@@ -4,9 +4,9 @@
 
 ### NeurIPS 2026
 
-Jiaming Wang<sup>*</sup>, Jizhuo Chen<sup>*</sup>, Diwen Liu<sup>*</sup>, Atharva Ghotavadekar, Jiaxuan Da, Linh Kästner, Harold Soh
+Jiaming Wang, Jizhuo Chen, Diwen Liu, Atharva Ghotavadekar, Jiaxuan Da, Linh Kästner, Harold Soh
 
-National University of Singapore &nbsp;·&nbsp; <sup>*</sup>Equal contribution
+National University of Singapore
 
 [![Project Page](https://img.shields.io/badge/Project-Page-e8622c)](https://jiaming.im/CROSS/)
 [![arXiv](https://img.shields.io/badge/arXiv-2605.02227-b31b1b.svg)](https://arxiv.org/abs/2605.02227)
