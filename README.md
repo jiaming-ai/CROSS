@@ -1,4 +1,21 @@
-# CROSS
+<div align="center">
+
+# CROSS: Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation
+
+### NeurIPS 2026
+
+Jiaming Wang<sup>*</sup>, Jizhuo Chen<sup>*</sup>, Diwen Liu<sup>*</sup>, Atharva Ghotavadekar, Jiaxuan Da, Linh Kästner, Harold Soh
+
+National University of Singapore &nbsp;·&nbsp; <sup>*</sup>Equal contribution
+
+[![Project Page](https://img.shields.io/badge/Project-Page-e8622c)](https://jiaming.im/CROSS/)
+[![arXiv](https://img.shields.io/badge/arXiv-2605.02227-b31b1b.svg)](https://arxiv.org/abs/2605.02227)
+![NeurIPS 2026](https://img.shields.io/badge/NeurIPS-2026-4b44ce.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+<a href="https://jiaming.im/CROSS/"><img src="assets/teaser.jpg" alt="A quadruped relocalizes in a crowded canteen with a map built the evening before, then navigates to a language goal" width="100%"></a>
+
+</div>
 
 **Pose-aware topological mapping for RGB-D and monocular inputs.**
 
@@ -30,8 +47,8 @@ cross/
 ### Quick Start (recommended)
 
 ```bash
-git clone https://github.com/jiaming/cross.git
-cd cross
+git clone https://github.com/jiaming-ai/CROSS.git
+cd CROSS
 bash install.sh
 ```
 
@@ -155,11 +172,16 @@ Place processed ROS bag directories in `data/rosbag/`.
 If you use CROSS in your research, please cite:
 
 ```bibtex
-@software{cross2025,
-  title  = {CROSS: Pose-Aware Topological Mapping},
-  author = {Jiaming},
-  year   = {2025},
-  url    = {https://github.com/jiaming/cross},
+@inproceedings{wang2026cross,
+  title     = {Change-Robust Online Topological Memory for Long-Term
+               Relocalization and Semantic Navigation},
+  author    = {Wang, Jiaming and Chen, Jizhuo and Liu, Diwen and
+               Ghotavadekar, Atharva and Da, Jiaxuan and K{\"a}stner, Linh
+               and Soh, Harold},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2026},
+  eprint    = {2605.02227},
+  archivePrefix = {arXiv}
 }
 ```
 

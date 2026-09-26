@@ -64,9 +64,9 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jiaming/cross"
-Repository = "https://github.com/jiaming/cross"
-Issues = "https://github.com/jiaming/cross/issues"
+Homepage = "https://jiaming.im/CROSS/"
+Repository = "https://github.com/jiaming-ai/CROSS"
+Issues = "https://github.com/jiaming-ai/CROSS/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cross"]
