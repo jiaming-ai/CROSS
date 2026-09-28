@@ -21,6 +21,10 @@ class ReferenceSupport:
         self.ever_historical = [False] * self.components
         self.last_step = None
 
+    def clear_component(self, component):
+        self.history[component] = deque([frozenset()] * self.window, maxlen=self.window)
+        self.ever_historical[component] = False
+
     def start(self, loaded_ids):
         self.loaded_ids = frozenset(loaded_ids)
         self.unanchored = self.enabled and bool(self.loaded_ids)
@@ -35,8 +39,7 @@ class ReferenceSupport:
             raise ValueError("Reference support requires increasing source steps")
         self.last_step = step
         for component in newborns:
-            self.history[component] = deque([frozenset()] * self.window, maxlen=self.window)
-            self.ever_historical[component] = False
+            self.clear_component(component)
         supports = [set() for _ in range(self.components)]
         for keyframe, (source_component, target_component) in edge_mapping.items():
             # Only a directly verified loaded-map pose is independent of

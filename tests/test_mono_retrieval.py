@@ -108,3 +108,29 @@ def test_historical_slot_preserves_budget_thresholds_scores_and_embedding_cost()
     assert balanced["scores"] == pytest.approx([.95, .9, .6])
     assert [k.id for k in low_score_only["keyframes"]] == [0, 1, 2]
     assert len(calls) == 3
+
+
+@pytest.mark.parametrize("old_weight", [0., .5])
+def test_recycled_hypothesis_cannot_inherit_a_previous_places_evidence(old_weight):
+    from cross.core.hypothesis import HypothesisManager
+
+    manager = HypothesisManager(SimpleNamespace(device="cpu", topo_map=None), 2)
+    manager.dist = (pp.identity_SE3(2), pp.se3(torch.ones(2, 6) * .1), torch.tensor([1.-old_weight, old_weight]))
+    # A dead candidate left positive evidence in its slot. The next, spatially
+    # unrelated candidate has had no temporal observations yet.
+    manager.llr_hist[1] = 7.
+    manager.log_c_hist[1] = 7.
+    manager.log_conf_hist[1] = .5
+    far = pp.identity_SE3()
+    far[0] = 5.
+    proposals = [dict(pose=pp.identity_SE3(), std=pp.se3(torch.ones(6) * .1), score=torch.tensor(.8),
+                      source_indices=[(10, 0)]),
+                 dict(pose=far, std=pp.se3(torch.ones(6) * .1), score=torch.tensor(.6),
+                      source_indices=[(11, 0)])]
+    mu, std, weights, confidence, _ = manager.align_proposal_prior(proposals)
+    manager.gmm_filtering(mu, std, weights, confidence)
+    manager.add_node(SimpleNamespace(id=20))
+    assert 1 not in manager.hypotheses, "A newborn candidate was realized using the previous identity's evidence"
+    assert manager.last_sum_pos[1] == 0
+    assert torch.count_nonzero(manager.log_c_hist[1]) == 0
+    assert torch.count_nonzero(manager.log_conf_hist[1]) == 0

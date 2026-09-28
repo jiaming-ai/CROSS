@@ -547,6 +547,16 @@ class HypothesisManager:
         weights[component_id] = 0.0
         weights = weights / weights.sum()
         self.dist = (mu, sigma, weights)
+        self._reset_component_evidence(component_id)
+
+    def _reset_component_evidence(self, component_id):
+        """A bounded slot is storage, not the identity of a place hypothesis."""
+        self.llr_hist[component_id, :] = 0
+        self.log_c_hist[component_id, :] = 0
+        self.log_conf_hist[component_id, :] = 0
+        self.last_sum_pos[component_id] = 0
+        self.last_hit_rate[component_id] = 0
+        self.reference_support.clear_component(component_id)
 
 
     def reset_tracking_dist(self):
@@ -718,6 +728,7 @@ class HypothesisManager:
                 available_slots = torch.tensor([victim_idx], device=available_slots.device)
 
             new_comp_idx = available_slots[0].item()
+            self._reset_component_evidence(new_comp_idx)
             self.last_alignment_audit[proposal_idx].update(component=new_comp_idx, action="born")
             proposal = proposal_hypotheses[proposal_idx]
             
@@ -852,7 +863,9 @@ class HypothesisManager:
         # GATE: Only accumulate evidence for actively tracked components
         # Inactive components (weight ≈ 0) should not accumulate spurious evidence
         # from identity-pose overlap with identity proposals
-        active_tracking_mask = prior_weights > self.tracking_active_threshold
+        # A newborn that evicts an active slot has no prior of its own yet.
+        # Comparing it to the evicted identity would be spurious evidence.
+        active_tracking_mask = (prior_weights > self.tracking_active_threshold) & ~self.newborn
         pos = torch.where(active_tracking_mask, pos, torch.zeros_like(pos))
 
         # Debug history: log individual LLR components (for tuning/visualization)
@@ -957,6 +970,8 @@ class HypothesisManager:
                     for comp_idx in dead_indices.tolist():
                         if comp_idx in self.hypotheses:
                             self.remove_hypothesis(comp_idx)
+                        else:
+                            self._reset_component_evidence(comp_idx)
                         active_mask[comp_idx] = False
 
             # Renormalize after TTL removals
