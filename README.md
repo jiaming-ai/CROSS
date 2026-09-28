@@ -13,6 +13,8 @@ The monocular API accepts **RGB, timestamps and camera calibration**. It does no
 
 The current scope is a single-session research baseline. The diagonal metric bridge is not a full joint Sim(3) posterior. Save/load starts a new session. A same-sequence restart can commit after accumulated evidence, but actual changed-session relocalization is not validated.
 
+The benchmark bridge defaults to CROSS's existing `skip_active` policy: retrieval updates competing hypotheses and delayed-commitment evidence while the active pose follows motion. `--filter-mode full` also fuses the global observation into the active pose, as in the original CROSS default. `adaptive` exposes the inherited adaptive gate. These select existing policies; they do not change the observation message or commitment thresholds. Report the selected policy in comparisons.
+
 ## Monocular installation and usage
 
 The tested environment uses Linux, Python 3.11, PyTorch 2.5.1/CUDA 12.4 and an NVIDIA GPU. First install CROSS's dependencies using the instructions below, then add the monocular dependencies and pinned DA3 implementation:

@@ -40,7 +40,7 @@ class MonocularSystem:
         cfg.depth_pred.use_depth_pred = False
         cfg.pose_est.type = PoseEstType.DA3 if self.config.retrieval_pose == "da3" else PoseEstType.METRIC_PNP
         if system_config is None:
-            cfg.tracking.filter_mode = FilterMode.SKIP_ACTIVE
+            cfg.tracking.filter_mode = FilterMode(self.config.filter_mode)
             cfg.tracking.odom_min_std_translation = 0.005
             cfg.tracking.odom_min_std_rotation = 0.01
             cfg.tracking.odom_std_per_meter = 0.1

@@ -52,6 +52,8 @@ def main():
     parser.add_argument("--metric-interval", type=int, default=30)
     parser.add_argument("--mapping-interval", type=int, default=5)
     parser.add_argument("--retrieval-pose", choices=["da3", "metric_pnp"], default="da3")
+    parser.add_argument("--filter-mode", choices=["full", "skip_active", "adaptive"], default="skip_active",
+                        help="Inherited CROSS retrieval pose-update policy; delayed commitment remains enabled")
     parser.add_argument("--pose-model", default="depth-anything/DA3-SMALL")
     parser.add_argument("--pose-refinement", choices=["none", "xfeat"], default="none")
     parser.add_argument("--refinement-anchor-only", action="store_true")
@@ -105,6 +107,7 @@ def main():
                         resolution=args.resolution, metric_resolution=args.metric_resolution,
                         anchor_interval=args.anchor_interval, mapping_interval=args.mapping_interval,
                         retrieval_pose=args.retrieval_pose,
+                        filter_mode=args.filter_mode,
                         pose_refinement=args.pose_refinement,
                         refinement_anchor_only=args.refinement_anchor_only, metric_shape=args.metric_shape,
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,
