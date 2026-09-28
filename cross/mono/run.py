@@ -184,7 +184,8 @@ def main():
                                   advances_frontend_or_mapper=False, metric_model_calls=warmup_metric_calls)
         (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     loading_seconds = perf_counter() - loading_start
-    latencies, arrival_latencies, valid_count, metric_count = [], [], 0, 0
+    latencies, arrival_latencies, image_io, output_io = [], [], [], []
+    valid_count, metric_count = 0, 0
     tracking_stream = None
     if args.frontend == "streaming_pnp" and args.device.startswith("cuda"):
         tracking_stream = torch.cuda.Stream(device=args.device, priority=-1)
@@ -194,7 +195,9 @@ def main():
         with (args.output / "trajectory.txt").open("w") as trajectory, \
                 (args.output / "frontend_trajectory.txt").open("w") as front_trajectory, \
                 (args.output / "diagnostics.jsonl").open("w") as diagnostics:
+            read_started = perf_counter()
             for frame in sequence:
+                image_io.append(perf_counter()-read_started)
                 arrival = start + len(latencies) / args.input_fps if args.input_fps else None
                 if arrival is not None:
                     sleep(max(0., arrival-perf_counter()))
@@ -210,13 +213,16 @@ def main():
                 if args.device.startswith("cuda") and tracking_stream is None:
                     torch.cuda.synchronize()
                 elapsed = perf_counter() - frame_start
+                last_pose_elapsed = perf_counter()-start
                 if arrival is not None:
                     arrival_latencies.append(perf_counter()-arrival)
                     estimate.diagnostics["capture_to_pose_seconds"] = arrival_latencies[-1]
                 latencies.append(elapsed)
                 valid_count += bool(estimate.diagnostics["valid"])
                 metric_count += "scale_observation" in estimate.diagnostics
-                estimate.diagnostics.update(input_index=frame.index, wall_seconds=elapsed)
+                estimate.diagnostics.update(input_index=frame.index, wall_seconds=elapsed,
+                                            image_read_and_preprocessing_seconds=image_io[-1])
+                output_started = perf_counter()
                 for handle, pose in [(trajectory, estimate.pose), (front_trajectory, frontend.metric_pose)]:
                     row = np.r_[frame.timestamp, pose[:3, 3], Rotation.from_matrix(pose[:3, :3]).as_quat()]
                     handle.write(" ".join(f"{x:.9f}" for x in row) + "\n")
@@ -226,6 +232,8 @@ def main():
                 if len(latencies) % 50 == 0:
                     print(json.dumps({"frames": len(latencies), "valid": valid_count, "scale": frontend.scale_filter.scale,
                                       "fps": len(latencies) / (perf_counter() - start)}), flush=True)
+                output_io.append(perf_counter()-output_started)
+                read_started = perf_counter()
         emission_elapsed = perf_counter()-start
         if hasattr(tracker, "finish"):
             tracker.finish()
@@ -242,7 +250,8 @@ def main():
                "warmup_seconds_in_loading": warmup_seconds, "warmup_metric_model_calls": warmup_metric_calls,
                "elapsed_seconds": total, "fps_including_io": len(latencies) / total,
                "emission_elapsed_seconds": emission_elapsed,
-               "fps_until_last_pose": len(latencies) / emission_elapsed,
+               "fps_until_last_pose": len(latencies) / last_pose_elapsed,
+               "last_pose_elapsed_seconds": last_pose_elapsed,
                "background_drain_and_shutdown_seconds": total-emission_elapsed,
                "latency_median_ms": 1000 * float(np.median(latencies)),
                "latency_p95_ms": 1000 * float(np.quantile(latencies, 0.95)),
@@ -252,6 +261,8 @@ def main():
                "scale_reinitializations": frontend.scale_filter.reinitializations,
                "bootstrap_metric_calls": getattr(frontend, "bootstrap_metric_calls", 0),
                "coverage_definition": "Frontend validity flag; DPVO reports initialization, not an independent accuracy check"}
+    summary["image_read_and_preprocessing_ms"] = dict(mean=1000*float(np.mean(image_io)), p95=1000*float(np.quantile(image_io, .95)))
+    summary["trajectory_and_diagnostic_output_ms"] = dict(mean=1000*float(np.mean(output_io)), p95=1000*float(np.quantile(output_io, .95)))
     if hasattr(frontend, "depth_worker"):
         summary["teacher_worker"] = frontend.depth_worker.statistics()
     if hasattr(tracker, "map_worker"):
