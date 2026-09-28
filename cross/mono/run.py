@@ -40,6 +40,10 @@ def main():
                         help="Experimental metric refresh before tracking loss; request on fewer than 80 PnP inliers")
     parser.add_argument("--trace-metric-sources", action="store_true",
                         help="Record reused teacher identities and signed scale responses; does not change inference")
+    parser.add_argument('--conditional-sources', action='store_true',
+                        help='Experimental shared source inference; requires streaming_pnp, metric_pnp, chart-aware and session-recovery')
+    parser.add_argument('--source-log-std', type=float, default=.12,
+                        help='Declared per-prediction log-depth prior std for conditional inference; not empirically calibrated')
     parser.add_argument("--freeze-gc", action="store_true", help="Freeze long-lived startup objects during the run; retain collection of new objects")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
@@ -125,6 +129,7 @@ def main():
                         teacher_lag_frames=args.teacher_lag_frames,
                         adaptive_anchor=args.adaptive_anchor,
                         trace_metric_sources=args.trace_metric_sources,
+                        conditional_sources=args.conditional_sources,source_log_std=args.source_log_std,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
                         pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,

@@ -216,6 +216,7 @@ class KeyframeDatabase:
         Returns:
             dict: Database state including keyframes, embeddings, and atlases
         """
+        from cross.core.conditional_pose import records
         db_keyframes = []
         for atlas in self._keyframe_by_atlas:
             for kf in self._keyframe_by_atlas[atlas]:
@@ -228,6 +229,7 @@ class KeyframeDatabase:
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,
                     "pose_charts": kf.pose_charts.cpu() if kf.pose_charts is not None else None,
                     "metric_source": kf.metric_source,
+                    "conditional_poses": records(kf.conditional_poses),
                     "atlas_id": kf.atlas.id if kf.atlas is not None else None,
                     "timestamp": kf.timestamp,
                     "temporary": kf.temporary,
@@ -254,6 +256,7 @@ class KeyframeDatabase:
         Returns:
             dict: Mapping from keyframe ID to Keyframe object
         """
+        from cross.core.conditional_pose import restore
         self._keyframe_by_atlas.clear()
         self._atlas_to_indices.clear()
         self._index_to_atlas_idx.clear()
@@ -293,6 +296,7 @@ class KeyframeDatabase:
                 last_pgo_step=kf_data["last_pgo_step"],
                 pose_charts=kf_data["pose_charts"].to(storage_device) if kf_data.get("pose_charts") is not None else None,
                 metric_source=kf_data.get("metric_source"),
+                conditional_poses=restore(kf_data.get("conditional_poses")),
             )
 
             # Manually set the ID to match the saved one

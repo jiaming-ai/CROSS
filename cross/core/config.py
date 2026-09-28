@@ -126,6 +126,8 @@ class ClusterStdConfig:
 class HypothesisConfig:
     """All tuning parameters for HypothesisManager."""
 
+    conditional_sources: bool = False
+
     # --- Evidence tracking (LLR) ---
     llr_hist_length: int = 8
     llr_bias: float = 0.1

@@ -42,6 +42,9 @@ class MonocularSystem:
         if self.config.session_recovery:
             cfg.mapping.hypothesis.session_recovery = True
         cfg.mapping.hypothesis.chart_aware = self.config.chart_aware
+        cfg.mapping.hypothesis.conditional_sources = self.config.conditional_sources
+        if self.config.conditional_sources and (cfg.mapping.loop_closure.async_ or cfg.mapping.hypothesis.no_pgo_for_lc):
+            raise ValueError('Conditional sources require synchronous graph optimization in the mapping worker')
         if system_config is None:
             cfg.tracking.filter_mode = FilterMode(self.config.filter_mode)
             cfg.tracking.odom_min_std_translation = 0.005
@@ -56,7 +59,8 @@ class MonocularSystem:
         camera = Camera(np.array(K).copy(), *image_size)
         # System rescales camera.K in place to its stored-image resolution.
         pose_estimator = (DA3RelativePose(self.frontend.geometry, device) if self.config.retrieval_pose == "da3"
-                          else MetricRelativePose(camera.K, device, self.config.mask_people, self.config.retrieval_matcher))
+                          else MetricRelativePose(camera.K, device, self.config.mask_people, self.config.retrieval_matcher,
+                                                  self.config.conditional_sources,self.config.source_log_std))
         self.mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         self.map_alignment = np.eye(4)
         self.initialized = False

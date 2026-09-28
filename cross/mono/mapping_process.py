@@ -30,6 +30,7 @@ def initialize(K, image_size, config, system_config, device):
     _system = StreamingMonocularSystem.__new__(StreamingMonocularSystem)
     _system.pool, _system.map_stream, _system.previous_snapshot = None, None, None
     _system.mapper, _system.geometry, _system.device = wrapper.mapper, geometry, device
+    _system.config = config
 
 
 def operation(name, value):

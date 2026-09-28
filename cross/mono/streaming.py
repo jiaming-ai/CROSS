@@ -41,9 +41,10 @@ class FrameSnapshot:
     refresh_anchor: bool = False
     metric_source: MetricSource | None = None
     scale_response: TranslationResponse | None = None
+    world_geometry_std_prefix: np.ndarray | None = None
 
 
-def snapshot_motion(previous, current):
+def snapshot_motion(previous, current, conditional=False):
     """All intermediate motion survives replacement of pending map images.
 
     Prefixes sum world-coordinate marginal standard deviations. Mapping to
@@ -54,6 +55,12 @@ def snapshot_motion(previous, current):
         return np.eye(4), np.zeros((6, 6))
     if current.index <= previous.index:
         raise ValueError("Mapping snapshots must increase")
+    if conditional:
+        if previous.world_geometry_std_prefix is None or current.world_geometry_std_prefix is None:
+            raise ValueError('Conditional mapping needs a geometry-only uncertainty prefix')
+        world_std = np.maximum(current.world_geometry_std_prefix-previous.world_geometry_std_prefix,0.)
+        local_std = np.abs(adjoint(inverse(current.pose)))@world_std
+        return inverse(previous.pose)@current.pose,np.diag(local_std**2)
     world_std = np.maximum(current.world_std_prefix - previous.world_std_prefix, 0.)
     local_std = np.abs(adjoint(inverse(previous.pose))) @ world_std
     return inverse(previous.pose) @ current.pose, np.diag(local_std**2)
@@ -68,6 +75,7 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         if self.depth_stream is not None:
             self.depth_stream.wait_stream(torch.cuda.current_stream(device))
         self.world_std_prefix = np.zeros(6)
+        self.world_geometry_std_prefix = np.zeros(6)
         self.ready_depths = []
         self.pending_depths = []
         self.last_submitted = -1
@@ -175,11 +183,16 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                 valid = False  # keep the held output and its failure in evaluation
         delta = inverse(previous) @ self.metric_pose
         covariance = np.diag([self.config.translation_std_floor**2]*3 + [self.config.rotation_std_floor**2]*3)
+        geometry_covariance = covariance.copy()
         covariance[:3, :3] += scale_translation_covariance(delta[:3, 3], self.scale_filter.uncertainty_variance)
         if not valid:
             covariance += np.eye(6)
+            geometry_covariance += np.eye(6)
         transported = adjoint(previous) @ covariance @ adjoint(previous).T
         self.world_std_prefix += np.sqrt(np.maximum(np.diag(transported), 0.))
+        geometry_transported = adjoint(self.metric_pose)@geometry_covariance@adjoint(self.metric_pose).T
+        if hasattr(self,'world_geometry_std_prefix'):
+            self.world_geometry_std_prefix += np.sqrt(geometry_transported.diagonal().clip(0))
         interval = min(self.config.scale.interval, self.config.mapping_interval) if self.provide_mapping_depth else self.config.scale.interval
         bootstrap = self.anchor_features is None
         # The experimental policy asks while the current pose still has a
@@ -191,7 +204,10 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                    or ((not valid or weak_support) and self.index-self.last_submitted >= 5))
         if bootstrap or request:
             snapshot = FrameSnapshot(self.index, timestamp, rgb.copy(), features, self.metric_pose.copy(),
-                                     self.world_std_prefix.copy(), valid, refresh_anchor=weak_support)
+                                     self.world_std_prefix.copy(), valid, refresh_anchor=weak_support,
+                                     world_geometry_std_prefix=getattr(self,'world_geometry_std_prefix',None))
+            if snapshot.world_geometry_std_prefix is not None:
+                snapshot = replace(snapshot,world_geometry_std_prefix=snapshot.world_geometry_std_prefix.copy())
             if getattr(self, "trace_metric_sources", False):
                 source = identify_prediction(snapshot.rgb, self.K, model_id=self.config.metric_model,
                                              revision=self.metric_revision, resolution=self.config.metric_resolution,
@@ -270,6 +286,9 @@ class StreamingMonocularSystem(MonocularSystem):
         self.map_worker = LatestWorker(self._map_snapshot, "cross-global-observation")
         self.map_events = []
         self.finished = False
+        self.source_biases = {}
+        self.bias_packet_revision = 0
+        self._bias_prefix_cache = None
 
     def _map_snapshot(self, item):
         if self.pool is not None:
@@ -277,7 +296,8 @@ class StreamingMonocularSystem(MonocularSystem):
             return self.pool.submit(operation, "step", item).result()
         snapshot, depth = item
         def process():
-            delta, covariance = snapshot_motion(self.previous_snapshot, snapshot)
+            conditional = getattr(getattr(self,'config',None),'conditional_sources',False)
+            delta, covariance = snapshot_motion(self.previous_snapshot, snapshot,conditional=conditional)
             observation = dict(rgb=snapshot.rgb, depth=depth, conf=None, delta_pose=delta,
                                motion_covariance=covariance, timestamp=snapshot.timestamp)
             if getattr(snapshot, "metric_source", None) is not None:
@@ -290,6 +310,12 @@ class StreamingMonocularSystem(MonocularSystem):
                     source_id=snapshot.metric_source.source_id, session_id=snapshot.metric_source.session_id,
                     world_translation_response=snapshot.scale_response.record(),
                     motion_right_tangent_response=jacobians)
+                if conditional:
+                    from cross.core.conditional import SourceFactor
+                    keys = tuple(sorted(jacobians))
+                    J = np.column_stack([jacobians[k] for k in keys]) if keys else np.empty((6,0))
+                    observation['motion_source_factor'] = SourceFactor(tuple('image:'+k for k in keys),J,
+                        np.full(len(keys),self.config.source_log_std**2),log_depth_scale=True)
             self.mapper.step(observation)
             mapped = self.mapper.get_current_pose().matrix().detach().cpu().numpy()
             self.previous_snapshot = snapshot
@@ -298,7 +324,14 @@ class StreamingMonocularSystem(MonocularSystem):
                          graph_nodes=len(self.mapper.hypothesis_manager.nodes),
                          hypotheses=len(self.mapper.hypothesis_manager.hypotheses),
                          mapping_event=getattr(self.mapper, "last_step_diagnostics", {}).copy())
-            return mapped @ inverse(snapshot.pose), event
+            frontend_pose = snapshot.pose.copy()
+            if conditional:
+                state = self.mapper.hypothesis_manager.source_states[0]
+                biases = {key.removeprefix('image:'):float(mean) for key,mean in zip(state.keys,state.mean)}
+                frontend_pose[:3,3] = snapshot.scale_response.translation_at(frontend_pose[:3,3],biases)
+                event['_source_biases'] = biases
+                event['conditional_sources'] = dict(source_count=len(biases),max_abs_log_bias=max(map(abs,biases.values()),default=0.))
+            return mapped @ inverse(frontend_pose), event
         with torch.inference_mode():
             if self.map_stream is None:
                 return process()
@@ -317,6 +350,9 @@ class StreamingMonocularSystem(MonocularSystem):
         events = []
         for (alignment, event), timing in self.map_worker.poll():
             self.map_alignment = alignment
+            if '_source_biases' in event:
+                self.source_biases = event.pop('_source_biases')
+                self.bias_packet_revision += 1
             self.initialized = True
             events.append(dict(**event, **timing))
         self.map_events.extend(events)
@@ -327,6 +363,18 @@ class StreamingMonocularSystem(MonocularSystem):
         self._submit_depths()
         events = self._receive_maps()
         estimate.diagnostics["frontend_pose"] = estimate.pose.tolist()
+        if self.config.conditional_sources:
+            prefix = self.frontend.pose_scale_prefix
+            key = (id(prefix),self.bias_packet_revision)
+            if self._bias_prefix_cache is None or self._bias_prefix_cache[0] != key:
+                correction = prefix.translation_at(np.zeros(3),self.source_biases)
+                self._bias_prefix_cache = (key,correction)
+            correction = self._bias_prefix_cache[1].copy()
+            tail = self.frontend.pose_scale_tail
+            if tail is not None:
+                source,displacement = tail
+                correction -= (1.-np.exp(-self.source_biases.get(source,0.)))*displacement
+            estimate.pose[:3,3] += correction
         estimate.pose = self.map_alignment @ estimate.pose
         estimate.diagnostics.update(mapping_updates=events, mapping_update=bool(events),
                                     mapping_worker=self.map_worker.statistics())

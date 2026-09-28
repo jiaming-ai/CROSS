@@ -328,6 +328,8 @@ class System:
 
         self.hypothesis_manager.dist = (mu.to(self.device), sigma.to(self.device), weights.to(self.device))
         self.hypothesis_manager.start_tracking_chart()
+        if self.config.mapping.hypothesis.conditional_sources:
+            self.hypothesis_manager.initialize_source_filter()
 
         # insert the initial keyframe
         kf = self.db.insert(
@@ -496,6 +498,8 @@ class System:
         # --- 4. Combine All Data ---
         save_data = {
             "coordinate_charts_version": 1 if self.hypothesis_manager.chart_aware else 0,
+            "conditional_sources_version": 1 if (self.hypothesis_manager.source_states is not None or
+                                                   self.hypothesis_manager.saved_source_belief is not None) else 0,
             "config": config_to_dict(self.config),
             "db_data": db_data,
             "hypo_data": hypo_data,
@@ -538,6 +542,8 @@ class System:
             save_data = pickle.load(f)
         if save_data.get("coordinate_charts_version", 0) and not self.hypothesis_manager.chart_aware:
             raise ValueError("This map contains coordinate charts; enable chart-aware mapping to load it")
+        if bool(save_data.get('conditional_sources_version',0)) != self.config.mapping.hypothesis.conditional_sources:
+            raise ValueError('Conditional source maps require the same inference mode; rebuild a legacy reference map')
 
         # --- 2. Restore Class Variables ---
         Keyframe._next_id = save_data["class_vars"]["keyframe_next_id"]
@@ -610,7 +616,8 @@ class System:
 
         # first accumulate the odometry
         if self.use_odometry:
-            self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"))
+            self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"),
+                                              source_factor=obs.get('motion_source_factor'))
         
         if obs.get("rgb", None) is not None:
 
@@ -743,7 +750,8 @@ class System:
         ################################
         # update the motion model gmm with odometry
         if not ret["kidnapped"]:
-            self.hypothesis_manager.motion_update(ret["delta_pose"], ret["delta_std"])
+            self.hypothesis_manager.motion_update(ret["delta_pose"], ret["delta_std"],
+                                                  source_factor=ret.get('motion_source_factor'))
             logger.debug(f"Updated the current state gmm with odometry at step {self._processed_frame_num}")
         
         else:
@@ -832,7 +840,12 @@ class System:
             proposal_gmm_weights,
             proposal_gmm_confidence,
             pose_update_mask=pose_update_mask,
+            **(dict(source_factors={i:m.factor for i,m in self.hypothesis_manager.aligned_conditional_models.items()},
+                    source_covariances={i:m.geometry_covariance for i,m in self.hypothesis_manager.aligned_conditional_models.items()})
+               if self.hypothesis_manager.source_states is not None else {}),
         )
+        if self.hypothesis_manager.source_states is not None:
+            self.last_step_diagnostics['conditional_filter'] = self.hypothesis_manager.last_conditional_audit
         current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
 
         ret['current_mu'] = current_mu
@@ -912,6 +925,7 @@ class System:
         """
         ret = {"kidnapped": False}
         if self.use_odometry:
+            ret['motion_source_factor'] = self.odom_accumulator.source_since_last_reading('since_last_step')
             delta_pose, std = self.odom_accumulator.get_since_last_reading("since_last_step")
             ret["delta_pose"] = delta_pose
             ret["delta_std"] = std
@@ -982,6 +996,12 @@ class System:
 
         pg.solve(optim_node_ids=optim_node_ids, fixed_node_ids={fixed_node_id})
 
+        if self.hypothesis_manager.source_states is not None:
+            applied = self.hypothesis_manager.apply_pgo_result(dict(pose_graph=pg,optimized_poses=pg.optimized_poses,
+                                                                   other_hypothesis_id=0))
+            self._last_smoothing_step = self._processed_frame_num
+            return applied['success']
+
         # Apply smoothing updates to hypothesis 0
         std_reduction = self.config.pgo.std_reduction_factor
         with self.hypothesis_manager.graph_lock:
@@ -1021,6 +1041,11 @@ class System:
         # force true => add permanent kf
         is_temp_kf = False if force_permanent else True
         delta_pose, std = self.odom_accumulator.get_since_last_reading("since_last_add_kf", reset=False)
+        conditional_motion = None
+        if self.hypothesis_manager.source_states is not None:
+            from cross.core.conditional_pose import ConditionalPose
+            factor = self.odom_accumulator.source_since_last_reading('since_last_add_kf')
+            conditional_motion = ConditionalPose(np.diag(std.tensor().double().cpu().numpy()**2),factor)
 
         # if the robot moves too little, skip adding a kf
         if not force_add and rotation_angle_from_quat(delta_pose.tensor()[3:]) < 0.1 and \
@@ -1092,6 +1117,7 @@ class System:
                     type=EdgeType.VISUAL,
                     from_comp_id=source_comp_id,
                     to_comp_id=dest_comp_id,
+                    conditional_pose=ret.get('relative_conditional_poses',[None]*len(valid_keyframes))[i],
                 )
 
         # adding odometry constraints
@@ -1102,6 +1128,7 @@ class System:
                 rel_pose_mean=delta_pose,
                 rel_pose_std=std,
                 type=EdgeType.ODOMETRY,
+                conditional_pose=conditional_motion,
             )
         self.odom_accumulator.reset_item("since_last_add_kf")
         self.last_added_kf_id = current_kf_id
@@ -1270,6 +1297,20 @@ class System:
             })
             if self.hypothesis_manager.chart_aware:
                 hypotheses[-1]['chart_id'] = int(flat_charts[best_candidate_in_cluster_idx])
+            if self.hypothesis_manager.source_states is not None:
+                from cross.core.conditional_pose import ConditionalPose
+                b,c = [int(v[best_candidate_in_cluster_idx]) for v in valid_indices_tuple]
+                message = ret['convolved_conditional_poses'][b][c]
+                S = message.geometry_covariance.copy()
+                if len(cluster_indices) > 1:
+                    # Dispersion does not replace the selected factor's
+                    # conditional geometric uncertainty. Nearby duplicates
+                    # cannot turn a noisy node/PnP fit into exact geometry.
+                    S += np.diag(representative_std.tensor().double().cpu().numpy()**2)
+                message = ConditionalPose(S,message.factor)
+                hypotheses[-1]['conditional_pose'] = message
+                hypotheses[-1]['std'] = pp.se3(torch.as_tensor(S.diagonal().copy(),
+                                            device=self.device,dtype=representative_std.dtype).clamp_min(0).sqrt())
 
         # make sure the hypotheses are in the same order as the current state GMM
         return self.hypothesis_manager.align_proposal_prior(hypotheses)
@@ -1380,6 +1421,8 @@ class System:
         if getattr(self, "_current_metric_source", None) is not None:
             source_context = dict(ref_metric_sources=[getattr(k, "metric_source", None) for k in keyframes],
                                   curr_metric_source=self._current_metric_source)
+        if self.hypothesis_manager.source_states is not None:
+            source_context['excluded_factor_ids'] = set().union(*(s.seen_factors for s in self.hypothesis_manager.source_states if s is not None))
         valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
             ref_rgbs,
             ref_depths,
@@ -1455,9 +1498,38 @@ class System:
             valid_stds,
             valid_ref_component_weights,
         )
-
+        conditional_ret = {}
+        if self.hypothesis_manager.source_states is not None:
+            from cross.core.conditional_pose import ConditionalPose, compose
+            relative_models = getattr(self.pose_est, 'last_conditional_poses', None)
+            if relative_models is None or len(relative_models) != len(valid_keyframes):
+                raise ValueError('Conditional retrieval needs one model for every verified relative pose')
+            models = []
+            for i,(kf,relative) in enumerate(zip(valid_keyframes,relative_models)):
+                if kf.conditional_poses is None:
+                    raise ValueError('A retrieved node has no conditional pose model; rebuild the reference map')
+                # Retain CROSS confidence/retrieval-dependent geometry weights,
+                # without reintroducing the old teacher-scale marginal.
+                relative = ConditionalPose(np.diag(valid_stds[i].tensor().double().cpu().numpy()**2),relative.factor)
+                relative_models[i] = relative
+                row = []
+                for c,node_model in enumerate(kf.conditional_poses):
+                    if valid_ref_component_weights[i,c] <= 1e-3:
+                        row.append(None)
+                        continue
+                    if node_model is None:
+                        raise ValueError('An active retrieved component has no conditional pose model')
+                    pose,model = compose(kf.pose_mu[c].matrix().double().cpu().numpy(),node_model,
+                        valid_poses[i].matrix().double().cpu().numpy(),relative,self.hypothesis_manager.source_states[0])
+                    convolved_mus[i,c] = pp.from_matrix(torch.as_tensor(pose,device=self.device,dtype=convolved_mus.dtype),pp.SE3_type)
+                    convolved_stds[i,c] = pp.se3(torch.as_tensor(model.geometry_covariance.diagonal().copy(),
+                                                device=self.device,dtype=convolved_stds.dtype).clamp_min(0).sqrt())
+                    row.append(model)
+                models.append(row)
+            conditional_ret = dict(convolved_conditional_poses=models,relative_conditional_poses=relative_models)
 
         return {
+            **conditional_ret,
             # retrieval
             "retrieval_audit": ret["retrieval_audit"],
             "retrieval_scores": retrieval_scores,

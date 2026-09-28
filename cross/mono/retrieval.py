@@ -69,12 +69,16 @@ class MetricRelativePose:
     Uses its own matcher/detector state. Reading old keyframes must never
     contaminate the causal frontend's cached person masks or feature state.
     """
-    def __init__(self, K, device="cuda", mask_people=False, matcher="mnn"):
+    def __init__(self, K, device="cuda", mask_people=False, matcher="mnn", conditional_sources=False,
+                 source_log_std=.12):
         from .refinement import XFeatRefiner
         self.refiner = XFeatRefiner(K, device, mask_people=mask_people, mask_interval=1, matcher=matcher)
         self.device = device
         self.cache = OrderedDict()
         self.last_stds = None
+        self.conditional_sources = conditional_sources
+        self.source_log_std = source_log_std
+        self.factor_policy = f'metric-pnp-bidirectional-v1:{matcher}:people={mask_people}'
 
     def features(self, rgb):
         key = hashlib.sha256(rgb.tobytes()).digest()
@@ -95,7 +99,10 @@ class MetricRelativePose:
         if ref_depth is None or curr_depth is None:
             raise ValueError("Metric PnP verification requires learned depths of both images")
         current_depth = curr_depth.detach().cpu().numpy().squeeze()
+        if getattr(self,'conditional_sources',False) and (kwargs.get('ref_metric_sources') is None or kwargs.get('curr_metric_source') is None):
+            raise ValueError('Conditional PnP requires identified metric predictions for both images')
         self.last_pair_audit = []
+        self.last_conditional_poses = []
         for i, image in enumerate(ref_image):
             audit = dict(reason="forward_pnp", accepted=False)
             source_context = kwargs.get("ref_metric_sources")
@@ -103,6 +110,14 @@ class MetricRelativePose:
                 source = source_context[i]
                 audit["metric_sources"] = dict(reference=source, current=kwargs.get("curr_metric_source"))
             self.last_pair_audit.append(audit)
+            if getattr(self,'conditional_sources',False):
+                source,target = source_context[i],kwargs.get('curr_metric_source')
+                if source is None:
+                    raise ValueError('Conditional PnP cannot reuse a legacy depth prediction')
+                identity = hashlib.sha256((self.factor_policy+source['source_id']+target['source_id']).encode()).hexdigest()
+                if identity in kwargs.get('excluded_factor_ids',()):
+                    audit.update(reason='reused_geometric_factor',factor_id=identity)
+                    continue
             reference = self.features(DA3RelativePose.rgb(image))
             depth = ref_depth[i].detach().cpu().numpy().squeeze()
             forward = self.refiner.estimate(reference, current, depth)
@@ -132,6 +147,17 @@ class MetricRelativePose:
                 from .metric_sources import pnp_scale_response
                 audit["metric_sources"]["forward_right_tangent_response"] = pnp_scale_response(pose)
                 audit["metric_sources"]["backward_right_tangent_response"] = pnp_scale_response(backward[0])
+            if getattr(self,'conditional_sources',False):
+                from cross.core.conditional import SourceFactor
+                from cross.core.conditional_pose import ConditionalPose
+                source, target = source_context[i], kwargs.get('curr_metric_source')
+                if source is None or target is None:
+                    raise ValueError('Conditional PnP requires identified metric predictions for both images')
+                factor = SourceFactor(('image:'+source['source_id'],),
+                                      np.asarray(pnp_scale_response(pose))[:,None],
+                                      np.array([self.source_log_std**2]),factor_id=identity,log_depth_scale=True)
+                stds[-1] = np.array([.02]*3+[.03]*3)
+                self.last_conditional_poses.append(ConditionalPose(np.diag(stds[-1]**2),factor))
         self.last_stds = torch.as_tensor(np.array(stds).reshape(-1, 6), dtype=torch.float32)
         if not poses:
             return pp.identity_SE3(0, device=self.device), valid, torch.empty(0)

@@ -452,6 +452,9 @@ class PoseGraph:
         self.vertex_map = {v.id: v for v in vertices}
         if self.chart_aware:
             self._retain_connected_chart_graph(target_node_id, other_hypothesis_id)
+        if self.hypothesis_manager.source_states is not None:
+            from cross.core.conditional_pgo import prepare
+            prepare(self,other_hypothesis_id)
 
     def _retain_connected_chart_graph(self, target_node_id, other_hypothesis_id=0):
         """Do not optimize unrelated saved sessions merely due to adjacent IDs."""
@@ -513,6 +516,9 @@ class PoseGraph:
         self.vertex_map = {v.id: v for v in self.vertices}
         if self.chart_aware:
             self._retain_connected_chart_graph(target_node_id)
+        if self.hypothesis_manager.source_states is not None:
+            from cross.core.conditional_pgo import prepare
+            prepare(self,0)
 
     def validate_edge_uncertainties(
         self,
@@ -680,6 +686,7 @@ class PoseGraph:
         
         # 3. Add between factors for all edges
         has_edges = False
+        conditional_factors = []
         for (id1, id2, factors) in self.edges:
             if id1 in all_node_ids and id2 in all_node_ids:
                 num_visual_edges = sum(1 for f in factors if f.type == EdgeType.VISUAL)
@@ -689,7 +696,7 @@ class PoseGraph:
                     measurement_gtsam = pypose_to_gtsam_pose3(factor.mean)
                     
                     # Convert diagonal std from pypose to gtsam noise model
-                    pypose_stds = factor.std.tensor().cpu().numpy().flatten()
+                    pypose_stds = factor.std.tensor().cpu().numpy().flatten().copy()
 
                     # Apply uncertainty scaling factor
                     if factor.type in self.uncertainty_scales:
@@ -714,7 +721,10 @@ class PoseGraph:
                     gtsam_sigmas += 1e-9  # Add epsilon for stability
 
                     noise_model = self._make_between_noise_model(factor, gtsam_sigmas)
-                    graph.add(gtsam.BetweenFactorPose3(id1, id2, measurement_gtsam, noise_model))
+                    nonlinear = gtsam.BetweenFactorPose3(id1, id2, measurement_gtsam, noise_model)
+                    graph.add(nonlinear)
+                    if hasattr(self,'conditional_belief'):
+                        conditional_factors.append((nonlinear,factor))
 
         # Log edge statistics for debugging
         if has_edges:
@@ -722,7 +732,7 @@ class PoseGraph:
             for (id1, id2, factors) in self.edges:
                 if id1 in all_node_ids and id2 in all_node_ids:
                     for factor in factors:
-                        stds = factor.std.tensor().cpu().numpy().flatten()
+                        stds = factor.std.tensor().cpu().numpy().flatten().copy()
                         # Apply scaling factor if applicable
                         if factor.type in self.uncertainty_scales:
                             stds *= self.uncertainty_scales[factor.type]
@@ -756,3 +766,9 @@ class PoseGraph:
             optimized_pose_gtsam = result.atPose3(node_id)
             optimized_pose_pypose = gtsam_to_pypose_pose3(optimized_pose_gtsam, self.device)
             self.optimized_poses[node_id] = optimized_pose_pypose
+        if hasattr(self,'conditional_belief'):
+            from cross.core.conditional_pgo import solve_responses
+            solve_responses(self,result,conditional_factors,optim_node_ids,fixed_node_ids)
+            # Fixed nodes also need their bias-centered pose/model persisted.
+            for node_id in fixed_node_ids:
+                self.optimized_poses[node_id] = gtsam_to_pypose_pose3(result.atPose3(node_id),self.device)

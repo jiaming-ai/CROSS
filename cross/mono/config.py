@@ -34,6 +34,8 @@ class MonoConfig:
     teacher_lag_frames: int = 0
     adaptive_anchor: bool = False
     trace_metric_sources: bool = False
+    conditional_sources: bool = False
+    source_log_std: float = .12
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"
@@ -58,6 +60,12 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.conditional_sources:
+            if self.frontend != 'streaming_pnp' or self.retrieval_pose != 'metric_pnp' or not self.chart_aware:
+                raise ValueError('Conditional sources require streaming_pnp, metric_pnp retrieval and chart-aware mapping')
+            self.trace_metric_sources = True
+        if not 0 <= self.source_log_std <= 1:
+            raise ValueError('Source log standard deviation must be finite and within [0,1]')
         if self.trace_metric_sources and self.frontend != "streaming_pnp":
             raise ValueError("Metric source tracing requires streaming_pnp")
         if self.chart_aware and not self.session_recovery:
