@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--input-fps", type=float, help="Pace input arrivals and measure capture-to-pose deadlines")
     parser.add_argument("--warmup-models", action="store_true", help="Warm models using only the first RGB image; report startup separately")
     parser.add_argument("--paced-input-worker", action="store_true", help="Overlap RGB preprocessing with tracking; two-frame queue, fail on overflow")
+    parser.add_argument("--input-buffer", type=int, default=2, help="Maximum pending input frames; overflow fails instead of dropping data")
     parser.add_argument("--mapping-process", action="store_true", help="Isolate CROSS mapping from the streaming frontend's Python process")
     parser.add_argument("--delayed-recovery", action="store_true", help="Experimental delayed reverse PnP; may cause large pose corrections")
     parser.add_argument("--freeze-gc", action="store_true", help="Freeze long-lived startup objects during the run; retain collection of new objects")
@@ -66,6 +67,8 @@ def main():
         parser.error("--input-fps must be positive")
     if args.paced_input_worker and args.input_fps is None:
         parser.error("--paced-input-worker requires --input-fps")
+    if args.input_buffer < 1:
+        parser.error("--input-buffer must be positive")
     if (args.mapping_process or args.delayed_recovery) and args.frontend != "streaming_pnp":
         parser.error("--mapping-process and --delayed-recovery require streaming_pnp")
     import torch
@@ -107,6 +110,9 @@ def main():
                 "hostname": platform.node(), "python": platform.python_version(), "torch": torch.__version__,
                 "selected_frames": len(sequence), "dataset_rgb_frames": sequence.total_frames,
                 "input_modalities": ["RGB", "timestamps", "camera_intrinsics"],
+                "runtime_environment": {name: os.environ.get(name) for name in
+                                        ["CUDA_VISIBLE_DEVICES", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
+                                         "OPENBLAS_NUM_THREADS", "PYTORCH_CUDA_ALLOC_CONF"]},
                 "ground_truth_used_for_inference": False, "sensor_depth_used": False,
                 "calibration": sequence.K.tolist(), "distortion": sequence.distortion.tolist()}
     source_root = Path(__file__).resolve().parents[2]
@@ -221,7 +227,7 @@ def main():
     input_worker = None
     if args.paced_input_worker:
         from .stream_input import PacedRGBStream
-        input_worker = PacedRGBStream(sequence, args.input_fps, start)
+        input_worker = PacedRGBStream(sequence, args.input_fps, start, args.input_buffer)
     try:
         with (args.output / "trajectory.txt").open("w") as trajectory, \
                 (args.output / "frontend_trajectory.txt").open("w") as front_trajectory, \
@@ -277,14 +283,16 @@ def main():
         if args.save_map and not args.frontend_only:
             tracker.save_map(args.output / "map.pkl")
     finally:
-        if input_worker is not None:
-            input_worker.close()
-        if hasattr(tracker, "shutdown"):
-            tracker.shutdown()
-        gc.callbacks.remove(record_collection)
-        if args.freeze_gc:
-            gc.unfreeze()
-        (args.output / "gc_pauses.json").write_text(json.dumps(gc_pauses, indent=2) + "\n")
+        try:
+            if input_worker is not None:
+                input_worker.close()
+            if hasattr(tracker, "shutdown"):
+                tracker.shutdown()
+        finally:
+            gc.callbacks.remove(record_collection)
+            if args.freeze_gc:
+                gc.unfreeze()
+            (args.output / "gc_pauses.json").write_text(json.dumps(gc_pauses, indent=2) + "\n")
     total = perf_counter() - start
     summary = {"frames": len(latencies), "valid_frames": valid_count, "tracking_coverage": valid_count / len(latencies),
                "metric_calls": metric_count, "scale_observation_calls": metric_count,
@@ -313,6 +321,7 @@ def main():
         summary["teacher_worker"] = frontend.depth_worker.statistics()
     if hasattr(tracker, "map_worker"):
         summary["mapping_worker"] = tracker.map_worker.statistics()
+        summary["mapping_audit_complete"] = summary["mapping_worker"]["unread_results_replaced"] == 0
         (args.output / "mapping_events.json").write_text(json.dumps(tracker.map_events, indent=2) + "\n")
     if arrival_latencies:
         summary["input_fps"] = args.input_fps
