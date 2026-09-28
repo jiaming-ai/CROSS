@@ -213,3 +213,22 @@ def test_subpixel_alignment_recovers_fractional_motion_and_rejects_bad_matches()
     assert len(a) >= len(points) - 15
     assert len(a) <= len(points) - 10
     assert np.median(np.linalg.norm(b-a-motion, axis=1)) < 0.06
+
+
+def test_persistent_metric_tracks_follow_subpixel_translation():
+    import cv2
+    from cross.mono.tracks import MetricAnchorTracks
+    rng = np.random.default_rng(7)
+    image = cv2.GaussianBlur(rng.integers(0, 255, (240, 320), dtype=np.uint8), (3, 3), .7)
+    K = np.array([[250., 0, 160.], [0, 250., 120.], [0, 0, 1.]])
+    points = np.array([(x, y) for y in range(30, 220, 15) for x in range(30, 300, 15)], np.float32)
+    tracker = MetricAnchorTracks(K)
+    tracker.reset(image, points, np.full(image.shape, 3., np.float32))
+    for i in range(1, 6):
+        motion = np.array([i*.375, i*.125])
+        current = cv2.warpAffine(image, np.c_[np.eye(2), motion], (320, 240))
+        result = tracker.track(current)
+        assert result is not None
+        pose, count, residual = result
+        np.testing.assert_allclose(pose[:3, 3], np.r_[-motion*3/250., 0], atol=.003)
+        assert count > 150 and residual < .2

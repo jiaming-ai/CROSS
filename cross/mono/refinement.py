@@ -47,6 +47,8 @@ class XFeatRefiner:
                 keep &= ~inside
             result["masked_keypoints"] = int((~keep).sum())
             result["person_boxes"] = len(boxes)
+            padding = 8 + 4 * age
+            result["exclusion_boxes"] = (boxes + boxes.new_tensor([-padding, -padding, padding, padding])).cpu().numpy()
             for key in ("keypoints", "descriptors", "scores"):
                 result[key] = result[key][keep]
         result["shape"] = rgb.shape[:2]

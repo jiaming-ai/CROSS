@@ -24,7 +24,7 @@ def main():
     parser.add_argument("sequence", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frontend-only", action="store_true")
-    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric"], default="da3")
+    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt"], default="da3")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
@@ -111,9 +111,10 @@ def main():
         from .dpvo_frontend import DPVOFrontend
         frontend = DPVOFrontend(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
-    elif args.frontend in {"metric_pnp", "rotation_metric"}:
-        from .pnp_frontend import MetricPnPFrontend, RotationMetricFrontend
-        factory = MetricPnPFrontend if args.frontend == "metric_pnp" else RotationMetricFrontend
+    elif args.frontend in {"metric_pnp", "rotation_metric", "metric_klt"}:
+        from .pnp_frontend import MetricPnPFrontend, RotationMetricFrontend, MetricKLTFrontend
+        factory = {"metric_pnp": MetricPnPFrontend, "rotation_metric": RotationMetricFrontend,
+                   "metric_klt": MetricKLTFrontend}[args.frontend]
         frontend = factory(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
     else:

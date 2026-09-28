@@ -23,9 +23,10 @@ class MonocularSystem:
         elif self.config.frontend == "dpvo":
             from .dpvo_frontend import DPVOFrontend
             self.frontend = DPVOFrontend(K, self.config, device)
-        elif self.config.frontend in {"metric_pnp", "rotation_metric"}:
-            from .pnp_frontend import MetricPnPFrontend, RotationMetricFrontend
-            factory = MetricPnPFrontend if self.config.frontend == "metric_pnp" else RotationMetricFrontend
+        elif self.config.frontend in {"metric_pnp", "rotation_metric", "metric_klt"}:
+            from .pnp_frontend import MetricPnPFrontend, RotationMetricFrontend, MetricKLTFrontend
+            factory = {"metric_pnp": MetricPnPFrontend, "rotation_metric": RotationMetricFrontend,
+                       "metric_klt": MetricKLTFrontend}[self.config.frontend]
             self.frontend = factory(K, self.config, device)
         else:
             self.frontend = MonoFrontend(K, self.config, device)
