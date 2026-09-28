@@ -3,6 +3,7 @@
 import argparse
 from dataclasses import asdict
 import hashlib
+import gc
 import json
 import os
 from pathlib import Path
@@ -30,6 +31,7 @@ def main():
     parser.add_argument("--paced-input-worker", action="store_true", help="Overlap RGB preprocessing with tracking; two-frame queue, fail on overflow")
     parser.add_argument("--mapping-process", action="store_true", help="Isolate CROSS mapping from the streaming frontend's Python process")
     parser.add_argument("--delayed-recovery", action="store_true", help="Experimental delayed reverse PnP; may cause large pose corrections")
+    parser.add_argument("--freeze-gc", action="store_true", help="Freeze long-lived startup objects during the run; retain collection of new objects")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
@@ -192,7 +194,7 @@ def main():
             torch.cuda.synchronize()
         warmup_seconds = perf_counter()-warmup_start
         metadata["warmup"] = dict(seconds=warmup_seconds, uses_only_first_rgb=True,
-                                  advances_frontend_or_mapper=False, metric_model_calls=warmup_metric_calls)
+                                  advances_pose_or_topological_belief=False, metric_model_calls=warmup_metric_calls)
         (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     loading_seconds = perf_counter() - loading_start
     latencies, arrival_latencies, image_io, output_io = [], [], [], []
@@ -201,7 +203,21 @@ def main():
     if args.frontend == "streaming_pnp" and args.device.startswith("cuda"):
         tracking_stream = torch.cuda.Stream(device=args.device, priority=-1)
         tracking_stream.wait_stream(torch.cuda.current_stream(args.device))
+    if args.freeze_gc:
+        gc.collect()
+        gc.freeze()
     start = perf_counter()
+    gc_pauses, gc_started = [], {}
+    def record_collection(phase, info):
+        now = perf_counter()-start
+        generation = info["generation"]
+        if phase == "start":
+            gc_started[generation] = now
+        else:
+            began = gc_started.pop(generation, now)
+            gc_pauses.append(dict(generation=generation, start_seconds=began, seconds=now-began,
+                                  collected=info["collected"], uncollectable=info["uncollectable"]))
+    gc.callbacks.append(record_collection)
     input_worker = None
     if args.paced_input_worker:
         from .stream_input import PacedRGBStream
@@ -241,6 +257,7 @@ def main():
                 valid_count += bool(estimate.diagnostics["valid"])
                 metric_count += "scale_observation" in estimate.diagnostics
                 estimate.diagnostics.update(input_index=frame.index, wall_seconds=elapsed,
+                                            pose_ready_elapsed_seconds=last_pose_elapsed,
                                             image_read_and_preprocessing_seconds=image_io[-1])
                 output_started = perf_counter()
                 for handle, pose in [(trajectory, estimate.pose), (front_trajectory, frontend.metric_pose)]:
@@ -264,6 +281,10 @@ def main():
             input_worker.close()
         if hasattr(tracker, "shutdown"):
             tracker.shutdown()
+        gc.callbacks.remove(record_collection)
+        if args.freeze_gc:
+            gc.unfreeze()
+        (args.output / "gc_pauses.json").write_text(json.dumps(gc_pauses, indent=2) + "\n")
     total = perf_counter() - start
     summary = {"frames": len(latencies), "valid_frames": valid_count, "tracking_coverage": valid_count / len(latencies),
                "metric_calls": metric_count, "scale_observation_calls": metric_count,
