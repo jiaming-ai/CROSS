@@ -34,11 +34,20 @@ if "--out" in sys.argv and "CROSS_LOG_FILE" not in os.environ:
     _out.mkdir(parents=True, exist_ok=True)
     os.environ["CROSS_LOG_FILE"] = str(_out / "system.log")
 
-# headless runs: some CROSS versions select the interactive TkAgg backend at import, which fails without a display
-if not os.environ.get("DISPLAY"):
-    import matplotlib
-    _mpl_use = matplotlib.use
-    matplotlib.use = lambda backend, *a, **k: _mpl_use("Agg") if str(backend).lower().startswith("tk") else _mpl_use(backend, *a, **k)
+# headless runs: some CROSS versions select the interactive TkAgg backend at import, which fails without a usable
+# display (also when DISPLAY is set by ssh but Tk is missing): fall back to Agg
+import matplotlib  # noqa: E402
+_mpl_use = matplotlib.use
+
+
+def _safe_mpl_use(backend, *a, **k):
+    try:
+        return _mpl_use(backend, *a, **k)
+    except ImportError:
+        return _mpl_use("Agg")
+
+
+matplotlib.use = _safe_mpl_use
 
 import torch  # noqa: E402
 from loguru import logger  # noqa: E402
