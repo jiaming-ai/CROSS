@@ -116,8 +116,17 @@ class RetrievalConfig:
     recent_split_rel_score: float = 0.85
     recent_split_recent_slots: int = 4
     map_score_threshold: float = 0.0   # VPR score threshold for map keyframes (rank-based retrieval; geometry verifies)
+    # pose-guided retrieval (relocalization sessions): once the session is anchored to the map (a verified map edge),
+    # up to pose_guided_k map keyframes whose viewed region overlaps the current one are added in front of the VPR
+    # results.  The viewed region of a camera is the point pose_guided_depth metres along its optical axis; overlap =
+    # those points within pose_guided_radius and optical axes within pose_guided_max_angle_deg.  Appearance retrieval
+    # across sessions under strong appearance change is weak, the tracked pose is not.
     # keyframe images stored as uint8 (depth fp16) instead of float32: 4x less memory per keyframe and per saved map
     store_images_uint8: bool = False
+    pose_guided_k: int = 0
+    pose_guided_depth: float = 2.0
+    pose_guided_radius: float = 1.0
+    pose_guided_max_angle_deg: float = 60.0
     vpr_score_threshold_high: float = 0.3
     vpr_score_threshold_low: float = 0.3
     initial_buffer_size: int = 1000
@@ -204,6 +213,10 @@ class LoopClosureConfig:
     corroborate_window: int = 0
     corroborate_tol_t: float = 0.5
     corroborate_tol_r_deg: float = 5.0
+    # the optimisation run when a map is saved covers every keyframe of every session with only the first keyframe fixed
+    # (False: the neighbourhood of the latest keyframe, earlier sessions fixed), so a merged multi-session map is made
+    # consistent before the next session registers to it
+    global_final_opt: bool = False
     # relocalization sessions: a map edge of hypothesis 0 anchors the session to the map (prior test of the following
     # map references) when it passes the prior test through an earlier, still unanchored map edge of hypothesis 0 from
     # another observation (within anchor_corroborate_window steps) to another map keyframe.  Without it a session

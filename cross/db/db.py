@@ -337,6 +337,20 @@ class KeyframeDatabase:
         return all_keyframes_map
     
     @timeit
+    def similarities(self, img: torch.Tensor, kf_ids) -> dict:
+        """VPR cosine similarity of the query image to the given keyframes (by id), {kf_id: score}."""
+        want = {int(k) for k in kf_ids}
+        if not want or self._current_size == 0:
+            return {}
+        q = self.vpr_model.get_embedding(img)
+        out = {}
+        for bi in range(self._current_size):
+            atlas_i, list_i = self._index_to_atlas_idx[bi]
+            kid = int(self._keyframe_by_atlas[atlas_i][list_i].id)
+            if kid in want:
+                out[kid] = float(self._embedding_buffer[bi] @ q)
+        return out
+
     def query(
         self, 
         img: torch.Tensor,

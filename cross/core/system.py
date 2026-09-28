@@ -511,7 +511,7 @@ class System:
                 t_final = time.perf_counter()
                 try:
                     v = self._lc_verifier
-                    res = self.hypothesis_manager.handle_loop_closure(0)
+                    res = self.hypothesis_manager.handle_loop_closure(0, global_opt=bool(self.config.mapping.loop_closure.global_final_opt))
                     v.stats["pgo"] = v.stats.get("pgo", 0) + 1
                     n_rej = 0
                     pg0 = res.get("pose_graph")
@@ -570,7 +570,7 @@ class System:
                         logger.info(f"Final optimisation diagnostics: cost after write-back {c_after_apply[0]:.1f} {c_after_apply[1]} worst {c_after_apply[2]}; "
                                     f"bucket sizes of removed {sizes}; cost after removal {c_after_remove[0]:.1f} {c_after_remove[1]} worst {c_after_remove[2]}")
                         n_rej += len(outliers)
-                        res = self.hypothesis_manager.handle_loop_closure(0)
+                        res = self.hypothesis_manager.handle_loop_closure(0, global_opt=bool(self.config.mapping.loop_closure.global_final_opt))
                         v.stats["pgo"] = v.stats.get("pgo", 0) + 1
                         pgk = res.get("pose_graph")
                         logger.info(f"Final optimisation round: {len(outliers)} rejected (chi2 max {max(o[3] for o in outliers):.0f}, e.g. {[(o[0], o[1]) for o in outliers][:4]}); "
@@ -1825,6 +1825,10 @@ class System:
                 own = [(sc, kf) for sc, kf in zip(results["scores"], results["keyframes"]) if kf.id >= self._session_start_kf_id][:own_slots]
                 n_map = max(self.db.top_k - len(own), 0)
                 map_list = list(zip(map_res["scores"], map_res["keyframes"]))
+                guided = self._pose_guided_map_keyframes(rgb_image)
+                if guided:
+                    ids = {kf.id for _, kf in guided}
+                    map_list = guided + [(sc, kf) for sc, kf in map_list if kf.id not in ids]
                 merged = map_list[:n_map] + own
                 results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
             elif self.config.retrieval.recent_window_steps > 0 and self._processed_frame_num > self.config.retrieval.recent_window_steps:
@@ -1852,6 +1856,34 @@ class System:
         else:
             return self._last_retrieved_results
     
+    def _pose_guided_map_keyframes(self, rgb_image):
+        """Map keyframes whose viewed region overlaps the current one, predicted from the tracked belief (see
+        RetrievalConfig.pose_guided_*).  Only in a relocalization session that is anchored to the map."""
+        rc = self.config.retrieval
+        v = self._lc_verifier
+        if rc.pose_guided_k <= 0 or self._session_start_kf_id <= 0 or v is None or v.anchor is None:
+            return []
+        cache = getattr(self, "_pg_cache", None)
+        if cache is None or cache["session"] != self._session_start_kf_id:
+            kfs = [kf for kf in self.db.get_all_keyframes() if kf.id < self._session_start_kf_id]
+            if not kfs:
+                return []
+            M = np.stack([pp.SE3(kf.pose_mu[0]).matrix().detach().cpu().numpy() for kf in kfs]).astype(np.float64)
+            cache = {"session": self._session_start_kf_id, "kfs": kfs, "p": M[:, :3, 3] + rc.pose_guided_depth * M[:, :3, 2], "z": M[:, :3, 2]}
+            self._pg_cache = cache
+        Mc = pp.SE3(self.hypothesis_manager.dist[0][0]).matrix().detach().cpu().numpy().astype(np.float64)
+        pc = Mc[:3, 3] + rc.pose_guided_depth * Mc[:3, 2]
+        d = np.linalg.norm(cache["p"] - pc[None], axis=1)
+        cosang = cache["z"] @ Mc[:3, 2]
+        ok = (d < rc.pose_guided_radius) & (cosang > np.cos(np.radians(rc.pose_guided_max_angle_deg)))
+        idx = np.where(ok)[0][np.argsort(d[ok])][:rc.pose_guided_k]
+        if len(idx) == 0:
+            return []
+        kfs = [cache["kfs"][i] for i in idx]
+        sims = self.db.similarities(rgb_image, [kf.id for kf in kfs])
+        logger.debug(f"pose-guided retrieval: {[(int(kf.id), round(float(d[i]), 2)) for kf, i in zip(kfs, idx)]}")
+        return [(max(sims.get(int(kf.id), 0.3), 0.05), kf) for kf in kfs]
+
     def _get_std_diag(
         self, 
         confidences: torch.Tensor,
