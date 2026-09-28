@@ -824,6 +824,7 @@ class System:
         #########################
         lc_result = self.hypothesis_manager.detect_loop_closure(ret)
         self.last_step_diagnostics["loop_closure_detected"] = bool(lc_result["loop_closure"])
+        self.last_step_diagnostics["commitment_audit"] = self.hypothesis_manager.last_loop_audit
         
         
 

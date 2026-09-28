@@ -1014,6 +1014,11 @@ class HypothesisManager:
             dict: { 'loop_closure': bool, 'loop_closure_hypo_id': Optional[int] }
         """
 
+        # Keep the actual decision evidence available for monocular audits.
+        # These values do not change the inherited commitment policy.
+        self.last_loop_audit = {"realized": self.realized.detach().cpu().tolist(),
+                                "weights": self.dist[2].detach().cpu().tolist(),
+                                "candidates": []}
         # 1) Inter-hypothesis LC detection (exclude comp 0)
         # only consider active and realized components
         active_mask = torch.logical_and(self.dist[2] > self.active_dist_threshold, self.realized)[1:]
@@ -1040,6 +1045,20 @@ class HypothesisManager:
                 & (log_c_pos_hit_rate >= self.detect_overlap_hitrate_thresh) \
                 & (log_conf_hit_rate >= self.detect_conf_hitrate_thresh) \
                 & (~close_mask)
+
+            for j, component in enumerate(realized_ids.tolist()):
+                self.last_loop_audit["candidates"].append({
+                    "component": component,
+                    "overlap_sum": float(log_c_pos_sum[j]),
+                    "overlap_hit_rate": float(log_c_pos_hit_rate[j]),
+                    "confidence_hit_rate": float(log_conf_hit_rate[j]),
+                    "distance_m": float(distances[j]),
+                    "passes_overlap_sum": bool(log_c_pos_sum[j] >= self.detect_overlap_sum_thresh),
+                    "passes_overlap_hit_rate": bool(log_c_pos_hit_rate[j] >= self.detect_overlap_hitrate_thresh),
+                    "passes_confidence": bool(log_conf_hit_rate[j] >= self.detect_conf_hitrate_thresh),
+                    "passes_distance": bool(~close_mask[j]),
+                    "detected": bool(detected_mask[j]),
+                })
 
             if detected_mask.any():
                 # Map argmax within the masked array back to original realized indices
