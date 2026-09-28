@@ -44,7 +44,7 @@ class MonoConfig:
     metric_shape: bool = False
     mapping_interval: int = 5
     retrieval_pose: str = "da3"
-    filter_mode: str = "skip_active"
+    filter_mode: str = "full"
     translation_std_floor: float = 0.005
     rotation_std_floor: float = 0.01
     max_relative_rotation: float = 1.2
