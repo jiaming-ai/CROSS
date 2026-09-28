@@ -176,3 +176,30 @@ def test_repeated_se3_mean_updates_do_not_amplify_quaternion_roundoff():
                          source_factors={0:SourceFactor((),np.empty((6,0)),np.empty(0),factor_id=str(i))})
         q=hm.dist[0][0].tensor()[3:]
         assert abs(float(q.double().norm())-1)<5e-7
+
+
+def test_motion_preserves_covariance_symmetry_after_uncertain_tracking():
+    # Held frames can produce broad geometry uncertainty. The room image run
+    # failed at S~1e4 because an A S A^T product had 1e-12 antisymmetric roundoff.
+    # Compare with extended-precision arithmetic without relaxing validation.
+    rng = np.random.default_rng(483)
+    from cross.utils.lie_tensor import SE3_Adj
+    for _ in range(12):
+        hm = manager()
+        hm.dist = tuple(value.double() for value in hm.dist)
+        hm.initialize_source_filter()
+        L = rng.normal(size=(6,6))*50
+        S = L@L.T
+        hm.source_states[0] = SourceState(S)
+        motion = pp.se3(torch.tensor(rng.normal(size=6)*.2,dtype=torch.float64)).Exp()
+        noise = np.full(6,.1)
+        A = SE3_Adj(motion.Inv()).double().numpy().astype(np.longdouble)
+        expected = A@S.astype(np.longdouble)@A.T
+        std = np.sqrt(expected.diagonal())
+        expected += np.diag((std+noise)**2-std**2)
+        hm.motion_update(motion,pp.se3(torch.tensor(noise,dtype=torch.float64)),
+                         source_factor=SourceFactor((),np.empty((6,0)),np.empty(0)))
+        actual = hm.source_states[0].geometry_covariance
+        np.testing.assert_array_equal(actual,actual.T)
+        np.testing.assert_allclose(actual,expected.astype(float),rtol=1e-12,atol=2e-10)
+        assert np.linalg.eigvalsh(actual).min()>0

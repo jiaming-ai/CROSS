@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .conditional import SourceFactor, SourceState
+from .conditional import SourceFactor, SourceState, transport_covariance
 
 
 def skew(v):
@@ -117,7 +117,7 @@ class ConditionalPose:
         state, J, offset = belief.expand(self.factor)
         transport = right_jacobian(offset)
         factor = SourceFactor(state.keys,transport@J,state.prior_variances,state.mean,self.factor.factor_id)
-        return pose @ exp(offset), ConditionalPose(transport@self.geometry_covariance@transport.T,factor), state
+        return pose @ exp(offset), ConditionalPose(transport_covariance(self.geometry_covariance,transport),factor), state
 
 
 def compose(first_pose, first, second_pose, second, belief):
@@ -131,7 +131,7 @@ def compose(first_pose, first, second_pose, second, belief):
     A = adjoint(inverse(b))
     factor = SourceFactor(belief.keys,A@first.factor.jacobian+second.factor.jacobian,
                           belief.prior_variances,belief.mean,second.factor.factor_id)
-    S = A@first.geometry_covariance@A.T+second.geometry_covariance
+    S = transport_covariance(first.geometry_covariance,A)+second.geometry_covariance
     return a@b, ConditionalPose(S,factor)
 
 

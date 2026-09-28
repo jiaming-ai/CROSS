@@ -17,6 +17,17 @@ def _symmetric(value):
     return (value + value.T) * .5
 
 
+def transport_covariance(covariance, jacobian):
+    """Transport a validated covariance and remove product roundoff.
+
+    A S A^T is symmetric analytically. Preserve that invariant explicitly:
+    broad tracking uncertainty can otherwise amplify an antisymmetric rounding
+    residue beyond the constructor's absolute validation tolerance. This does
+    not repair an invalid input covariance or clip its eigenvalues.
+    """
+    return _symmetric(jacobian @ covariance @ jacobian.T)
+
+
 @dataclass
 class SourceFactor:
     keys: tuple[str, ...]

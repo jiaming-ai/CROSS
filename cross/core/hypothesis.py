@@ -693,7 +693,7 @@ class HypothesisManager:
             if source_factor is None:
                 raise ValueError("Conditional filtering needs the motion factor's source Jacobians")
             from cross.utils.lie_tensor import SE3_Adj
-            from cross.core.conditional import SourceState
+            from cross.core.conditional import SourceState, transport_covariance
             from cross.core.conditional_pose import normalize_mean
             active = torch.where(last_gmm_weights > self.tracking_active_threshold)[0].tolist()
             pending = []
@@ -705,7 +705,7 @@ class HypothesisManager:
                 twist = torch.as_tensor(offset,device=delta_pose.device,dtype=delta_pose.dtype)
                 corrected_delta = normalize_mean(delta_pose @ pp.se3(twist).Exp())
                 A = SE3_Adj(corrected_delta.Inv()).double().cpu().numpy()
-                covariance = A @ state.geometry_covariance @ A.T
+                covariance = transport_covariance(state.geometry_covariance,A)
                 # Keep the inherited std-sum policy for residual geometric
                 # errors, after transporting to the new local tangent.
                 std = torch.as_tensor(covariance.diagonal().copy()).clamp_min(0).sqrt().numpy()
@@ -1034,7 +1034,7 @@ class HypothesisManager:
         conditional_newborns = {}
         conditional_evidence_mask = None
         if source_factors is not None:
-            from cross.core.conditional import conditional_product, SourceFactor
+            from cross.core.conditional import conditional_product, SourceFactor, transport_covariance
             from cross.core.conditional_pose import ConditionalPose, right_jacobian, normalize_mean
             pending_sources = list(self.source_states)
             conditional_evidence_mask = torch.zeros_like(currently_tracking)
@@ -1056,7 +1056,7 @@ class HypothesisManager:
                     state, offset = self.source_states[0].seed(factor,R)
                     mean = normalize_mean(proposal_mu[component] @ pp.se3(torch.as_tensor(offset,device=self.device,dtype=prior_mu.dtype)).Exp())
                     T = right_jacobian(offset)
-                    state.geometry_covariance = T@state.geometry_covariance@T.T
+                    state.geometry_covariance = transport_covariance(state.geometry_covariance,T)
                     state.jacobian = T@state.jacobian
                     variance = torch.as_tensor(state.marginal_covariance().diagonal().copy(),device=self.device,dtype=prod_var_diag.dtype)
                     conditional_newborns[component] = (mean,variance)
@@ -1072,12 +1072,12 @@ class HypothesisManager:
                     residual = (prior_mu[component].Inv()@observed).Log().tensor().double().cpu().numpy()
                     G = np.linalg.inv(right_jacobian(residual))
                     common = SourceFactor(state.keys,G@model.factor.jacobian,state.prior_variances,state.mean,factor.factor_id)
-                    result = conditional_product(state,residual,G@model.geometry_covariance@G.T,common,
+                    result = conditional_product(state,residual,transport_covariance(model.geometry_covariance,G),common,
                         np.diag(Q[0].double().cpu().numpy()))
                     state = result.state
                     mean = normalize_mean(prior_mu[component] @ pp.se3(torch.as_tensor(result.pose_offset,device=self.device,dtype=prior_mu.dtype)).Exp())
                     T = right_jacobian(result.pose_offset)
-                    state.geometry_covariance = T@state.geometry_covariance@T.T
+                    state.geometry_covariance = transport_covariance(state.geometry_covariance,T)
                     state.jacobian = T@state.jacobian
                     variance = torch.as_tensor(state.marginal_covariance().diagonal().copy(),device=self.device,dtype=prod_var_diag.dtype)
                     log_c[component] = result.log_overlap

@@ -38,7 +38,7 @@ def test_conditional_convolution_reuses_sources_and_transports_the_tangent():
         numerical = (log(inverse(pose)@plus)-log(inverse(pose)@minus))/2e-6
         np.testing.assert_allclose(message.factor.jacobian[:,i],numerical,atol=4e-10)
     A = adjoint(inverse(b))
-    np.testing.assert_allclose(message.geometry_covariance,A@first.geometry_covariance@A.T+second.geometry_covariance)
+    np.testing.assert_allclose(message.geometry_covariance,A@first.geometry_covariance@A.T+second.geometry_covariance,atol=1e-15)
     assert 'covariance' not in message.factor.record()
 
 
@@ -79,3 +79,18 @@ def test_invalid_saved_source_covariance_is_rejected():
     record = belief.record(); record['covariance'] = [[1.,2.],[2.,1.]]
     with pytest.raises(ValueError,match='positive semidefinite'):
         SourceState.from_record(record)
+
+
+def test_broad_geometry_covariance_survives_retraction_and_convolution():
+    rng = np.random.default_rng(482)
+    for _ in range(12):
+        L = rng.normal(size=(6,6))*50
+        first = ConditionalPose(L@L.T,SourceFactor(('image',),rng.normal(size=(6,1)),np.array([.0144])))
+        belief,_,_ = SourceState(np.zeros((6,6))).expand(first.factor)
+        belief.mean[0] = .2
+        pose,message,_ = first.at(exp(rng.normal(size=6)*.3),belief)
+        np.testing.assert_array_equal(message.geometry_covariance,message.geometry_covariance.T)
+        second = model(('image',),rng.normal(size=(6,1)))
+        _,combined = compose(pose,message,exp(rng.normal(size=6)*.2),second,belief)
+        np.testing.assert_array_equal(combined.geometry_covariance,combined.geometry_covariance.T)
+        assert np.linalg.eigvalsh(combined.geometry_covariance).min()>0
