@@ -11,7 +11,7 @@ The monocular API accepts **RGB, timestamps and camera calibration**. It does no
 - Mapping: the existing CROSS hypothesis lifecycle. Learned retrieval poses are verified with image correspondences; scale uncertainty enters the original diagonal SE(3) filter conservatively.
 - Evaluation: separate ground-truth reader, rigid-aligned metric ATE, similarity-aligned ATE and fitted scale, metric RPE, tracking coverage and runtime including periodic inference.
 
-The single-session baseline runs at camera rate in the measured consumer-GPU tests. Multi-session mapping remains experimental. Optional two-view verification recovers difficult viewpoint and lighting queries, and an accumulated three-session map also recovers the people query. A longer seven-session chain exposes a late false map merge, described below. Broad changed-session robustness is not established. The default diagonal metric bridge is not a full joint Sim(3) posterior; a conditional pose/source option is described below.
+The single-session baseline runs at camera rate in the measured consumer-GPU tests. Multi-session mapping remains experimental. Optional two-view verification recovers difficult viewpoint and lighting queries, and an accumulated three-session map also recovers the people query. A longer seven-session chain exposes a late false map merge; the experimental shared-geometry option rejects this reproduced failure in the controls below. Broad changed-session robustness is not established. The default diagonal metric bridge is not a full joint Sim(3) posterior; a conditional pose/source option is described below.
 
 The monocular bridge defaults to CROSS's original `full` policy: the global observation updates the active pose as well as competing hypotheses and delayed-commitment evidence. `--filter-mode skip_active` reproduces the earlier monocular bridge, where the active pose follows local motion; `adaptive` exposes the inherited adaptive gate. These select existing policies; they do not change the observation message or commitment thresholds. Report the selected policy in comparisons, including when reproducing historical runs that used `skip_active`.
 
@@ -285,10 +285,35 @@ on a failed conversion. Near-unit rotations are now normalized in double
 precision before graph conversion, and all converted updates are validated
 before publication. Both regression tests fail before this fix; all 129 CPU
 tests pass afterward. No geometric or commitment threshold was relaxed.
-A private graph-covariance control reduces the late alias's evidence advantage
-but still makes the false merge in both repeats; it is not adopted. Shared
-geometric uncertainty, scale-prior calibration and controlled false-association
-evaluation remain necessary research work.
+A private control using independent graph marginals reduces the late alias's
+evidence advantage but still makes the false merge in both repeats. Retaining
+joint map geometry rejects that alias, but initially worsens short-map trajectory
+RMSE from 16.25 cm to 42.50 cm. The standard Schmidt control brings this back to
+16.55 cm while retaining alias rejection. These contrasting controls motivated
+the optional shared-geometry implementation described above.
+
+Public source `f775418`, with `--schmidt-map-geometry`, was tested twice on each
+of three fixed office1-7 input maps. Each run recovers correctly and avoids the
+late false merge, including final mapper updates. Saved-map means use the
+persisted source posterior and the original reference-only rigid alignment.
+
+| Input map | Received recovery | Post-recovery position RMSE | Maximum saved-node error |
+|---|---:|---:|---:|
+| Short, sessions 1→2 | 7.67 s | 16.54–16.55 cm | 28.83 cm |
+| Long, sessions 1→2→3→4→5→6 | 9.77 s | 22.74–22.80 cm | 53.25 cm |
+| Persisted Schmidt chain | 10.71–10.81 s | 19.48–19.59 cm | 51.83 cm |
+
+All 4,560 selected outputs meet the 50 ms deadline without input loss, with
+capture-to-pose p95 18.05–18.98 ms on the shared RTX 5090. The inherited
+observation mixture and delayed thresholds are unchanged. Avoiding repeated
+validation of unchanged covariance reduces committed graph service on the
+persisted map from 10.20 to 3.61–3.71 s; the mapper still runs below camera
+rate. Its changed schedule affects which low-rate images are processed.
+The 158 CPU tests pass, including independent Gaussian checks, persistence,
+chart joins and mutation isolation. These are development controls with dense
+state, uncalibrated priors and no RTX 4090 measurement. Generic shared covariance,
+Schmidt conditioning and these implementation fixes are established techniques;
+a publication contribution requires further formulation and validation.
 
 `--historical-min-score 0` with reserved historical slots permits a bounded number of weaker saved-map candidates, while new query nodes retain the original score thresholds. Original retrieval scores remain available to the inherited uncertainty calculation and keyframe policy; no geometry or temporal-commitment test is relaxed. This experimental search option can spend the entire retrieval budget on historical views if all three slots are reserved. Both search and learned matching need false-association and online runtime evaluation; accepted pairs alone do not establish map recovery.
 
