@@ -203,6 +203,9 @@ class HypothesisManager:
         self.detect_overlap_rel_margin = cfg.detect_overlap_rel_margin
         self.detect_conf_rel_margin = cfg.detect_conf_rel_margin
         self.detect_conf_hitrate_thresh = cfg.detect_conf_hitrate_thresh
+        from cross.core.reference_support import ReferenceSupport
+        self.reference_support = ReferenceSupport(n_components, self.llr_hist_length,
+                                                  self.detect_overlap_hitrate_thresh, cfg.session_recovery)
 
         # ========== Self LC Detection (comp 0, aligned confidence) ==========
         self.self_lc_conf_thresh = cfg.self_lc_conf_thresh
@@ -282,6 +285,7 @@ class HypothesisManager:
         - Graph structure (nodes, odom_edges, hypotheses)
         - Distribution (dist) - remains None until initialized
         """
+        self.reference_support.clear_tracking()
         # Reset lifecycle metadata
         self.ttl = torch.zeros(self.n_components, dtype=torch.long, device=self.device)
         self.last_seen_step = torch.zeros(self.n_components, dtype=torch.long, device=self.device)
@@ -1051,11 +1055,17 @@ class HypothesisManager:
             distances = torch.norm(candidate_poses - current_pose, dim=1) # (C,)
 
             close_mask = distances < 3 # 
+            reference_audits = [self.reference_support.audit(i) for i in realized_ids.tolist()]
+            cross_chart = torch.tensor([a["unanchored_reference_candidate"] for a in reference_audits],
+                                       device=distances.device, dtype=torch.bool)
+            reference_supported = torch.tensor([a["eligible"] for a in reference_audits],
+                                               device=distances.device, dtype=torch.bool)
+            separation_gate = torch.where(cross_chart, reference_supported, ~close_mask)
 
             detected_mask = (log_c_pos_sum >= self.detect_overlap_sum_thresh) \
                 & (log_c_pos_hit_rate >= self.detect_overlap_hitrate_thresh) \
                 & (log_conf_hit_rate >= self.detect_conf_hitrate_thresh) \
-                & (~close_mask)
+                & separation_gate
 
             for j, component in enumerate(realized_ids.tolist()):
                 self.last_loop_audit["candidates"].append({
@@ -1068,6 +1078,9 @@ class HypothesisManager:
                     "passes_overlap_hit_rate": bool(log_c_pos_hit_rate[j] >= self.detect_overlap_hitrate_thresh),
                     "passes_confidence": bool(log_conf_hit_rate[j] >= self.detect_conf_hitrate_thresh),
                     "passes_distance": bool(~close_mask[j]),
+                    "reference_support": reference_audits[j],
+                    "separation_rule": "historical_support" if bool(cross_chart[j]) else "legacy_three_meters",
+                    "passes_separation_gate": bool(separation_gate[j]),
                     "detected": bool(detected_mask[j]),
                 })
 
@@ -1214,6 +1227,7 @@ class HypothesisManager:
         other_hypo = int(pgo_result.get("other_hypothesis_id", 0))
         pg = pgo_result.get("pose_graph")
         affected_ids = set(optimized_poses.keys())
+        anchored_reference = other_hypo != 0 and self.reference_support.audit(other_hypo)["unanchored_reference_candidate"]
 
         # Mutate shared graph under lock
         with self.graph_lock:
@@ -1228,6 +1242,8 @@ class HypothesisManager:
 
             if other_hypo != 0 and other_hypo in self.hypotheses:
                 self.merge_hypotheses(other_hypo)
+                if anchored_reference:
+                    self.reference_support.mark_anchored()
 
             if affected_ids:
                 if self.system.topo_map is not None:

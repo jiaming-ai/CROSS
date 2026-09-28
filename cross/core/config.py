@@ -97,6 +97,7 @@ class RetrievalConfig:
     vpr_score_threshold_high: float = 0.3
     vpr_score_threshold_low: float = 0.3
     initial_buffer_size: int = 1000
+    historical_slots: int = 0  # reserve within top_k after loading a map; same score thresholds
 
 
 @dataclass
@@ -157,6 +158,7 @@ class HypothesisConfig:
     detect_overlap_rel_margin: float = 1.0
     detect_conf_rel_margin: float = 1.0
     detect_conf_hitrate_thresh: float = 0.5
+    session_recovery: bool = False  # experimental historical support in place of chart-distance guard
 
     # --- Self LC detection (comp 0) ---
     self_lc_conf_thresh: float = 0.55

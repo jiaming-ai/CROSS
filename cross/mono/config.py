@@ -45,6 +45,8 @@ class MonoConfig:
     mapping_interval: int = 5
     retrieval_pose: str = "da3"
     filter_mode: str = "full"
+    session_recovery: bool = False
+    historical_retrieval_slots: int = 0
     translation_std_floor: float = 0.005
     rotation_std_floor: float = 0.01
     max_relative_rotation: float = 1.2
@@ -61,6 +63,8 @@ class MonoConfig:
             raise ValueError("At least one recent frame is required")
         if self.teacher_lag_frames < 0:
             raise ValueError("Teacher delivery lag cannot be negative")
+        if self.historical_retrieval_slots < 0:
+            raise ValueError("Historical retrieval slots cannot be negative")
         if self.pose_refinement not in {"none", "xfeat"}:
             raise ValueError("pose_refinement must be none or xfeat")
         if self.retrieval_pose not in {"da3", "metric_pnp"}:

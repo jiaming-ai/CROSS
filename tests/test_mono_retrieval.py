@@ -60,3 +60,51 @@ def test_pair_audit_keeps_rejections_in_input_order():
     estimates = iter([(identity, 40, .1), (identity, 40, .1)])
     estimator.estimate_pose(images[:1], depth[:1], images[0], depth[0])
     assert len(estimator.last_pair_audit) == 1 and estimator.last_pair_audit[0]["accepted"]
+
+
+@pytest.mark.parametrize("distance", [.1, 2., 10.])
+def test_historical_recovery_keeps_temporal_gates_independent_of_chart_distance(distance):
+    from cross.core.config import HypothesisConfig
+    from cross.core.hypothesis import HypothesisManager
+
+    manager = HypothesisManager(SimpleNamespace(device="cpu"), 2, HypothesisConfig(session_recovery=True))
+    poses = pp.identity_SE3(2)
+    poses[1, 0] = distance
+    manager.dist = (poses, pp.se3(torch.ones(2, 6) * .1), torch.tensor([.5, .5]))
+    manager.realized[:] = True
+    manager.log_c_hist[1] = 2.
+    manager.reference_support.start({1, 2})
+    for i in range(4):
+        manager.reference_support.observe(i, {1: (0, 1), 2: (0, 1)})
+    assert manager.detect_loop_closure({})["loop_closure"]
+    manager.log_c_hist[1] = -2.
+    assert not manager.detect_loop_closure({})["loop_closure"]  # history still mandatory
+    manager.log_c_hist[1] = 2.
+    manager.reference_support.observe(4, {1: (0, 1)}, newborns=[1])
+    assert not manager.detect_loop_closure({})["loop_closure"]  # even when distance >3m
+    manager.reference_support.mark_anchored()
+    assert manager.detect_loop_closure({})["loop_closure"] == (distance >= 3.)
+
+
+def test_historical_slot_preserves_budget_thresholds_scores_and_embedding_cost():
+    from cross.db.db import KeyframeDatabase
+
+    database = KeyframeDatabase.__new__(KeyframeDatabase)
+    database._current_size, database.top_k = 5, 3
+    database._embedding_buffer = torch.tensor([[.95], [.9], [.8], [.6], [.1]])
+    database.score_threshold_high = database.score_threshold_low = .3
+    database._keyframe_by_atlas = {None: [SimpleNamespace(id=i) for i in range(5)]}
+    database._index_to_atlas_idx = {i: (None, i) for i in range(5)}
+    calls = []
+    def embedding(image):
+        calls.append(image)
+        return torch.ones(1)
+    database.vpr_model = SimpleNamespace(get_embedding=embedding)
+    original = database.query(None)
+    balanced = database.query(None, reserved_keyframe_ids={3, 4}, reserved_count=1)
+    low_score_only = database.query(None, reserved_keyframe_ids={4}, reserved_count=1)
+    assert [k.id for k in original["keyframes"]] == [0, 1, 2]
+    assert [k.id for k in balanced["keyframes"]] == [0, 1, 3]
+    assert balanced["scores"] == pytest.approx([.95, .9, .6])
+    assert [k.id for k in low_score_only["keyframes"]] == [0, 1, 2]
+    assert len(calls) == 3

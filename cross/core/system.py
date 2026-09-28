@@ -551,6 +551,7 @@ class System:
         # Recompute next ID: object re-instantiation during load bumps the counter
         Keyframe._next_id = (max(self.hypothesis_manager.nodes.keys()) + 1) if self.hypothesis_manager.nodes else 0  
         self.loaded_node_ids = frozenset(self.hypothesis_manager.nodes)
+        self.hypothesis_manager.reference_support.start(self.loaded_node_ids)
 
         # --- 5. Restore Current Atlas ---
         if save_data["current_atlas_id"] is not None:
@@ -764,6 +765,7 @@ class System:
         self.last_step_diagnostics["loaded_node_count"] = len(self.loaded_node_ids)
         # if no proposal, continue with motion-only update
         if len(ret["valid_keyframes"]) == 0:
+            self.hypothesis_manager.reference_support.observe(self._processed_frame_num, {})
             logger.info(f"No valid keyframes found. Continuing with motion-only update")
             self._unsuccessful_retrieval_steps += 1
 
@@ -804,6 +806,9 @@ class System:
          proposal_gmm_weights, 
          proposal_gmm_confidence, 
          edge_mapping) = self._merge_and_align_components(ret)
+        self.hypothesis_manager.reference_support.observe(
+            self._processed_frame_num, edge_mapping,
+            torch.where(self.hypothesis_manager.newborn)[0].tolist())
         self.last_step_diagnostics["proposal_audit"] = self.hypothesis_manager.last_alignment_audit
 
 
@@ -1263,7 +1268,8 @@ class System:
                 retrieve = False
 
         if retrieve:
-            results = self.db.query(rgb_image) 
+            results = self.db.query(rgb_image, reserved_keyframe_ids=self.loaded_node_ids,
+                                    reserved_count=self.config.retrieval.historical_slots)
             self._last_retrieved_results = results
             self.odom_accumulator.reset_item("since_last_retrieval")
             return results

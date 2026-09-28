@@ -39,6 +39,8 @@ class MonocularSystem:
         cfg.tracking.use_VO = False
         cfg.depth_pred.use_depth_pred = False
         cfg.pose_est.type = PoseEstType.DA3 if self.config.retrieval_pose == "da3" else PoseEstType.METRIC_PNP
+        if self.config.session_recovery:
+            cfg.mapping.hypothesis.session_recovery = True
         if system_config is None:
             cfg.tracking.filter_mode = FilterMode(self.config.filter_mode)
             cfg.tracking.odom_min_std_translation = 0.005
@@ -46,6 +48,9 @@ class MonocularSystem:
             cfg.tracking.odom_std_per_meter = 0.1
             cfg.tracking.odom_std_per_radian = 0.1
             cfg.retrieval.top_k = 3
+        cfg.retrieval.historical_slots = self.config.historical_retrieval_slots
+        if cfg.retrieval.historical_slots > cfg.retrieval.top_k:
+            raise ValueError("Historical retrieval slots cannot exceed the total retrieval budget")
         camera = Camera(np.array(K).copy(), *image_size)
         # System rescales camera.K in place to its stored-image resolution.
         pose_estimator = (DA3RelativePose(self.frontend.geometry, device) if self.config.retrieval_pose == "da3"

@@ -312,6 +312,8 @@ class KeyframeDatabase:
         self, 
         img: torch.Tensor,
         target_atlases: Optional[List[Atlas]] = None,
+        reserved_keyframe_ids=(),
+        reserved_count: int = 0,
     ) -> List[Tuple[float, Keyframe]]:
         """Query the database for the most likely Keyframe.
 
@@ -373,6 +375,29 @@ class KeyframeDatabase:
         
         # Select the top_k relative indices
         top_k_relative_indices = sorted_relative_indices[:self.top_k]
+        if reserved_count:
+            if reserved_count < 0 or reserved_count > self.top_k:
+                raise ValueError("Historical retrieval slots must be between zero and top_k")
+            # Reserve candidates within the same verification budget. Never
+            # bypass retrieval thresholds or change a candidate's score.
+            reserved_ids = set(reserved_keyframe_ids)
+            ranking = sorted_relative_indices.tolist()
+            historical = []
+            for index in ranking:
+                score_index = int(original_indices_passing_threshold[index])
+                buffer_index = valid_indices[score_index] if target_atlases is not None else score_index
+                atlas, list_index = self._index_to_atlas_idx[buffer_index]
+                if self._keyframe_by_atlas[atlas][list_index].id in reserved_ids:
+                    historical.append(index)
+                    if len(historical) == reserved_count:
+                        break
+            chosen = set(historical)
+            for index in ranking:
+                if len(chosen) >= self.top_k:
+                    break
+                chosen.add(index)
+            top_k_relative_indices = torch.tensor([index for index in ranking if index in chosen],
+                                                   device=scores.device, dtype=torch.long)
         
         # Use these top_k relative indices to get the actual top_k scores
         final_top_k_scores = scores_of_candidates[top_k_relative_indices]

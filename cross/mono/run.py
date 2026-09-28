@@ -67,6 +67,10 @@ def main():
     parser.add_argument("--image-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"),
                         help="Resize RGB after undistortion and adjust intrinsics for pixel-centre sampling")
     parser.add_argument("--load-map", type=Path)
+    parser.add_argument("--session-recovery", action="store_true",
+                        help="Experimental loaded-map recovery using historical support and inherited delayed evidence")
+    parser.add_argument("--historical-retrieval-slots", type=int, default=0,
+                        help="Reserve saved-map candidates within the same retrieval/verification budget")
     parser.add_argument("--save-map", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--threads", type=int, default=4)
@@ -113,6 +117,8 @@ def main():
                         anchor_interval=args.anchor_interval, mapping_interval=args.mapping_interval,
                         retrieval_pose=args.retrieval_pose,
                         filter_mode=args.filter_mode,
+                        session_recovery=args.session_recovery,
+                        historical_retrieval_slots=args.historical_retrieval_slots,
                         pose_refinement=args.pose_refinement,
                         refinement_anchor_only=args.refinement_anchor_only, metric_shape=args.metric_shape,
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,
