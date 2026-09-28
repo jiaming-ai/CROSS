@@ -25,10 +25,9 @@ class BackgroundPatchifier(torch.nn.Module):
     """
     def __init__(self, original, device="cuda", interval=3):
         super().__init__()
-        from torchvision.models.detection import ssdlite320_mobilenet_v3_large, SSDLite320_MobileNet_V3_Large_Weights
+        from .person_detector import make_person_detector
         self.original = original
-        self.detector = ssdlite320_mobilenet_v3_large(
-            weights=SSDLite320_MobileNet_V3_Large_Weights.COCO_V1).to(device).eval()
+        self.detector = make_person_detector(device)
         self.interval, self.frame_index, self.boxes, self.valid_patches = interval, 0, None, 0
         self.current_boxes = None
 

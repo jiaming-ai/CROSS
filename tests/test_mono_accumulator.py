@@ -50,3 +50,22 @@ def test_background_patch_selection_excludes_people_and_reports_no_support():
     assert indices.tolist() == [2, 3, 2]
     _, supported = background_indices(points, torch.tensor([[0., 0., 50., 50.]]), 3)
     assert supported == 0
+
+
+def test_vectorized_detector_retains_high_score_outputs_and_global_cap():
+    from types import SimpleNamespace
+    from torchvision.models.detection.ssd import SSD
+    from torchvision.models.detection._utils import BoxCoder
+    from cross.mono.person_detector import high_confidence_postprocess
+    generator = torch.Generator().manual_seed(73)
+    anchors = torch.rand(500, 4, generator=generator)*200
+    anchors[:, 2:] += anchors[:, :2]+5
+    logits = torch.randn(1, 500, 91, generator=generator)*5
+    model = SimpleNamespace(box_coder=BoxCoder((10., 10., 5., 5.)), topk_candidates=200,
+                            score_thresh=.001, nms_thresh=.55, detections_per_img=25)
+    heads = dict(bbox_regression=torch.randn(1, 500, 4, generator=generator)*.1, cls_logits=logits)
+    expected = SSD.postprocess_detections(model, heads, [anchors], [(480, 640)])[0]
+    keep = expected["scores"] >= .5
+    actual = high_confidence_postprocess(model, heads, [anchors], [(480, 640)])[0]
+    for key in ["boxes", "scores", "labels"]:
+        torch.testing.assert_close(actual[key], expected[key][keep])

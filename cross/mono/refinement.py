@@ -25,9 +25,8 @@ class XFeatRefiner:
         self.subpixel = subpixel
         self.last_correspondences = 0
         if mask_people:
-            from torchvision.models.detection import ssdlite320_mobilenet_v3_large, SSDLite320_MobileNet_V3_Large_Weights
-            self.detector = ssdlite320_mobilenet_v3_large(
-                weights=SSDLite320_MobileNet_V3_Large_Weights.COCO_V1).to(device).eval()
+            from .person_detector import make_person_detector
+            self.detector = make_person_detector(device)
 
     @torch.inference_mode()
     def extract(self, rgb):
