@@ -257,10 +257,12 @@ class StreamingMonocularSystem(MonocularSystem):
 
     def finish(self):
         if not self.finished:
-            self.frontend.finish()
-            self._submit_depths()
-            self.map_worker.close()
-            self._receive_maps()
+            try:
+                self.frontend.finish()
+                self._submit_depths()
+            finally:
+                self.map_worker.close()
+                self._receive_maps()
             self.finished = True
 
     def save_map(self, path):
@@ -296,12 +298,14 @@ class StreamingMonocularSystem(MonocularSystem):
         try:
             self.finish()
         finally:
-            self.frontend.shutdown()
-            if self.pool is None:
-                super().shutdown()
-            else:
-                from .mapping_process import operation
-                try:
-                    self.pool.submit(operation, "shutdown", None).result()
-                finally:
-                    self.pool.shutdown()
+            try:
+                self.frontend.shutdown()
+            finally:
+                if self.pool is None:
+                    super().shutdown()
+                else:
+                    from .mapping_process import operation
+                    try:
+                        self.pool.submit(operation, "shutdown", None).result()
+                    finally:
+                        self.pool.shutdown()

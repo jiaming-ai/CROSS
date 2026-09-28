@@ -78,3 +78,17 @@ def test_delayed_depth_recovers_its_source_without_rewriting_emitted_pose():
     assert received[0][0][0].valid
     assert failed.pose[0, 3] == 0.  # original capture record remains immutable
     assert frontend.metric_pose[0, 3] == 0.  # emitted state is not rewritten
+
+
+def test_teacher_failure_still_closes_the_mapping_worker():
+    calls = []
+    def failed_teacher():
+        raise RuntimeError("teacher failed")
+    system = StreamingMonocularSystem.__new__(StreamingMonocularSystem)
+    system.finished = False
+    system.frontend = SimpleNamespace(finish=failed_teacher)
+    system.map_worker = SimpleNamespace(close=lambda: calls.append("map_closed"))
+    system._receive_maps = lambda: calls.append("received")
+    with pytest.raises(RuntimeError, match="teacher failed"):
+        system.finish()
+    assert calls == ["map_closed", "received"]
