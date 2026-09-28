@@ -36,7 +36,7 @@ class DA3Geometry:
 
     @torch.inference_mode()
     def predict(self, images):
-        result = self.model(torch.stack(images)[None], ref_view_strategy="first")
+        result = self.model(torch.stack(images)[None], ref_view_strategy="first", export_feat_layers=[])
         def array(key):
             return result[key][0].float().cpu().numpy()
         depth = array("depth")
@@ -57,7 +57,7 @@ class DA3MetricDepth(DA3Geometry):
     @torch.inference_mode()
     def predict_metric(self, rgb, K, output_shape):
         image = self.prepare(rgb)
-        result = self.model(image[None, None])
+        result = self.model(image[None, None], export_feat_layers=[])
         depth = result["depth"][0, 0].float().cpu().numpy().squeeze()
         h, w = depth.shape
         focal = 0.5 * (K[0, 0] * w / rgb.shape[1] + K[1, 1] * h / rgb.shape[0])
