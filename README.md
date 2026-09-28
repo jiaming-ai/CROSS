@@ -60,11 +60,14 @@ The experimental streaming path moves metric inference and the existing CROSS ma
 python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
   --frontend streaming_pnp --mask-people --mask-interval 3 \
   --metric-interval 30 --mapping-interval 15 \
+  --retrieval-pose metric_pnp --mapping-process --input-buffer 4 \
   --input-fps 20 --warmup-models --paced-input-worker \
   --output outputs/desk_streaming
 ```
 
 The operating target is 20–30 FPS at 640×480 on one consumer GPU such as an RTX 4090. This is a target, not a verified hardware claim. Measure capture-to-pose latency and deadline misses as well as throughput; include initialization, mapping lag and combined GPU memory. `--warmup-models` uses only the first image and records its time separately. The paced input worker starts preprocessing after simulated capture time and fails on queue overflow (two frames by default, configurable with `--input-buffer`); it never silently drops evaluation frames. A bounded input queue does not itself bound capture-time lag when preprocessing falls behind. Local server storage avoids including NAS congestion in GPU comparisons.
+
+The command above paces every selected image uniformly at 20 Hz. For playback at the original motion speed with approximately 20 images per second, add `--sample-fps 20 --replay-timestamps`. Sampling keeps the first available RGB image in each time bin; gaps remain gaps, timestamps and source indices remain unchanged, and the selected frame count is recorded. Arrival intervals can vary with the original capture cadence. `--input-fps 20` then specifies the 50 ms pose deadline while the recorded timestamps determine arrival times. Report this sampling protocol separately from all-frame throughput replay.
 
 Teacher outputs retain their source image and timestamp. Mapping receives accumulated motion even if a pending low-rate image is replaced. Previously emitted poses are not rewritten. The mapping worker calls the inherited global observation-mixture, hypothesis filtering and delayed commitment code. `--mapping-process` optionally isolates that worker in a separate process on the same GPU; both processes' allocated-memory peaks are reported. This alone does not guarantee deadlines. The class-specific person detector batches its class postprocessing while retaining the pretrained scores and NMS.
 

@@ -26,9 +26,11 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frontend-only", action="store_true")
     parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt", "streaming_pnp"], default="da3")
-    parser.add_argument("--input-fps", type=float, help="Pace input arrivals and measure capture-to-pose deadlines")
+    parser.add_argument("--input-fps", type=float, help="Pose deadline rate; also pace arrivals uniformly unless --replay-timestamps")
+    parser.add_argument("--sample-fps", type=float, help="Select the first RGB in each timestamp bin at this rate; keep original timestamps")
+    parser.add_argument("--replay-timestamps", action="store_true", help="Pace arrivals with original RGB timestamp differences; requires the paced input worker")
     parser.add_argument("--warmup-models", action="store_true", help="Warm models using only the first RGB image; report startup separately")
-    parser.add_argument("--paced-input-worker", action="store_true", help="Overlap RGB preprocessing with tracking; two-frame queue, fail on overflow")
+    parser.add_argument("--paced-input-worker", action="store_true", help="Overlap RGB preprocessing with tracking; bounded queue, fail on overflow")
     parser.add_argument("--input-buffer", type=int, default=2, help="Maximum pending input frames; overflow fails instead of dropping data")
     parser.add_argument("--mapping-process", action="store_true", help="Isolate CROSS mapping from the streaming frontend's Python process")
     parser.add_argument("--delayed-recovery", action="store_true", help="Experimental delayed reverse PnP; may cause large pose corrections")
@@ -63,10 +65,14 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--threads", type=int, default=4)
     args = parser.parse_args()
-    if args.input_fps is not None and args.input_fps <= 0:
+    if args.input_fps is not None and (not np.isfinite(args.input_fps) or args.input_fps <= 0):
         parser.error("--input-fps must be positive")
+    if args.sample_fps is not None and (not np.isfinite(args.sample_fps) or args.sample_fps <= 0):
+        parser.error("--sample-fps must be finite and positive")
     if args.paced_input_worker and args.input_fps is None:
         parser.error("--paced-input-worker requires --input-fps")
+    if args.replay_timestamps and not args.paced_input_worker:
+        parser.error("--replay-timestamps requires --paced-input-worker")
     if args.input_buffer < 1:
         parser.error("--input-buffer must be positive")
     if (args.mapping_process or args.delayed_recovery) and args.frontend != "streaming_pnp":
@@ -99,7 +105,8 @@ def main():
                         refinement_anchor_only=args.refinement_anchor_only, metric_shape=args.metric_shape,
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,
                                           recovery_observations=args.scale_recovery_observations))
-    sequence = RGBSequence(args.sequence, args.stride, args.start, args.frames, args.intrinsics, not args.no_undistort)
+    sequence = RGBSequence(args.sequence, args.stride, args.start, args.frames, args.intrinsics,
+                           not args.no_undistort, args.sample_fps)
     if not len(sequence):
         raise ValueError("No selected images")
     try:
@@ -109,6 +116,9 @@ def main():
     metadata = {"config": asdict(config), "command": vars(args).copy(), "source_commit": commit,
                 "hostname": platform.node(), "python": platform.python_version(), "torch": torch.__version__,
                 "selected_frames": len(sequence), "dataset_rgb_frames": sequence.total_frames,
+                "input_selection": "first available RGB per elapsed-time bin" if args.sample_fps else "index stride",
+                "arrival_schedule": "original RGB timestamp offsets" if args.replay_timestamps else
+                                    ("uniform input-fps intervals" if args.input_fps else "unpaced"),
                 "input_modalities": ["RGB", "timestamps", "camera_intrinsics"],
                 "runtime_environment": {name: os.environ.get(name) for name in
                                         ["CUDA_VISIBLE_DEVICES", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
@@ -227,7 +237,11 @@ def main():
     input_worker = None
     if args.paced_input_worker:
         from .stream_input import PacedRGBStream
-        input_worker = PacedRGBStream(sequence, args.input_fps, start, args.input_buffer)
+        offsets = None
+        if args.replay_timestamps:
+            origin = sequence.rows[0][1][0]
+            offsets = [row[1][0] - origin for row in sequence.rows]
+        input_worker = PacedRGBStream(sequence, args.input_fps, start, args.input_buffer, offsets)
     try:
         with (args.output / "trajectory.txt").open("w") as trajectory, \
                 (args.output / "frontend_trajectory.txt").open("w") as front_trajectory, \

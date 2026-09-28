@@ -9,6 +9,22 @@ from cross.mono.geometry import relative_pose, scale_translation_covariance
 from cross.mono.scale import LogScaleFilter, ScaleObservation, observe_scale
 
 
+def test_time_bin_sampling_keeps_original_rgb_indices_and_timestamps(tmp_path):
+    from cross.mono.data import RGBSequence
+    times = [0., .03, .07, .105, .135, .17, .205, .31, .33, .405]
+    (tmp_path / "rgb.txt").write_text("\n".join(f"{t} missing-{i}.png" for i, t in enumerate(times)))
+    # Selection needs only RGB metadata, not images, depth or ground truth.
+    sequence = RGBSequence(tmp_path, sample_fps=20, calibration=[500, 500, 320, 240])
+    indices = [row[0] for row in sequence.rows]
+    assert indices == [0, 2, 3, 5, 6, 7, 9]
+    assert [row[1][0] for row in sequence.rows] == [times[i] for i in indices]
+    assert sequence.total_frames == len(times)
+    limited = RGBSequence(tmp_path, sample_fps=20, start=2, limit=3, calibration=[500, 500, 320, 240])
+    assert [row[0] for row in limited.rows] == [2, 4, 5]
+    with pytest.raises(ValueError, match="sample_fps"):
+        RGBSequence(tmp_path, sample_fps=float("nan"), calibration=[500, 500, 320, 240])
+
+
 def test_robust_metric_scale_and_spatial_uncertainty():
     rng = np.random.default_rng(4)
     source = rng.uniform(0.5, 5, (80, 96))

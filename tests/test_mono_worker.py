@@ -72,3 +72,25 @@ def test_input_overload_is_reported_instead_of_accumulating_latency():
         assert len(source.items) <= 1
     finally:
         source.close()
+
+
+def test_timestamp_replay_preserves_irregular_capture_times_and_gaps():
+    from time import perf_counter
+    from cross.mono.stream_input import PacedRGBStream
+    offsets = [0., .007, .029, .052]
+    start = perf_counter()
+    class Sequence:
+        def __len__(self):
+            return len(offsets)
+        def __iter__(self):
+            for index, offset in enumerate(offsets):
+                assert perf_counter() >= start+offset
+                yield index
+    source = PacedRGBStream(Sequence(), 100, start, capture_offsets=offsets)
+    try:
+        items = list(source)
+        assert [item[1] for item in items] == [start+offset for offset in offsets]
+    finally:
+        source.close()
+    with pytest.raises(ValueError, match="Capture offsets"):
+        PacedRGBStream([0, 1], 20, start, capture_offsets=[0., 0.])

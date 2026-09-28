@@ -6,15 +6,22 @@ never silently drops benchmark inputs or builds an unbounded backlog.
 """
 
 from collections import deque
+from math import isfinite
 from threading import Condition, Event, Thread
 from time import perf_counter
 
 
 class PacedRGBStream:
-    def __init__(self, sequence, fps, start_time, capacity=2):
-        if fps <= 0 or capacity < 1:
+    def __init__(self, sequence, fps, start_time, capacity=2, capture_offsets=None):
+        if not isfinite(fps) or fps <= 0 or capacity < 1:
             raise ValueError("Positive frame rate and buffer capacity required")
         self.sequence, self.fps, self.start_time, self.capacity = sequence, fps, start_time, capacity
+        self.capture_offsets = None if capture_offsets is None else tuple(capture_offsets)
+        if self.capture_offsets is not None:
+            if (len(self.capture_offsets) != len(sequence) or
+                    any(not isfinite(t) or t < 0 for t in self.capture_offsets) or
+                    any(b <= a for a, b in zip(self.capture_offsets, self.capture_offsets[1:]))):
+                raise ValueError("Capture offsets must match the sequence and increase from a nonnegative time")
         self.items = deque()
         self.condition = Condition()
         self.stop = Event()
@@ -28,7 +35,8 @@ class PacedRGBStream:
         try:
             iterator = iter(self.sequence)
             for index in range(len(self.sequence)):
-                arrival = self.start_time + index/self.fps
+                offset = index/self.fps if self.capture_offsets is None else self.capture_offsets[index]
+                arrival = self.start_time + offset
                 if self.stop.wait(max(0., arrival-perf_counter())):
                     return
                 tick = perf_counter()
