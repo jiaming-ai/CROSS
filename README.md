@@ -11,7 +11,7 @@ The monocular API accepts **RGB, timestamps and camera calibration**. It does no
 - Mapping: the existing CROSS hypothesis lifecycle. Learned retrieval poses are verified with image correspondences; scale uncertainty enters the original diagonal SE(3) filter conservatively.
 - Evaluation: separate ground-truth reader, rigid-aligned metric ATE, similarity-aligned ATE and fitted scale, metric RPE, tracking coverage and runtime including periodic inference.
 
-The current scope is a single-session research baseline with experimental multi-session recovery. The default diagonal metric bridge is not a full joint Sim(3) posterior; a conditional pose/source option is described below. Object-change recovery works in development tests. Reversed-viewpoint recovery succeeds with an older reference map but fails with newly built references, and illumination recovery still fails. Broad changed-session robustness is not established.
+The single-session baseline runs at camera rate in the measured consumer-GPU tests. Multi-session mapping remains experimental. Optional two-view verification recovers difficult viewpoint and lighting queries, and an accumulated three-session map also recovers the people query. A longer seven-session chain exposes a late false map merge, described below. Broad changed-session robustness is not established. The default diagonal metric bridge is not a full joint Sim(3) posterior; a conditional pose/source option is described below.
 
 The monocular bridge defaults to CROSS's original `full` policy: the global observation updates the active pose as well as competing hypotheses and delayed-commitment evidence. `--filter-mode skip_active` reproduces the earlier monocular bridge, where the active pose follows local motion; `adaptive` exposes the inherited adaptive gate. These select existing policies; they do not change the observation message or commitment thresholds. Report the selected policy in comparisons, including when reproducing historical runs that used `skip_active`.
 
@@ -229,6 +229,40 @@ from 22.76 to 7.54–7.61 cm. Harder lighting worsened from 29.37–29.39 to
 and object cases remained close to their controls. All 7,920 outputs met the
 50 ms deadline on the RTX 5090, with p95 16.09–19.03 ms and maximum 36.26 ms.
 This tradeoff does not support a uniform robustness claim or default adoption.
+
+Loading the accumulated office1-1→1-2 map lets office1-7 recover in both
+repeats at 7.67 s, with 16.24–16.25 cm post-recovery RMSE. Evaluation keeps
+the original office1-1-only rigid alignment; it never fits the added session
+or query. Nearby original views face the opposite direction, so spatial
+coverage alone does not establish usable visual overlap. Map augmentation
+changes geometry and image coverage together.
+
+Two longer chains through office1-3/4/5/6/7 recover all five queries initially,
+but both commit a false association late in office1-7. That correction returns
+after the last camera output: the live post-recovery RMSE is 21.34 cm, while
+the saved map contains 65 incorrect poses among 184 ground-truth-associated
+nodes under the 1 m/30° diagnostic (one node is unassociated). Maximum saved
+node error is 2.45 m. Evaluate final maps and drained updates as well as live
+trajectories; the long-chain maps are unsuitable as robust reference maps.
+
+All 6,720 camera outputs in those ten queries meet the 50 ms deadline without
+input loss: p95 17.28–19.24 ms, maximum 35.94 ms, on the shared RTX 5090.
+However, maximum mapper turnaround grows from about 0.64 to 3.97 s. The
+latest-only mapper replaces 34 pending low-rate snapshots, retaining their
+accumulated motion; final draining/shutdown takes up to 6.25 s. Peak allocated
+GPU memory summed across processes is 3.21–3.72 GB, excluding contexts and
+reserved memory. These results establish a fast local pose stream, not a
+20 Hz global mapper or a long-map latency bound.
+
+Repeated graph joins also exposed quaternion roundoff and partial publication
+on a failed conversion. Near-unit rotations are now normalized in double
+precision before graph conversion, and all converted updates are validated
+before publication. Both regression tests fail before this fix; all 129 CPU
+tests pass afterward. No geometric or commitment threshold was relaxed.
+A private graph-covariance control reduces the late alias's evidence advantage
+but still makes the false merge in both repeats; it is not adopted. Shared
+geometric uncertainty, scale-prior calibration and controlled false-association
+evaluation remain necessary research work.
 
 `--historical-min-score 0` with reserved historical slots permits a bounded number of weaker saved-map candidates, while new query nodes retain the original score thresholds. Original retrieval scores remain available to the inherited uncertainty calculation and keyframe policy; no geometry or temporal-commitment test is relaxed. This experimental search option can spend the entire retrieval budget on historical views if all three slots are reserved. Both search and learned matching need false-association and online runtime evaluation; accepted pairs alone do not establish map recovery.
 
