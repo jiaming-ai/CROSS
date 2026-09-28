@@ -6,7 +6,7 @@ old trajectory is rewritten and no future frame is consulted. The mapper
 retains CROSS's global observation mixture and delayed commitment unchanged.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 
 import numpy as np
@@ -80,16 +80,28 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         return snapshot, depth
 
     def _receive(self):
-        received = self.depth_worker.poll()
-        self.ready_depths.extend(received)
+        received = []
         renewed = False
-        for (snapshot, depth), _ in received:
+        for (snapshot, depth), timing in self.depth_worker.poll():
             if snapshot.index <= self.anchor_index:
                 continue
+            recovered = False
+            if not snapshot.valid:
+                # The baseline's reverse PnP becomes available when this
+                # image's depth arrives. Correct the internal delayed anchor,
+                # never a previously emitted pose. The next increment carries
+                # the correction and retains the failed-frame uncertainty.
+                reverse = self.refiner.estimate(snapshot.features, self.anchor_features, depth)
+                if reverse is not None:
+                    snapshot = replace(snapshot, pose=self.anchor_pose @ inverse(reverse[0]), valid=True)
+                    recovered = True
+            timing = dict(timing, delayed_reverse_recovery=recovered)
+            received.append(((snapshot, depth), timing))
             if snapshot.index - self.anchor_index >= self.config.scale.interval or not self.last_valid:
                 self.anchor_features, self.anchor_depth = snapshot.features, depth
                 self.anchor_pose, self.anchor_index = snapshot.pose, snapshot.index
                 renewed = True
+        self.ready_depths.extend(received)
         return renewed, received
 
     def take_depths(self):

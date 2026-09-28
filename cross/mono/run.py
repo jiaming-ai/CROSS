@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--frontend-only", action="store_true")
     parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt", "streaming_pnp"], default="da3")
     parser.add_argument("--input-fps", type=float, help="Pace input arrivals and measure capture-to-pose deadlines")
+    parser.add_argument("--warmup-models", action="store_true", help="Warm models using only the first RGB image; report startup separately")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
@@ -156,6 +157,32 @@ def main():
                                   device=args.device, frontend=frontend)
         if args.load_map:
             tracker.load_map(args.load_map)
+    warmup_seconds = 0.
+    warmup_metric_calls = 0
+    if args.warmup_models:
+        if not hasattr(frontend, "refiner"):
+            raise ValueError("Model warmup is currently supported for PnP frontends")
+        warmup_start = perf_counter()
+        rgb = next(iter(sequence)).rgb
+        def warm_features(refiner):
+            old_index, old_boxes = refiner.frame_index, refiner.boxes
+            refiner.extract(rgb)
+            refiner.frame_index, refiner.boxes = old_index, old_boxes
+        warm_features(frontend.refiner)
+        frontend.metric.predict_metric(rgb, sequence.K, rgb.shape[:2])
+        warmup_metric_calls = 1
+        image = frontend.geometry.prepare(rgb)
+        frontend.geometry.predict([image, image])
+        if not args.frontend_only:
+            tracker.mapper.db.vpr_model.get_embedding(tracker.mapper.rgb_transform(rgb))
+            if hasattr(tracker.mapper.pose_est, "refiner"):
+                warm_features(tracker.mapper.pose_est.refiner)
+        if args.device.startswith("cuda"):
+            torch.cuda.synchronize()
+        warmup_seconds = perf_counter()-warmup_start
+        metadata["warmup"] = dict(seconds=warmup_seconds, uses_only_first_rgb=True,
+                                  advances_frontend_or_mapper=False, metric_model_calls=warmup_metric_calls)
+        (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     loading_seconds = perf_counter() - loading_start
     latencies, arrival_latencies, valid_count, metric_count = [], [], 0, 0
     tracking_stream = None
@@ -212,6 +239,7 @@ def main():
                "metric_calls": metric_count, "scale_observation_calls": metric_count,
                "metric_model_calls": getattr(frontend.metric, "calls", None),
                "model_loading_seconds": loading_seconds,
+               "warmup_seconds_in_loading": warmup_seconds, "warmup_metric_model_calls": warmup_metric_calls,
                "elapsed_seconds": total, "fps_including_io": len(latencies) / total,
                "emission_elapsed_seconds": emission_elapsed,
                "fps_until_last_pose": len(latencies) / emission_elapsed,
