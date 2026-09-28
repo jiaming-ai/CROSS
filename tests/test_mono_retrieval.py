@@ -110,6 +110,30 @@ def test_historical_slot_preserves_budget_thresholds_scores_and_embedding_cost()
     assert len(calls) == 3
 
 
+def test_historical_exploration_does_not_admit_weak_query_nodes_or_exceed_budget():
+    from cross.db.db import KeyframeDatabase
+
+    database = KeyframeDatabase.__new__(KeyframeDatabase)
+    database._current_size, database.top_k = 5, 3
+    database._embedding_buffer = torch.tensor([[.29], [.25], [.2], [.15], [-.1]])
+    database.score_threshold_high = database.score_threshold_low = .3
+    atlas = object()
+    database._keyframe_by_atlas = {atlas: [SimpleNamespace(id=i+10) for i in range(5)]}
+    database._index_to_atlas_idx = {i: (atlas, i) for i in range(5)}
+    database._atlas_to_indices = {atlas: [2, 4, 0, 3, 1]}  # exercise subset-index remapping
+    database.vpr_model = SimpleNamespace(get_embedding=lambda _: torch.ones(1))
+    assert database.query(None)["scores"] == []
+    for selected in (None, [atlas]):
+        results = database.query(None, target_atlases=selected, reserved_keyframe_ids={11,12,13,14},
+                                 reserved_count=2, reserved_min_score=0.)
+        assert [k.id for k in results["keyframes"]] == [11,12]
+        assert results["scores"] == pytest.approx([.25,.2])
+        # The unfilled third slot must not admit the weak new-query node10 or
+        # an extra below-threshold historical view. Negative scores stay out.
+    with pytest.raises(ValueError):
+        database.query(None, reserved_min_score=0.)
+
+
 @pytest.mark.parametrize("old_weight", [0., .5])
 def test_recycled_hypothesis_cannot_inherit_a_previous_places_evidence(old_weight):
     from cross.core.hypothesis import HypothesisManager

@@ -9,13 +9,20 @@ from .geometry import inverse
 
 class XFeatRefiner:
     def __init__(self, K, device="cuda", keypoints=1600, mask_people=False, mask_interval=1, rotation_selection=False,
-                 subpixel=False):
+                 subpixel=False, matcher="mnn"):
+        if matcher not in {"mnn", "lighterglue"}:
+            raise ValueError("Matcher must be mnn or lighterglue")
+        self.matcher = matcher
         self.K = np.asarray(K)
         self.device = device
         self.extractor = torch.hub.load("verlab/accelerated_features", "XFeat", pretrained=True,
                                        top_k=keypoints, detection_threshold=0.03, trust_repo=True)
         self.extractor.net.to(device).eval()
         self.extractor.dev = torch.device(device)
+        self.learned_matcher = None
+        if matcher == "lighterglue":
+            from .learned_matching import load_lighterglue
+            self.learned_matcher = load_lighterglue(self.extractor, device)
         self.detector = None
         self.mask_interval = mask_interval
         self.frame_index = 0
@@ -59,6 +66,9 @@ class XFeatRefiner:
     @torch.inference_mode()
     def match(self, ref, current):
         """Return paired pixel coordinates; pose verification is shared by matchers."""
+        if self.matcher == "lighterglue":
+            from .learned_matching import match_lighterglue
+            return match_lighterglue(self.learned_matcher, ref, current)
         similarity = ref["descriptors"] @ current["descriptors"].T
         scores, indices = similarity.topk(2, dim=1)
         best = indices[:, 0]

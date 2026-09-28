@@ -55,6 +55,8 @@ def main():
     parser.add_argument("--metric-interval", type=int, default=30)
     parser.add_argument("--mapping-interval", type=int, default=5)
     parser.add_argument("--retrieval-pose", choices=["da3", "metric_pnp"], default="da3")
+    parser.add_argument("--retrieval-matcher", choices=["mnn", "lighterglue"], default="mnn",
+                        help="Matcher for low-rate metric-PnP retrieval; local tracking is unchanged")
     parser.add_argument("--filter-mode", choices=["full", "skip_active", "adaptive"], default="full",
                         help="Inherited CROSS retrieval pose-update policy; delayed commitment remains enabled")
     parser.add_argument("--pose-model", default="depth-anything/DA3-SMALL")
@@ -73,6 +75,8 @@ def main():
                         help="Experimental loaded-map recovery using historical support and inherited delayed evidence")
     parser.add_argument("--historical-retrieval-slots", type=int, default=0,
                         help="Reserve saved-map candidates within the same retrieval/verification budget")
+    parser.add_argument("--historical-min-score", type=float,
+                        help="Experimental score floor for reserved saved-map candidates only; default uses existing thresholds")
     parser.add_argument("--save-map", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--threads", type=int, default=4)
@@ -121,9 +125,11 @@ def main():
                         resolution=args.resolution, metric_resolution=args.metric_resolution,
                         anchor_interval=args.anchor_interval, mapping_interval=args.mapping_interval,
                         retrieval_pose=args.retrieval_pose,
+                        retrieval_matcher=args.retrieval_matcher,
                         filter_mode=args.filter_mode,
                         session_recovery=args.session_recovery,
                         historical_retrieval_slots=args.historical_retrieval_slots,
+                        historical_min_score=args.historical_min_score,
                         pose_refinement=args.pose_refinement,
                         refinement_anchor_only=args.refinement_anchor_only, metric_shape=args.metric_shape,
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,

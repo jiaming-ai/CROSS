@@ -49,12 +49,13 @@ class MonocularSystem:
             cfg.tracking.odom_std_per_radian = 0.1
             cfg.retrieval.top_k = 3
         cfg.retrieval.historical_slots = self.config.historical_retrieval_slots
+        cfg.retrieval.historical_min_score = self.config.historical_min_score
         if cfg.retrieval.historical_slots > cfg.retrieval.top_k:
             raise ValueError("Historical retrieval slots cannot exceed the total retrieval budget")
         camera = Camera(np.array(K).copy(), *image_size)
         # System rescales camera.K in place to its stored-image resolution.
         pose_estimator = (DA3RelativePose(self.frontend.geometry, device) if self.config.retrieval_pose == "da3"
-                          else MetricRelativePose(camera.K, device, self.config.mask_people))
+                          else MetricRelativePose(camera.K, device, self.config.mask_people, self.config.retrieval_matcher))
         self.mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         self.map_alignment = np.eye(4)
         self.initialized = False

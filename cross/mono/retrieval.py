@@ -69,9 +69,9 @@ class MetricRelativePose:
     Uses its own matcher/detector state. Reading old keyframes must never
     contaminate the causal frontend's cached person masks or feature state.
     """
-    def __init__(self, K, device="cuda", mask_people=False):
+    def __init__(self, K, device="cuda", mask_people=False, matcher="mnn"):
         from .refinement import XFeatRefiner
-        self.refiner = XFeatRefiner(K, device, mask_people=mask_people, mask_interval=1)
+        self.refiner = XFeatRefiner(K, device, mask_people=mask_people, mask_interval=1, matcher=matcher)
         self.device = device
         self.cache = OrderedDict()
         self.last_stds = None

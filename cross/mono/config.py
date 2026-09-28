@@ -45,9 +45,11 @@ class MonoConfig:
     metric_shape: bool = False
     mapping_interval: int = 5
     retrieval_pose: str = "da3"
+    retrieval_matcher: str = "mnn"
     filter_mode: str = "full"
     session_recovery: bool = False
     historical_retrieval_slots: int = 0
+    historical_min_score: float | None = None
     translation_std_floor: float = 0.005
     rotation_std_floor: float = 0.01
     max_relative_rotation: float = 1.2
@@ -66,6 +68,13 @@ class MonoConfig:
             raise ValueError("Teacher delivery lag cannot be negative")
         if self.historical_retrieval_slots < 0:
             raise ValueError("Historical retrieval slots cannot be negative")
+        if self.historical_min_score is not None:
+            if not 0 <= self.historical_min_score <= 1 or not self.historical_retrieval_slots:
+                raise ValueError("Historical minimum score needs reserved slots and must be within [0,1]")
+        if self.retrieval_matcher not in {"mnn", "lighterglue"}:
+            raise ValueError("Unknown retrieval matcher")
+        if self.retrieval_matcher != "mnn" and self.retrieval_pose != "metric_pnp":
+            raise ValueError("LighterGlue retrieval requires metric_pnp")
         if self.pose_refinement not in {"none", "xfeat"}:
             raise ValueError("pose_refinement must be none or xfeat")
         if self.retrieval_pose not in {"da3", "metric_pnp"}:

@@ -98,6 +98,7 @@ class RetrievalConfig:
     vpr_score_threshold_low: float = 0.3
     initial_buffer_size: int = 1000
     historical_slots: int = 0  # reserve within top_k after loading a map; same score thresholds
+    historical_min_score: float | None = None  # opt-in exploration floor, saved-map candidates only
 
 
 @dataclass

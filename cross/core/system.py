@@ -1269,7 +1269,8 @@ class System:
 
         if retrieve:
             results = self.db.query(rgb_image, reserved_keyframe_ids=self.loaded_node_ids,
-                                    reserved_count=self.config.retrieval.historical_slots)
+                                    reserved_count=self.config.retrieval.historical_slots,
+                                    reserved_min_score=self.config.retrieval.historical_min_score)
             self._last_retrieved_results = results
             self.odom_accumulator.reset_item("since_last_retrieval")
             return results

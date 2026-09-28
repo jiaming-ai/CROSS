@@ -26,7 +26,7 @@ def geometry_fixture():
     ref = dict(keypoints=torch.tensor(xy), descriptors=descriptors, shape=(480, 640))
     cur = dict(keypoints=torch.tensor(pixels[permutation]), descriptors=descriptors[permutation], shape=(480, 640))
     refiner = XFeatRefiner.__new__(XFeatRefiner)
-    refiner.K, refiner.subpixel, refiner.rotation_selection = K, False, False
+    refiner.K, refiner.subpixel, refiner.rotation_selection, refiner.matcher = K, False, False, "mnn"
     expected = np.eye(4)
     expected[:3, :3], expected[:3, 3] = cv2.Rodrigues(rvec)[0], tvec
     return refiner, ref, cur, depth, np.linalg.inv(expected), pixels

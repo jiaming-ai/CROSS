@@ -314,6 +314,7 @@ class KeyframeDatabase:
         target_atlases: Optional[List[Atlas]] = None,
         reserved_keyframe_ids=(),
         reserved_count: int = 0,
+        reserved_min_score: Optional[float] = None,
     ) -> List[Tuple[float, Keyframe]]:
         """Query the database for the most likely Keyframe.
 
@@ -324,6 +325,11 @@ class KeyframeDatabase:
         Returns:
             List of (score, Keyframe) tuples in descending order of confidence
         """
+        if reserved_count < 0 or reserved_count > self.top_k:
+            raise ValueError("Historical retrieval slots must be between zero and top_k")
+        if reserved_min_score is not None:
+            if not 0 <= reserved_min_score <= 1 or not reserved_count:
+                raise ValueError("Historical minimum score needs reserved slots and must be within [0,1]")
         if self._current_size == 0:
             return {
                 "scores": [],
@@ -358,6 +364,28 @@ class KeyframeDatabase:
         original_indices_passing_threshold = (scores > self.score_threshold_high).nonzero(as_tuple=True)[0]
         if original_indices_passing_threshold.numel() == 0:
             original_indices_passing_threshold = (scores > self.score_threshold_low).nonzero(as_tuple=True)[0]
+
+        if reserved_min_score is not None:
+            # Permit at most the reserved budget of weaker historical views.
+            # Their original scores still weight the global observation; query
+            # nodes retain the original high/low thresholds. Geometry and CROSS
+            # temporal evidence decide whether any such candidate is usable.
+            historical = []
+            reserved_ids = set(reserved_keyframe_ids)
+            score_values = scores.detach().cpu().tolist()
+            for score_index in scores.argsort(descending=True).tolist():
+                if not score_values[score_index] > reserved_min_score:
+                    break
+                buffer_index = valid_indices[score_index] if target_atlases is not None else score_index
+                atlas, list_index = self._index_to_atlas_idx[buffer_index]
+                if self._keyframe_by_atlas[atlas][list_index].id in reserved_ids:
+                    historical.append(score_index)
+                    if len(historical) == reserved_count:
+                        break
+            if historical:
+                original_indices_passing_threshold = torch.unique(torch.cat([
+                    original_indices_passing_threshold,
+                    torch.tensor(historical, device=scores.device, dtype=torch.long)]), sorted=True)
         
         if original_indices_passing_threshold.numel() == 0:
             return {
@@ -376,10 +404,8 @@ class KeyframeDatabase:
         # Select the top_k relative indices
         top_k_relative_indices = sorted_relative_indices[:self.top_k]
         if reserved_count:
-            if reserved_count < 0 or reserved_count > self.top_k:
-                raise ValueError("Historical retrieval slots must be between zero and top_k")
-            # Reserve candidates within the same verification budget. Never
-            # bypass retrieval thresholds or change a candidate's score.
+            # Reserve candidates within the same verification budget. Original
+            # thresholds apply unless the explicit historical floor is set.
             reserved_ids = set(reserved_keyframe_ids)
             ranking = sorted_relative_indices.tolist()
             historical = []
