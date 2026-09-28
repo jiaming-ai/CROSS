@@ -326,7 +326,11 @@ class System:
             weights = torch.zeros(self.kf_gmm_n_components, device=self.storage_device)
             weights[0] = 1.0
 
-        self.hypothesis_manager.dist = (mu.to(self.device), sigma.to(self.device), weights.to(self.device))
+        # .to() aliases when storage and tracking use the same device. The
+        # first saved node must remain a snapshot when live motion mutates
+        # its prior, including its conditional source-response center.
+        self.hypothesis_manager.dist = (mu.to(self.device).clone(), sigma.to(self.device).clone(),
+                                       weights.to(self.device).clone())
         self.hypothesis_manager.start_tracking_chart()
         if self.config.mapping.hypothesis.conditional_sources:
             self.hypothesis_manager.initialize_source_filter()

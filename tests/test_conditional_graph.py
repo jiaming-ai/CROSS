@@ -180,3 +180,30 @@ def test_commitment_joins_charts_without_identifying_two_sessions_biases():
     assert hm.source_states[0].keys==keys
     np.testing.assert_array_equal(hm.source_states[0].covariance,before)
     assert hm.source_states[1] is None and 1 not in hm.hypotheses
+
+
+@pytest.mark.parametrize('conditional',[False,True])
+def test_initial_map_node_does_not_share_mutable_tracking_pose(conditional):
+    from cross.core.system import System
+    from cross.core.odom_accum import OdomAccumulator
+    class Database:
+        get_all_atlases=lambda self: []
+        get_size=lambda self: 0
+        create_atlas=lambda self: None
+        def insert(self,index,rgb,depth,**kw):
+            return Keyframe(kw['mu'],kw['sigma'],kw['weights'],pose_charts=kw['pose_charts'])
+    system=System.__new__(System)
+    system.config=SystemConfig();system.config.mapping.hypothesis.conditional_sources=conditional
+    system.device=system.storage_device='cpu';system.topo_map=None
+    system.kf_gmm_n_components=2;system._processed_frame_num=1;system.db=Database()
+    system.hypothesis_manager=HypothesisManager(system,2,HypothesisConfig(chart_aware=True,session_recovery=True))
+    system.odom_accumulator=OdomAccumulator(device='cpu')
+    node=system._init_system(torch.zeros(3,8,8),None)
+    before=tuple(x.clone() for x in (node.pose_mu,node.pose_std,node.pose_weights))
+    delta=pp.identity_SE3();delta[0]=1.
+    source=SourceFactor(('image',),np.array([[-1.],[0.],[0.],[0.],[0.],[0.]]),np.array([.0144]),log_depth_scale=True)
+    system.hypothesis_manager.motion_update(delta,pp.se3(torch.full((6,),.01)),
+                                            source_factor=source if conditional else None)
+    for actual,snapshot in zip((node.pose_mu,node.pose_std,node.pose_weights),before):
+        torch.testing.assert_close(actual,snapshot,rtol=0,atol=0)
+    assert float(system.hypothesis_manager.dist[0][0,0])==1.
