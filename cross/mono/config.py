@@ -29,6 +29,8 @@ class MonoConfig:
     mask_interval: int = 1
     rotation_selection: bool = False
     subpixel: bool = False
+    mapping_process: bool = False
+    delayed_recovery: bool = False
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"

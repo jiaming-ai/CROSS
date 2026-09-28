@@ -86,7 +86,7 @@ class StreamingPnPFrontend(MetricPnPFrontend):
             if snapshot.index <= self.anchor_index:
                 continue
             recovered = False
-            if not snapshot.valid:
+            if not snapshot.valid and self.config.delayed_recovery:
                 # The baseline's reverse PnP becomes available when this
                 # image's depth arrives. Correct the internal delayed anchor,
                 # never a previously emitted pose. The next increment carries
@@ -184,7 +184,18 @@ class StreamingMonocularSystem(MonocularSystem):
 
     def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None):
         frontend = frontend or StreamingPnPFrontend(K, config, device)
-        super().__init__(K, image_size, config, system_config, device, frontend)
+        self.pool = None
+        if config is not None and config.mapping_process:
+            from concurrent.futures import ProcessPoolExecutor
+            import multiprocessing
+            from .mapping_process import initialize
+            self.config, self.frontend = config, frontend
+            self.map_alignment, self.initialized, self.last_estimate = np.eye(4), False, None
+            self.mapper = None  # single owner lives in the child process
+            self.pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+            self.pool.submit(initialize, K, image_size, config, system_config, device).result()
+        else:
+            super().__init__(K, image_size, config, system_config, device, frontend)
         self.map_stream = torch.cuda.Stream(device=device, priority=0) if device.startswith("cuda") else None
         if self.map_stream is not None:
             self.map_stream.wait_stream(torch.cuda.current_stream(device))
@@ -194,6 +205,9 @@ class StreamingMonocularSystem(MonocularSystem):
         self.finished = False
 
     def _map_snapshot(self, item):
+        if self.pool is not None:
+            from .mapping_process import operation
+            return self.pool.submit(operation, "step", item).result()
         snapshot, depth = item
         def process():
             delta, covariance = snapshot_motion(self.previous_snapshot, snapshot)
@@ -218,7 +232,8 @@ class StreamingMonocularSystem(MonocularSystem):
     def _submit_depths(self):
         for (snapshot, depth), _ in self.frontend.take_depths():
             if snapshot.valid:
-                self.map_worker.submit((snapshot, depth))
+                # Mapping needs RGB/depth/motion, not frontend CUDA features.
+                self.map_worker.submit((replace(snapshot, features={}), depth))
 
     def _receive_maps(self):
         events = []
@@ -250,16 +265,43 @@ class StreamingMonocularSystem(MonocularSystem):
 
     def save_map(self, path):
         self.finish()
-        super().save_map(path)
+        if self.pool is None:
+            super().save_map(path)
+        else:
+            from .mapping_process import operation
+            self.pool.submit(operation, "save", str(path)).result()
 
     def load_map(self, path):
         if self.frontend.index:
             raise RuntimeError("Load a map before processing images of a new session")
-        super().load_map(path)
+        if self.pool is None:
+            super().load_map(path)
+        else:
+            from .mapping_process import operation
+            self.pool.submit(operation, "load", str(path)).result()
+
+    def warmup_mapping(self, rgb):
+        if self.pool is not None:
+            from .mapping_process import operation
+            self.pool.submit(operation, "warmup", rgb).result()
+        else:
+            self.mapper.db.vpr_model.get_embedding(self.mapper.rgb_transform(rgb))
+            if hasattr(self.mapper.pose_est, "refiner"):
+                refiner = self.mapper.pose_est.refiner
+                old_index, old_boxes = refiner.frame_index, refiner.boxes
+                refiner.extract(rgb)
+                refiner.frame_index, refiner.boxes = old_index, old_boxes
 
     def shutdown(self):
         try:
             self.finish()
         finally:
             self.frontend.shutdown()
-            super().shutdown()
+            if self.pool is None:
+                super().shutdown()
+            else:
+                from .mapping_process import operation
+                try:
+                    self.pool.submit(operation, "shutdown", None).result()
+                finally:
+                    self.pool.shutdown()

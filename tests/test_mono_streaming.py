@@ -40,7 +40,7 @@ def test_worker_uses_snapshot_rgb_depth_timestamp_and_native_mapper_message():
             return FakePose()
 
     system = StreamingMonocularSystem.__new__(StreamingMonocularSystem)
-    system.mapper, system.map_stream, system.previous_snapshot = FakeMapper(), None, None
+    system.mapper, system.map_stream, system.previous_snapshot, system.pool = FakeMapper(), None, None, None
     pose = np.eye(4)
     pose[0, 3] = 2.
     snapshot = SimpleNamespace(index=9, timestamp=.3, pose=pose,
@@ -64,7 +64,7 @@ def test_delayed_depth_recovers_its_source_without_rewriting_emitted_pose():
     frontend.anchor_index, frontend.last_valid = 0, False
     frontend.anchor_pose = frontend.metric_pose = np.eye(4)
     frontend.anchor_features = {"frame": 0}
-    frontend.config = SimpleNamespace(scale=SimpleNamespace(interval=30))
+    frontend.config = SimpleNamespace(scale=SimpleNamespace(interval=30), delayed_recovery=True)
     def reverse(source, reference, received_depth):
         assert source["frame"] == 10 and reference["frame"] == 0
         assert received_depth is depth

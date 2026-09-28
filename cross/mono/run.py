@@ -28,6 +28,8 @@ def main():
     parser.add_argument("--input-fps", type=float, help="Pace input arrivals and measure capture-to-pose deadlines")
     parser.add_argument("--warmup-models", action="store_true", help="Warm models using only the first RGB image; report startup separately")
     parser.add_argument("--paced-input-worker", action="store_true", help="Overlap RGB preprocessing with tracking; two-frame queue, fail on overflow")
+    parser.add_argument("--mapping-process", action="store_true", help="Isolate CROSS mapping from the streaming frontend's Python process")
+    parser.add_argument("--delayed-recovery", action="store_true", help="Experimental delayed reverse PnP; may cause large pose corrections")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
@@ -62,6 +64,8 @@ def main():
         parser.error("--input-fps must be positive")
     if args.paced_input_worker and args.input_fps is None:
         parser.error("--paced-input-worker requires --input-fps")
+    if (args.mapping_process or args.delayed_recovery) and args.frontend != "streaming_pnp":
+        parser.error("--mapping-process and --delayed-recovery require streaming_pnp")
     import torch
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -80,6 +84,7 @@ def main():
                         mask_interval=args.mask_interval,
                         rotation_selection=args.rotation_selection,
                         subpixel=args.subpixel,
+                        mapping_process=args.mapping_process, delayed_recovery=args.delayed_recovery,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
                         pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,
@@ -177,9 +182,12 @@ def main():
         image = frontend.geometry.prepare(rgb)
         frontend.geometry.predict([image, image])
         if not args.frontend_only:
-            tracker.mapper.db.vpr_model.get_embedding(tracker.mapper.rgb_transform(rgb))
-            if hasattr(tracker.mapper.pose_est, "refiner"):
-                warm_features(tracker.mapper.pose_est.refiner)
+            if hasattr(tracker, "warmup_mapping"):
+                tracker.warmup_mapping(rgb)
+            else:
+                tracker.mapper.db.vpr_model.get_embedding(tracker.mapper.rgb_transform(rgb))
+                if hasattr(tracker.mapper.pose_est, "refiner"):
+                    warm_features(tracker.mapper.pose_est.refiner)
         if args.device.startswith("cuda"):
             torch.cuda.synchronize()
         warmup_seconds = perf_counter()-warmup_start
@@ -297,6 +305,10 @@ def main():
                                                    pose_deadline_miss_fraction=float(np.mean(steady > 1/args.input_fps)))
     if args.device.startswith("cuda"):
         summary["peak_gpu_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
+        if hasattr(tracker, "map_events") and args.mapping_process:
+            child_peak = max((e.get("mapper_process_peak_gpu_allocated_gb", 0.) for e in tracker.map_events), default=0.)
+            summary["mapper_process_peak_gpu_allocated_gb"] = child_peak
+            summary["sum_process_peak_gpu_allocated_gb"] = summary["peak_gpu_allocated_gb"]+child_peak
     if args.frontend in {"dpvo", "rotation_metric"}:
         native_frontend = frontend if args.frontend == "dpvo" else frontend.rotation_tracker
         native_tracker = native_frontend.tracker
