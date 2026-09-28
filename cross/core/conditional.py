@@ -109,8 +109,25 @@ class SourceState:
             raise ValueError("Source covariance has a negative marginal variance")
 
     def copy(self):
-        return SourceState(self.geometry_covariance, self.keys, self.mean, self.covariance,
-                           self.jacobian, self.prior_variances, self.seen_factors)
+        return self._with_owned_sources(self.keys,self.mean.copy(),self.covariance.copy(),
+                                        self.jacobian.copy(),self.prior_variances.copy())
+
+    def _with_owned_sources(self,keys,mean,covariance,jacobian,variances):
+        """Internal copy/independent-prior extension of validated statistics.
+
+        All argument arrays must be newly owned. Copying a valid distribution
+        or appending an independent nonnegative prior preserves its invariants;
+        checking every entry of the unchanged dense covariance again is wasteful.
+        New posterior estimates and deserialization still use the validating
+        constructor. This helper must not be used for general covariance edits.
+        """
+        result=object.__new__(SourceState)
+        result.geometry_covariance=self.geometry_covariance.copy()
+        result.keys=keys
+        result.mean,result.covariance,result.jacobian=mean,covariance,jacobian
+        result.prior_variances=variances
+        result.seen_factors=self.seen_factors
+        return result
 
     def record(self):
         return dict(version=1, geometry_covariance=self.geometry_covariance.tolist(),
@@ -157,7 +174,7 @@ class SourceState:
             raise ValueError(f"A reused source cannot acquire a different prior: {factor.keys[position]}")
         added = indices[~reused]
         covariance[added,added] = variances[added] = factor.prior_variances[~reused]
-        result = SourceState(self.geometry_covariance, keys, mean, covariance, jacobian, variances, self.seen_factors)
+        result = self._with_owned_sources(keys,mean,covariance,jacobian,variances)
         observed_J = np.zeros((6,n))
         displacement = mean[indices]-factor.center
         multiplier = np.exp(-displacement) if factor.log_depth_scale else np.ones(len(indices))

@@ -126,3 +126,25 @@ def test_invalid_conditional_covariance_is_not_silently_used_as_information():
     factor = SourceFactor((),np.empty((6,0)),np.empty(0))
     with pytest.raises(ValueError,match='positive semidefinite'):
         conditional_product(SourceState(np.eye(6)),np.zeros(6),-np.eye(6)*.1,factor)
+
+
+def test_copy_and_extension_do_not_share_mutable_statistics_between_hypotheses():
+    state=SourceState(np.eye(6),('map-x','metric'),np.array([.1,.2]),
+        np.array([[.2,.01],[.01,.1]]),np.arange(12).reshape(6,2)/10,np.array([.3,.4]),
+        frozenset({'existing-observation'}))
+    original=state.record()
+    factor=SourceFactor(('metric','new'),np.ones((6,2)),np.array([.4,.5]))
+    for other in (state.copy(),state.expand(factor)[0]):
+        assert other.seen_factors==state.seen_factors
+        for field in ('geometry_covariance','mean','covariance','jacobian','prior_variances'):
+            assert not np.shares_memory(getattr(state,field),getattr(other,field))
+            getattr(other,field)[:]=0
+        assert state.record()==original
+
+
+def test_fast_copy_does_not_bypass_validation_of_loaded_covariance():
+    state=SourceState(np.eye(6),('a','b'),np.zeros(2),np.eye(2),np.zeros((6,2)),np.ones(2))
+    record=state.copy().record()
+    record['covariance'][0][1]=.1
+    with pytest.raises(ValueError,match='symmetric'):
+        SourceState.from_record(record)
