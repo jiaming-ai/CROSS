@@ -161,7 +161,7 @@ class HypothesisManager:
         self.odom_edges: Dict[Tuple[int, int], Edge] = {}  # odom edges are always from previous kf to current kf
         self.hypotheses: Dict[int, Hypothesis] = {}
         self.system = system
-        self.device = "cuda"
+        self.device = getattr(system, "device", "cuda")
         self.disappearance_counts = collections.defaultdict(int)
         # Graph-lock to guard structural reads/writes across threads (nodes/edges/adjacency)
         # Use re-entrant lock since some operations call other locked methods.
@@ -974,6 +974,7 @@ class HypothesisManager:
             if (~final_update_mask).any():
                 revert_mask = ~final_update_mask
                 prod_mu[revert_mask] = prior_mu[revert_mask]
+                prod_var_diag[revert_mask] = prior_var_diag_noQ[revert_mask]
 
         # Comp 0 specific weight floor to maintain observability in downstream consumers.
         # This keeps comp 0 above the active distribution threshold without dominating others.
