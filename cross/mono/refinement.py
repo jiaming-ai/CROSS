@@ -60,6 +60,8 @@ class XFeatRefiner:
     def estimate(self, ref, current, ref_depth, rotation=None):
         self.last_rotation_only = False
         self.last_correspondences = 0
+        self.last_match_audit = dict(reason="few_features", reference_features=len(ref["keypoints"]),
+                                    current_features=len(current["keypoints"]))
         if min(len(ref["keypoints"]), len(current["keypoints"])) < 20:
             return None
         similarity = ref["descriptors"] @ current["descriptors"].T
@@ -74,6 +76,7 @@ class XFeatRefiner:
             from .photometric import refine_correspondences
             xy_ref, xy_cur = refine_correspondences(ref["gray"], current["gray"], xy_ref, xy_cur)
         self.last_correspondences = len(xy_ref)
+        self.last_match_audit.update(reason="few_matches", matches=len(xy_ref))
         if len(xy_ref) < 20:
             return None
         height, width = ref["shape"]
@@ -84,9 +87,11 @@ class XFeatRefiner:
         valid = np.isfinite(z) & (z > 0.01)
         xyz = np.c_[xy_ref[valid], np.ones(valid.sum())] @ np.linalg.inv(self.K).T * z[valid, None]
         pixels = np.ascontiguousarray(xy_cur[valid], dtype=np.float64)
+        self.last_match_audit.update(reason="few_valid_depths", valid_depths=len(xyz))
         if len(xyz) < 20:
             return None
         if rotation is not None:
+            self.last_match_audit["reason"] = "fixed_rotation_fit"
             from .translation import translation_given_rotation
             solution = translation_given_rotation(xyz, pixels, self.K, rotation)
             if solution is None:
@@ -94,17 +99,21 @@ class XFeatRefiner:
             translation, inliers, error = solution
             tiles = np.floor(pixels[inliers] / [width, height] * 4).astype(int)
             if len(np.unique(tiles, axis=0)) < 4:
+                self.last_match_audit["reason"] = "poor_spatial_coverage"
                 return None
             transform = np.eye(4)
             transform[:3, :3], transform[:3, 3] = rotation, translation
+            self.last_match_audit.update(reason="accepted", inliers=len(inliers), error_px=float(error))
             return inverse(transform), len(inliers), error
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             np.ascontiguousarray(xyz, dtype=np.float64), pixels, self.K, None,
             iterationsCount=150, reprojectionError=3.0, confidence=0.999, flags=cv2.SOLVEPNP_EPNP)
+        self.last_match_audit.update(reason="pnp_consensus", inliers=0 if inliers is None else len(inliers))
         if not success or inliers is None or len(inliers) < 20 or len(inliers) / len(xyz) < 0.3:
             return None
         inliers = inliers.ravel()
         tiles = np.floor(pixels[inliers] / [width, height] * 4).astype(int)
+        self.last_match_audit.update(reason="poor_spatial_coverage", tiles=len(np.unique(tiles, axis=0)))
         if len(np.unique(tiles, axis=0)) < 4:
             return None
         rvec, tvec = cv2.solvePnPRefineLM(xyz[inliers], pixels[inliers], self.K, None, rvec, tvec)
@@ -121,5 +130,7 @@ class XFeatRefiner:
         projected = cv2.projectPoints(xyz[inliers], rvec, tvec, self.K, None)[0].reshape(-1, 2)
         error = np.median(np.linalg.norm(projected - pixels[inliers], axis=1))
         if error > 3.0 or not np.isfinite(T_current_ref).all():
+            self.last_match_audit["reason"] = "refined_pose_invalid"
             return None
+        self.last_match_audit.update(reason="accepted", error_px=float(error))
         return inverse(T_current_ref), len(inliers), float(error)

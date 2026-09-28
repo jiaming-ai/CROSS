@@ -95,25 +95,35 @@ class MetricRelativePose:
         if ref_depth is None or curr_depth is None:
             raise ValueError("Metric PnP verification requires learned depths of both images")
         current_depth = curr_depth.detach().cpu().numpy().squeeze()
+        self.last_pair_audit = []
         for i, image in enumerate(ref_image):
+            audit = dict(reason="forward_pnp", accepted=False)
+            self.last_pair_audit.append(audit)
             reference = self.features(DA3RelativePose.rgb(image))
             depth = ref_depth[i].detach().cpu().numpy().squeeze()
             forward = self.refiner.estimate(reference, current, depth)
+            audit["forward"] = dict(self.refiner.last_match_audit)
             if forward is None:
                 continue
             backward = self.refiner.estimate(current, reference, current_depth)
+            audit.update(reason="backward_pnp", backward=dict(self.refiner.last_match_audit))
             if backward is None:
                 continue
             pose, count, error = forward
             cycle = pose @ backward[0]
-            if (Rotation.from_matrix(cycle[:3, :3]).magnitude() > 0.1 or
-                    np.linalg.norm(cycle[:3, 3]) > 0.15 + 0.2 * np.linalg.norm(pose[:3, 3])):
+            cycle_rotation = Rotation.from_matrix(cycle[:3, :3]).magnitude()
+            cycle_translation = np.linalg.norm(cycle[:3, 3])
+            audit.update(reason="inconsistent_cycle", cycle_rotation_rad=float(cycle_rotation),
+                         cycle_translation_m=float(cycle_translation))
+            if (cycle_rotation > 0.1 or
+                    cycle_translation > 0.15 + 0.2 * np.linalg.norm(pose[:3, 3])):
                 continue
             confidence = min(1., min(count, backward[1]) / 80.) * np.exp(-max(error, backward[2]) / 3.)
             poses.append(pose)
             confidences.append(float(np.clip(confidence, 0.01, 1.)))
             stds.append(np.r_[np.sqrt(0.02**2 + (pose[:3, 3] * 0.12)**2), [0.03] * 3])
             valid[i] = True
+            audit.update(reason="accepted", accepted=True, confidence=confidences[-1])
         self.last_stds = torch.as_tensor(np.array(stds).reshape(-1, 6), dtype=torch.float32)
         if not poses:
             return pp.identity_SE3(0, device=self.device), valid, torch.empty(0)

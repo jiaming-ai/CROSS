@@ -103,6 +103,9 @@ class System:
         
         ################ counter ################
         self._processed_frame_num = 0
+        # Immutable provenance of the graph present at map load. New query
+        # nodes can share its atlas, so atlas IDs do not identify sessions.
+        self.loaded_node_ids = frozenset()
 
 
         ########### tracking ###########
@@ -547,6 +550,7 @@ class System:
 
         # Recompute next ID: object re-instantiation during load bumps the counter
         Keyframe._next_id = (max(self.hypothesis_manager.nodes.keys()) + 1) if self.hypothesis_manager.nodes else 0  
+        self.loaded_node_ids = frozenset(self.hypothesis_manager.nodes)
 
         # --- 5. Restore Current Atlas ---
         if save_data["current_atlas_id"] is not None:
@@ -756,6 +760,8 @@ class System:
         ################################
         ret.update(self._construct_observation_dist(rgb_image, depth_image))
         self.last_step_diagnostics["verified_keyframes"] = len(ret["valid_keyframes"])
+        self.last_step_diagnostics["retrieval_audit"] = ret["retrieval_audit"]
+        self.last_step_diagnostics["loaded_node_count"] = len(self.loaded_node_ids)
         # if no proposal, continue with motion-only update
         if len(ret["valid_keyframes"]) == 0:
             logger.info(f"No valid keyframes found. Continuing with motion-only update")
@@ -798,6 +804,7 @@ class System:
          proposal_gmm_weights, 
          proposal_gmm_confidence, 
          edge_mapping) = self._merge_and_align_components(ret)
+        self.last_step_diagnostics["proposal_audit"] = self.hypothesis_manager.last_alignment_audit
 
 
         self.hypothesis_manager.gmm_filtering(
@@ -1309,6 +1316,7 @@ class System:
             "valid_retrieval_weights": [],
             "valid_retrieval_weights_normalized": [],
             "valid_ref_mus": [],
+            "retrieval_audit": [],
         }
         # first retrieve the image
         results = self._retrieve_keyframes(rgb_image) 
@@ -1336,6 +1344,17 @@ class System:
             rgb_image,
             depth_image,
         )
+        # Record even failed geometry. Previously the early return erased
+        # retrieved IDs whenever no pair survived verification.
+        pair_audits = getattr(self.pose_est, "last_pair_audit", None)
+        offset = int(self._prev_obs is not None and self.use_VO)
+        for i, (keyframe, score) in enumerate(zip(keyframes, retrieval_scores)):
+            pair_index = i + offset
+            item = dict(keyframe_id=int(keyframe.id), loaded=keyframe.id in self.loaded_node_ids,
+                        retrieval_score=float(score), verified=bool(valid_masks[pair_index]))
+            if pair_audits is not None and pair_index < len(pair_audits):
+                item["geometry"] = pair_audits[pair_index]
+            ret["retrieval_audit"].append(item)
         # no valid pose
         if valid_masks.sum() == 0:
             logger.debug(f"No valid pose found.")
@@ -1397,6 +1416,7 @@ class System:
 
         return {
             # retrieval
+            "retrieval_audit": ret["retrieval_audit"],
             "retrieval_scores": retrieval_scores,
             "retrieved_keyframes": keyframes,
             "valid_masks": valid_masks,

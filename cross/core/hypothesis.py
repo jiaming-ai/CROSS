@@ -619,6 +619,14 @@ class HypothesisManager:
         # --- Step 2: Greedy Best-First Matching ---
         # Calculate the pairwise distance between every active component and every proposal.
         dist_matrix = torch.cdist(current_mu_proj, proposal_mu_proj)
+        self.last_alignment_audit = [dict(
+            sources=[dict(keyframe_id=int(k), source_component=int(c),
+                          loaded=k in getattr(self.system, "loaded_node_ids", ()))
+                     for k, c in proposal["source_indices"]],
+            pose=proposal["pose"].tensor().detach().cpu().tolist(),
+            score=float(proposal["score"]), nearest_prior_distance=float(dist_matrix[:, i].min()),
+            component=None, action="capacity_rejected")
+            for i, proposal in enumerate(proposal_hypotheses)]
 
         # Prepare tensors for the new, aligned GMM. Default to low-confidence values.
         num_components = current_mu.shape[0]
@@ -644,6 +652,7 @@ class HypothesisManager:
             active_comp_idx_in_subset, proposal_idx = res[0][0].item(), res[1][0].item()
             # Get the true component index in the full GMM tensor
             true_comp_idx = active_comp_indices[active_comp_idx_in_subset].item()
+            self.last_alignment_audit[proposal_idx].update(component=true_comp_idx, action="matched")
             
             # --- A match is found: update the aligned GMM ---
             proposal = proposal_hypotheses[proposal_idx]
@@ -705,6 +714,7 @@ class HypothesisManager:
                 available_slots = torch.tensor([victim_idx], device=available_slots.device)
 
             new_comp_idx = available_slots[0].item()
+            self.last_alignment_audit[proposal_idx].update(component=new_comp_idx, action="born")
             proposal = proposal_hypotheses[proposal_idx]
             
             aligned_mu[new_comp_idx] = proposal['pose']
