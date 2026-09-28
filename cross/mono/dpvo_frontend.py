@@ -43,6 +43,8 @@ class DPVOFrontend:
         self.scale_history = []
         self.initialized_before = False
         self.provide_mapping_depth = True
+        self.vo_cpu_rng = torch.Generator().manual_seed(self.config.seed).get_state()
+        self.vo_cuda_rng = torch.Generator(device="cuda").manual_seed(self.config.seed).get_state()
 
     def _pose_at(self, index):
         """Resolve an input frame through DPVO's keyframe-removal chain."""
@@ -76,12 +78,22 @@ class DPVOFrontend:
             config.LOOP_CLOSURE = False
             config.CLASSIC_LOOP_CLOSURE = False
             config.PATCHES_PER_FRAME = 96
-            self.tracker = DPVO(config, self.config.dpvo_checkpoint, ht=h, wd=w, viz=False)
+            with torch.random.fork_rng(devices=[0]):
+                torch.manual_seed(self.config.seed)
+                self.tracker = DPVO(config, self.config.dpvo_checkpoint, ht=h, wd=w, viz=False)
         tracker = self.tracker
         self.rgb_memory[self.index] = rgb.copy()
         image = torch.as_tensor(rgb[..., ::-1].copy(), device="cuda").permute(2, 0, 1)  # DPVO expects BGR
         intrinsics = torch.tensor([self.K[0, 0], self.K[1, 1], self.K[0, 2], self.K[1, 2]], device="cuda")
-        tracker(timestamp, image, intrinsics)
+        # The geometry/metric models and BoQ can consume random numbers even
+        # in eval mode (e.g. pixel subsampling). Keep VO patch choices identical
+        # across scale ablations and frontend-only vs integrated runs.
+        with torch.random.fork_rng(devices=[0]):
+            torch.set_rng_state(self.vo_cpu_rng)
+            torch.cuda.set_rng_state(self.vo_cuda_rng)
+            tracker(timestamp, image, intrinsics)
+            self.vo_cpu_rng = torch.get_rng_state()
+            self.vo_cuda_rng = torch.cuda.get_rng_state()
         torch.cuda.synchronize()
         pose_seconds = perf_counter() - start
         self.scale_filter.predict()

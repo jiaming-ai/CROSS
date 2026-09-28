@@ -60,6 +60,7 @@ def main():
         raise FileExistsError(f"Refusing to overwrite previous results: {args.output}")
     args.output.mkdir(parents=True, exist_ok=True)
     config = MonoConfig(frontend=args.frontend,
+                        seed=args.seed,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
                         pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,

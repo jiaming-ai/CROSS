@@ -19,6 +19,7 @@ class ScaleConfig:
 class MonoConfig:
     frontend: str = "da3"
     dpvo_checkpoint: str | None = None
+    seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"
     resolution: int = 336
