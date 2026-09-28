@@ -28,6 +28,7 @@ class DPVOFrontend:
             raise FileNotFoundError("Supply --dpvo-checkpoint pointing to released dpvo.pth")
         if device not in {"cuda", "cuda:0"}:
             raise ValueError("DPVO uses cuda:0; choose physical GPU with CUDA_VISIBLE_DEVICES")
+        self.device = device
         self.K = np.asarray(K).copy()
         self.geometry = geometry_model or DA3Geometry(self.config.pose_model, device, self.config.resolution)
         self.metric = None if self.config.scale.mode == "relative" else DA3MetricDepth(
@@ -86,7 +87,7 @@ class DPVOFrontend:
             if self.config.mask_people:
                 from .background_patches import BackgroundPatchifier
                 self.background_patchifier = BackgroundPatchifier(
-                    self.tracker.network.patchify, device, self.config.mask_interval)
+                    self.tracker.network.patchify, self.device, self.config.mask_interval)
                 self.tracker.network.patchify = self.background_patchifier
         tracker = self.tracker
         if self.background_patchifier is not None:
