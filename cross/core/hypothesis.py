@@ -169,6 +169,14 @@ class HypothesisManager:
 
         # ========== Component Lifecycle Metadata ==========
         self.n_components = n_components
+        self.chart_aware = cfg.chart_aware
+        if self.chart_aware and not cfg.session_recovery:
+            raise ValueError("Chart-aware mapping requires historical-support recovery")
+        if self.chart_aware and cfg.no_pgo_for_lc:
+            raise ValueError("Chart-aware commitment requires graph optimization")
+        self.component_charts = torch.zeros(n_components, dtype=torch.long, device=self.device)
+        self.component_generations = [0] * n_components
+        self.next_chart_id = 0
 
         # ========== Evidence Tracking (LLR & Windowing) ==========
         self.llr_hist_length = cfg.llr_hist_length
@@ -205,7 +213,8 @@ class HypothesisManager:
         self.detect_conf_hitrate_thresh = cfg.detect_conf_hitrate_thresh
         from cross.core.reference_support import ReferenceSupport
         self.reference_support = ReferenceSupport(n_components, self.llr_hist_length,
-                                                  self.detect_overlap_hitrate_thresh, cfg.session_recovery)
+                                                  self.detect_overlap_hitrate_thresh, cfg.session_recovery,
+                                                  track_after_anchor=self.chart_aware)
 
         # ========== Self LC Detection (comp 0, aligned confidence) ==========
         self.self_lc_conf_thresh = cfg.self_lc_conf_thresh
@@ -267,6 +276,30 @@ class HypothesisManager:
         current_weights[non_active_components] = 0.0
 
         return current_mu, current_sigma, current_weights
+
+    def start_tracking_chart(self):
+        """A restarted trajectory has an independent gauge until commitment."""
+        if not self.chart_aware:
+            return
+        for component in list(self.hypotheses):
+            if component != 0:
+                self.remove_hypothesis(component)
+        self.component_charts.fill_(-1)
+        self.component_charts[0] = self.next_chart_id
+        self.next_chart_id += 1
+
+    def get_active_charts(self):
+        if not self.chart_aware:
+            return None
+        charts = self.component_charts.clone()
+        inactive = (self.dist[2] < self.active_dist_threshold) | ~self.realized
+        inactive[0] = False
+        charts[inactive] = -1
+        return charts
+
+    def reference_audit(self, component):
+        cross_chart = (int(self.component_charts[component]) != int(self.component_charts[0])) if self.chart_aware else None
+        return self.reference_support.audit(component, cross_chart=cross_chart)
 
     def reset_tracking_state(self):
         """
@@ -356,6 +389,14 @@ class HypothesisManager:
 
         self.hypotheses[new_comp_id] = new_h
         self.realized[new_comp_id] = True
+        if self.chart_aware and new_comp_id != 0 and start_idx in self.nodes:
+            # add_node realizes after the keyframe snapshot was taken. Store
+            # the newly realized pose instead of an inactive identity placeholder.
+            kf = self.nodes[start_idx]
+            kf.pose_mu[new_comp_id] = self.dist[0][new_comp_id]
+            kf.pose_std[new_comp_id] = self.dist[1][new_comp_id]
+            kf.pose_weights[new_comp_id] = self.dist[2][new_comp_id]
+            kf.pose_charts[new_comp_id] = self.component_charts[new_comp_id]
         # Initialize TTL for realized components
         self.ttl[new_comp_id] = max(int(self.ttl[new_comp_id].item()), self.death_ttl_base)
 
@@ -536,6 +577,8 @@ class HypothesisManager:
                     kf.pose_mu[component_id] = pp.identity_SE3(1, device=kf.pose_mu.device)
                     kf.pose_std[component_id] = pp.identity_se3(1, device=kf.pose_mu.device)
                     kf.pose_weights[component_id] = 0.0
+                    if kf.pose_charts is not None:
+                        kf.pose_charts[component_id] = -1
 
             # --- Delete the Hypothesis ---
             del self.hypotheses[component_id]
@@ -557,6 +600,8 @@ class HypothesisManager:
         self.last_sum_pos[component_id] = 0
         self.last_hit_rate[component_id] = 0
         self.reference_support.clear_component(component_id)
+        self.component_charts[component_id] = -1
+        self.component_generations[component_id] += 1
 
 
     def reset_tracking_dist(self):
@@ -633,6 +678,11 @@ class HypothesisManager:
         # --- Step 2: Greedy Best-First Matching ---
         # Calculate the pairwise distance between every active component and every proposal.
         dist_matrix = torch.cdist(current_mu_proj, proposal_mu_proj)
+        if self.chart_aware:
+            proposal_charts = torch.tensor([h['chart_id'] for h in proposal_hypotheses],
+                                           device=self.device, dtype=torch.long)
+            compatible = self.component_charts[active_comp_indices, None] == proposal_charts[None, :]
+            dist_matrix.masked_fill_(~compatible, float('inf'))
         self.last_alignment_audit = [dict(
             sources=[dict(keyframe_id=int(k), source_component=int(c),
                           loaded=k in getattr(self.system, "loaded_node_ids", ()))
@@ -641,6 +691,11 @@ class HypothesisManager:
             score=float(proposal["score"]), nearest_prior_distance=float(dist_matrix[:, i].min()),
             component=None, action="capacity_rejected")
             for i, proposal in enumerate(proposal_hypotheses)]
+        if self.chart_aware:
+            for audit, proposal in zip(self.last_alignment_audit, proposal_hypotheses):
+                audit['chart_id'] = proposal['chart_id']
+                if not math.isfinite(audit['nearest_prior_distance']):
+                    audit['nearest_prior_distance'] = None
 
         # Prepare tensors for the new, aligned GMM. Default to low-confidence values.
         num_components = current_mu.shape[0]
@@ -733,6 +788,7 @@ class HypothesisManager:
             proposal = proposal_hypotheses[proposal_idx]
             
             aligned_mu[new_comp_idx] = proposal['pose']
+            self.component_charts[new_comp_idx] = proposal['chart_id'] if self.chart_aware else 0
             aligned_sigma[new_comp_idx] = proposal['std']
             aligned_weights[new_comp_idx] = proposal['score']
             aligned_confidence[new_comp_idx] = proposal['score']
@@ -1054,9 +1110,11 @@ class HypothesisManager:
                                                                hit_rate=self.realize_hitrate_thresh),
                                 "relative_overlap_history": self.log_c_hist.detach().cpu().tolist(),
                                 "relative_confidence_history": self.log_conf_hist.detach().cpu().tolist(),
-                                "historical_support": [self.reference_support.audit(i)
+                                "historical_support": [self.reference_audit(i)
                                                        for i in range(self.n_components)],
                                 "candidates": []}
+        if self.chart_aware:
+            self.last_loop_audit["component_charts"] = self.component_charts.tolist()
         # 1) Inter-hypothesis LC detection (exclude comp 0)
         # only consider active and realized components
         active_mask = torch.logical_and(self.dist[2] > self.active_dist_threshold, self.realized)[1:]
@@ -1078,9 +1136,9 @@ class HypothesisManager:
             distances = torch.norm(candidate_poses - current_pose, dim=1) # (C,)
 
             close_mask = distances < 3 # 
-            reference_audits = [self.reference_support.audit(i) for i in realized_ids.tolist()]
-            cross_chart = torch.tensor([a["unanchored_reference_candidate"] for a in reference_audits],
-                                       device=distances.device, dtype=torch.bool)
+            reference_audits = [self.reference_audit(i) for i in realized_ids.tolist()]
+            cross_chart = (self.component_charts[realized_ids] != self.component_charts[0]) if self.chart_aware else torch.tensor(
+                [a["unanchored_reference_candidate"] for a in reference_audits], device=distances.device, dtype=torch.bool)
             reference_supported = torch.tensor([a["eligible"] for a in reference_audits],
                                                device=distances.device, dtype=torch.bool)
             separation_gate = torch.where(cross_chart, reference_supported, ~close_mask)
@@ -1096,11 +1154,11 @@ class HypothesisManager:
                     "overlap_sum": float(log_c_pos_sum[j]),
                     "overlap_hit_rate": float(log_c_pos_hit_rate[j]),
                     "confidence_hit_rate": float(log_conf_hit_rate[j]),
-                    "distance_m": float(distances[j]),
+                    "distance_m": None if self.chart_aware and bool(cross_chart[j]) else float(distances[j]),
                     "passes_overlap_sum": bool(log_c_pos_sum[j] >= self.detect_overlap_sum_thresh),
                     "passes_overlap_hit_rate": bool(log_c_pos_hit_rate[j] >= self.detect_overlap_hitrate_thresh),
                     "passes_confidence": bool(log_conf_hit_rate[j] >= self.detect_conf_hitrate_thresh),
-                    "passes_distance": bool(~close_mask[j]),
+                    "passes_distance": None if self.chart_aware and bool(cross_chart[j]) else bool(~close_mask[j]),
                     "reference_support": reference_audits[j],
                     "separation_rule": "historical_support" if bool(cross_chart[j]) else "legacy_three_meters",
                     "passes_separation_gate": bool(separation_gate[j]),
@@ -1193,7 +1251,7 @@ class HypothesisManager:
         temp_vertex_ids = [v.id for v in pg.vertices if v.id not in self.nodes]
 
         # Fix the earliest keyframe from hypothesis 0
-        fixed_node_id = min(original_kf_ids)
+        fixed_node_id = pg.preferred_fixed_node if self.chart_aware else min(original_kf_ids)
         optim_node_ids = set(original_kf_ids + temp_vertex_ids) - {fixed_node_id}
 
         if self.visualize_pose_graph:
@@ -1213,13 +1271,16 @@ class HypothesisManager:
         logger.info(f"Loop closure PGO completed with cost: {pg.optimization_cost}")
 
         # Step 3: Apply updates via unified method (also used by async engine)
-        self.apply_pgo_result({
+        applied = self.apply_pgo_result({
             "success": True,
             "pose_graph": pg,
             "optimized_poses": pg.optimized_poses,
             "other_hypothesis_id": hypo_id,
             "target_node_id": target_node_id,
         })
+        if not applied['success']:
+            result['message'] = applied.get('message')
+            return result
 
         result.update(
             {
@@ -1250,14 +1311,30 @@ class HypothesisManager:
         other_hypo = int(pgo_result.get("other_hypothesis_id", 0))
         pg = pgo_result.get("pose_graph")
         affected_ids = set(optimized_poses.keys())
-        anchored_reference = other_hypo != 0 and self.reference_support.audit(other_hypo)["unanchored_reference_candidate"]
+        anchored_reference = other_hypo != 0 and self.reference_audit(other_hypo)["unanchored_reference_candidate"]
 
         # Mutate shared graph under lock
         with self.graph_lock:
+            if self.chart_aware:
+                if pg is None or pg.output_chart is None:
+                    return dict(success=False, message="PGO result lacks coordinate provenance")
+                for component in {0, other_hypo}:
+                    if (pg.source_component_charts[component] != int(self.component_charts[component]) or
+                            pg.source_component_generations[component] != self.component_generations[component]):
+                        return dict(success=False, message="PGO result refers to a retired chart or hypothesis")
+                # Temporary optimizer vertices can collide with real keyframe
+                # IDs allocated while an asynchronous solve was in flight.
+                # The snapshot's component provenance, not current membership
+                # in self.nodes, determines which solved poses are originals.
+                optimized_poses = {i: p for i, p in optimized_poses.items() if i in pg.source_node_poses}
+                affected_ids = set(optimized_poses)
+                affected_ids |= self._transport_merged_charts(pg, optimized_poses)
             for node_id, optimized_pose in optimized_poses.items():
                 if node_id in self.nodes:
                     kf = self.nodes[node_id]
                     kf.pose_mu[0] = optimized_pose
+                    if self.chart_aware:
+                        kf.pose_charts[0] = pg.output_chart
                     # Reduce uncertainty after optimization
                     kf.pose_std[0] = kf.pose_std[0] * 0.5
                     kf.last_pgo_step = int(self.step_counter)
@@ -1278,6 +1355,8 @@ class HypothesisManager:
                 self.dist[0][0] = self.nodes[last_kf_id].pose_mu[0]
                 self.dist[1][0] = self.nodes[last_kf_id].pose_std[0]
                 self.dist[2][0] = 1
+                if self.chart_aware:
+                    self.component_charts[0] = self.nodes[last_kf_id].pose_charts[0]
 
         ret = {
             "success": True,
@@ -1288,6 +1367,33 @@ class HypothesisManager:
         if pg is not None:
             ret["cost"] = pg.optimization_cost
         return ret
+
+    def _transport_merged_charts(self, pg, optimized_poses):
+        """Transport unsolved poses as well as solved nodes after commitment.
+
+        PGO supplies local corrections at its vertices. For the rest of a
+        merged chart, use the most recent solved pose as its rigid anchor.
+        Left multiplication preserves right-tangent stds and relative edges;
+        this is an SE(3) chart join, not a scale or Sim(3) update.
+        """
+        transforms = {}
+        for node_id in sorted(pg.source_node_poses):
+            chart = pg.source_node_charts[node_id]
+            if chart == pg.output_chart or node_id not in optimized_poses:
+                continue
+            transforms[chart] = optimized_poses[node_id] @ pg.source_node_poses[node_id].Inv()
+        affected = set()
+        for chart, transform in transforms.items():
+            for kf in self.nodes.values():
+                mask = kf.pose_charts == chart
+                if bool(mask.any()):
+                    kf.pose_mu[mask] = transform @ kf.pose_mu[mask]
+                    kf.pose_charts[mask] = pg.output_chart
+                    affected.add(kf.id)
+            mask = self.component_charts == chart
+            self.dist[0][mask] = transform @ self.dist[0][mask]
+            self.component_charts[mask] = pg.output_chart
+        return affected
 
     def rebuild_topology_graph(self):
         """
@@ -1313,7 +1419,8 @@ class HypothesisManager:
                 for edge_factor in edge_factors:
                     # ignore edges from other hypothesis than 0 and comp_idx
                     if (edge_factor.from_comp_id == 0 and edge_factor.to_comp_id == comp_idx) or \
-                        (edge_factor.from_comp_id == comp_idx and edge_factor.to_comp_id == 0):
+                        (edge_factor.from_comp_id == comp_idx and edge_factor.to_comp_id == 0) or \
+                        (self.chart_aware and edge_factor.from_comp_id == edge_factor.to_comp_id == comp_idx):
 
                         # change the comp_ids to 0
                         edge_factor.from_comp_id = 0
@@ -1412,6 +1519,7 @@ class HypothesisManager:
                     "pose_mu": kf.pose_mu.cpu() if kf.pose_mu is not None else None,
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,
+                    "pose_charts": kf.pose_charts.cpu() if kf.pose_charts is not None else None,
                     "timestamp": kf.timestamp,
                     "temporary": kf.temporary,
                     "atlas_id": kf.atlas.id if kf.atlas is not None else None,
@@ -1482,6 +1590,7 @@ class HypothesisManager:
                 timestamp=kf_data["timestamp"],
                 temporary=kf_data["temporary"],
                 last_pgo_step=kf_data["last_pgo_step"],
+                pose_charts=kf_data["pose_charts"].to(storage_device) if kf_data.get("pose_charts") is not None else None,
             )
 
             # Manually set the ID to match the saved one
@@ -1535,6 +1644,10 @@ class HypothesisManager:
             self.hypotheses[0] = hypothesis
 
         # --- 5. Reset all tracking state metadata for new session ---
+        if self.chart_aware:
+            from cross.core.charts import restore_node_charts
+            self.next_chart_id = restore_node_charts(self.nodes, self.odom_edges,
+                                                     self.hypotheses[0].visual_edges if 0 in self.hypotheses else {})
         # Don't restore old tracking state - start fresh
         self.reset_tracking_state()
 

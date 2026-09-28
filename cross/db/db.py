@@ -95,6 +95,7 @@ class KeyframeDatabase:
         atlas: Atlas = None,
         temporary: bool = False,
         last_pgo_step: int = -1,
+        pose_charts: torch.Tensor = None,
     ) -> Keyframe:
         """Insert a Keyframe into the database.
 
@@ -121,6 +122,7 @@ class KeyframeDatabase:
             atlas=atlas,
             temporary=temporary,
             last_pgo_step=last_pgo_step,
+            pose_charts=pose_charts,
         )
         
         # Add to storage
@@ -222,6 +224,7 @@ class KeyframeDatabase:
                     "pose_mu": kf.pose_mu.cpu() if kf.pose_mu is not None else None,
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,
+                    "pose_charts": kf.pose_charts.cpu() if kf.pose_charts is not None else None,
                     "atlas_id": kf.atlas.id if kf.atlas is not None else None,
                     "timestamp": kf.timestamp,
                     "temporary": kf.temporary,
@@ -285,6 +288,7 @@ class KeyframeDatabase:
                 timestamp=kf_data["timestamp"],
                 temporary=kf_data["temporary"],
                 last_pgo_step=kf_data["last_pgo_step"],
+                pose_charts=kf_data["pose_charts"].to(storage_device) if kf_data.get("pose_charts") is not None else None,
             )
 
             # Manually set the ID to match the saved one

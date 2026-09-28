@@ -73,6 +73,8 @@ def main():
     parser.add_argument("--load-map", type=Path)
     parser.add_argument("--session-recovery", action="store_true",
                         help="Experimental loaded-map recovery using historical support and inherited delayed evidence")
+    parser.add_argument("--chart-aware", action="store_true",
+                        help="Keep disconnected pose charts separate; requires --session-recovery")
     parser.add_argument("--historical-retrieval-slots", type=int, default=0,
                         help="Reserve saved-map candidates within the same retrieval/verification budget")
     parser.add_argument("--historical-min-score", type=float,
@@ -128,6 +130,7 @@ def main():
                         retrieval_matcher=args.retrieval_matcher,
                         filter_mode=args.filter_mode,
                         session_recovery=args.session_recovery,
+                        chart_aware=args.chart_aware,
                         historical_retrieval_slots=args.historical_retrieval_slots,
                         historical_min_score=args.historical_min_score,
                         pose_refinement=args.pose_refinement,

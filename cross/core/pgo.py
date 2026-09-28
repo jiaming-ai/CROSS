@@ -66,6 +66,11 @@ class PoseGraph:
         self.nodes = hypothesis_manager.nodes
         self.odom_edges = hypothesis_manager.odom_edges
         self.hypothesis_manager = hypothesis_manager
+        self.chart_aware = hypothesis_manager.chart_aware
+        self.source_component_charts = hypothesis_manager.component_charts.tolist()
+        self.source_component_generations = list(hypothesis_manager.component_generations)
+        self.output_chart = None
+        self.preferred_fixed_node = None
         self.device = device
         self.depth = depth
         self.k_hop = k_hop
@@ -358,13 +363,17 @@ class PoseGraph:
             # Find keyframes that exist in both hypotheses (for LC edges)
             # These are keyframes >= start_idx that are also in visual_node_ids
             common_kf_ids = [kf_id for kf_id in sorted_kf_ids if kf_id >= start_idx]
+            if self.chart_aware:
+                common_kf_ids = [i for i in common_kf_ids
+                                if int(self.nodes[i].pose_charts[other_hypothesis_id]) == self.source_component_charts[other_hypothesis_id]
+                                and self.nodes[i].pose_weights[other_hypothesis_id] > 0]
             
             # --- Step 4.1: Create temp vertices for the other hypothesis ---
             previous_temp_id = None
             previous_kf_id = None
             # Important: temp vertex ids start from the last keyframe id in the nodes
             # to avoid conflicts with the original keyframe ids
-            temp_vertex_id = len(self.nodes)
+            temp_vertex_id = max(self.nodes) + 1 if self.chart_aware else len(self.nodes)
             
             for kf_id in common_kf_ids:
                 kf = self.nodes[kf_id]
@@ -413,11 +422,15 @@ class PoseGraph:
                     temp_v = kf_to_temp_vertex[v]
                     cross_hypo = True
 
-                else:
+                elif u in kf_to_temp_vertex and v in kf_to_temp_vertex:
                     # both u and v are from the other hypothesis
                     # then the both from and to comp ids should be other_hypothesis_id
                     temp_u = kf_to_temp_vertex[u]
                     temp_v = kf_to_temp_vertex[v]
+                else:
+                    if self.chart_aware:
+                        continue  # retired or absent pose components have no vertex
+                    raise KeyError((u, v))
 
                 # Filter factors that belong to this hypothesis
                 # Accept edges where:
@@ -437,6 +450,33 @@ class PoseGraph:
         self.vertices = vertices
         self.edges = edges
         self.vertex_map = {v.id: v for v in vertices}
+        if self.chart_aware:
+            self._retain_connected_chart_graph(target_node_id, other_hypothesis_id)
+
+    def _retain_connected_chart_graph(self, target_node_id, other_hypothesis_id=0):
+        """Do not optimize unrelated saved sessions merely due to adjacent IDs."""
+        neighbors = collections.defaultdict(set)
+        for a, b, factors in self.edges:
+            if factors and a in self.vertex_map and b in self.vertex_map:
+                neighbors[a].add(b)
+                neighbors[b].add(a)
+        connected, pending = set(), [target_node_id]
+        while pending:
+            node = pending.pop()
+            if node not in connected:
+                connected.add(node)
+                pending.extend(neighbors[node] - connected)
+        self.vertices = [v for v in self.vertices if v.id in connected]
+        self.edges = [(a, b, f) for a, b, f in self.edges if f and a in connected and b in connected]
+        self.vertex_map = {v.id: v for v in self.vertices}
+        originals = [v for v in self.vertices if v.original_comp_id == 0]
+        self.source_node_charts = {v.id: int(self.nodes[v.id].pose_charts[0]) for v in originals}
+        self.source_node_poses = {v.id: v.pose.clone() for v in originals}
+        reference_chart = self.source_component_charts[other_hypothesis_id]
+        anchors = [v.id for v in originals if self.source_node_charts[v.id] == reference_chart]
+        if not anchors:
+            raise ValueError("Graph does not connect to its proposed reference chart")
+        self.preferred_fixed_node = min(anchors)
 
     def construct_for_local_smoothing(
         self,
@@ -471,6 +511,8 @@ class PoseGraph:
         self.vertices = nodes
         self.edges = visual_edges + odom_edges
         self.vertex_map = {v.id: v for v in self.vertices}
+        if self.chart_aware:
+            self._retain_connected_chart_graph(target_node_id)
 
     def validate_edge_uncertainties(
         self,
@@ -612,6 +654,11 @@ class PoseGraph:
             fixed_node_ids: Set of vertex IDs to fix
         """
         assert self.vertices and self.edges, "No graph constructed. Call construct_for_loop_closure() first."
+        if self.chart_aware:
+            charts = {self.source_node_charts[i] for i in fixed_node_ids}
+            if len(charts) != 1:
+                raise ValueError("Fixed vertices must share one coordinate chart")
+            self.output_chart = charts.pop()
         
         graph = gtsam.NonlinearFactorGraph()
         initial = gtsam.Values()

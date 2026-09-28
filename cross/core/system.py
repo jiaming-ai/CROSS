@@ -327,6 +327,7 @@ class System:
             weights[0] = 1.0
 
         self.hypothesis_manager.dist = (mu.to(self.device), sigma.to(self.device), weights.to(self.device))
+        self.hypothesis_manager.start_tracking_chart()
 
         # insert the initial keyframe
         kf = self.db.insert(
@@ -339,6 +340,7 @@ class System:
             atlas=new_atlas,
             timestamp=timestamp,
             temporary=False,
+            pose_charts=self.hypothesis_manager.get_active_charts(),
         )
         self.hypothesis_manager.add_node(kf)
         self.last_added_kf_id = kf.id
@@ -388,6 +390,9 @@ class System:
         # TODO: we should only compute distance between current
         # and surrounding nodes, not all nodes, to make it more efficient
         all_nodes = list(self.hypothesis_manager.nodes.values())
+        if self.hypothesis_manager.chart_aware:
+            chart = int(self.hypothesis_manager.component_charts[0])
+            all_nodes = [n for n in all_nodes if int(n.pose_charts[0]) == chart]
         all_node_poses = [n.pose_mu[0] for n in all_nodes]
         all_node_poses = torch.stack(all_node_poses).to(self.device)
 
@@ -400,7 +405,7 @@ class System:
 
         # get closest permanent node
 
-        all_perm_nodes = [kf for kf in self.hypothesis_manager.nodes.values() if not kf.temporary]
+        all_perm_nodes = [kf for kf in all_nodes if not kf.temporary]
         all_perm_node_poses = [n.pose_mu[0] for n in all_perm_nodes]
         all_perm_node_poses = torch.stack(all_perm_node_poses).to(self.device)
         all_perm_distances = torch.norm(all_perm_node_poses.tensor()[:, :3] - \
@@ -489,6 +494,7 @@ class System:
 
         # --- 4. Combine All Data ---
         save_data = {
+            "coordinate_charts_version": 1 if self.hypothesis_manager.chart_aware else 0,
             "config": config_to_dict(self.config),
             "db_data": db_data,
             "hypo_data": hypo_data,
@@ -529,6 +535,8 @@ class System:
         # --- 1. Load Data from Disk ---
         with open(load_path, "rb") as f:
             save_data = pickle.load(f)
+        if save_data.get("coordinate_charts_version", 0) and not self.hypothesis_manager.chart_aware:
+            raise ValueError("This map contains coordinate charts; enable chart-aware mapping to load it")
 
         # --- 2. Restore Class Variables ---
         Keyframe._next_id = save_data["class_vars"]["keyframe_next_id"]
@@ -963,7 +971,7 @@ class System:
         original_kf_ids = [v.id for v in pg.vertices if v.id in self.hypothesis_manager.nodes]
         if not original_kf_ids:
             return False
-        fixed_node_id = min(original_kf_ids)
+        fixed_node_id = pg.preferred_fixed_node if self.hypothesis_manager.chart_aware else min(original_kf_ids)
         optim_node_ids = set([v.id for v in pg.vertices]) - {fixed_node_id}
 
         pg.solve(optim_node_ids=optim_node_ids, fixed_node_ids={fixed_node_id})
@@ -1023,6 +1031,7 @@ class System:
                 is_temp_kf = False
 
         mu, sigma, weights = self.hypothesis_manager.get_active_dist()
+        pose_charts = self.hypothesis_manager.get_active_charts()
 
         if not is_temp_kf:
             if weights.nonzero().numel() == 0:
@@ -1038,6 +1047,7 @@ class System:
                 atlas=self.current_atlas,
                 timestamp=timestamp,
                 temporary=is_temp_kf,
+                pose_charts=pose_charts,
             )
             logger.debug(f"Add permanent keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         else:
@@ -1048,6 +1058,7 @@ class System:
                 pose_weights=weights.to(self.storage_device),
                 timestamp=timestamp,
                 temporary=is_temp_kf,
+                pose_charts=pose_charts,
             )
             logger.debug(f"Add temporary keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         
@@ -1161,9 +1172,15 @@ class System:
 
         
         # --- 2. Run DBSCAN ---
-        db = DBSCAN(eps=dbscan_eps, min_samples=dbscan_min_samples).fit(clustering_data)
-        labels = db.labels_
-        unique_labels = set(labels)
+        if self.hypothesis_manager.chart_aware:
+            from cross.core.charts import cluster_by_chart
+            charts = torch.stack([kf.pose_charts for kf in ret['valid_keyframes']]).to(self.device)
+            flat_charts = charts[valid_mask].cpu().numpy()
+            labels = cluster_by_chart(clustering_data, flat_charts, dbscan_eps, dbscan_min_samples)
+        else:
+            db = DBSCAN(eps=dbscan_eps, min_samples=dbscan_min_samples).fit(clustering_data)
+            labels = db.labels_
+        unique_labels = sorted(set(labels))
         
         hypotheses = []
         
@@ -1243,6 +1260,8 @@ class System:
                 'score': hypothesis_score, # cluster score
                 'source_indices': cluster_sources.tolist(), # M, 2
             })
+            if self.hypothesis_manager.chart_aware:
+                hypotheses[-1]['chart_id'] = int(flat_charts[best_candidate_in_cluster_idx])
 
         # make sure the hypotheses are in the same order as the current state GMM
         return self.hypothesis_manager.align_proposal_prior(hypotheses)

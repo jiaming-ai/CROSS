@@ -79,6 +79,7 @@ def serialize_keyframes(keyframes, path: str, method: str = "pickle"):
             "pose_mu": kf.pose_mu.tensor().cpu().numpy() if kf.pose_mu is not None else None,
             "pose_std": kf.pose_std.tensor().cpu().numpy() if kf.pose_std is not None else None,
             "pose_weights": kf.pose_weights.cpu().numpy() if kf.pose_weights is not None else None,
+            "pose_charts": kf.pose_charts.cpu().numpy() if kf.pose_charts is not None else None,
             "atlas": kf.atlas.id if kf.atlas is not None else None,
             "timestamp": kf.timestamp
         })
@@ -108,6 +109,9 @@ class Keyframe:
     temporary: bool = False # whether the keyframe is temporary
     # Throttle info for PGO to avoid repeated LC when revisiting
     last_pgo_step: int = -1
+    # Coordinate frame of each pose component; independent of acquisition atlas
+    # and bounded hypothesis slot. None denotes a legacy map without provenance.
+    pose_charts: Optional[torch.Tensor] = None
 
     def __post_init__(self):
         self.id = Keyframe._next_id

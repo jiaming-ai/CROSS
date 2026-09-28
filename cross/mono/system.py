@@ -41,6 +41,7 @@ class MonocularSystem:
         cfg.pose_est.type = PoseEstType.DA3 if self.config.retrieval_pose == "da3" else PoseEstType.METRIC_PNP
         if self.config.session_recovery:
             cfg.mapping.hypothesis.session_recovery = True
+        cfg.mapping.hypothesis.chart_aware = self.config.chart_aware
         if system_config is None:
             cfg.tracking.filter_mode = FilterMode(self.config.filter_mode)
             cfg.tracking.odom_min_std_translation = 0.005

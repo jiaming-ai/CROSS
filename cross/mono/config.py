@@ -48,6 +48,7 @@ class MonoConfig:
     retrieval_matcher: str = "mnn"
     filter_mode: str = "full"
     session_recovery: bool = False
+    chart_aware: bool = False
     historical_retrieval_slots: int = 0
     historical_min_score: float | None = None
     translation_std_floor: float = 0.005
@@ -56,6 +57,8 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.chart_aware and not self.session_recovery:
+            raise ValueError("Chart-aware mapping requires session_recovery")
         if self.frontend not in {"da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt", "streaming_pnp"}:
             raise ValueError("Unknown monocular frontend")
         if min(self.resolution, self.metric_resolution) < 56:

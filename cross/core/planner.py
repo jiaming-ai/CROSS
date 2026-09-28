@@ -369,6 +369,8 @@ class Planner:
 
         if from_kf is None or to_kf is None:
             return 0.0
+        if self.hypothesis_manager.chart_aware and int(from_kf.pose_charts[0]) != int(to_kf.pose_charts[0]):
+            return 0.0
 
         # Extract translation from pose_mu (first component of GMM)
         # pose_mu is (K, 7) where K is number of components

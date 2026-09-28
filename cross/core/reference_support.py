@@ -8,9 +8,10 @@ from collections import deque
 
 
 class ReferenceSupport:
-    def __init__(self, components, window, hit_rate, enabled=False):
+    def __init__(self, components, window, hit_rate, enabled=False, track_after_anchor=False):
         self.components, self.window, self.hit_rate = components, window, hit_rate
         self.enabled = enabled
+        self.track_after_anchor = track_after_anchor
         self.loaded_ids = frozenset()
         self.unanchored = False
         self.clear_tracking()
@@ -31,7 +32,7 @@ class ReferenceSupport:
         self.clear_tracking()
 
     def observe(self, step, edge_mapping, newborns=()):
-        if not self.unanchored:
+        if not self.unanchored and not (self.enabled and self.track_after_anchor):
             return
         if self.last_step == step:
             return  # one source observation cannot count twice
@@ -50,11 +51,11 @@ class ReferenceSupport:
             self.history[component].append(frozenset(ids))
             self.ever_historical[component] |= bool(ids)
 
-    def audit(self, component):
+    def audit(self, component, cross_chart=None):
         history = self.history[component]
         hits = sum(bool(ids) for ids in history)
         references = sorted(set().union(*history))
-        cross_chart = self.unanchored and self.ever_historical[component]
+        cross_chart = (self.unanchored if cross_chart is None else cross_chart) and self.ever_historical[component]
         # Use the inherited overlap hit-rate/window and require redundancy
         # across at least two reference images. Neither is place proof alone.
         eligible = cross_chart and hits / self.window >= self.hit_rate and len(references) >= 2

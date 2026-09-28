@@ -160,6 +160,7 @@ class HypothesisConfig:
     detect_conf_rel_margin: float = 1.0
     detect_conf_hitrate_thresh: float = 0.5
     session_recovery: bool = False  # experimental historical support in place of chart-distance guard
+    chart_aware: bool = False  # keep disconnected coordinate frames separate
 
     # --- Self LC detection (comp 0) ---
     self_lc_conf_thresh: float = 0.55
