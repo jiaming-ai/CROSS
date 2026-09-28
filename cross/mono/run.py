@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--replay-timestamps", action="store_true", help="Pace arrivals with original RGB timestamp differences; requires the paced input worker")
     parser.add_argument("--warmup-models", action="store_true", help="Warm models using only the first RGB image; report startup separately")
     parser.add_argument("--paced-input-worker", action="store_true", help="Overlap RGB preprocessing with tracking; bounded queue, fail on overflow")
+    parser.add_argument("--input-process", action="store_true", help="Run paced RGB acquisition in an independent CPU process")
     parser.add_argument("--input-buffer", type=int, default=2, help="Maximum pending input frames; overflow fails instead of dropping data")
     parser.add_argument("--mapping-process", action="store_true", help="Isolate CROSS mapping from the streaming frontend's Python process")
     parser.add_argument("--delayed-recovery", action="store_true", help="Experimental delayed reverse PnP; may cause large pose corrections")
@@ -76,6 +77,8 @@ def main():
         parser.error("--paced-input-worker requires --input-fps")
     if args.replay_timestamps and not args.paced_input_worker:
         parser.error("--replay-timestamps requires --paced-input-worker")
+    if args.input_process and not args.paced_input_worker:
+        parser.error("--input-process requires --paced-input-worker")
     if args.input_buffer < 1:
         parser.error("--input-buffer must be positive")
     if args.teacher_lag_frames < 0 or (args.teacher_lag_frames and args.frontend != "streaming_pnp"):
@@ -219,7 +222,6 @@ def main():
         metadata["warmup"] = dict(seconds=warmup_seconds, uses_only_first_rgb=True,
                                   advances_pose_or_topological_belief=False, metric_model_calls=warmup_metric_calls)
         (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    loading_seconds = perf_counter() - loading_start
     latencies, arrival_latencies, image_io, output_io = [], [], [], []
     valid_count, metric_count = 0, 0
     tracking_stream = None
@@ -229,6 +231,22 @@ def main():
     if args.freeze_gc:
         gc.collect()
         gc.freeze()
+    input_worker = None
+    offsets = None
+    if args.replay_timestamps:
+        origin = sequence.rows[0][1][0]
+        offsets = [row[1][0] - origin for row in sequence.rows]
+    if args.input_process:
+        from .input_process import PacedRGBProcess
+        try:
+            input_worker = PacedRGBProcess(sequence, args.input_fps, args.input_buffer, offsets)
+        except BaseException:
+            if hasattr(tracker, "shutdown"):
+                tracker.shutdown()
+            raise
+        metadata["input_process_startup_seconds"] = input_worker.startup_seconds
+        (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    loading_seconds = perf_counter() - loading_start
     start = perf_counter()
     gc_pauses, gc_started = [], {}
     def record_collection(phase, info):
@@ -241,13 +259,10 @@ def main():
             gc_pauses.append(dict(generation=generation, start_seconds=began, seconds=now-began,
                                   collected=info["collected"], uncollectable=info["uncollectable"]))
     gc.callbacks.append(record_collection)
-    input_worker = None
-    if args.paced_input_worker:
+    if args.input_process:
+        input_worker.start(start)
+    elif args.paced_input_worker:
         from .stream_input import PacedRGBStream
-        offsets = None
-        if args.replay_timestamps:
-            origin = sequence.rows[0][1][0]
-            offsets = [row[1][0] - origin for row in sequence.rows]
         input_worker = PacedRGBStream(sequence, args.input_fps, start, args.input_buffer, offsets)
     try:
         with (args.output / "trajectory.txt").open("w") as trajectory, \
@@ -285,7 +300,8 @@ def main():
                 metric_count += "scale_observation" in estimate.diagnostics
                 estimate.diagnostics.update(input_index=frame.index, wall_seconds=elapsed,
                                             pose_ready_elapsed_seconds=last_pose_elapsed,
-                                            image_read_and_preprocessing_seconds=image_io[-1])
+                                            image_read_and_preprocessing_seconds=image_io[-1],
+                                            input_timing=frame.input_timing)
                 output_started = perf_counter()
                 for handle, pose in [(trajectory, estimate.pose), (front_trajectory, frontend.metric_pose)]:
                     row = np.r_[frame.timestamp, pose[:3, 3], Rotation.from_matrix(pose[:3, :3]).as_quat()]
@@ -298,6 +314,8 @@ def main():
                                       "fps": len(latencies) / (perf_counter() - start)}), flush=True)
                 output_io.append(perf_counter()-output_started)
                 read_started = perf_counter()
+        if len(latencies) != len(sequence):
+            raise RuntimeError(f"Input ended after {len(latencies)} poses; expected {len(sequence)} selected frames")
         emission_elapsed = perf_counter()-start
         if hasattr(tracker, "finish"):
             tracker.finish()
@@ -314,11 +332,16 @@ def main():
             if args.freeze_gc:
                 gc.unfreeze()
             (args.output / "gc_pauses.json").write_text(json.dumps(gc_pauses, indent=2) + "\n")
+            if hasattr(tracker, "map_events"):
+                # Preserve observed events even if input/tracking failed;
+                # a completed audit still requires a successful run summary.
+                (args.output / "mapping_events.json").write_text(json.dumps(tracker.map_events, indent=2) + "\n")
     total = perf_counter() - start
     summary = {"frames": len(latencies), "valid_frames": valid_count, "tracking_coverage": valid_count / len(latencies),
                "metric_calls": metric_count, "scale_observation_calls": metric_count,
                "metric_model_calls": getattr(frontend.metric, "calls", None),
                "model_loading_seconds": loading_seconds,
+               "input_process_startup_seconds": metadata.get("input_process_startup_seconds", 0.),
                "warmup_seconds_in_loading": warmup_seconds, "warmup_metric_model_calls": warmup_metric_calls,
                "elapsed_seconds": total, "fps_including_io": len(latencies) / total,
                "emission_elapsed_seconds": emission_elapsed,
@@ -337,6 +360,8 @@ def main():
     summary["trajectory_and_diagnostic_output_ms"] = dict(mean=1000*float(np.mean(output_io)), p95=1000*float(np.quantile(output_io, .95)))
     if input_worker is not None:
         summary["input_worker"] = dict(capacity=input_worker.capacity, maximum_queued=input_worker.maximum_queued,
+                                       backend="process" if args.input_process else "thread",
+                                       queue_peak_is_sampled=args.input_process,
                                        dropped_frames=0, overflow_policy="fail the run", preprocessing_begins_after_capture=True)
     if hasattr(frontend, "depth_worker"):
         summary["teacher_worker"] = frontend.depth_worker.statistics()

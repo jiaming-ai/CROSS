@@ -1,7 +1,8 @@
 """RGB-only sequence reader. No ground truth or sensor-depth access here."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from time import perf_counter, thread_time
 
 import cv2
 import numpy as np
@@ -12,6 +13,7 @@ class RGBFrame:
     rgb: np.ndarray
     timestamp: float
     index: int
+    input_timing: dict = field(default_factory=dict)
 
 
 class RGBSequence:
@@ -71,12 +73,20 @@ class RGBSequence:
 
     def __iter__(self):
         for index, (timestamp, path) in self.rows:
+            wall, cpu = perf_counter(), thread_time()
             bgr = cv2.imread(str(path))
+            timing = dict(read_decode_wall_seconds=perf_counter()-wall, read_decode_cpu_seconds=thread_time()-cpu)
             if bgr is None:
                 raise FileNotFoundError(path)
+            wall, cpu = perf_counter(), thread_time()
             if self.undistort and np.any(self.distortion):
                 if self.maps is None:
                     self.maps = cv2.initUndistortRectifyMap(self.K, self.distortion, None, self.K,
                                                          (bgr.shape[1], bgr.shape[0]), cv2.CV_32FC1)
                 bgr = cv2.remap(bgr, *self.maps, interpolation=cv2.INTER_LINEAR)
-            yield RGBFrame(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), timestamp, index)
+            timing.update(undistort_wall_seconds=perf_counter()-wall, undistort_cpu_seconds=thread_time()-cpu)
+            wall, cpu = perf_counter(), thread_time()
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            timing.update(color_wall_seconds=perf_counter()-wall, color_cpu_seconds=thread_time()-cpu,
+                          opencv_threads=cv2.getNumThreads())
+            yield RGBFrame(rgb, timestamp, index, timing)
