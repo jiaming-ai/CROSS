@@ -56,7 +56,7 @@ class MonoFrontend:
         self.refiner = None
         if self.config.pose_refinement == "xfeat":
             from .refinement import XFeatRefiner
-            self.refiner = XFeatRefiner(self.K, device)
+            self.refiner = XFeatRefiner(self.K, device, mask_people=self.config.mask_people)
         self.reset()
 
     def reset(self):

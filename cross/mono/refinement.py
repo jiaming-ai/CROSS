@@ -8,18 +8,35 @@ from .geometry import inverse
 
 
 class XFeatRefiner:
-    def __init__(self, K, device="cuda", keypoints=1600):
+    def __init__(self, K, device="cuda", keypoints=1600, mask_people=False):
         self.K = np.asarray(K)
         self.device = device
         self.extractor = torch.hub.load("verlab/accelerated_features", "XFeat", pretrained=True,
                                        top_k=keypoints, detection_threshold=0.03, trust_repo=True)
         self.extractor.net.to(device).eval()
         self.extractor.dev = torch.device(device)
+        self.detector = None
+        if mask_people:
+            from torchvision.models.detection import ssdlite320_mobilenet_v3_large, SSDLite320_MobileNet_V3_Large_Weights
+            self.detector = ssdlite320_mobilenet_v3_large(
+                weights=SSDLite320_MobileNet_V3_Large_Weights.COCO_V1).to(device).eval()
 
     @torch.inference_mode()
     def extract(self, rgb):
         tensor = torch.as_tensor(rgb.copy(), device=self.device).permute(2, 0, 1).float()[None] / 255.0
         result = self.extractor.detectAndCompute(tensor)[0]
+        if self.detector is not None:
+            detected = self.detector([tensor[0]])[0]
+            boxes = detected["boxes"][(detected["labels"] == 1) & (detected["scores"] >= 0.5)]
+            keep = torch.ones(len(result["keypoints"]), device=self.device, dtype=torch.bool)
+            points = result["keypoints"]
+            for box in boxes:
+                inside = ((points >= box[:2] - 8) & (points <= box[2:] + 8)).all(dim=1)
+                keep &= ~inside
+            result["masked_keypoints"] = int((~keep).sum())
+            result["person_boxes"] = len(boxes)
+            for key in ("keypoints", "descriptors", "scores"):
+                result[key] = result[key][keep]
         result["shape"] = rgb.shape[:2]
         return result
 

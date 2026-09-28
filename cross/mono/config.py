@@ -25,6 +25,7 @@ class MonoConfig:
     frontend: str = "da3"
     dpvo_checkpoint: str | None = None
     dpvo_metric_bootstrap: bool = False
+    mask_people: bool = False
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"
