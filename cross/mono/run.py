@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
     parser.add_argument("--mask-interval", type=int, default=1)
+    parser.add_argument("--rotation-selection", action="store_true")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--start", type=int, default=0)
@@ -69,6 +70,7 @@ def main():
                         dpvo_metric_bootstrap=args.dpvo_metric_bootstrap,
                         mask_people=args.mask_people,
                         mask_interval=args.mask_interval,
+                        rotation_selection=args.rotation_selection,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
                         pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,

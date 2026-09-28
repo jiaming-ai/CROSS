@@ -183,3 +183,17 @@ def test_fixed_rotation_metric_translation_with_moving_outliers():
     estimate, inliers, residual = translation_given_rotation(xyz, pixels, K, R)
     np.testing.assert_allclose(estimate, t, atol=0.002)
     assert len(inliers) >= 74 and residual < 0.3
+
+
+def test_rotation_model_selection_preserves_observable_translation():
+    import cv2
+    from cross.mono.observability import rotation_only_model
+    rng = np.random.default_rng(123)
+    xyz = rng.uniform([-1., -1., 2.], [1., 1., 5.], (300, 3))
+    K = np.array([[500., 0, 320.], [0, 500., 240.], [0, 0, 1.]])
+    R = Rotation.from_rotvec([0.03, -0.1, 0.02]).as_matrix()
+    for translation, expected in [(np.zeros(3), True), (np.array([0.15, 0.03, 0.1]), False)]:
+        pixels = cv2.projectPoints(xyz, cv2.Rodrigues(R)[0], translation, K, None)[0].reshape(-1, 2)
+        pixels += rng.normal(0, 0.5, pixels.shape)
+        _, selected = rotation_only_model(xyz, pixels, K, R, translation)
+        assert selected == expected

@@ -8,7 +8,7 @@ from .geometry import inverse
 
 
 class XFeatRefiner:
-    def __init__(self, K, device="cuda", keypoints=1600, mask_people=False, mask_interval=1):
+    def __init__(self, K, device="cuda", keypoints=1600, mask_people=False, mask_interval=1, rotation_selection=False):
         self.K = np.asarray(K)
         self.device = device
         self.extractor = torch.hub.load("verlab/accelerated_features", "XFeat", pretrained=True,
@@ -19,6 +19,8 @@ class XFeatRefiner:
         self.mask_interval = mask_interval
         self.frame_index = 0
         self.boxes = None
+        self.rotation_selection = rotation_selection
+        self.last_rotation_only = False
         if mask_people:
             from torchvision.models.detection import ssdlite320_mobilenet_v3_large, SSDLite320_MobileNet_V3_Large_Weights
             self.detector = ssdlite320_mobilenet_v3_large(
@@ -50,6 +52,7 @@ class XFeatRefiner:
 
     @torch.inference_mode()
     def estimate(self, ref, current, ref_depth, rotation=None):
+        self.last_rotation_only = False
         if min(len(ref["keypoints"]), len(current["keypoints"])) < 20:
             return None
         similarity = ref["descriptors"] @ current["descriptors"].T
@@ -94,6 +97,13 @@ class XFeatRefiner:
         if len(np.unique(tiles, axis=0)) < 4:
             return None
         rvec, tvec = cv2.solvePnPRefineLM(xyz[inliers], pixels[inliers], self.K, None, rvec, tvec)
+        if self.rotation_selection:
+            from .observability import rotation_only_model
+            rotation_only, selected = rotation_only_model(xyz[inliers], pixels[inliers], self.K,
+                                                          cv2.Rodrigues(rvec)[0], tvec)
+            if selected:
+                rvec, tvec = cv2.Rodrigues(rotation_only)[0], np.zeros((3, 1))
+                self.last_rotation_only = True
         T_current_ref = np.eye(4)
         T_current_ref[:3, :3] = cv2.Rodrigues(rvec)[0]
         T_current_ref[:3, 3] = tvec.ravel()
