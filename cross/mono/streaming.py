@@ -1,0 +1,253 @@
+"""Causal monocular tracking with timestamped, bounded slow-model work.
+
+The teacher supplies depth for the image it actually processed. Its delayed
+output creates an anchor at that image's previously emitted local pose. No
+old trajectory is rewritten and no future frame is consulted. The mapper
+retains CROSS's global observation mixture and delayed commitment unchanged.
+"""
+
+from dataclasses import dataclass
+from time import perf_counter
+
+import numpy as np
+import torch
+
+from .frontend import MonoEstimate
+from .geometry import inverse, scale_translation_covariance
+from .pnp_frontend import MetricPnPFrontend
+from .system import MonocularSystem
+from .worker import LatestWorker
+
+
+def adjoint(pose):
+    rotation, (x, y, z) = pose[:3, :3], pose[:3, 3]
+    skew = np.array([[0., -z, y], [z, 0., -x], [-y, x, 0.]])
+    out = np.zeros((6, 6))
+    out[:3, :3] = out[3:, 3:] = rotation
+    out[:3, 3:] = skew @ rotation
+    return out
+
+
+@dataclass
+class FrameSnapshot:
+    index: int
+    timestamp: float
+    rgb: np.ndarray
+    features: dict
+    pose: np.ndarray
+    world_std_prefix: np.ndarray
+    valid: bool
+
+
+def snapshot_motion(previous, current):
+    """All intermediate motion survives replacement of pending map images.
+
+    Prefixes sum world-coordinate marginal standard deviations. Mapping to
+    the previous camera uses |Ad| to conservatively allow unknown correlation;
+    treating the diagonal as a full independent covariance would be unsafe.
+    """
+    if previous is None:
+        return np.eye(4), np.zeros((6, 6))
+    if current.index <= previous.index:
+        raise ValueError("Mapping snapshots must increase")
+    world_std = np.maximum(current.world_std_prefix - previous.world_std_prefix, 0.)
+    local_std = np.abs(adjoint(inverse(previous.pose))) @ world_std
+    return inverse(previous.pose) @ current.pose, np.diag(local_std**2)
+
+
+class StreamingPnPFrontend(MetricPnPFrontend):
+    def __init__(self, K, config=None, device="cuda"):
+        super().__init__(K, config, device)
+        self.device = device
+        self.depth_stream = torch.cuda.Stream(device=device, priority=0) if device.startswith("cuda") else None
+        # Models were constructed on the calling stream before the worker.
+        if self.depth_stream is not None:
+            self.depth_stream.wait_stream(torch.cuda.current_stream(device))
+        self.depth_worker = LatestWorker(self._predict_snapshot, "cross-metric-depth")
+        self.world_std_prefix = np.zeros(6)
+        self.ready_depths = []
+        self.last_submitted = -1
+        self.finished = False
+
+    def _predict_snapshot(self, snapshot):
+        with torch.inference_mode():
+            if self.depth_stream is None:
+                depth = self.metric.predict_metric(snapshot.rgb, self.K, snapshot.rgb.shape[:2])
+            else:
+                with torch.cuda.stream(self.depth_stream):
+                    depth = self.metric.predict_metric(snapshot.rgb, self.K, snapshot.rgb.shape[:2])
+                self.depth_stream.synchronize()
+        return snapshot, depth
+
+    def _receive(self):
+        received = self.depth_worker.poll()
+        self.ready_depths.extend(received)
+        renewed = False
+        for (snapshot, depth), _ in received:
+            if snapshot.index <= self.anchor_index:
+                continue
+            if snapshot.index - self.anchor_index >= self.config.scale.interval or not self.last_valid:
+                self.anchor_features, self.anchor_depth = snapshot.features, depth
+                self.anchor_pose, self.anchor_index = snapshot.pose, snapshot.index
+                renewed = True
+        return renewed, received
+
+    def take_depths(self):
+        result, self.ready_depths = self.ready_depths, []
+        return result
+
+    def step(self, rgb, timestamp):
+        if not np.isfinite(timestamp) or (self.last_timestamp is not None and timestamp <= self.last_timestamp):
+            raise ValueError("Frame timestamps must increase")
+        start = perf_counter()
+        renewed, received = self._receive()
+        features = self.refiner.extract(rgb)
+        previous = self.metric_pose.copy()
+        valid, count, error = True, 0, 0.
+        bootstrap_seconds = 0.
+        if self.anchor_features is not None:
+            result = self.refiner.estimate(self.anchor_features, features, self.anchor_depth)
+            if result is not None:
+                relative, count, error = result
+                self.metric_pose = self.anchor_pose @ relative
+            else:
+                valid = False  # keep the held output and its failure in evaluation
+        delta = inverse(previous) @ self.metric_pose
+        covariance = np.diag([self.config.translation_std_floor**2]*3 + [self.config.rotation_std_floor**2]*3)
+        covariance[:3, :3] += scale_translation_covariance(delta[:3, 3], self.scale_filter.uncertainty_variance)
+        if not valid:
+            covariance += np.eye(6)
+        transported = adjoint(previous) @ covariance @ adjoint(previous).T
+        self.world_std_prefix += np.sqrt(np.maximum(np.diag(transported), 0.))
+        interval = min(self.config.scale.interval, self.config.mapping_interval) if self.provide_mapping_depth else self.config.scale.interval
+        # Failed frames can request recovery, but never more than once per
+        # five frames. One replaceable pending item bounds memory and lag.
+        request = self.index-self.last_submitted >= interval or (not valid and self.index-self.last_submitted >= 5)
+        bootstrap = self.anchor_features is None
+        if bootstrap or request:
+            snapshot = FrameSnapshot(self.index, timestamp, rgb.copy(), features, self.metric_pose.copy(),
+                                     self.world_std_prefix.copy(), valid)
+            self.last_submitted = self.index
+            if bootstrap:
+                tick = perf_counter()
+                _, depth = self._predict_snapshot(snapshot)
+                bootstrap_seconds = perf_counter()-tick
+                self.anchor_features, self.anchor_depth = features, depth
+                self.anchor_pose, self.anchor_index = self.metric_pose.copy(), self.index
+                self.ready_depths.append(((snapshot, depth), dict(queue_seconds=0., service_seconds=bootstrap_seconds,
+                                                               turnaround_seconds=bootstrap_seconds)))
+                renewed = True
+            else:
+                self.depth_worker.submit(snapshot)
+        diagnostics = dict(frame=self.index, valid=valid, initializing=bootstrap, pose_source="streaming_pnp",
+                           pnp_inliers=count, pnp_reprojection_median_px=error, anchor_renewed=renewed,
+                           anchor_frame=self.anchor_index, anchor_age_frames=self.index-self.anchor_index,
+                           correspondences=self.refiner.last_correspondences,
+                           masked_keypoints=features.get("masked_keypoints", 0), person_boxes=features.get("person_boxes", 0),
+                           scale=1., log_scale_std=float(np.sqrt(self.scale_filter.uncertainty_variance)),
+                           metric_initialized=True, metric_seconds=bootstrap_seconds, bootstrap_seconds=bootstrap_seconds,
+                           frontend_seconds=perf_counter()-start-bootstrap_seconds, total_seconds=perf_counter()-start,
+                           teacher_updates=[dict(source_frame=s.index, age_frames=self.index-s.index, **timing)
+                                            for (s, _), timing in received],
+                           teacher_worker=self.depth_worker.statistics())
+        self.last_timestamp, self.last_valid = timestamp, valid
+        self.index += 1
+        if not self.provide_mapping_depth:
+            self.take_depths()
+        # A delayed anchor depth is not a depth observation of this RGB frame.
+        return MonoEstimate(timestamp, self.metric_pose.copy(), delta, covariance, None, diagnostics)
+
+    def finish(self):
+        if not self.finished:
+            self.depth_worker.close()
+            self._receive()
+            self.finished = True
+
+    def shutdown(self):
+        self.finish()
+
+
+class StreamingMonocularSystem(MonocularSystem):
+    """A single owner updates the inherited CROSS mapper in capture order."""
+
+    def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None):
+        frontend = frontend or StreamingPnPFrontend(K, config, device)
+        super().__init__(K, image_size, config, system_config, device, frontend)
+        self.map_stream = torch.cuda.Stream(device=device, priority=0) if device.startswith("cuda") else None
+        if self.map_stream is not None:
+            self.map_stream.wait_stream(torch.cuda.current_stream(device))
+        self.previous_snapshot = None
+        self.map_worker = LatestWorker(self._map_snapshot, "cross-global-observation")
+        self.map_events = []
+        self.finished = False
+
+    def _map_snapshot(self, item):
+        snapshot, depth = item
+        def process():
+            delta, covariance = snapshot_motion(self.previous_snapshot, snapshot)
+            self.mapper.step(dict(rgb=snapshot.rgb, depth=depth, conf=None, delta_pose=delta,
+                                  motion_covariance=covariance, timestamp=snapshot.timestamp))
+            mapped = self.mapper.get_current_pose().matrix().detach().cpu().numpy()
+            self.previous_snapshot = snapshot
+            event = dict(source_frame=snapshot.index, source_timestamp=snapshot.timestamp,
+                         permanent_keyframes=self.mapper.db.get_size(),
+                         graph_nodes=len(self.mapper.hypothesis_manager.nodes),
+                         hypotheses=len(self.mapper.hypothesis_manager.hypotheses),
+                         mapping_event=getattr(self.mapper, "last_step_diagnostics", {}).copy())
+            return mapped @ inverse(snapshot.pose), event
+        with torch.inference_mode():
+            if self.map_stream is None:
+                return process()
+            with torch.cuda.stream(self.map_stream):
+                result = process()
+            self.map_stream.synchronize()
+            return result
+
+    def _submit_depths(self):
+        for (snapshot, depth), _ in self.frontend.take_depths():
+            if snapshot.valid:
+                self.map_worker.submit((snapshot, depth))
+
+    def _receive_maps(self):
+        events = []
+        for (alignment, event), timing in self.map_worker.poll():
+            self.map_alignment = alignment
+            self.initialized = True
+            events.append(dict(**event, **timing))
+        self.map_events.extend(events)
+        return events
+
+    def step(self, rgb, timestamp):
+        estimate = self.frontend.step(rgb, timestamp)
+        self._submit_depths()
+        events = self._receive_maps()
+        estimate.diagnostics["frontend_pose"] = estimate.pose.tolist()
+        estimate.pose = self.map_alignment @ estimate.pose
+        estimate.diagnostics.update(mapping_updates=events, mapping_update=bool(events),
+                                    mapping_worker=self.map_worker.statistics())
+        self.last_estimate = estimate
+        return estimate
+
+    def finish(self):
+        if not self.finished:
+            self.frontend.finish()
+            self._submit_depths()
+            self.map_worker.close()
+            self._receive_maps()
+            self.finished = True
+
+    def save_map(self, path):
+        self.finish()
+        super().save_map(path)
+
+    def load_map(self, path):
+        if self.frontend.index:
+            raise RuntimeError("Load a map before processing images of a new session")
+        super().load_map(path)
+
+    def shutdown(self):
+        try:
+            self.finish()
+        finally:
+            self.frontend.shutdown()
+            super().shutdown()

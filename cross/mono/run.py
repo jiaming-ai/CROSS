@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
-from time import perf_counter
+from time import perf_counter, sleep
 
 import cv2
 import numpy as np
@@ -24,7 +24,8 @@ def main():
     parser.add_argument("sequence", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frontend-only", action="store_true")
-    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt"], default="da3")
+    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt", "streaming_pnp"], default="da3")
+    parser.add_argument("--input-fps", type=float, help="Pace input arrivals and measure capture-to-pose deadlines")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
@@ -55,6 +56,8 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--threads", type=int, default=4)
     args = parser.parse_args()
+    if args.input_fps is not None and args.input_fps <= 0:
+        parser.error("--input-fps must be positive")
     import torch
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -107,7 +110,11 @@ def main():
         torch.cuda.reset_peak_memory_stats()
     (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     loading_start = perf_counter()
-    if args.frontend == "dpvo":
+    if args.frontend == "streaming_pnp":
+        from .streaming import StreamingPnPFrontend
+        frontend = StreamingPnPFrontend(sequence.K, config, args.device)
+        frontend.provide_mapping_depth = not args.frontend_only
+    elif args.frontend == "dpvo":
         from .dpvo_frontend import DPVOFrontend
         frontend = DPVOFrontend(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
@@ -140,25 +147,45 @@ def main():
     (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     tracker = frontend
     if not args.frontend_only:
-        from .system import MonocularSystem
+        if args.frontend == "streaming_pnp":
+            from .streaming import StreamingMonocularSystem as MonocularSystem
+        else:
+            from .system import MonocularSystem
         first = next(iter(sequence))
         tracker = MonocularSystem(sequence.K, (first.rgb.shape[1], first.rgb.shape[0]), config,
                                   device=args.device, frontend=frontend)
         if args.load_map:
             tracker.load_map(args.load_map)
     loading_seconds = perf_counter() - loading_start
-    latencies, valid_count, metric_count = [], 0, 0
+    latencies, arrival_latencies, valid_count, metric_count = [], [], 0, 0
+    tracking_stream = None
+    if args.frontend == "streaming_pnp" and args.device.startswith("cuda"):
+        tracking_stream = torch.cuda.Stream(device=args.device, priority=-1)
+        tracking_stream.wait_stream(torch.cuda.current_stream(args.device))
     start = perf_counter()
     try:
         with (args.output / "trajectory.txt").open("w") as trajectory, \
                 (args.output / "frontend_trajectory.txt").open("w") as front_trajectory, \
                 (args.output / "diagnostics.jsonl").open("w") as diagnostics:
             for frame in sequence:
+                arrival = start + len(latencies) / args.input_fps if args.input_fps else None
+                if arrival is not None:
+                    sleep(max(0., arrival-perf_counter()))
                 frame_start = perf_counter()
-                estimate = tracker.step(frame.rgb, frame.timestamp)
-                if args.device.startswith("cuda"):
+                if tracking_stream is not None:
+                    with torch.cuda.stream(tracking_stream):
+                        estimate = tracker.step(frame.rgb, frame.timestamp)
+                    # Synchronize only the pose stream. A device-wide barrier
+                    # would silently wait for the asynchronous teacher/map.
+                    tracking_stream.synchronize()
+                else:
+                    estimate = tracker.step(frame.rgb, frame.timestamp)
+                if args.device.startswith("cuda") and tracking_stream is None:
                     torch.cuda.synchronize()
                 elapsed = perf_counter() - frame_start
+                if arrival is not None:
+                    arrival_latencies.append(perf_counter()-arrival)
+                    estimate.diagnostics["capture_to_pose_seconds"] = arrival_latencies[-1]
                 latencies.append(elapsed)
                 valid_count += bool(estimate.diagnostics["valid"])
                 metric_count += "scale_observation" in estimate.diagnostics
@@ -172,6 +199,9 @@ def main():
                 if len(latencies) % 50 == 0:
                     print(json.dumps({"frames": len(latencies), "valid": valid_count, "scale": frontend.scale_filter.scale,
                                       "fps": len(latencies) / (perf_counter() - start)}), flush=True)
+        emission_elapsed = perf_counter()-start
+        if hasattr(tracker, "finish"):
+            tracker.finish()
         if args.save_map and not args.frontend_only:
             tracker.save_map(args.output / "map.pkl")
     finally:
@@ -183,13 +213,32 @@ def main():
                "metric_model_calls": getattr(frontend.metric, "calls", None),
                "model_loading_seconds": loading_seconds,
                "elapsed_seconds": total, "fps_including_io": len(latencies) / total,
+               "emission_elapsed_seconds": emission_elapsed,
+               "fps_until_last_pose": len(latencies) / emission_elapsed,
+               "background_drain_and_shutdown_seconds": total-emission_elapsed,
                "latency_median_ms": 1000 * float(np.median(latencies)),
                "latency_p95_ms": 1000 * float(np.quantile(latencies, 0.95)),
+               "latency_p99_ms": 1000 * float(np.quantile(latencies, 0.99)),
                "scale": frontend.scale_filter.scale, "accepted_scale_observations": frontend.scale_filter.accepted,
                "rejected_scale_observations": frontend.scale_filter.rejected,
                "scale_reinitializations": frontend.scale_filter.reinitializations,
                "bootstrap_metric_calls": getattr(frontend, "bootstrap_metric_calls", 0),
                "coverage_definition": "Frontend validity flag; DPVO reports initialization, not an independent accuracy check"}
+    if hasattr(frontend, "depth_worker"):
+        summary["teacher_worker"] = frontend.depth_worker.statistics()
+    if hasattr(tracker, "map_worker"):
+        summary["mapping_worker"] = tracker.map_worker.statistics()
+        (args.output / "mapping_events.json").write_text(json.dumps(tracker.map_events, indent=2) + "\n")
+    if arrival_latencies:
+        summary["input_fps"] = args.input_fps
+        summary["capture_to_pose_p95_ms"] = 1000*float(np.quantile(arrival_latencies, .95))
+        summary["capture_to_pose_p99_ms"] = 1000*float(np.quantile(arrival_latencies, .99))
+        summary["pose_deadline_miss_fraction"] = float(np.mean(np.array(arrival_latencies) > 1/args.input_fps))
+        if len(arrival_latencies) > 30:
+            steady = np.array(arrival_latencies[30:])
+            summary["after_first_30_frames"] = dict(capture_to_pose_p95_ms=1000*float(np.quantile(steady, .95)),
+                                                   capture_to_pose_p99_ms=1000*float(np.quantile(steady, .99)),
+                                                   pose_deadline_miss_fraction=float(np.mean(steady > 1/args.input_fps)))
     if args.device.startswith("cuda"):
         summary["peak_gpu_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
     if args.frontend in {"dpvo", "rotation_metric"}:

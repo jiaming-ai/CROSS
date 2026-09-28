@@ -47,7 +47,7 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
-        if self.frontend not in {"da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt"}:
+        if self.frontend not in {"da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt", "streaming_pnp"}:
             raise ValueError("Unknown monocular frontend")
         if min(self.resolution, self.metric_resolution) < 56:
             raise ValueError("Model resolutions must be at least 56 pixels")
