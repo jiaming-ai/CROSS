@@ -1,6 +1,6 @@
 # CROSS-Mono
 
-Experimental monocular extension of [CROSS](https://github.com/jiaming-ai/CROSS), retaining its probabilistic topological memory and delayed hypothesis commitment. This separate research repository is not the published RGB-D system; the original paper's publication status does not apply to this extension.
+Experimental monocular extension of [CROSS](https://arxiv.org/abs/2605.02227), built upon its global retrieval observation message, continuous multi-modal pose hypotheses and delayed commitment. Those existing formulations remain the foundation of this system. This separate research repository adds monocular inputs and uncertain learned metric priors.
 
 The monocular API accepts **RGB, timestamps and camera calibration**. It does not consume sensor depth, input odometry, IMU readings or ground-truth poses. Learned metric depth supplies an uncertain prior; its absolute scale may remain biased out of distribution.
 
@@ -53,6 +53,22 @@ python -m pytest tests -q
 ```
 
 The recommended profile above does not require DPVO or its CUDA extensions. The motion features and optional person detector are small; the metric teacher and retrieved-pair geometry run at lower rates. These calls are synchronous, so average throughput does not guarantee a fixed frame deadline.
+
+The experimental streaming path moves metric inference and the existing CROSS mapping updates to bounded workers:
+
+```bash
+python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
+  --frontend streaming_pnp --mask-people --mask-interval 3 \
+  --metric-interval 30 --mapping-interval 15 \
+  --input-fps 20 --warmup-models --paced-input-worker \
+  --output outputs/desk_streaming
+```
+
+The operating target is 20–30 FPS at 640×480 on one consumer GPU such as an RTX 4090. This is a target, not a verified hardware claim. Measure capture-to-pose latency and deadline misses as well as throughput; include initialization, mapping lag and combined GPU memory. `--warmup-models` uses only the first image and records its time separately. The paced input worker starts preprocessing after simulated capture time and fails on a two-frame queue overflow; it never silently drops evaluation frames. Local server storage avoids including NAS congestion in GPU comparisons.
+
+Teacher outputs retain their source image and timestamp. Mapping receives accumulated motion even if a pending low-rate image is replaced. Previously emitted poses are not rewritten. The mapping worker calls the inherited global observation-mixture, hypothesis filtering and delayed commitment code. `--mapping-process` optionally isolates that worker in a separate process on the same GPU; both processes' allocated-memory peaks are reported. This alone does not guarantee deadlines. The class-specific person detector batches its class postprocessing while retaining the pretrained scores and NMS.
+
+`--delayed-recovery` enables experimental reverse-PnP correction when delayed depth arrives. It is disabled by default because it produced large pose jumps in development. Asynchronous scheduling can change anchor timing and trajectories; report repeated timed runs. The joint place/scale/shared-bias message extension remains research work, and has not yet been implemented or validated as a new contribution.
 
 To reproduce a complete multi-seed suite on a remote server:
 
