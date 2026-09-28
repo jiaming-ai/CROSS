@@ -18,6 +18,7 @@ class MemoryFrame:
     pose: np.ndarray
     depth: np.ndarray
     confidence: np.ndarray
+    features: object = None
 
 
 @dataclass
@@ -52,6 +53,10 @@ class MonoFrontend:
             metric_model = DA3MetricDepth(self.config.metric_model, device, self.config.metric_resolution)
         self.geometry = geometry_model
         self.metric = metric_model
+        self.refiner = None
+        if self.config.pose_refinement == "xfeat":
+            from .refinement import XFeatRefiner
+            self.refiner = XFeatRefiner(self.K, device)
         self.reset()
 
     def reset(self):
@@ -82,6 +87,7 @@ class MonoFrontend:
         current_depth = prediction.depth[-1]
         current_confidence = prediction.confidence[-1]
         diagnostics = {"frame": self.index, "valid": True, "frontend_seconds": frontend_seconds}
+        current_features = self.refiner.extract(rgb) if self.refiner else None
         proposals, weights, overlap_scales = [], [], []
         overlap_config = ScaleConfig(observation_std_floor=0.02, max_log_mad=0.55)
         for i, ref in enumerate(refs):
@@ -108,6 +114,21 @@ class MonoFrontend:
             next_unit_pose = np.eye(4)
             unit_depth = current_depth.copy()
             dispersion = np.zeros(3)
+        if self.refiner and refs:
+            refined, refined_weights = [], []
+            for ref in refs:
+                result = self.refiner.estimate(ref.features, current_features, ref.depth)
+                if result is not None:
+                    relative, inliers, error = result
+                    refined.append(ref.pose @ relative)
+                    refined_weights.append(inliers / max(error, 0.5))
+            diagnostics["refined_references"] = len(refined)
+            if refined:
+                next_unit_pose = mean_pose(refined, refined_weights)
+                dispersion = np.std(np.asarray(refined)[:, :3, 3], axis=0)
+                diagnostics["pose_source"] = "xfeat_pnp"
+            else:
+                diagnostics["pose_source"] = "da3_fallback"
         delta_unit = inverse(self.unit_pose) @ next_unit_pose
         rotation = Rotation.from_matrix(delta_unit[:3, :3]).magnitude()
         if rotation > self.config.max_relative_rotation:
@@ -136,7 +157,7 @@ class MonoFrontend:
         if diagnostics["valid"]:
             self.metric_pose = self.metric_pose @ delta_metric
             self.unit_pose = next_unit_pose
-            frame = MemoryFrame(self.index, image, next_unit_pose, unit_depth, current_confidence)
+            frame = MemoryFrame(self.index, image, next_unit_pose, unit_depth, current_confidence, current_features)
             if self.anchor is None or self.index - self.anchor.index >= self.config.anchor_interval:
                 self.anchor = frame
             self.recent = (self.recent + [frame])[-self.config.recent_frames:]

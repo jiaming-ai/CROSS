@@ -23,6 +23,7 @@ class MonoConfig:
     metric_resolution: int = 504
     anchor_interval: int = 30
     recent_frames: int = 2
+    pose_refinement: str = "none"  # none or xfeat
     mapping_interval: int = 5
     translation_std_floor: float = 0.005
     rotation_std_floor: float = 0.01
@@ -36,5 +37,7 @@ class MonoConfig:
             raise ValueError("Intervals must be positive")
         if self.recent_frames < 1:
             raise ValueError("At least one recent frame is required")
+        if self.pose_refinement not in {"none", "xfeat"}:
+            raise ValueError("pose_refinement must be none or xfeat")
         if self.scale.mode not in {"filtered", "direct", "initial", "relative"}:
             raise ValueError(f"Unknown scale mode: {self.scale.mode}")
