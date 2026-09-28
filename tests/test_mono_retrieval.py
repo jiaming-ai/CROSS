@@ -58,8 +58,13 @@ def test_pair_audit_keeps_rejections_in_input_order():
     assert estimator.last_pair_audit[1]["cycle_translation_m"] == 1.
     # No stale rejection history when the next frame has one accepted pair.
     estimates = iter([(identity, 40, .1), (identity, 40, .1)])
-    estimator.estimate_pose(images[:1], depth[:1], images[0], depth[0])
+    estimator.estimate_pose(images[:1], depth[:1], images[0], depth[0],
+                            ref_metric_sources=[None], curr_metric_source={"source_id": "new"})
     assert len(estimator.last_pair_audit) == 1 and estimator.last_pair_audit[0]["accepted"]
+    source_audit = estimator.last_pair_audit[0]["metric_sources"]
+    assert source_audit["reference"] is None  # legacy depth provenance is unknown
+    assert source_audit["current"] == {"source_id": "new"}
+    assert source_audit["forward_right_tangent_response"] == [0.]*6
 
 
 @pytest.mark.parametrize("distance", [.1, 2., 10.])

@@ -341,6 +341,7 @@ class System:
             timestamp=timestamp,
             temporary=False,
             pose_charts=self.hypothesis_manager.get_active_charts(),
+            metric_source=getattr(self, "_current_metric_source", None),
         )
         self.hypothesis_manager.add_node(kf)
         self.last_added_kf_id = kf.id
@@ -671,6 +672,11 @@ class System:
         depth_image = last_obs["depth"]
         confidence_map = last_obs["conf"]
         timestamp = last_obs.get("timestamp", None)
+        self._current_metric_source = last_obs.get("metric_source")
+        if "metric_input" in last_obs:
+            # These are frontend input derivatives, not filtered node-pose
+            # sensitivities. Retain them as diagnostics for the coupled model.
+            self.last_step_diagnostics["metric_input"] = last_obs["metric_input"]
 
         if timestamp is None:
             timestamp = self._processed_frame_num
@@ -1048,6 +1054,7 @@ class System:
                 timestamp=timestamp,
                 temporary=is_temp_kf,
                 pose_charts=pose_charts,
+                metric_source=getattr(self, "_current_metric_source", None),
             )
             logger.debug(f"Add permanent keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         else:
@@ -1059,6 +1066,7 @@ class System:
                 timestamp=timestamp,
                 temporary=is_temp_kf,
                 pose_charts=pose_charts,
+                metric_source=getattr(self, "_current_metric_source", None),
             )
             logger.debug(f"Add temporary keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         
@@ -1368,11 +1376,16 @@ class System:
         ref_depths = torch.cat(ref_depths, dim=0) if ref_depths is not None else None
 
         # then estimate the relative pose
+        source_context = {}
+        if getattr(self, "_current_metric_source", None) is not None:
+            source_context = dict(ref_metric_sources=[getattr(k, "metric_source", None) for k in keyframes],
+                                  curr_metric_source=self._current_metric_source)
         valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
             ref_rgbs,
             ref_depths,
             rgb_image,
             depth_image,
+            **source_context,
         )
         # Record even failed geometry. Previously the early return erased
         # retrieved IDs whenever no pair survived verification.

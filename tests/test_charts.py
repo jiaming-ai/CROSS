@@ -162,10 +162,12 @@ def test_database_and_temporary_node_roundtrip_keep_disconnected_charts(monkeypa
     atlas = db.create_atlas()
     kf = node(1,5)
     saved = db.insert(1,None,None,mu=kf.pose_mu,sigma=kf.pose_std,weights=kf.pose_weights,
-                      atlas=atlas,pose_charts=kf.pose_charts)
+                      atlas=atlas,pose_charts=kf.pose_charts,
+                      metric_source=dict(source_id="image-a",session_id="session-a"))
     hm = manager()
     hm.nodes = {saved.id:saved,100:node(100,9)}
     hm.nodes[100].temporary = True
+    hm.nodes[100].metric_source = dict(source_id="image-b",session_id="session-b")
     db_state, hm_state = copy.deepcopy(db.save_state()), copy.deepcopy(hm.save_state())
     db2 = db_module.KeyframeDatabase(None,device='cpu')
     loaded = db2.load_state(db_state,'cpu')
@@ -173,6 +175,8 @@ def test_database_and_temporary_node_roundtrip_keep_disconnected_charts(monkeypa
     hm2.load_state(hm_state,db2,'cpu','cpu',loaded)
     assert int(hm2.nodes[saved.id].pose_charts[0]) == 5
     assert int(hm2.nodes[100].pose_charts[0]) == 9
+    assert hm2.nodes[saved.id].metric_source == saved.metric_source
+    assert hm2.nodes[100].metric_source == hm.nodes[100].metric_source
     hm2.start_tracking_chart()
     assert int(hm2.component_charts[0]) == 10
 

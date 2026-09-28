@@ -80,6 +80,7 @@ def serialize_keyframes(keyframes, path: str, method: str = "pickle"):
             "pose_std": kf.pose_std.tensor().cpu().numpy() if kf.pose_std is not None else None,
             "pose_weights": kf.pose_weights.cpu().numpy() if kf.pose_weights is not None else None,
             "pose_charts": kf.pose_charts.cpu().numpy() if kf.pose_charts is not None else None,
+            "metric_source": kf.metric_source,
             "atlas": kf.atlas.id if kf.atlas is not None else None,
             "timestamp": kf.timestamp
         })
@@ -112,6 +113,9 @@ class Keyframe:
     # Coordinate frame of each pose component; independent of acquisition atlas
     # and bounded hypothesis slot. None denotes a legacy map without provenance.
     pose_charts: Optional[torch.Tensor] = None
+    # Identity of the image/model prediction that supplied this node's depth.
+    # Independent of pose charts and hypothesis slots; None for legacy maps.
+    metric_source: Optional[dict] = None
 
     def __post_init__(self):
         self.id = Keyframe._next_id

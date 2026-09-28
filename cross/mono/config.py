@@ -33,6 +33,7 @@ class MonoConfig:
     delayed_recovery: bool = False
     teacher_lag_frames: int = 0
     adaptive_anchor: bool = False
+    trace_metric_sources: bool = False
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"
@@ -57,6 +58,8 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.trace_metric_sources and self.frontend != "streaming_pnp":
+            raise ValueError("Metric source tracing requires streaming_pnp")
         if self.chart_aware and not self.session_recovery:
             raise ValueError("Chart-aware mapping requires session_recovery")
         if self.frontend not in {"da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt", "streaming_pnp"}:

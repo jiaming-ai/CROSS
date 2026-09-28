@@ -1520,6 +1520,7 @@ class HypothesisManager:
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,
                     "pose_charts": kf.pose_charts.cpu() if kf.pose_charts is not None else None,
+                    "metric_source": kf.metric_source,
                     "timestamp": kf.timestamp,
                     "temporary": kf.temporary,
                     "atlas_id": kf.atlas.id if kf.atlas is not None else None,
@@ -1591,6 +1592,7 @@ class HypothesisManager:
                 temporary=kf_data["temporary"],
                 last_pgo_step=kf_data["last_pgo_step"],
                 pose_charts=kf_data["pose_charts"].to(storage_device) if kf_data.get("pose_charts") is not None else None,
+                metric_source=kf_data.get("metric_source"),
             )
 
             # Manually set the ID to match the saved one

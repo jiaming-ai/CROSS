@@ -98,6 +98,10 @@ class MetricRelativePose:
         self.last_pair_audit = []
         for i, image in enumerate(ref_image):
             audit = dict(reason="forward_pnp", accepted=False)
+            source_context = kwargs.get("ref_metric_sources")
+            if source_context is not None:
+                source = source_context[i]
+                audit["metric_sources"] = dict(reference=source, current=kwargs.get("curr_metric_source"))
             self.last_pair_audit.append(audit)
             reference = self.features(DA3RelativePose.rgb(image))
             depth = ref_depth[i].detach().cpu().numpy().squeeze()
@@ -124,6 +128,10 @@ class MetricRelativePose:
             stds.append(np.r_[np.sqrt(0.02**2 + (pose[:3, 3] * 0.12)**2), [0.03] * 3])
             valid[i] = True
             audit.update(reason="accepted", accepted=True, confidence=confidences[-1])
+            if source_context is not None:
+                from .metric_sources import pnp_scale_response
+                audit["metric_sources"]["forward_right_tangent_response"] = pnp_scale_response(pose)
+                audit["metric_sources"]["backward_right_tangent_response"] = pnp_scale_response(backward[0])
         self.last_stds = torch.as_tensor(np.array(stds).reshape(-1, 6), dtype=torch.float32)
         if not poses:
             return pp.identity_SE3(0, device=self.device), valid, torch.empty(0)

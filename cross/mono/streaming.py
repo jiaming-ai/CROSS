@@ -17,6 +17,7 @@ from .geometry import inverse, scale_translation_covariance
 from .pnp_frontend import MetricPnPFrontend
 from .system import MonocularSystem
 from .worker import LatestWorker
+from .metric_sources import MetricSource, TranslationResponse, identify_prediction, relative_scale_response
 
 
 def adjoint(pose):
@@ -38,6 +39,8 @@ class FrameSnapshot:
     world_std_prefix: np.ndarray
     valid: bool
     refresh_anchor: bool = False
+    metric_source: MetricSource | None = None
+    scale_response: TranslationResponse | None = None
 
 
 def snapshot_motion(previous, current):
@@ -64,12 +67,30 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         # Models were constructed on the calling stream before the worker.
         if self.depth_stream is not None:
             self.depth_stream.wait_stream(torch.cuda.current_stream(device))
-        self.depth_worker = LatestWorker(self._predict_snapshot, "cross-metric-depth")
         self.world_std_prefix = np.zeros(6)
         self.ready_depths = []
         self.pending_depths = []
         self.last_submitted = -1
         self.finished = False
+        self.trace_metric_sources = self.config.trace_metric_sources
+        if self.trace_metric_sources:
+            from uuid import uuid4
+            from .models import MODEL_REVISIONS
+            self.metric_revision = MODEL_REVISIONS.get(self.config.metric_model)
+            if self.metric_revision is None:
+                raise ValueError("Metric source tracing requires a pinned metric model revision")
+            self.metric_session_id = uuid4().hex
+            self.anchor_metric_source = None
+            self.anchor_scale_response = TranslationResponse()
+            self.pose_scale_prefix = TranslationResponse()
+            self.pose_scale_tail = None
+        self.depth_worker = LatestWorker(self._predict_snapshot, "cross-metric-depth")
+
+    def _capture_scale_response(self):
+        if self.pose_scale_tail is None:
+            return self.pose_scale_prefix
+        source, displacement = self.pose_scale_tail
+        return self.pose_scale_prefix.with_displacement(source, displacement)
 
     def _predict_snapshot(self, snapshot):
         with torch.inference_mode():
@@ -101,7 +122,14 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                 # the correction and retains the failed-frame uncertainty.
                 reverse = self.refiner.estimate(snapshot.features, self.anchor_features, depth)
                 if reverse is not None:
-                    snapshot = replace(snapshot, pose=self.anchor_pose @ inverse(reverse[0]), valid=True)
+                    relative = inverse(reverse[0])
+                    snapshot = replace(snapshot, pose=self.anchor_pose @ relative, valid=True)
+                    if getattr(self, "trace_metric_sources", False):
+                        # Reverse PnP uses the newly delivered image's depth,
+                        # not the old anchor's depth. Emitted trace stays held.
+                        response = self.anchor_scale_response.with_displacement(
+                            snapshot.metric_source.source_id, self.anchor_pose[:3, :3] @ relative[:3, 3])
+                        snapshot = replace(snapshot, scale_response=response)
                     recovered = True
             timing = dict(timing, delayed_reverse_recovery=recovered,
                           held_ready_frames=self.index-timing["first_ready_frame"],
@@ -113,6 +141,9 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                     or (snapshot.valid and snapshot.refresh_anchor)):
                 self.anchor_features, self.anchor_depth = snapshot.features, depth
                 self.anchor_pose, self.anchor_index = snapshot.pose, snapshot.index
+                if getattr(self, "trace_metric_sources", False):
+                    self.anchor_metric_source = snapshot.metric_source
+                    self.anchor_scale_response = snapshot.scale_response
                 renewed = True
         self.pending_depths = retained
         self.ready_depths.extend(received)
@@ -136,6 +167,10 @@ class StreamingPnPFrontend(MetricPnPFrontend):
             if result is not None:
                 relative, count, error = result
                 self.metric_pose = self.anchor_pose @ relative
+                if getattr(self, "trace_metric_sources", False):
+                    self.pose_scale_prefix = self.anchor_scale_response
+                    self.pose_scale_tail = (self.anchor_metric_source.source_id,
+                                           self.anchor_pose[:3, :3] @ relative[:3, 3])
             else:
                 valid = False  # keep the held output and its failure in evaluation
         delta = inverse(previous) @ self.metric_pose
@@ -157,6 +192,11 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         if bootstrap or request:
             snapshot = FrameSnapshot(self.index, timestamp, rgb.copy(), features, self.metric_pose.copy(),
                                      self.world_std_prefix.copy(), valid, refresh_anchor=weak_support)
+            if getattr(self, "trace_metric_sources", False):
+                source = identify_prediction(snapshot.rgb, self.K, model_id=self.config.metric_model,
+                                             revision=self.metric_revision, resolution=self.config.metric_resolution,
+                                             session_id=self.metric_session_id)
+                snapshot = replace(snapshot, metric_source=source, scale_response=self._capture_scale_response())
             self.last_submitted = self.index
             if bootstrap:
                 tick = perf_counter()
@@ -164,6 +204,9 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                 bootstrap_seconds = perf_counter()-tick
                 self.anchor_features, self.anchor_depth = features, depth
                 self.anchor_pose, self.anchor_index = self.metric_pose.copy(), self.index
+                if getattr(self, "trace_metric_sources", False):
+                    self.anchor_metric_source = snapshot.metric_source
+                    self.anchor_scale_response = snapshot.scale_response
                 self.ready_depths.append(((snapshot, depth), dict(queue_seconds=0., service_seconds=bootstrap_seconds,
                                                                turnaround_seconds=bootstrap_seconds)))
                 renewed = True
@@ -182,6 +225,10 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                            teacher_updates=[dict(source_frame=s.index, age_frames=self.index-s.index, **timing)
                                             for (s, _), timing in received],
                            teacher_worker=self.depth_worker.statistics())
+        if getattr(self, "trace_metric_sources", False):
+            diagnostics.update(metric_anchor_source=self.anchor_metric_source.source_id,
+                               metric_session_id=self.metric_session_id,
+                               metric_source_trace_version=1)
         self.last_timestamp, self.last_valid = timestamp, valid
         self.index += 1
         if not self.provide_mapping_depth:
@@ -231,8 +278,19 @@ class StreamingMonocularSystem(MonocularSystem):
         snapshot, depth = item
         def process():
             delta, covariance = snapshot_motion(self.previous_snapshot, snapshot)
-            self.mapper.step(dict(rgb=snapshot.rgb, depth=depth, conf=None, delta_pose=delta,
-                                  motion_covariance=covariance, timestamp=snapshot.timestamp))
+            observation = dict(rgb=snapshot.rgb, depth=depth, conf=None, delta_pose=delta,
+                               motion_covariance=covariance, timestamp=snapshot.timestamp)
+            if getattr(snapshot, "metric_source", None) is not None:
+                previous = self.previous_snapshot
+                jacobians = relative_scale_response(previous.pose, previous.scale_response, snapshot.pose,
+                                                     snapshot.scale_response) if previous is not None else {}
+                observation["metric_source"] = snapshot.metric_source.record()
+                observation["metric_input"] = dict(version=1, source_frame=snapshot.index,
+                    previous_frame=previous.index if previous is not None else None,
+                    source_id=snapshot.metric_source.source_id, session_id=snapshot.metric_source.session_id,
+                    world_translation_response=snapshot.scale_response.record(),
+                    motion_right_tangent_response=jacobians)
+            self.mapper.step(observation)
             mapped = self.mapper.get_current_pose().matrix().detach().cpu().numpy()
             self.previous_snapshot = snapshot
             event = dict(source_frame=snapshot.index, source_timestamp=snapshot.timestamp,
