@@ -146,10 +146,18 @@ python -m cross.mono.openloris_groundtruth /path/to/office1-2 --output /path/to/
 python -m cross.mono.evaluate_restart \
   /path/to/reference/trajectory.txt /path/to/evaluation/office1-1-camera.txt \
   /path/to/query/trajectory.txt /path/to/evaluation/office1-2-camera.txt \
-  --diagnostics /path/to/query/diagnostics.jsonl --output /path/to/evaluation/restart.json
+  --diagnostics /path/to/query/diagnostics.jsonl \
+  --mapping-events /path/to/query/mapping_events.json \
+  --output /path/to/evaluation/restart.json
 ```
 
 The restart evaluator fits one rigid transform using only the reference trajectory and applies it unchanged to the query. Held outputs remain included. It records the emitted pose receiving each applied commitment; pose correctness at that instant is a diagnostic, not a label proving a correct topological merge. Independently aligned query ATE cannot establish relocalization success.
+
+`--mapping-events` additionally accounts for recorded commitments that never
+reached a camera output, including results drained at shutdown. Their accuracy
+remains unknown until the saved map is evaluated. Check the run summary's
+`mapping_audit_complete` flag: accounting can only cover the supplied event log.
+Missing, duplicated or inconsistent commitment records are rejected.
 
 Two opt-in session experiments are available. `--session-recovery` replaces the distance guard for an unanchored historical-map candidate with direct historical support across the inherited evidence window and at least two reference keyframes. The existing overlap/confidence tests and delayed hypothesis realization still apply. Support from new query nodes, duplicate deliveries, and a reused hypothesis slot cannot substitute for this history. After a successful reference merge, the original distance guard resumes. This addresses the arbitrary chart displacement in that guard. Without the separate chart-aware option below, clustering and proposal alignment still compare numerical coordinates across sessions. `--historical-retrieval-slots 1` reserves one of the existing three candidates for saved-map keyframes without lowering retrieval thresholds or increasing the geometry budget. Both options default off and need broader aliasing evaluation. Retrieval diagnostics include source IDs, geometric rejection reasons and proposal assignments.
 

@@ -77,6 +77,66 @@ def test_held_outputs_are_counted_and_degenerate_reference_rejected(tmp_path):
         evaluate_restart(*files)
 
 
+def commitment_logs(tmp_path, stamps):
+    first = dict(source_frame=2, source_timestamp=float(stamps[2]+100),
+                 mapping_event=dict(loop_closure_applied=True))
+    late = dict(source_frame=11, source_timestamp=float(stamps[11]+100),
+                mapping_event=dict(loop_closure_applied=True))
+    rows = [{} for _ in stamps]
+    rows[7] = dict(mapping_updates=[first])
+    diagnostics = tmp_path/"diagnostics.jsonl"
+    diagnostics.write_text("\n".join(json.dumps(row) for row in rows))
+    mapping = tmp_path/"mapping_events.json"
+    mapping.write_text(json.dumps([first, late]))
+    return diagnostics, mapping
+
+
+def test_late_commit_is_reported_without_claiming_live_pose_or_map_correctness(tmp_path):
+    t, _, _, files = example(tmp_path)
+    diagnostics, mapping = commitment_logs(tmp_path, t)
+    result = evaluate_restart(*files, diagnostics=diagnostics, mapping_events=mapping)
+    assert result["query_ate_rmse_m"] < 1e-9
+    assert len(result["applied_commitments"]) == 1
+    assert result["applied_commitments"][0]["output_index"] == 7
+    audit = result["mapping_commitment_audit"]
+    assert audit["recorded_mapper_commitments"] == 2
+    assert audit["received_in_camera_outputs"] == 1
+    assert audit["not_received_in_camera_outputs"] == 1
+    assert audit["unreceived_commitments"] == [dict(source_frame=11, source_timestamp=float(t[11]+100))]
+    # Backward-compatible trajectory evaluation alone makes no map-audit claim.
+    assert "mapping_commitment_audit" not in evaluate_restart(*files, diagnostics=diagnostics)
+
+
+@pytest.mark.parametrize("damage, message", [
+    ("missing", "missing from"),
+    ("duplicate", "duplicate source frame"),
+    ("timestamp", "timestamps disagree"),
+    ("missing_timestamp", "finite timestamp"),
+])
+def test_inconsistent_mapping_log_cannot_silently_change_commit_counts(tmp_path, damage, message):
+    t, _, _, files = example(tmp_path)
+    diagnostics, mapping = commitment_logs(tmp_path, t)
+    events = json.loads(mapping.read_text())
+    if damage == "missing":
+        events.pop(0)
+    elif damage == "duplicate":
+        events.append(events[0].copy())
+    elif damage == "timestamp":
+        events[0]["source_timestamp"] += 1
+    else:
+        del events[0]["source_timestamp"]
+    mapping.write_text(json.dumps(events))
+    with pytest.raises(ValueError, match=message):
+        evaluate_restart(*files, diagnostics=diagnostics, mapping_events=mapping)
+
+
+def test_mapping_accounting_requires_the_emitted_camera_diagnostics(tmp_path):
+    t, _, _, files = example(tmp_path)
+    _, mapping = commitment_logs(tmp_path, t)
+    with pytest.raises(ValueError, match="requires camera diagnostics"):
+        evaluate_restart(*files, mapping_events=mapping)
+
+
 def test_openloris_gt_preserves_shared_world_and_camera_lever_arm(tmp_path):
     import cv2
     from cross.mono.openloris_groundtruth import camera_groundtruth
