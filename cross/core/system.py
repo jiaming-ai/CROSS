@@ -805,7 +805,8 @@ class System:
             # Handle force-add keyframe if threshold exceeded
             new_kf = None
             if self._unsuccessful_retrieval_steps > self.new_kf_after_n_unsuccessful_steps:
-                new_kf = self._add_new_kf(rgb_image, depth_image, force_permanent=True, force_add=True)
+                new_kf = self._add_new_kf(rgb_image, depth_image, timestamp=timestamp,
+                                          force_permanent=True, force_add=True)
                 self._unsuccessful_retrieval_steps = 0
                 logger.info(f"Added new keyframe at step {self._processed_frame_num} due to unsuccessful retrieval")
 

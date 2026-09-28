@@ -13,7 +13,17 @@ from scipy import sparse
 from scipy.sparse.linalg import splu
 
 from .conditional import SourceFactor
-from .conditional_pose import ConditionalPose, adjoint, inverse
+from .conditional_pose import ConditionalPose, adjoint, inverse, normalize_mean
+
+
+def _matrix(pose):
+    """Normalize near-unit stored quaternions before double-precision geometry.
+
+    GTSAM's quaternion constructor and our transpose inverse assume SO(3).
+    Passing float32 norm roundoff through repeated graph joins can amplify it;
+    normalizing after forming the matrix is already too late.
+    """
+    return normalize_mean(pose.double()).matrix().cpu().numpy()
 
 
 def prepare(pg, component):
@@ -59,7 +69,7 @@ def prepare(pg, component):
     chosen = {}
     pg.conditional_source_nodes = {}
     for vertex in pg.vertices:
-        pose,model,_ = models[vertex.id].at(vertex.pose.matrix().double().cpu().numpy(),belief)
+        pose,model,_ = models[vertex.id].at(_matrix(vertex.pose),belief)
         if vertex.original_comp_id == 0:
             pg.conditional_source_nodes[vertex.original_kf_id] = (pose,model)
         # A realized alternative supplies the initialization of duplicated
@@ -67,16 +77,16 @@ def prepare(pg, component):
         if vertex.original_kf_id not in chosen or vertex.original_comp_id == component:
             item = copy.copy(vertex)
             item.id = vertex.original_kf_id
-            item.pose = pp.from_matrix(torch.as_tensor(pose,device=pg.device,dtype=vertex.pose.dtype),pp.SE3_type)
+            item.pose = normalize_mean(pp.from_matrix(torch.as_tensor(pose,device=pg.device,dtype=torch.float64),pp.SE3_type))
             item.conditional_pose = model
             chosen[item.id] = item
     conditioned_edges = []
     for a,b,factors in edges:
         conditioned = []
         for edge in factors:
-            pose,model,_ = edge.conditional_pose.at(edge.mean.matrix().double().cpu().numpy(),belief)
+            pose,model,_ = edge.conditional_pose.at(_matrix(edge.mean),belief)
             item = copy.copy(edge)
-            item.mean = pp.from_matrix(torch.as_tensor(pose,device=pg.device,dtype=edge.mean.dtype),pp.SE3_type)
+            item.mean = normalize_mean(pp.from_matrix(torch.as_tensor(pose,device=pg.device,dtype=torch.float64),pp.SE3_type))
             item.std = pp.se3(torch.as_tensor(model.geometry_covariance.diagonal().copy(),
                                              device=pg.device,dtype=edge.std.dtype).clip(1e-12).sqrt())
             item.conditional_pose = model
@@ -106,7 +116,7 @@ def solve_responses(pg, result, factors, free_ids, fixed_ids):
         a,b = keys
         Ai,Aj = dense[:,:6][:,permutation],dense[:,6:][:,permutation]
         Xi,Xj = result.atPose3(a).matrix(),result.atPose3(b).matrix()
-        Z = edge.mean.matrix().double().cpu().numpy()
+        Z = _matrix(edge.mean)
         error_transform = inverse(Z)@inverse(Xi)@Xj
         Jz = edge.conditional_pose.factor.jacobian
         sl = slice(6*row,6*row+6)
@@ -173,20 +183,20 @@ def apply_result(hm, pg, optimized_poses, other):
     for key in sorted(optimized):
         chart = pg.source_node_charts[key]
         old_pose,old_model = pg.conditional_source_nodes[key]
-        transforms[chart] = correction(old_pose,old_model,optimized[key].matrix().double().cpu().numpy(),
+        transforms[chart] = correction(old_pose,old_model,_matrix(optimized[key]),
                                        pg.optimized_conditional_poses[key])
 
     # Keep the selected live pose's displacement beyond the latest graph node.
     selected_state = hm.source_states[other]
-    selected_pose = hm.dist[0][other].matrix().double().cpu().numpy()
+    selected_pose = _matrix(hm.dist[0][other])
     current_model = ConditionalPose.from_state(selected_state)
     eligible = [key for key in optimized if hm.nodes[key].conditional_poses[other] is not None]
     if not eligible:
         return dict(success=False,message='Conditional PGO has no anchor for the selected live hypothesis')
     latest = max(eligible)
     kf = hm.nodes[latest]
-    old_pose,old_model,_ = kf.conditional_poses[other].at(kf.pose_mu[other].matrix().double().cpu().numpy(),belief)
-    C,J = correction(old_pose,old_model,optimized[latest].matrix().double().cpu().numpy(),
+    old_pose,old_model,_ = kf.conditional_poses[other].at(_matrix(kf.pose_mu[other]),belief)
+    C,J = correction(old_pose,old_model,_matrix(optimized[latest]),
                      pg.optimized_conditional_poses[latest])
     current_pose,current_model = transport(selected_pose,current_model,C,J)
     current_state,_ = belief.with_pose(current_model)
@@ -198,48 +208,57 @@ def apply_result(hm, pg, optimized_poses, other):
                 continue
             chart = int(node.pose_charts[component])
             if component == 0 and node.id in optimized:
-                pose = optimized[node.id].matrix().double().cpu().numpy()
+                pose = _matrix(optimized[node.id])
                 moved = pg.optimized_conditional_poses[node.id]
             elif chart in transforms:
-                pose,moved = transport(node.pose_mu[component].matrix().double().cpu().numpy(),model,*transforms[chart])
+                pose,moved = transport(_matrix(node.pose_mu[component]),model,*transforms[chart])
             else:
                 continue
             state,_ = belief.with_pose(moved)
             marginal = np.sqrt(state.marginal_covariance().diagonal().clip(0))
-            pending.append((node,component,pose,moved,marginal))
-    # Validate and construct every conditional result before publishing it.
-    affected = set()
-    for node,component,pose,model,std in pending:
-        node.pose_mu[component] = pp.from_matrix(torch.as_tensor(pose,device=node.pose_mu.device,dtype=node.pose_mu.dtype),pp.SE3_type)
-        node.pose_std[component] = pp.se3(torch.as_tensor(std,device=node.pose_std.device,dtype=node.pose_std.dtype))
-        node.conditional_poses[component] = model
-        node.pose_charts[component] = pg.output_chart
-        node.last_pgo_step = hm.step_counter
-        affected.add(node.id)
-    # Retain unrelated tracking modes. Their pose response is re-expressed at
-    # their own bias posterior, rather than replacing it by the selected one.
+            value = pp.from_matrix(torch.as_tensor(pose,device=node.pose_mu.device,dtype=node.pose_mu.dtype),pp.SE3_type)
+            std = pp.se3(torch.as_tensor(marginal,device=node.pose_std.device,dtype=node.pose_std.dtype))
+            pending.append((node,component,value,moved,std))
+    # Retain unrelated tracking modes at their own bias posterior. Construct
+    # their conversions too before publishing any node or tracking state.
+    tracking_pending = []
     for component,state in enumerate(hm.source_states):
         if state is None or component in {0,other}:
             continue
         chart = int(hm.component_charts[component])
         if chart in transforms:
-            pose,model = transport(hm.dist[0][component].matrix().double().cpu().numpy(),
+            pose,model = transport(_matrix(hm.dist[0][component]),
                                    ConditionalPose.from_state(state),*transforms[chart])
             pose,model,own_belief = model.at(pose,state)
             updated,_ = own_belief.with_pose(model)
-            hm.source_states[component] = updated
-            hm.dist[0][component] = pp.from_matrix(torch.as_tensor(pose,device=hm.device,dtype=hm.dist[0].dtype),pp.SE3_type)
-            hm.dist[1][component] = pp.se3(torch.as_tensor(np.sqrt(updated.marginal_covariance().diagonal().clip(0)),
-                                                         device=hm.device,dtype=hm.dist[1].dtype))
-            hm.component_charts[component] = pg.output_chart
+            value = pp.from_matrix(torch.as_tensor(pose,device=hm.device,dtype=hm.dist[0].dtype),pp.SE3_type)
+            std = pp.se3(torch.as_tensor(np.sqrt(updated.marginal_covariance().diagonal().clip(0)),
+                                         device=hm.device,dtype=hm.dist[1].dtype))
+            tracking_pending.append((component,updated,value,std))
+    current_value = pp.from_matrix(torch.as_tensor(current_pose,device=hm.device,dtype=hm.dist[0].dtype),pp.SE3_type)
+    current_std = pp.se3(torch.as_tensor(np.sqrt(current_state.marginal_covariance().diagonal().clip(0)),
+                                       device=hm.device,dtype=hm.dist[1].dtype))
+    # All potentially failing pose/covariance conversions have now succeeded.
+    affected = set()
+    for node,component,pose,model,std in pending:
+        node.pose_mu[component] = pose
+        node.pose_std[component] = std
+        node.conditional_poses[component] = model
+        node.pose_charts[component] = pg.output_chart
+        node.last_pgo_step = hm.step_counter
+        affected.add(node.id)
+    for component,state,pose,std in tracking_pending:
+        hm.source_states[component] = state
+        hm.dist[0][component] = pose
+        hm.dist[1][component] = std
+        hm.component_charts[component] = pg.output_chart
     if other != 0:
         hm.merge_hypotheses(other,conditional_transport_done=True)
         if anchored_reference:
             hm.reference_support.mark_anchored()
     hm.source_states[0] = current_state
-    hm.dist[0][0] = pp.from_matrix(torch.as_tensor(current_pose,device=hm.device,dtype=hm.dist[0].dtype),pp.SE3_type)
-    hm.dist[1][0] = pp.se3(torch.as_tensor(np.sqrt(current_state.marginal_covariance().diagonal().clip(0)),
-                                         device=hm.device,dtype=hm.dist[1].dtype))
+    hm.dist[0][0] = current_value
+    hm.dist[1][0] = current_std
     hm.dist[2][0] = 1.
     hm.component_charts[0] = pg.output_chart
     if hm.system.topo_map is not None:

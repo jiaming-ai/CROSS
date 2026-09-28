@@ -92,6 +92,50 @@ def test_stale_conditional_graph_is_rejected_before_mutating_any_node():
         torch.testing.assert_close(node.pose_mu,pose,rtol=0,atol=0)
 
 
+def test_repeated_graph_solves_do_not_amplify_near_unit_stored_quaternions():
+    hm = chain()
+    frame = lie(exp(np.array([.3,-.1,.2,0.,2.05,0.])))
+    for node in hm.nodes.values():
+        node.pose_mu[0] = frame @ node.pose_mu[0]
+        # Magnitude observed before the fifth-session graph failure.
+        node.pose_mu[0,3:] *= 1.+1.5e-6
+    hm.dist = (hm.nodes[10].pose_mu.clone(), hm.dist[1], hm.dist[2])
+    expected = [node.pose_mu[0].tensor().double().numpy().copy() for node in hm.nodes.values()]
+    for value in expected:
+        value[3:] /= np.linalg.norm(value[3:])
+    for _ in range(12):
+        pg = solve(hm)
+        result = hm.apply_pgo_result(dict(pose_graph=pg,optimized_poses=pg.optimized_poses,other_hypothesis_id=0))
+        assert result['success']
+        for node,mean in zip(hm.nodes.values(),expected):
+            value = node.pose_mu[0].tensor().double().numpy()
+            assert abs(np.linalg.norm(value[3:])-1) < 2e-7
+            np.testing.assert_allclose(value[:3],mean[:3],atol=3e-5)
+            assert abs(value[3:]@mean[3:]) == pytest.approx(1.,abs=3e-7)
+
+
+def test_invalid_unsolved_pose_cannot_partially_publish_graph_results():
+    hm = chain()
+    hm.source_states[0].mean[:] = .07
+    extra = copy.deepcopy(hm.nodes[10]); extra.id = 20
+    extra.pose_mu[0,3:] *= 1.2
+    hm.nodes[20] = extra  # Same chart, outside the connected optimized graph.
+    pg = solve(hm)
+    assert 20 not in pg.optimized_poses
+    before = [(n.pose_mu.clone(),n.pose_std.clone(),n.pose_charts.clone(),n.last_pgo_step,
+               [m.record() if m is not None else None for m in n.conditional_poses]) for n in hm.nodes.values()]
+    tracking = tuple(x.clone() for x in hm.dist)
+    with pytest.raises(ValueError):
+        hm.apply_pgo_result(dict(pose_graph=pg,optimized_poses=pg.optimized_poses,other_hypothesis_id=0))
+    for node,snapshot in zip(hm.nodes.values(),before):
+        for actual,expected in zip((node.pose_mu,node.pose_std,node.pose_charts),snapshot[:3]):
+            torch.testing.assert_close(actual,expected,rtol=0,atol=0)
+        assert node.last_pgo_step == snapshot[3]
+        assert [m.record() if m is not None else None for m in node.conditional_poses] == snapshot[4]
+    for actual,expected in zip(hm.dist,tracking):
+        torch.testing.assert_close(actual,expected,rtol=0,atol=0)
+
+
 def test_saved_node_conditional_model_is_separate_from_one_bias_posterior():
     hm = chain()
     hm.source_states[0].mean[:] = .07
