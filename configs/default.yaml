@@ -1,0 +1,129 @@
+# CROSS default configuration
+# All values here match the dataclass defaults in cross/core/config.py.
+# Override per-experiment by layering another YAML on top:
+#   load_config("configs/default.yaml", "configs/experiments/indoor_vio.yaml")
+
+async_update: false
+
+# ── Retrieval (VPR) ──────────────────────────────────────────────────────────
+retrieval:
+  vpr_model_type: boq
+  top_k: 10
+  vpr_score_threshold_high: 0.3
+  vpr_score_threshold_low: 0.3
+  initial_buffer_size: 1000
+
+# ── Tracking ─────────────────────────────────────────────────────────────────
+tracking:
+  use_VO: false
+  use_odometry: true
+  new_kf_after_n_unsuccessful_steps: 5
+  odom_std_per_meter: 0.5
+  odom_std_per_radian: 0.5
+  odom_min_std_translation: 0.1
+  odom_min_std_rotation: 0.1
+  # full | skip_active | adaptive
+  filter_mode: full
+  adaptive_filter:
+    trans_thresh: 0.10   # meters
+    rot_thresh: 0.10     # radians
+
+# ── Mapping ──────────────────────────────────────────────────────────────────
+mapping:
+  kf_gmm_n_components: 5
+  kf_retrieval_threshold_new_kf: 0.75
+  kf_match_threshold_new_kf: 50
+  new_component_weight_threshold: 0.2
+
+  loop_closure:
+    async: false
+    queue_size: 1
+
+  local_smoothing:
+    enabled: false
+    window_kfs: 30
+    period_steps: 10
+    k_hop: 1
+
+  cluster_std:
+    use_conf_weight: true
+    min_std_translation: 0.01   # meters
+    min_std_rotation: 0.01      # radians
+
+  # Hypothesis manager parameters
+  hypothesis:
+    llr_hist_length: 8
+    llr_bias: 0.1
+    active_dist_threshold: 0.001
+    alignment_threshold: 1.0
+    tracking_active_threshold: 1.0e-12
+    tracking_floor_weight: 1.0e-8
+    realize_sum_thresh: 0.3
+    realize_hitrate_thresh: 0.4
+    death_ttl_base: 4
+    death_ttl_gain: 4.0
+    ttl_sum_thresh: 0.25
+    ttl_hitrate_thresh: 0.4
+    death_ttl_max: 20
+    newborn_mix_coeff: 0.1
+    newborn_conf_power: 1.0
+    detect_overlap_sum_thresh: 2.0
+    detect_overlap_hitrate_thresh: 0.5
+    detect_overlap_rel_margin: 1.0
+    detect_conf_rel_margin: 1.0
+    detect_conf_hitrate_thresh: 0.5
+    self_lc_conf_thresh: 0.55
+    self_lc_cooldown_steps: 300
+    self_lc_min_kf_id_gap: 30
+    no_pgo_for_lc: false
+    comp0_keepalive_score: 0.01
+    comp0_sigma_inflation_factor: 1.2
+    comp0_weight_floor: 0.01
+    visualize_pose_graph: false
+
+  # Topological proximity graph for planning
+  topo:
+    proximity_distance_thresh: 0.5
+    proximity_std_trans: 0.05
+    proximity_std_rot: 0.1
+    use_proximity_grid: false
+    enable_incremental_proximity: false
+
+# ── PGO ──────────────────────────────────────────────────────────────────────
+pgo:
+  std_reduction_factor: 0.3
+  visual_robust_enabled: true
+  visual_robust_type: huber   # huber | cauchy | tukey
+  visual_robust_delta: 1.0
+
+# ── Pose Estimation ──────────────────────────────────────────────────────────
+pose_est:
+  type: pnp             # pnp | vggt
+  kp_detector:
+    type: xfeat          # xfeat | disk
+    n_keypoints: 300
+    detection_threshold: 0.1
+  kp_matcher:
+    type: lightglue
+    min_conf: 0.7
+    allow_batch_inference: true
+  kf_match_threshold: 10
+  inlier_count_threshold: 10
+  max_depth: 30.0
+
+# ── Depth Prediction ─────────────────────────────────────────────────────────
+depth_pred:
+  use_depth_pred: false # when set to true, it will use unidepth to predict the depth map
+
+# ── Visualization ────────────────────────────────────────────────────────────
+visualization:
+  visualize_pointcloud: false
+  visualize_current_gmm_state: true
+  visualize_keyframe_gmms: true
+  visualize_system_data: true
+  visualize_trajectory: true
+  visualize_camera: true
+  visualize_pinhole_camera: false
+  visualize_keyframe_gmm_trajectory: true
+  visualize_hypotheses: true
+  visualize_odom_trajectory: true

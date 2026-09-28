@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data and models
+data
+data/
+saved_maps/
+logs/
+thirdparty/
+*.pth
+*.pkl
+*.onnx
+
+# IDE
+.cursor/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent/AI
+AGENTS.md
+CLAUDE.md
+
+# Misc
+*.log
+wandb/
+
+doc/
+# Private research and experiment artifacts
+docs/
+outputs/
+.archive/
+.pytest_cache/
+.ruff_cache/
+*.safetensors
