@@ -97,6 +97,21 @@ DPVO/scalar-only comparison: select `--frontend dpvo --dpvo-checkpoint /path/to/
 
 Each run records configuration, source fingerprint, model provenance, causal system/frontend trajectories, per-frame diagnostics and timing. Existing result directories are not overwritten. Failed PnP verification holds the pose and marks the frame invalid. DPVO validity records initialization only; it is not an independent accuracy or tracking-success check. Evaluate all emitted poses and report the validity fraction separately. Similarity alignment can conceal metric-scale error, so report both ATE alignments and the fitted scale. For Bonn rotational RPE, also request `--groundtruth-frame bonn-camera`: its raw mocap orientation has a different body-frame convention. Keep raw and calibrated results separate. `cross.mono.replay_scale` enables causal scalar-policy ablations using exactly shared DPVO geometry and teacher observations, without assigning replay outputs inference timing.
 
+OpenLORIS packages can be read directly from `color.txt` and the D400 color section of `sensors.yaml`. The monocular reader needs no depth, IMU, odometry, extrinsics or ground truth. It reads the package's `fx, cx, fy, cy` ordering, checked against the [authors' camera matrix](https://github.com/lifelong-robotic-vision/openloris-scene-tools/blob/ce6a4839f618bf036d3f3dbae14561bfc7413641/dataprocess/segway_transforms.py). Add `--image-size 640 480` to resize after undistortion; intrinsics are adjusted using OpenCV's pixel-centre convention. The original camera dimensions and both intrinsic matrices are recorded.
+
+For saved-map tests, use `--save-map` on the reference run, then `--load-map /path/to/reference/map.pkl` in a fresh query run. Convert OpenLORIS ground truth separately to camera poses, retaining the shared world frame:
+
+```bash
+python -m cross.mono.openloris_groundtruth /path/to/office1-1 --output /path/to/evaluation/office1-1-camera.txt
+python -m cross.mono.openloris_groundtruth /path/to/office1-2 --output /path/to/evaluation/office1-2-camera.txt
+python -m cross.mono.evaluate_restart \
+  /path/to/reference/trajectory.txt /path/to/evaluation/office1-1-camera.txt \
+  /path/to/query/trajectory.txt /path/to/evaluation/office1-2-camera.txt \
+  --diagnostics /path/to/query/diagnostics.jsonl --output /path/to/evaluation/restart.json
+```
+
+The restart evaluator fits one rigid transform using only the reference trajectory and applies it unchanged to the query. Held outputs remain included. It records the emitted pose receiving each applied commitment; pose correctness at that instant is a diagnostic, not a label proving a correct topological merge. Independently aligned query ATE cannot establish relocalization success.
+
 Monocular code lives in `cross/mono/`; inherited mapping is in `cross/core/`. Private research notes and runs belong in ignored `docs/` and `outputs/`. External models retain their own licenses. This implementation is informed by [AMB3R-SLAM](https://arxiv.org/abs/2609.19518); it is not a reproduction of that paper.
 
 The remaining instructions document the inherited CROSS RGB-D interface.

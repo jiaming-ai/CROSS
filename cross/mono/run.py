@@ -64,6 +64,8 @@ def main():
     parser.add_argument("--scale-recovery-observations", type=int, default=3)
     parser.add_argument("--intrinsics", nargs="+", type=float)
     parser.add_argument("--no-undistort", action="store_true")
+    parser.add_argument("--image-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"),
+                        help="Resize RGB after undistortion and adjust intrinsics for pixel-centre sampling")
     parser.add_argument("--load-map", type=Path)
     parser.add_argument("--save-map", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
@@ -116,7 +118,7 @@ def main():
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,
                                           recovery_observations=args.scale_recovery_observations))
     sequence = RGBSequence(args.sequence, args.stride, args.start, args.frames, args.intrinsics,
-                           not args.no_undistort, args.sample_fps)
+                           not args.no_undistort, args.sample_fps, args.image_size)
     if not len(sequence):
         raise ValueError("No selected images")
     try:
@@ -134,7 +136,9 @@ def main():
                                         ["CUDA_VISIBLE_DEVICES", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
                                          "OPENBLAS_NUM_THREADS", "PYTORCH_CUDA_ALLOC_CONF"]},
                 "ground_truth_used_for_inference": False, "sensor_depth_used": False,
-                "calibration": sequence.K.tolist(), "distortion": sequence.distortion.tolist()}
+                "calibration": sequence.K.tolist(), "distortion": sequence.distortion.tolist(),
+                "input_calibration": sequence.input_K.tolist(), "input_image_size": sequence.input_size,
+                "resize_image_size": sequence.resize}
     source_root = Path(__file__).resolve().parents[2]
     digest = hashlib.sha256()
     for path in sorted((source_root / "cross").rglob("*.py")):

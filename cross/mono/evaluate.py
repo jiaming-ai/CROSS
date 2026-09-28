@@ -64,10 +64,12 @@ def bonn_camera_poses(poses):
     return ros.T @ poses @ ros @ marker
 
 
-def evaluate(estimate_path, groundtruth_path, max_gap=0.1, rpe_interval=1.0, groundtruth_frame="raw"):
+def associate_trajectory(estimate_path, groundtruth_path, max_gap=0.1, groundtruth_frame="raw"):
+    """Associate camera poses for evaluation; retain held estimator outputs."""
+    if not np.isfinite(max_gap) or max_gap <= 0:
+        raise ValueError("Maximum ground-truth gap must be finite and positive")
     times, est = read_trajectory(estimate_path)
     gt_times, gt = read_trajectory(groundtruth_path, sort_and_deduplicate=True)
-    raw_gt_times = np.loadtxt(groundtruth_path, comments="#", usecols=0)
     if groundtruth_frame == "bonn-camera":
         gt = bonn_camera_poses(gt)
     elif groundtruth_frame != "raw":
@@ -84,7 +86,14 @@ def evaluate(estimate_path, groundtruth_path, max_gap=0.1, rpe_interval=1.0, gro
     for axis in range(3):
         truth[:, axis, 3] = np.interp(query, gt_times, gt[:, axis, 3])
     truth[:, :3, :3] = Slerp(gt_times, Rotation.from_matrix(gt[:, :3, :3]))(query).as_matrix()
-    result = {"estimated_frames": len(times), "associated_frames": len(query),
+    return query, poses, truth, valid
+
+
+def evaluate(estimate_path, groundtruth_path, max_gap=0.1, rpe_interval=1.0, groundtruth_frame="raw"):
+    query, poses, truth, valid = associate_trajectory(estimate_path, groundtruth_path, max_gap, groundtruth_frame)
+    raw_gt_times = np.loadtxt(groundtruth_path, comments="#", usecols=0)
+    gt_times = np.unique(raw_gt_times)
+    result = {"estimated_frames": len(valid), "associated_frames": len(query),
               "association_fraction": float(valid.mean()), "duration_seconds": float(query[-1] - query[0]),
               "gt_path_length_m": float(np.linalg.norm(np.diff(truth[:, :3, 3], axis=0), axis=1).sum()),
               "groundtruth_frame": groundtruth_frame,
