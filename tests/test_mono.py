@@ -43,6 +43,19 @@ def test_camera_convention_and_shared_scale_covariance():
     assert covariance[0, 1] == pytest.approx(0.4)
 
 
+def test_retrieved_geometry_rejects_wrong_camera_direction():
+    from cross.mono.verification import reprojection_inliers
+    K = np.array([[100., 0, 50.], [0, 100., 50.], [0, 0, 1.]])
+    pixels = np.array([[40., 40.], [50., 50.], [60., 60.]])
+    depth = np.full((100, 100), 2.)
+    T_ref_current = np.eye(4)
+    T_ref_current[0, 3] = 0.2
+    current = pixels - [10., 0.]
+    assert reprojection_inliers(pixels, current, depth, K, K, T_ref_current).all()
+    T_ref_current[0, 3] = -0.2
+    assert not reprojection_inliers(pixels, current, depth, K, K, T_ref_current).any()
+
+
 class SyntheticGeometry:
     def __init__(self):
         self.calls = 0
