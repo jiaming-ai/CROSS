@@ -37,9 +37,32 @@ def fit_alignment(source, target, with_scale):
     return scale, rotation, translation
 
 
-def evaluate(estimate_path, groundtruth_path, max_gap=0.1, rpe_interval=1.0):
+def bonn_camera_poses(poses):
+    """Apply the dataset's published mocap/ROS-to-camera calibration.
+
+    https://www.ipb.uni-bonn.de/data/rgbd-dynamic-dataset/
+    Its T_m contains a ~1.059 uniform scale from point-cloud calibration.
+    Use its polar rotation for camera orientation, and its stated lever arm;
+    do not rescale the already-metric mocap translations. Raw TUM-format ATE
+    remains available as the default for comparison with common protocols.
+    """
+    ros = np.eye(4)
+    ros[:3, :3] = [[-1., 0, 0], [0, 0, 1.], [0, 1., 0]]
+    marker = np.array([[1.0157, 0.1828, -0.2389, 0.0113],
+                       [0.0009, -0.8431, -0.6413, -0.0098],
+                       [-0.3009, 0.6147, -0.8085, 0.0111], [0, 0, 0, 1.]])
+    u, _, vh = np.linalg.svd(marker[:3, :3])
+    marker[:3, :3] = u @ vh
+    return ros.T @ poses @ ros @ marker
+
+
+def evaluate(estimate_path, groundtruth_path, max_gap=0.1, rpe_interval=1.0, groundtruth_frame="raw"):
     times, est = read_trajectory(estimate_path)
     gt_times, gt = read_trajectory(groundtruth_path)
+    if groundtruth_frame == "bonn-camera":
+        gt = bonn_camera_poses(gt)
+    elif groundtruth_frame != "raw":
+        raise ValueError("Unknown ground-truth coordinate convention")
     idx = np.searchsorted(gt_times, times)
     left = np.clip(idx - 1, 0, len(gt_times) - 1)
     right = np.clip(idx, 0, len(gt_times) - 1)
@@ -55,7 +78,8 @@ def evaluate(estimate_path, groundtruth_path, max_gap=0.1, rpe_interval=1.0):
     result = {"estimated_frames": len(times), "associated_frames": len(query),
               "association_fraction": float(valid.mean()), "duration_seconds": float(query[-1] - query[0]),
               "gt_path_length_m": float(np.linalg.norm(np.diff(truth[:, :3, 3], axis=0), axis=1).sum()),
-              "association": "translation interpolation and quaternion SLERP; maximum GT gap 0.1 s"}
+              "groundtruth_frame": groundtruth_frame,
+              "association": f"translation interpolation and quaternion SLERP; maximum GT gap {max_gap:g} s"}
     for mode, with_scale in [("se3", False), ("sim3", True)]:
         scale, rotation, translation = fit_alignment(poses[:, :3, 3], truth[:, :3, 3], with_scale)
         aligned = scale * poses[:, :3, 3] @ rotation.T + translation
@@ -86,8 +110,9 @@ def main():
     parser.add_argument("estimate", type=Path)
     parser.add_argument("groundtruth", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--groundtruth-frame", choices=["raw", "bonn-camera"], default="raw")
     args = parser.parse_args()
-    result = evaluate(args.estimate, args.groundtruth)
+    result = evaluate(args.estimate, args.groundtruth, groundtruth_frame=args.groundtruth_frame)
     text = json.dumps(result, indent=2, allow_nan=False)
     if args.output:
         args.output.write_text(text + "\n")

@@ -22,6 +22,7 @@ class DA3Geometry:
         from depth_anything_3.api import DepthAnything3
 
         self.model_id, self.device, self.resolution = model_id, device, resolution
+        self.calls = 0
         self.model = DepthAnything3.from_pretrained(model_id).to(device).eval()
         self.mean = torch.tensor([0.485, 0.456, 0.406], device=device)[:, None, None]
         self.std = torch.tensor([0.229, 0.224, 0.225], device=device)[:, None, None]
@@ -56,6 +57,7 @@ class DA3MetricDepth(DA3Geometry):
 
     @torch.inference_mode()
     def predict_metric(self, rgb, K, output_shape):
+        self.calls += 1
         image = self.prepare(rgb)
         result = self.model(image[None, None], export_feat_layers=[])
         depth = result["depth"][0, 0].float().cpu().numpy().squeeze()

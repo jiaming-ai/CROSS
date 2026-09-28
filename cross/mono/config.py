@@ -42,8 +42,8 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
-        if self.frontend not in {"da3", "dpvo"}:
-            raise ValueError("frontend must be da3 or dpvo")
+        if self.frontend not in {"da3", "dpvo", "metric_pnp"}:
+            raise ValueError("frontend must be da3, dpvo or metric_pnp")
         if min(self.resolution, self.metric_resolution) < 56:
             raise ValueError("Model resolutions must be at least 56 pixels")
         if min(self.anchor_interval, self.mapping_interval, self.scale.interval) < 1:

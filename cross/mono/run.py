@@ -24,7 +24,7 @@ def main():
     parser.add_argument("sequence", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frontend-only", action="store_true")
-    parser.add_argument("--frontend", choices=["da3", "dpvo"], default="da3")
+    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp"], default="da3")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--device", default="cuda")
@@ -101,6 +101,10 @@ def main():
         from .dpvo_frontend import DPVOFrontend
         frontend = DPVOFrontend(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
+    elif args.frontend == "metric_pnp":
+        from .pnp_frontend import MetricPnPFrontend
+        frontend = MetricPnPFrontend(sequence.K, config, args.device)
+        frontend.provide_mapping_depth = not args.frontend_only
     else:
         frontend = MonoFrontend(sequence.K, config, args.device)
     metadata["model_parameters"] = {
@@ -154,7 +158,9 @@ def main():
             tracker.shutdown()
     total = perf_counter() - start
     summary = {"frames": len(latencies), "valid_frames": valid_count, "tracking_coverage": valid_count / len(latencies),
-               "metric_calls": metric_count, "model_loading_seconds": loading_seconds,
+               "metric_calls": metric_count, "scale_observation_calls": metric_count,
+               "metric_model_calls": getattr(frontend.metric, "calls", None),
+               "model_loading_seconds": loading_seconds,
                "elapsed_seconds": total, "fps_including_io": len(latencies) / total,
                "latency_median_ms": 1000 * float(np.median(latencies)),
                "latency_p95_ms": 1000 * float(np.quantile(latencies, 0.95)),
