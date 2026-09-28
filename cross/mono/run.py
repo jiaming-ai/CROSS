@@ -2,6 +2,7 @@
 
 import argparse
 from dataclasses import asdict
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -70,6 +71,12 @@ def main():
                 "input_modalities": ["RGB", "timestamps", "camera_intrinsics"],
                 "ground_truth_used_for_inference": False, "sensor_depth_used": False,
                 "calibration": sequence.K.tolist(), "distortion": sequence.distortion.tolist()}
+    source_root = Path(__file__).resolve().parents[2]
+    digest = hashlib.sha256()
+    for path in sorted((source_root / "cross").rglob("*.py")):
+        digest.update(str(path.relative_to(source_root)).encode())
+        digest.update(path.read_bytes())
+    metadata["python_source_sha256"] = digest.hexdigest()
     metadata["command"] = {k: str(v) if isinstance(v, Path) else v for k, v in metadata["command"].items()}
     if args.device.startswith("cuda"):
         metadata["gpu"] = torch.cuda.get_device_name()
@@ -77,6 +84,16 @@ def main():
     (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     loading_start = perf_counter()
     frontend = MonoFrontend(sequence.K, config, args.device)
+    metadata["model_parameters"] = {
+        "geometry": sum(p.numel() for p in frontend.geometry.model.parameters()),
+        "metric": sum(p.numel() for p in frontend.metric.model.parameters()) if frontend.metric else 0,
+    }
+    from huggingface_hub import try_to_load_from_cache
+    metadata["model_checkpoint_files"] = {
+        model: str(try_to_load_from_cache(model, "model.safetensors"))
+        for model in [config.pose_model, config.metric_model] if model
+    }
+    (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     tracker = frontend
     if not args.frontend_only:
         from .system import MonocularSystem
