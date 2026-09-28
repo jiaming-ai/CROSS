@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("torch")
 
-from cross.mono.streaming import StreamingMonocularSystem, snapshot_motion
+from cross.mono.streaming import FrameSnapshot, StreamingMonocularSystem, StreamingPnPFrontend, snapshot_motion
 
 
 def test_replaced_mapping_images_preserve_motion_and_correlated_error():
@@ -53,3 +53,28 @@ def test_worker_uses_snapshot_rgb_depth_timestamp_and_native_mapper_message():
     assert received["timestamp"] == snapshot.timestamp
     assert event["mapping_event"]["verified_keyframes"] == 3
     assert event["source_frame"] == 9
+
+
+def test_delayed_depth_recovers_its_source_without_rewriting_emitted_pose():
+    frontend = StreamingPnPFrontend.__new__(StreamingPnPFrontend)
+    failed = FrameSnapshot(10, .3, np.zeros((4, 4, 3)), {"frame": 10}, np.eye(4), np.ones(6), False)
+    depth = np.ones((4, 4))*2
+    frontend.depth_worker = SimpleNamespace(poll=lambda: [((failed, depth), {})])
+    frontend.ready_depths = []
+    frontend.anchor_index, frontend.last_valid = 0, False
+    frontend.anchor_pose = frontend.metric_pose = np.eye(4)
+    frontend.anchor_features = {"frame": 0}
+    frontend.config = SimpleNamespace(scale=SimpleNamespace(interval=30))
+    def reverse(source, reference, received_depth):
+        assert source["frame"] == 10 and reference["frame"] == 0
+        assert received_depth is depth
+        transform = np.eye(4)
+        transform[0, 3] = -2.
+        return transform, 30, .1
+    frontend.refiner = SimpleNamespace(estimate=reverse)
+    renewed, received = frontend._receive()
+    assert renewed and frontend.anchor_pose[0, 3] == 2.
+    assert received[0][1]["delayed_reverse_recovery"]
+    assert received[0][0][0].valid
+    assert failed.pose[0, 3] == 0.  # original capture record remains immutable
+    assert frontend.metric_pose[0, 3] == 0.  # emitted state is not rewritten
