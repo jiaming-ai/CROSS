@@ -1,6 +1,7 @@
 """Offline-only TUM-format evaluator; never imported by the estimator."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -10,10 +11,17 @@ from scipy.spatial.transform import Rotation, Slerp
 from .geometry import inverse
 
 
-def read_trajectory(path):
+def read_trajectory(path, sort_and_deduplicate=False):
     rows = np.loadtxt(path, comments="#", ndmin=2)
     if rows.shape[1] != 8 or len(rows) < 3 or not np.isfinite(rows).all():
         raise ValueError("Expected at least three finite timestamp tx ty tz qx qy qz qw poses")
+    if sort_and_deduplicate:
+        # Public TUM ground truth can contain duplicate timestamps. Its
+        # reference reader stores poses in a timestamp-keyed dictionary, so
+        # retaining the last record matches that convention. Never normalize
+        # the estimator output: duplicate estimates remain an error.
+        rows = rows[np.argsort(rows[:, 0], kind="stable")]
+        rows = rows[np.r_[rows[:-1, 0] != rows[1:, 0], True]]
     if np.any(np.diff(rows[:, 0]) <= 0):
         raise ValueError("Trajectory timestamps must be strictly increasing")
     poses = np.broadcast_to(np.eye(4), (len(rows), 4, 4)).copy()
@@ -58,7 +66,8 @@ def bonn_camera_poses(poses):
 
 def evaluate(estimate_path, groundtruth_path, max_gap=0.1, rpe_interval=1.0, groundtruth_frame="raw"):
     times, est = read_trajectory(estimate_path)
-    gt_times, gt = read_trajectory(groundtruth_path)
+    gt_times, gt = read_trajectory(groundtruth_path, sort_and_deduplicate=True)
+    raw_gt_times = np.loadtxt(groundtruth_path, comments="#", usecols=0)
     if groundtruth_frame == "bonn-camera":
         gt = bonn_camera_poses(gt)
     elif groundtruth_frame != "raw":
@@ -79,6 +88,10 @@ def evaluate(estimate_path, groundtruth_path, max_gap=0.1, rpe_interval=1.0, gro
               "association_fraction": float(valid.mean()), "duration_seconds": float(query[-1] - query[0]),
               "gt_path_length_m": float(np.linalg.norm(np.diff(truth[:, :3, 3], axis=0), axis=1).sum()),
               "groundtruth_frame": groundtruth_frame,
+              "groundtruth_duplicate_timestamps": len(raw_gt_times) - len(gt_times),
+              "groundtruth_out_of_order_steps": int((np.diff(raw_gt_times) < 0).sum()),
+              "groundtruth_normalization": "stable timestamp sort; keep last record of duplicates",
+              "evaluator_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               "association": f"translation interpolation and quaternion SLERP; maximum GT gap {max_gap:g} s"}
     for mode, with_scale in [("se3", False), ("sim3", True)]:
         scale, rotation, translation = fit_alignment(poses[:, :3, 3], truth[:, :3, 3], with_scale)

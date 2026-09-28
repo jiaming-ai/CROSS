@@ -134,6 +134,15 @@ def test_evaluator_exposes_metric_error_hidden_by_similarity(tmp_path):
     assert metrics["sim3_alignment_scale"] == pytest.approx(0.5)
     assert metrics["metric_scale_error_percent"] == pytest.approx(100.)
     assert metrics["rpe_translation_rmse_m"] > 0.1
+    original = np.c_[times, points, quaternions]
+    # Public GT can be unordered or repeat a timestamp. Normalize only GT.
+    np.savetxt(truth, np.r_[original[::-1], original[[3]]])
+    repeated = evaluate(estimate, truth, max_gap=0.11)
+    assert repeated["ate_se3_rmse_m"] == pytest.approx(metrics["ate_se3_rmse_m"])
+    assert repeated["groundtruth_duplicate_timestamps"] == 1
+    np.savetxt(estimate, np.r_[original, original[[3]]])
+    with pytest.raises(ValueError, match="timestamps"):
+        evaluate(estimate, truth)
 
 
 def test_scale_replay_is_causal_and_preserves_source_geometry():
