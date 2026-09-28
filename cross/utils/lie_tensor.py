@@ -5,6 +5,22 @@ import pypose as pp
 import torch
 from cross.utils.rotation import quaternion_to_euler_torch
 
+
+def normalize_SE3(x):
+    """Return `x` with unit quaternions (batched SE3 LieTensor or raw (..., 7) tensor).
+
+    pypose never renormalizes: every float32 composition (odometry accumulation, motion update,
+    candidate poses `kf_pose @ rel`) shrinks |q| by ~1e-6, which compounds over thousands of steps
+    into |q| ~ 0.98.  A non-unit quaternion is not a rotation for pypose (Act/matrix blend the
+    rotation with the identity and scale translations), so poses must be renormalized wherever
+    they are composed.
+    """
+    t = x.tensor() if hasattr(x, "ltype") else x
+    q = t[..., 3:7]
+    n = torch.linalg.norm(q, dim=-1, keepdim=True).clamp_min(1e-12)
+    out = torch.cat([t[..., :3], q / n], dim=-1)
+    return pp.SE3(out)
+
 def vec2skew(input:torch.Tensor) -> torch.Tensor:
     r"""
     Convert batched vectors to skew matrices.
@@ -89,15 +105,33 @@ def SE3_Adj(T: pp.LieTensor) -> torch.Tensor:
     return Adj
 
 
+# vertical axis of the map frame (the first camera frame) used by `project_SE3`: None keeps the original ground-robot
+# projection (x, z, yaw from the Euler angles of an OpenCV y-down camera); 1 (y) or 2 (z, down-looking cameras such as
+# an AUV survey camera) projects onto the two horizontal axes and the heading about the vertical axis
+PROJECTION_VERTICAL_AXIS = None
+
+
+def set_projection_vertical_axis(axis):
+    global PROJECTION_VERTICAL_AXIS
+    PROJECTION_VERTICAL_AXIS = None if axis is None or int(axis) < 0 else int(axis)
+
+
 def project_SE3(T: pp.LieTensor, use_heights: bool = False) -> torch.Tensor:
-    """Project a batch of SE3 objects to (x, z, yaw).
-    
+    """Project a batch of SE3 objects to (horizontal position, heading) = (x, z, cos yaw, sin yaw) by default.
+
     Args:
         T (pp.SE3): A pypose.SE3 tensor of shape (B, K) or any other shape.
-        
+
     Returns:
         torch.Tensor: The projected 3D points, shape (..., 3)
     """
+    if PROJECTION_VERTICAL_AXIS is not None and not use_heights:
+        v = PROJECTION_VERTICAL_AXIS
+        h1, h2 = [a for a in (0, 1, 2) if a != v]
+        t = T.tensor()[:, :3]
+        R = pp.SE3(T.tensor()).rotation().matrix()
+        yaw = torch.atan2(R[:, h2, h1], R[:, h1, h1])
+        return torch.stack([t[:, h1], t[:, h2], torch.cos(yaw), torch.sin(yaw)], dim=1)
     if use_heights:
         euler_angles = quaternion_to_euler_torch(T.tensor()[:, 3:])
         yaw = euler_angles[:, :1]

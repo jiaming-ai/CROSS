@@ -101,6 +101,7 @@ class Keyframe:
     pose_weights: torch.Tensor # (K,) weights of K se3 components
     raw_rgb_image: torch.Tensor = None
     depth_image: torch.Tensor = None
+    raw_rgb_right: torch.Tensor = None # right stereo image (3, H, W), used as a metric scale anchor
     atlas: Atlas = None # the atlas of the keyframe
     timestamp: float = None # the timestamp of the keyframe
     id: int = field(init=False)
@@ -169,13 +170,33 @@ class Edge:
         self.information: torch.Tensor = torch.diag(1.0 / (std.tensor().flatten() + 1e-9))
         self.type = type
         self._cost = cost
+        # measurement metadata used by the calibrated noise model (see cross/core/lc_verify.py)
+        self.n_frames: Optional[int] = None   # odometry: number of integrated readings
+        self.conf: Optional[float] = None     # visual: estimator confidence (covisibility)
 
     @property
     def cost(self) -> float:
         """Get the edge cost (translation norm). Computed lazily if not provided."""
         if self._cost is None:
-            self._cost = self.mean.tensor()[:3].norm().item()
+            self._cost = float(self.mean_np[:3] @ self.mean_np[:3]) ** 0.5
         return self._cost
+
+    @property
+    def mean_np(self) -> np.ndarray:
+        """Measurement as a (7,) float64 numpy array [x y z qx qy qz qw], cached (avoids repeated device syncs)."""
+        m = getattr(self, "_mean_np", None)
+        if m is None:
+            m = self.mean.tensor().detach().cpu().numpy().astype(np.float64).reshape(-1)
+            self._mean_np = m
+        return m
+
+    @property
+    def std_np(self) -> np.ndarray:
+        s = getattr(self, "_std_np", None)
+        if s is None:
+            s = self.std.tensor().detach().cpu().numpy().astype(np.float64).reshape(-1)
+            self._std_np = s
+        return s
 
 class VisualEdge(Edge):
     def __init__(

@@ -9,6 +9,22 @@ from collections import defaultdict
 from cross.core.config import RetrievalConfig, VPRModelType
 
 
+def to_uint8_image(t):
+    """float image in [0, 1] -> uint8 (compact keyframe storage); None and uint8 pass through."""
+    if t is None or t.dtype == torch.uint8:
+        return t
+    return (t.clamp(0, 1) * 255.0).round().to(torch.uint8)
+
+
+def as_float_image(t):
+    """stored keyframe image -> float in [0, 1] (inverse of to_uint8_image); fp16 depth -> fp32."""
+    if t is None:
+        return None
+    if t.dtype == torch.uint8:
+        return t.float() / 255.0
+    return t.float() if t.dtype == torch.float16 else t
+
+
 class KeyframeDatabase:
     def __init__(
         self,
@@ -24,6 +40,7 @@ class KeyframeDatabase:
             config: RetrievalConfig with VPR model type, buffer size, and query parameters.
         """
         cfg = config or RetrievalConfig()
+        self.config = cfg
         self.system = system
         self.device = device
 
@@ -68,7 +85,10 @@ class KeyframeDatabase:
             (new_size, self._embedding_buffer.shape[1]),
             device=self.device
         )
-        new_buffer[:self._current_size] = self._embedding_buffer[:self._current_size]
+        # copy only rows that exist: load_state sets _current_size to the stored count before growing the buffer
+        # (a map with more keyframes than the initial buffer failed to load)
+        n = min(self._current_size, self._embedding_buffer.shape[0])
+        new_buffer[:n] = self._embedding_buffer[:n]
         self._embedding_buffer = new_buffer
 
     def get_all_keyframes(self, atlas: Atlas= None) -> List[Keyframe]:
@@ -95,6 +115,7 @@ class KeyframeDatabase:
         atlas: Atlas = None,
         temporary: bool = False,
         last_pgo_step: int = -1,
+        raw_rgb_right: torch.Tensor = None,
     ) -> Keyframe:
         """Insert a Keyframe into the database.
 
@@ -109,11 +130,17 @@ class KeyframeDatabase:
         """
         # Get embedding
         embedding = self.vpr_model.get_embedding(raw_rgb_image)
+        if getattr(self.config, "store_images_uint8", False):
+            # compact storage (after the embedding): images as uint8, depth as fp16; consumers convert with as_float_image
+            raw_rgb_image = to_uint8_image(raw_rgb_image)
+            raw_rgb_right = to_uint8_image(raw_rgb_right)
+            depth_image = depth_image.half() if depth_image is not None else None
         
         # Create PosedRGBD object
         keyframe = Keyframe(
             raw_rgb_image=raw_rgb_image,
             depth_image=depth_image,
+            raw_rgb_right=raw_rgb_right,
             pose_mu=mu,
             pose_std=sigma,
             pose_weights=weights,
@@ -219,6 +246,7 @@ class KeyframeDatabase:
                     "id": kf.id,
                     "raw_rgb_image": kf.raw_rgb_image.cpu() if kf.raw_rgb_image is not None else None,
                     "depth_image": kf.depth_image.cpu() if kf.depth_image is not None else None,
+                    "raw_rgb_right": kf.raw_rgb_right.cpu() if kf.raw_rgb_right is not None else None,
                     "pose_mu": kf.pose_mu.cpu() if kf.pose_mu is not None else None,
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,
@@ -278,6 +306,7 @@ class KeyframeDatabase:
             kf = Keyframe(
                 raw_rgb_image=kf_data["raw_rgb_image"].to(storage_device) if kf_data["raw_rgb_image"] is not None else None,
                 depth_image=kf_data["depth_image"].to(storage_device) if kf_data["depth_image"] is not None else None,
+                raw_rgb_right=kf_data.get("raw_rgb_right").to(storage_device) if kf_data.get("raw_rgb_right") is not None else None,
                 pose_mu=kf_data["pose_mu"].to(storage_device) if kf_data["pose_mu"] is not None else None,
                 pose_std=kf_data["pose_std"].to(storage_device) if kf_data["pose_std"] is not None else None,
                 pose_weights=kf_data["pose_weights"].to(storage_device) if kf_data["pose_weights"] is not None else None,
@@ -308,10 +337,27 @@ class KeyframeDatabase:
         return all_keyframes_map
     
     @timeit
+    def similarities(self, img: torch.Tensor, kf_ids) -> dict:
+        """VPR cosine similarity of the query image to the given keyframes (by id), {kf_id: score}."""
+        want = {int(k) for k in kf_ids}
+        if not want or self._current_size == 0:
+            return {}
+        q = self.vpr_model.get_embedding(img)
+        out = {}
+        for bi in range(self._current_size):
+            atlas_i, list_i = self._index_to_atlas_idx[bi]
+            kid = int(self._keyframe_by_atlas[atlas_i][list_i].id)
+            if kid in want:
+                out[kid] = float(self._embedding_buffer[bi] @ q)
+        return out
+
     def query(
         self, 
         img: torch.Tensor,
         target_atlases: Optional[List[Atlas]] = None,
+        max_kf_id: Optional[int] = None,
+        min_kf_id: Optional[int] = None,
+        score_threshold: Optional[float] = None,
     ) -> List[Tuple[float, Keyframe]]:
         """Query the database for the most likely Keyframe.
 
@@ -332,10 +378,23 @@ class KeyframeDatabase:
         query_embedding = self.vpr_model.get_embedding(img)
         
         # Get relevant embeddings
-        if target_atlases is not None:
-            valid_indices = []
-            for atlas in target_atlases:
-                valid_indices.extend(self._atlas_to_indices[atlas])
+        if target_atlases is not None or max_kf_id is not None or min_kf_id is not None:
+            if target_atlases is not None:
+                valid_indices = []
+                for atlas in target_atlases:
+                    valid_indices.extend(self._atlas_to_indices[atlas])
+            else:
+                valid_indices = list(range(self._current_size))
+            if max_kf_id is not None or min_kf_id is not None:
+                # restrict by keyframe id (e.g. keyframes of previous sessions only)
+                keep = []
+                for bi in valid_indices:
+                    atlas_i, list_i = self._index_to_atlas_idx[bi]
+                    kid = self._keyframe_by_atlas[atlas_i][list_i].id
+                    if (max_kf_id is None or kid < max_kf_id) and (min_kf_id is None or kid >= min_kf_id):
+                        keep.append(bi)
+                valid_indices = keep
+            target_atlases = valid_indices  # reuse the index-mapping branch below
             if not valid_indices:
                 return {
                     "scores": [],
@@ -353,9 +412,11 @@ class KeyframeDatabase:
         # `scores` are similarity scores against `database_emb`
         
         # Find the indices in `scores` (and thus `database_emb`) that pass the threshold
-        original_indices_passing_threshold = (scores > self.score_threshold_high).nonzero(as_tuple=True)[0]
+        thr_high = self.score_threshold_high if score_threshold is None else score_threshold
+        thr_low = self.score_threshold_low if score_threshold is None else score_threshold
+        original_indices_passing_threshold = (scores > thr_high).nonzero(as_tuple=True)[0]
         if original_indices_passing_threshold.numel() == 0:
-            original_indices_passing_threshold = (scores > self.score_threshold_low).nonzero(as_tuple=True)[0]
+            original_indices_passing_threshold = (scores > thr_low).nonzero(as_tuple=True)[0]
         
         if original_indices_passing_threshold.numel() == 0:
             return {

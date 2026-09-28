@@ -2,6 +2,7 @@ import pypose as pp
 from typing import Tuple, Union
 import torch
 import numpy as np
+from cross.utils.lie_tensor import normalize_SE3
 MAX_STD = torch.tensor([0.3, 0.3, 0.3, 0.3, 0.3, 0.3])
 
 class OdomAccumulator():
@@ -78,7 +79,7 @@ class OdomAccumulator():
             return None, None
 
         # get delta pose
-        delta = self._odoms_means[name].Inv() @ self._accumulated_odom
+        delta = normalize_SE3(self._odoms_means[name].Inv() @ self._accumulated_odom)
         if return_std:
 
             # Calculate std based on distance traveled
@@ -131,7 +132,7 @@ class OdomAccumulator():
         else:
             if isinstance(odom_reading, np.ndarray):
                 odom_reading = pp.from_matrix(odom_reading, pp.SE3_type).float()
-            self._accumulated_odom = self._accumulated_odom @ odom_reading
+            self._accumulated_odom = normalize_SE3(self._accumulated_odom @ odom_reading)
 
     def reset_item(self, name: str):
         """Reset the item"""
