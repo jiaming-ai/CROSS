@@ -37,6 +37,7 @@ class FrameSnapshot:
     pose: np.ndarray
     world_std_prefix: np.ndarray
     valid: bool
+    refresh_anchor: bool = False
 
 
 def snapshot_motion(previous, current):
@@ -108,7 +109,8 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                           if self.config.teacher_lag_frames else 0,
                           final_drain=drain)
             received.append(((snapshot, depth), timing))
-            if snapshot.index - self.anchor_index >= self.config.scale.interval or not self.last_valid:
+            if (snapshot.index - self.anchor_index >= self.config.scale.interval or not self.last_valid
+                    or (snapshot.valid and snapshot.refresh_anchor)):
                 self.anchor_features, self.anchor_depth = snapshot.features, depth
                 self.anchor_pose, self.anchor_index = snapshot.pose, snapshot.index
                 renewed = True
@@ -144,13 +146,17 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         transported = adjoint(previous) @ covariance @ adjoint(previous).T
         self.world_std_prefix += np.sqrt(np.maximum(np.diag(transported), 0.))
         interval = min(self.config.scale.interval, self.config.mapping_interval) if self.provide_mapping_depth else self.config.scale.interval
-        # Failed frames can request recovery, but never more than once per
-        # five frames. One replaceable pending item bounds memory and lag.
-        request = self.index-self.last_submitted >= interval or (not valid and self.index-self.last_submitted >= 5)
         bootstrap = self.anchor_features is None
+        # The experimental policy asks while the current pose still has a
+        # verified geometric estimate. A depth attached to a held pose after
+        # loss cannot recover the motion that was missed. Keep the existing
+        # five-frame request bound and a single replaceable pending item.
+        weak_support = (self.config.adaptive_anchor and not bootstrap and valid and count < 80)
+        request = (self.index-self.last_submitted >= interval
+                   or ((not valid or weak_support) and self.index-self.last_submitted >= 5))
         if bootstrap or request:
             snapshot = FrameSnapshot(self.index, timestamp, rgb.copy(), features, self.metric_pose.copy(),
-                                     self.world_std_prefix.copy(), valid)
+                                     self.world_std_prefix.copy(), valid, refresh_anchor=weak_support)
             self.last_submitted = self.index
             if bootstrap:
                 tick = perf_counter()
@@ -170,6 +176,8 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                            masked_keypoints=features.get("masked_keypoints", 0), person_boxes=features.get("person_boxes", 0),
                            scale=1., log_scale_std=float(np.sqrt(self.scale_filter.uncertainty_variance)),
                            metric_initialized=True, metric_seconds=bootstrap_seconds, bootstrap_seconds=bootstrap_seconds,
+                           weak_anchor_support=weak_support,
+                           proactive_metric_request=bool(weak_support and request),
                            frontend_seconds=perf_counter()-start-bootstrap_seconds, total_seconds=perf_counter()-start,
                            teacher_updates=[dict(source_frame=s.index, age_frames=self.index-s.index, **timing)
                                             for (s, _), timing in received],

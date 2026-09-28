@@ -130,3 +130,68 @@ def test_teacher_failure_still_closes_the_mapping_worker():
     with pytest.raises(RuntimeError, match="teacher failed"):
         system.finish()
     assert calls == ["map_closed", "received"]
+
+
+def test_proactive_anchor_keeps_the_verified_source_pose_and_rejects_stale_depth():
+    frontend = StreamingPnPFrontend.__new__(StreamingPnPFrontend)
+    source_pose = np.eye(4)
+    source_pose[0, 3] = 2.
+    snapshot = FrameSnapshot(5, .25, np.zeros((4, 4, 3)), {"source": 5},
+                             source_pose, np.zeros(6), True, refresh_anchor=True)
+    pending = [((snapshot, np.ones((4, 4))*3), {})]
+    def poll():
+        result = pending.copy()
+        pending.clear()
+        return result
+    frontend.depth_worker = SimpleNamespace(poll=poll)
+    frontend.pending_depths, frontend.ready_depths, frontend.index = [], [], 7
+    frontend.anchor_index, frontend.last_valid = 0, True
+    frontend.anchor_pose = frontend.metric_pose = np.eye(4)
+    frontend.config = SimpleNamespace(scale=SimpleNamespace(interval=20), delayed_recovery=False, teacher_lag_frames=0)
+    renewed, received = frontend._receive()
+    assert renewed and frontend.anchor_index == 5  # before the fixed interval
+    assert frontend.anchor_features["source"] == 5
+    np.testing.assert_array_equal(frontend.anchor_pose, source_pose)
+    assert received[0][0][0] is snapshot
+    assert frontend.metric_pose[0, 3] == 0.  # no rewrite of emitted poses
+    from dataclasses import replace
+    pending.append(((replace(snapshot, index=4), np.ones((4, 4))*9), {}))
+    renewed, received = frontend._receive()
+    assert not renewed and not received
+    assert frontend.anchor_index == 5 and frontend.anchor_depth[0, 0] == 3
+
+
+@pytest.mark.parametrize("enabled,count,valid,index,requested", [
+    (True, 60, True, 5, True),
+    (True, 60, True, 4, False),
+    (True, 100, True, 5, False),
+    (False, 60, True, 5, False),
+    (True, 0, False, 5, True),  # inherited failure request, not proactive
+])
+def test_proactive_requests_are_geometric_causal_and_budgeted(enabled, count, valid, index, requested):
+    from cross.mono.config import MonoConfig, ScaleConfig
+    frontend = StreamingPnPFrontend.__new__(StreamingPnPFrontend)
+    frontend.config = MonoConfig(frontend="streaming_pnp", adaptive_anchor=enabled,
+                                 scale=ScaleConfig(interval=20), mapping_interval=10)
+    frontend.anchor_features, frontend.anchor_depth = {"source": 0}, np.ones((4, 4))
+    frontend.anchor_pose = frontend.metric_pose = np.eye(4)
+    frontend.anchor_index, frontend.index, frontend.last_submitted = 0, index, 0
+    frontend.last_timestamp, frontend.last_valid = 0., True
+    frontend.world_std_prefix, frontend.provide_mapping_depth = np.zeros(6), True
+    frontend.scale_filter = SimpleNamespace(uncertainty_variance=.01)
+    features = {"source": index}
+    relative = np.eye(4)
+    relative[0, 3] = 1.
+    frontend.refiner = SimpleNamespace(extract=lambda rgb: features,
+        estimate=lambda *args: (relative, count, .5) if valid else None, last_correspondences=count)
+    submitted = []
+    frontend.depth_worker = SimpleNamespace(submit=submitted.append, statistics=lambda: {})
+    frontend._receive = lambda: (False, [])
+    estimate = frontend.step(np.zeros((4, 4, 3)), .05*index)
+    assert bool(submitted) is requested
+    assert estimate.diagnostics["proactive_metric_request"] is (enabled and valid and count < 80 and requested)
+    if submitted:
+        assert submitted[0].index == index
+        assert submitted[0].valid is valid
+        assert submitted[0].refresh_anchor is (enabled and valid and count < 80)
+        np.testing.assert_array_equal(submitted[0].pose, estimate.pose)

@@ -32,6 +32,7 @@ class MonoConfig:
     mapping_process: bool = False
     delayed_recovery: bool = False
     teacher_lag_frames: int = 0
+    adaptive_anchor: bool = False
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"

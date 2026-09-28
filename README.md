@@ -79,6 +79,8 @@ Teacher outputs retain their source image and timestamp. Mapping receives accumu
 
 `--teacher-lag-frames L` optionally holds a ready metric result until its source is at least `L` frames old. This tests sensitivity to delivery timing without blocking the pose stream. Late results are applied when available and their lateness is recorded; it is not a guarantee of deterministic tracking. The default is zero. Final shutdown drains remaining results for mapping, while already emitted poses stay unchanged.
 
+`--adaptive-anchor` is an experimental streaming option, disabled by default. When a valid PnP estimate has fewer than 80 inliers (four times the acceptance minimum), it requests metric depth before tracking fails. Requests remain at least five input frames apart. A ready proactive result renews the anchor at its verified source pose, retaining that image's timestamp and features; it never rewrites emitted poses. This can increase teacher and mapping work compared with fixed cadence. Logs record proactive requests and actual worker counts. The option retains CROSS's existing observation mixture and commitment tests; it is not a joint scale/bias inference method.
+
 To reproduce a complete multi-seed suite on a remote server:
 
 ```bash
