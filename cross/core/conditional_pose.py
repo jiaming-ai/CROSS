@@ -10,7 +10,8 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from .conditional import SourceFactor, SourceState, transport_covariance
+from .conditional import (SourceFactor, SourceState, ConditionalProduct,
+                          conditional_product, transport_covariance)
 
 
 def skew(v):
@@ -76,6 +77,39 @@ def log(T):
     rotation = Rotation.from_matrix(T[:3,:3]).as_rotvec()
     v = np.linalg.solve(right_jacobian(-np.r_[np.zeros(3),rotation])[:3,:3], T[:3,3])
     return np.r_[v,rotation]
+
+
+def residual_product(prior, residual, observation_covariance, factor, process_covariance=None):
+    """Condition a right-tangent pose on a relative SE3 residual.
+
+    Call after evaluating the observation model at ``prior.mean``. For
+    r=Log(P^-1 O), the residual Jacobians are -Jl(r)^-1 and Jr(r)^-1.
+    Transport BOTH uncertain poses to that residual chart, condition there,
+    then return the pose response in P's right tangent. Using the identity
+    for the prior Jacobian can spuriously observe a shared rigid map shift.
+    This is first-order Gaussian conditioning, not an exact Lie-group density.
+    """
+    if factor.factor_id is not None and factor.factor_id in prior.seen_factors:
+        return ConditionalProduct(prior.copy(),np.zeros(6),None,None,duplicate=True)
+    if (factor.keys != prior.keys or not np.array_equal(factor.center,prior.mean)
+            or factor.log_depth_scale):
+        raise ValueError('Evaluate and align the observation at the current source belief first')
+    residual = np.asarray(residual,dtype=np.float64)
+    back = right_jacobian(-residual)
+    F = np.linalg.inv(back)
+    G = np.linalg.inv(right_jacobian(residual))
+    common_prior = SourceState(transport_covariance(prior.geometry_covariance,F),
+        prior.keys,prior.mean,prior.covariance,F@prior.jacobian,
+        prior.prior_variances,prior.seen_factors)
+    common_factor = SourceFactor(factor.keys,G@factor.jacobian,factor.prior_variances,
+                                 factor.center,factor.factor_id)
+    process = None if process_covariance is None else transport_covariance(process_covariance,F)
+    result = conditional_product(common_prior,residual,
+        transport_covariance(observation_covariance,G),common_factor,process)
+    result.state.geometry_covariance = transport_covariance(result.state.geometry_covariance,back)
+    result.state.jacobian = back@result.state.jacobian
+    result.pose_offset = back@result.pose_offset
+    return result
 
 
 @dataclass

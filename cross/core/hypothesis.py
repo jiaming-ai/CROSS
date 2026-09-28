@@ -1034,8 +1034,8 @@ class HypothesisManager:
         conditional_newborns = {}
         conditional_evidence_mask = None
         if source_factors is not None:
-            from cross.core.conditional import conditional_product, SourceFactor, transport_covariance
-            from cross.core.conditional_pose import ConditionalPose, right_jacobian, normalize_mean
+            from cross.core.conditional import transport_covariance
+            from cross.core.conditional_pose import ConditionalPose, right_jacobian, normalize_mean, residual_product
             pending_sources = list(self.source_states)
             conditional_evidence_mask = torch.zeros_like(currently_tracking)
             self.last_conditional_audit = []
@@ -1070,9 +1070,7 @@ class HypothesisManager:
                         proposal_mu[component].matrix().double().cpu().numpy(),state)
                     observed = pp.from_matrix(torch.as_tensor(observation,device=self.device,dtype=prior_mu.dtype),pp.SE3_type)
                     residual = (prior_mu[component].Inv()@observed).Log().tensor().double().cpu().numpy()
-                    G = np.linalg.inv(right_jacobian(residual))
-                    common = SourceFactor(state.keys,G@model.factor.jacobian,state.prior_variances,state.mean,factor.factor_id)
-                    result = conditional_product(state,residual,transport_covariance(model.geometry_covariance,G),common,
+                    result = residual_product(state,residual,model.geometry_covariance,model.factor,
                         np.diag(Q[0].double().cpu().numpy()))
                     state = result.state
                     mean = normalize_mean(prior_mu[component] @ pp.se3(torch.as_tensor(result.pose_offset,device=self.device,dtype=prior_mu.dtype)).Exp())
