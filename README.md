@@ -201,6 +201,18 @@ or scale fit. Whole-query RMSE, including the unanchored prefix, is respectively
 commitment. This small development cohort does not establish held-out robustness,
 calibration, a benefit from source-bias inference, or RTX 4090 performance.
 
+A subsequent frozen test used three previously unused sequences in the same
+office, with two scheduling repeats per policy and the same saved reference.
+Both policies recovered office1-3 (turn-around) and office1-5 (lighting); neither
+recovered office1-7 (moving people). The fallback worsened post-commit position
+RMSE on office1-3 from 8.65 cm to 22.69–22.76 cm, and changed office1-5 from
+6.16 cm to 6.39–6.40 cm. These errors use reference-only alignment. A wrong
+two-view proposal pulled an established branch despite successful initial
+recovery. All 8,240 outputs met the 50 ms deadline with no dropped input;
+capture-to-output p95 was 14.96–18.87 ms and maximum 35.75 ms on the RTX 5090.
+The fallback remains optional: broader pair acceptance did not improve recovery
+in this cohort. The sequences become development data for subsequent changes.
+
 `--historical-min-score 0` with reserved historical slots permits a bounded number of weaker saved-map candidates, while new query nodes retain the original score thresholds. Original retrieval scores remain available to the inherited uncertainty calculation and keyframe policy; no geometry or temporal-commitment test is relaxed. This experimental search option can spend the entire retrieval budget on historical views if all three slots are reserved. Both search and learned matching need false-association and online runtime evaluation; accepted pairs alone do not establish map recovery.
 
 After a new keyframe realizes a temporally supported branch, commitment is checked once more with the same evidence and completed graph edges. This corrects an ordering issue that otherwise requires a later successful retrieval just to examine the newly realized branch; evidence is not counted twice and thresholds are unchanged. With the older saved reference, shared 5090 tests reconnect the reversed-viewpoint query at 12.21 s with 23.1 cm post-commit fixed-reference RMSE, and the object-change query at 11.17 s with 7.9 cm afterward. Rebuilt references at source `b7ea914` recover object change in both modes (baseline 5.20 s / 5.50 cm; conditional 5.47 s / 5.25 cm), but neither recovers viewpoint or illumination. This exposes reference-construction sensitivity; the small error difference does not establish a conditional-inference benefit. Each query uses its own reference's rigid alignment, with no query fit. Errors before recovery and all failures remain part of evaluation; systematic false-association testing remains outstanding.
