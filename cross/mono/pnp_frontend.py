@@ -120,7 +120,7 @@ class RotationMetricFrontend(MetricPnPFrontend):
         start = perf_counter()
         rotation_estimate = self.rotation_tracker.step(rgb, timestamp)
         rotation = rotation_estimate.pose[:3, :3]
-        initialized = rotation_estimate.diagnostics["valid"] and np.isfinite(rotation).all()
+        initialized = bool(rotation_estimate.diagnostics["valid"] and np.isfinite(rotation).all())
         self.rotation_prior = self.rotation_alignment @ rotation if initialized and self.rotation_alignment is not None else None
         estimate = super().step(rgb, timestamp)
         if initialized and self.rotation_alignment is None and estimate.diagnostics["valid"]:
