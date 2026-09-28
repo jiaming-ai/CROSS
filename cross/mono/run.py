@@ -126,8 +126,12 @@ def main():
             metadata["model_parameters"]["person_detector"] = sum(p.numel() for p in frontend.refiner.detector.parameters())
             metadata["person_detector"] = "torchvision SSDLite320 MobileNet V3 Large COCO_V1; score>=0.5; bbox padding 8+4*age px"
     from huggingface_hub import try_to_load_from_cache
+    from .models import MODEL_REVISIONS
+    metadata["model_checkpoint_revisions"] = {
+        model: MODEL_REVISIONS.get(model) for model in [config.pose_model, config.metric_model] if model
+    }
     metadata["model_checkpoint_files"] = {
-        model: str(try_to_load_from_cache(model, "model.safetensors"))
+        model: str(try_to_load_from_cache(model, "model.safetensors", revision=MODEL_REVISIONS.get(model)))
         for model in [config.pose_model, config.metric_model] if model
     }
     (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")

@@ -9,6 +9,12 @@ import torch
 from .geometry import homogeneous
 
 
+MODEL_REVISIONS = {
+    "depth-anything/DA3-SMALL": "e08cab65ca0ec38e7826075418411ab90cab4da3",
+    "depth-anything/DA3METRIC-LARGE": "4010e39f3634a45bc60553321fb49fb760bd594e",
+}
+
+
 @dataclass
 class GeometryPrediction:
     depth: np.ndarray
@@ -23,7 +29,10 @@ class DA3Geometry:
 
         self.model_id, self.device, self.resolution = model_id, device, resolution
         self.calls = 0
-        self.model = DepthAnything3.from_pretrained(model_id).to(device).eval()
+        # Default benchmark weights must not silently change with a hub update.
+        # Other model IDs and local model directories keep the upstream API.
+        revision = MODEL_REVISIONS.get(model_id)
+        self.model = DepthAnything3.from_pretrained(model_id, revision=revision).to(device).eval()
         self.mean = torch.tensor([0.485, 0.456, 0.406], device=device)[:, None, None]
         self.std = torch.tensor([0.229, 0.224, 0.225], device=device)[:, None, None]
 
