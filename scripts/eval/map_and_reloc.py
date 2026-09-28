@@ -184,6 +184,9 @@ def run_mapping(args, out: Path) -> dict:
             "elapsed": elapsed, "n_keyframes": len(nodes), "n_permanent": n_perm, "timing": _timing_summary(),
             "map_file_bytes": map_file.stat().st_size}
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
+    if args.dump_graph:          # pose graph with ground truth, input of scripts/eval/calibrate_noise.py (which ignores the gt)
+        from graph_io import dump_graph
+        dump_graph(system, out / "graph_s0.json", kf_gt, session_id=0, meta={"map": str(args.map), "seed": args.seed})
     logger.info(f"Map ATE vs GT (permanent kfs): {ate:.3f} m, map file {meta['map_file_bytes'] / 2**20:.1f} MB")
     release(system)
     return meta
@@ -268,6 +271,7 @@ def main():
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
     ap.add_argument("--skip-reloc", action="store_true")
+    ap.add_argument("--dump-graph", action="store_true", help="write the mapping pose graph (graph_s0.json) for the noise calibration")
     args = ap.parse_args()
     if args.snr is not None and args.snr <= 0:
         args.snr = None
