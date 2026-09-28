@@ -181,6 +181,26 @@ floors are not calibrated, and a successful pair fit is not a place commitment.
 It is disabled by default; pair-level results alone do not establish robustness,
 real-time performance, or a novel contribution.
 
+In a development test of this fallback on an RTX 5090, two repeated 640×480,
+20 Hz runs per OpenLORIS change condition each committed to the saved office1-1
+map correctly. Both original metric-PnP controls failed viewpoint and illumination
+recovery. All 3,800 fallback outputs met the 50 ms deadline: capture-to-output
+p95 was 17.50–18.57 ms, maximum 36.97 ms, with no dropped input. Model loading
+and background shutdown are excluded. Summed process peak allocated GPU memory
+was 3.24–3.28 GB, excluding contexts and reservations.
+
+| Changed session | Received commitment delay | Post-commit position RMSE |
+|---|---:|---:|
+| office1-2, viewpoint | 6.50 s | 37.63–37.64 cm |
+| office1-4, illumination | 11.38 s | 27.39–27.41 cm |
+| office1-6, objects | 5.47 s | 5.26–5.27 cm |
+
+These use one rigid alignment fitted to the reference only; no query alignment
+or scale fit. Whole-query RMSE, including the unanchored prefix, is respectively
+2.48, 3.38 and 0.90 m. The difficult sessions still drift after a correct
+commitment. This small development cohort does not establish held-out robustness,
+calibration, a benefit from source-bias inference, or RTX 4090 performance.
+
 `--historical-min-score 0` with reserved historical slots permits a bounded number of weaker saved-map candidates, while new query nodes retain the original score thresholds. Original retrieval scores remain available to the inherited uncertainty calculation and keyframe policy; no geometry or temporal-commitment test is relaxed. This experimental search option can spend the entire retrieval budget on historical views if all three slots are reserved. Both search and learned matching need false-association and online runtime evaluation; accepted pairs alone do not establish map recovery.
 
 After a new keyframe realizes a temporally supported branch, commitment is checked once more with the same evidence and completed graph edges. This corrects an ordering issue that otherwise requires a later successful retrieval just to examine the newly realized branch; evidence is not counted twice and thresholds are unchanged. With the older saved reference, shared 5090 tests reconnect the reversed-viewpoint query at 12.21 s with 23.1 cm post-commit fixed-reference RMSE, and the object-change query at 11.17 s with 7.9 cm afterward. Rebuilt references at source `b7ea914` recover object change in both modes (baseline 5.20 s / 5.50 cm; conditional 5.47 s / 5.25 cm), but neither recovers viewpoint or illumination. This exposes reference-construction sensitivity; the small error difference does not establish a conditional-inference benefit. Each query uses its own reference's rigid alignment, with no query fit. Errors before recovery and all failures remain part of evaluation; systematic false-association testing remains outstanding.
