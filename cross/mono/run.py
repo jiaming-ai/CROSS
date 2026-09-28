@@ -28,6 +28,7 @@ def main():
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
+    parser.add_argument("--mask-interval", type=int, default=1)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--start", type=int, default=0)
@@ -66,6 +67,7 @@ def main():
                         seed=args.seed,
                         dpvo_metric_bootstrap=args.dpvo_metric_bootstrap,
                         mask_people=args.mask_people,
+                        mask_interval=args.mask_interval,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
                         pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,
@@ -118,7 +120,7 @@ def main():
         metadata["model_parameters"]["xfeat"] = sum(p.numel() for p in frontend.refiner.extractor.net.parameters())
         if frontend.refiner.detector is not None:
             metadata["model_parameters"]["person_detector"] = sum(p.numel() for p in frontend.refiner.detector.parameters())
-            metadata["person_detector"] = "torchvision SSDLite320 MobileNet V3 Large COCO_V1; score>=0.5; bbox padding 8px"
+            metadata["person_detector"] = "torchvision SSDLite320 MobileNet V3 Large COCO_V1; score>=0.5; bbox padding 8+4*age px"
     from huggingface_hub import try_to_load_from_cache
     metadata["model_checkpoint_files"] = {
         model: str(try_to_load_from_cache(model, "model.safetensors"))

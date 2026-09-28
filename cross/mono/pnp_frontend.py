@@ -25,7 +25,7 @@ class MetricPnPFrontend:
         self.K = np.asarray(K).copy()
         self.geometry = DA3Geometry(self.config.pose_model, device, self.config.resolution)
         self.metric = DA3MetricDepth(self.config.metric_model, device, self.config.metric_resolution)
-        self.refiner = XFeatRefiner(K, device, mask_people=self.config.mask_people)
+        self.refiner = XFeatRefiner(K, device, mask_people=self.config.mask_people, mask_interval=self.config.mask_interval)
         self.scale_filter = LogScaleFilter(self.config.scale)
         self.scale_filter.initialized = True
         self.scale_filter.variance = self.config.scale.observation_std_floor**2

@@ -26,6 +26,7 @@ class MonoConfig:
     dpvo_checkpoint: str | None = None
     dpvo_metric_bootstrap: bool = False
     mask_people: bool = False
+    mask_interval: int = 1
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"
@@ -47,7 +48,7 @@ class MonoConfig:
             raise ValueError("frontend must be da3, dpvo, metric_pnp or rotation_metric")
         if min(self.resolution, self.metric_resolution) < 56:
             raise ValueError("Model resolutions must be at least 56 pixels")
-        if min(self.anchor_interval, self.mapping_interval, self.scale.interval) < 1:
+        if min(self.anchor_interval, self.mapping_interval, self.scale.interval, self.mask_interval) < 1:
             raise ValueError("Intervals must be positive")
         if self.recent_frames < 1:
             raise ValueError("At least one recent frame is required")
