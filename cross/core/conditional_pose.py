@@ -32,6 +32,23 @@ def inverse(T):
     return result
 
 
+def normalize_mean(pose):
+    """Keep float32 group products on SE3 before matrix/log-chart conversion.
+
+    Repeated quaternion -> matrix -> quaternion cycles otherwise amplify
+    roundoff. Only normalize an already finite, near-unit quaternion; reject
+    a materially invalid pose instead of projecting arbitrary matrices.
+    """
+    import pypose as pp
+    import torch
+    data = pose.tensor().clone()
+    norm = torch.linalg.vector_norm(data[...,3:],dim=-1,keepdim=True)
+    if not torch.isfinite(data).all() or torch.any((norm-1).abs()>1e-3):
+        raise ValueError('Conditional pose mean has a non-unit or non-finite quaternion')
+    data[...,3:] /= norm
+    return pp.SE3(data)
+
+
 def right_jacobian(twist):
     """d Log(Exp(x)^-1 Exp(x+dx))/d dx, [translation,rotation] order."""
     twist = np.asarray(twist, dtype=np.float64)

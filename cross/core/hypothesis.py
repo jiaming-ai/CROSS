@@ -694,6 +694,7 @@ class HypothesisManager:
                 raise ValueError("Conditional filtering needs the motion factor's source Jacobians")
             from cross.utils.lie_tensor import SE3_Adj
             from cross.core.conditional import SourceState
+            from cross.core.conditional_pose import normalize_mean
             active = torch.where(last_gmm_weights > self.tracking_active_threshold)[0].tolist()
             pending = []
             for component in active:
@@ -702,7 +703,7 @@ class HypothesisManager:
                     raise ValueError("Active hypothesis has no conditional source state")
                 state, motion_J, offset = state.expand(source_factor)
                 twist = torch.as_tensor(offset,device=delta_pose.device,dtype=delta_pose.dtype)
-                corrected_delta = delta_pose @ pp.se3(twist).Exp()
+                corrected_delta = normalize_mean(delta_pose @ pp.se3(twist).Exp())
                 A = SE3_Adj(corrected_delta.Inv()).double().cpu().numpy()
                 covariance = A @ state.geometry_covariance @ A.T
                 # Keep the inherited std-sum policy for residual geometric
@@ -714,7 +715,7 @@ class HypothesisManager:
                     A@state.jacobian+motion_J,state.prior_variances,state.seen_factors)
                 marginal = torch.as_tensor(posterior.marginal_covariance().diagonal().copy(),
                                             device=last_gmm_sigma.device,dtype=last_gmm_sigma.dtype)
-                pending.append((component,posterior,last_gmm_mu[component] @ corrected_delta,
+                pending.append((component,posterior,normalize_mean(last_gmm_mu[component] @ corrected_delta),
                                 pp.se3(marginal.clamp_min(0).sqrt())))
             # Validate all components before mutating any live pose/bias state.
             for component,posterior,mean,std in pending:
@@ -1034,7 +1035,7 @@ class HypothesisManager:
         conditional_evidence_mask = None
         if source_factors is not None:
             from cross.core.conditional import conditional_product, SourceFactor
-            from cross.core.conditional_pose import ConditionalPose, right_jacobian
+            from cross.core.conditional_pose import ConditionalPose, right_jacobian, normalize_mean
             pending_sources = list(self.source_states)
             conditional_evidence_mask = torch.zeros_like(currently_tracking)
             self.last_conditional_audit = []
@@ -1053,7 +1054,7 @@ class HypothesisManager:
                     # The newborn has no pose prior in its new chart. Reuse
                     # the committed bias belief once; seed x conditionally.
                     state, offset = self.source_states[0].seed(factor,R)
-                    mean = proposal_mu[component] @ pp.se3(torch.as_tensor(offset,device=self.device,dtype=prior_mu.dtype)).Exp()
+                    mean = normalize_mean(proposal_mu[component] @ pp.se3(torch.as_tensor(offset,device=self.device,dtype=prior_mu.dtype)).Exp())
                     T = right_jacobian(offset)
                     state.geometry_covariance = T@state.geometry_covariance@T.T
                     state.jacobian = T@state.jacobian
@@ -1074,7 +1075,7 @@ class HypothesisManager:
                     result = conditional_product(state,residual,G@model.geometry_covariance@G.T,common,
                         np.diag(Q[0].double().cpu().numpy()))
                     state = result.state
-                    mean = prior_mu[component] @ pp.se3(torch.as_tensor(result.pose_offset,device=self.device,dtype=prior_mu.dtype)).Exp()
+                    mean = normalize_mean(prior_mu[component] @ pp.se3(torch.as_tensor(result.pose_offset,device=self.device,dtype=prior_mu.dtype)).Exp())
                     T = right_jacobian(result.pose_offset)
                     state.geometry_covariance = T@state.geometry_covariance@T.T
                     state.jacobian = T@state.jacobian

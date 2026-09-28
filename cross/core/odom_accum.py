@@ -196,6 +196,9 @@ class OdomAccumulator():
                     # for fully correlated increments, unlike summing variances.
                     self._measurement_std_sums[name] += transformed.diagonal().clamp_min(0).sqrt()
             self._accumulated_odom = self._accumulated_odom @ odom_reading
+            if self._source_factor is not None:
+                from cross.core.conditional_pose import normalize_mean
+                self._accumulated_odom = normalize_mean(self._accumulated_odom)
 
     def reset_item(self, name: str):
         """Reset the item"""

@@ -163,3 +163,16 @@ def test_invalid_motion_source_prior_cannot_partially_advance_the_mixture():
     for actual,expected in zip(hm.source_states,states):
         np.testing.assert_array_equal(actual.geometry_covariance,expected.geometry_covariance)
         np.testing.assert_array_equal(actual.jacobian,expected.jacobian)
+
+
+def test_repeated_se3_mean_updates_do_not_amplify_quaternion_roundoff():
+    hm=manager();hm.initialize_source_filter()
+    # Near-unit input of the magnitude seen in the failed image run.
+    hm.dist[0][0,3:] *= 1.+8e-7
+    increment=pp.se3(torch.tensor([.02,.01,0.,.03,-.02,.04])).Exp()
+    for i in range(200):
+        proposal=hm.dist[0]@increment
+        hm.gmm_filtering(proposal,pp.se3(torch.full((1,6),.08)),torch.ones(1),torch.ones(1),
+                         source_factors={0:SourceFactor((),np.empty((6,0)),np.empty(0),factor_id=str(i))})
+        q=hm.dist[0][0].tensor()[3:]
+        assert abs(float(q.double().norm())-1)<5e-7

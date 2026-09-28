@@ -365,11 +365,11 @@ class StreamingMonocularSystem(MonocularSystem):
         estimate.diagnostics["frontend_pose"] = estimate.pose.tolist()
         if self.config.conditional_sources:
             prefix = self.frontend.pose_scale_prefix
-            key = (id(prefix),self.bias_packet_revision)
-            if self._bias_prefix_cache is None or self._bias_prefix_cache[0] != key:
+            if (self._bias_prefix_cache is None or self._bias_prefix_cache[0] is not prefix
+                    or self._bias_prefix_cache[1] != self.bias_packet_revision):
                 correction = prefix.translation_at(np.zeros(3),self.source_biases)
-                self._bias_prefix_cache = (key,correction)
-            correction = self._bias_prefix_cache[1].copy()
+                self._bias_prefix_cache = (prefix,self.bias_packet_revision,correction)
+            correction = self._bias_prefix_cache[2].copy()
             tail = self.frontend.pose_scale_tail
             if tail is not None:
                 source,displacement = tail
