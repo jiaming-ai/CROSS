@@ -28,6 +28,7 @@ class MonoConfig:
     mask_people: bool = False
     mask_interval: int = 1
     rotation_selection: bool = False
+    subpixel: bool = False
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"

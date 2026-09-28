@@ -197,3 +197,19 @@ def test_rotation_model_selection_preserves_observable_translation():
         pixels += rng.normal(0, 0.5, pixels.shape)
         _, selected = rotation_only_model(xyz, pixels, K, R, translation)
         assert selected == expected
+
+
+def test_subpixel_alignment_recovers_fractional_motion_and_rejects_bad_matches():
+    import cv2
+    from cross.mono.photometric import refine_correspondences
+    rng = np.random.default_rng(7)
+    reference = cv2.GaussianBlur(rng.integers(0, 255, (160, 240), dtype=np.uint8), (3, 3), 0.7)
+    motion = np.array([1.375, -0.625])
+    current = cv2.warpAffine(reference, np.c_[np.eye(2), motion], (240, 160))
+    points = np.array([(x, y) for y in range(30, 140, 20) for x in range(30, 220, 20)], np.float32)
+    initial = points + np.round(motion)
+    initial[:10] += 12  # not a permitted subpixel correction
+    a, b = refine_correspondences(reference, current, points, initial)
+    assert len(a) >= len(points) - 15
+    assert len(a) <= len(points) - 10
+    assert np.median(np.linalg.norm(b-a-motion, axis=1)) < 0.06

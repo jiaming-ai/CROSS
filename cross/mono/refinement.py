@@ -8,7 +8,8 @@ from .geometry import inverse
 
 
 class XFeatRefiner:
-    def __init__(self, K, device="cuda", keypoints=1600, mask_people=False, mask_interval=1, rotation_selection=False):
+    def __init__(self, K, device="cuda", keypoints=1600, mask_people=False, mask_interval=1, rotation_selection=False,
+                 subpixel=False):
         self.K = np.asarray(K)
         self.device = device
         self.extractor = torch.hub.load("verlab/accelerated_features", "XFeat", pretrained=True,
@@ -21,6 +22,8 @@ class XFeatRefiner:
         self.boxes = None
         self.rotation_selection = rotation_selection
         self.last_rotation_only = False
+        self.subpixel = subpixel
+        self.last_correspondences = 0
         if mask_people:
             from torchvision.models.detection import ssdlite320_mobilenet_v3_large, SSDLite320_MobileNet_V3_Large_Weights
             self.detector = ssdlite320_mobilenet_v3_large(
@@ -47,12 +50,15 @@ class XFeatRefiner:
             for key in ("keypoints", "descriptors", "scores"):
                 result[key] = result[key][keep]
         result["shape"] = rgb.shape[:2]
+        if self.subpixel:
+            result["gray"] = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
         self.frame_index += 1
         return result
 
     @torch.inference_mode()
     def estimate(self, ref, current, ref_depth, rotation=None):
         self.last_rotation_only = False
+        self.last_correspondences = 0
         if min(len(ref["keypoints"]), len(current["keypoints"])) < 20:
             return None
         similarity = ref["descriptors"] @ current["descriptors"].T
@@ -63,6 +69,10 @@ class XFeatRefiner:
         matched &= (1 - scores[:, 0]).clamp_min(0) < 0.81 * (1 - scores[:, 1]).clamp_min(0)
         xy_ref = ref["keypoints"][matched].cpu().numpy()
         xy_cur = current["keypoints"][best[matched]].cpu().numpy()
+        if self.subpixel:
+            from .photometric import refine_correspondences
+            xy_ref, xy_cur = refine_correspondences(ref["gray"], current["gray"], xy_ref, xy_cur)
+        self.last_correspondences = len(xy_ref)
         if len(xy_ref) < 20:
             return None
         height, width = ref["shape"]

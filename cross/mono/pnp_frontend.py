@@ -26,7 +26,7 @@ class MetricPnPFrontend:
         self.geometry = DA3Geometry(self.config.pose_model, device, self.config.resolution)
         self.metric = DA3MetricDepth(self.config.metric_model, device, self.config.metric_resolution)
         self.refiner = XFeatRefiner(K, device, mask_people=self.config.mask_people, mask_interval=self.config.mask_interval,
-                                    rotation_selection=self.config.rotation_selection)
+                                    rotation_selection=self.config.rotation_selection, subpixel=self.config.subpixel)
         self.scale_filter = LogScaleFilter(self.config.scale)
         self.scale_filter.initialized = True
         self.scale_filter.variance = self.config.scale.observation_std_floor**2
@@ -91,6 +91,7 @@ class MetricPnPFrontend:
         diagnostics = {
             "frame": self.index, "valid": valid, "initializing": False, "pose_source": "metric_pnp",
             "pnp_inliers": count, "pnp_reprojection_median_px": error, "anchor_renewed": renew,
+            "correspondences": self.refiner.last_correspondences,
             "masked_keypoints": features.get("masked_keypoints", 0), "person_boxes": features.get("person_boxes", 0),
             "rotation_only_selected": self.refiner.last_rotation_only,
             "scale": 1.0, "log_scale_std": float(np.sqrt(self.scale_filter.uncertainty_variance)),
