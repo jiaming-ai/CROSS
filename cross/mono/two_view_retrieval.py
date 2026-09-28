@@ -20,7 +20,7 @@ class MetricTwoViewRelativePose(MetricRelativePose):
     """
 
     def __init__(self, K, device="cuda", mask_people=False, matcher="superpoint_lightglue",
-                 conditional_sources=False, source_log_std=.12):
+                 conditional_sources=False, source_log_std=.12, rotation_geometry=None):
         from .refinement import XFeatRefiner
         if matcher != "superpoint_lightglue":
             raise ValueError("Two-view fallback requires superpoint_lightglue")
@@ -31,6 +31,41 @@ class MetricTwoViewRelativePose(MetricRelativePose):
                                             matcher=matcher)
         self.fallback_cache = OrderedDict()
         self.factor_policy += ":superpoint-two-view-fallback-v2"
+        self.rotation_geometry = rotation_geometry
+        self.rotation_cache = OrderedDict()
+        # A screen does not create new geometric evidence. Keep the physical
+        # factor identity unchanged, including when a map already saw this pair.
+
+    def _check_rotation(self, reference_rgb, current_rgb, pose):
+        """Optional learned rotation agreement, with no extra source/evidence.
+
+        The .1 rad limit is the existing metric-PnP cycle rotation threshold.
+        Agreement is a heuristic screen, not an independent pose likelihood.
+        """
+        from scipy.spatial.transform import Rotation
+        from .geometry import relative_pose
+
+        geometry = self.rotation_geometry
+        prepared = []
+        for rgb in (reference_rgb, current_rgb):
+            key = hashlib.sha256(rgb.tobytes()).digest()
+            if key not in self.rotation_cache:
+                self.rotation_cache[key] = geometry.prepare(rgb)
+                if len(self.rotation_cache) > 128:
+                    self.rotation_cache.popitem(last=False)
+            self.rotation_cache.move_to_end(key)
+            prepared.append(self.rotation_cache[key])
+        prediction = geometry.predict(prepared)
+        learned = relative_pose(prediction.extrinsics[0], prediction.extrinsics[1])
+        audit = dict(model_id=geometry.model_id, resolution=geometry.resolution,
+                     limit_rad=.1, accepted=False)
+        if not np.isfinite(learned).all():
+            audit['reason'] = 'nonfinite_prediction'
+            return audit
+        angle = float(Rotation.from_matrix(pose[:3, :3].T @ learned[:3, :3]).magnitude())
+        audit.update(rotation_difference_rad=angle, accepted=angle <= .1,
+                     reason='accepted' if angle <= .1 else 'rotation_disagreement')
+        return audit
 
     def fallback_features(self, rgb):
         key = hashlib.sha256(rgb.tobytes()).digest()
@@ -82,6 +117,13 @@ class MetricTwoViewRelativePose(MetricRelativePose):
             audit.update(reason="two_view_rejected", two_view=geometry)
             if pose is None:
                 continue
+            if getattr(self, 'rotation_geometry', None) is not None:
+                check = self._check_rotation(DA3RelativePose.rgb(ref_image[i]),
+                                             DA3RelativePose.rgb(curr_image), pose)
+                audit['rotation_check'] = check
+                if not check['accepted']:
+                    audit['reason'] = 'learned_rotation_rejected'
+                    continue
             confidence = min(1., geometry["metric_inliers"] / 80.) * np.exp(
                 -geometry["median_reprojection_px"] / 3.)
             std = np.r_[np.sqrt(.02**2 + (.12*pose[:3, 3])**2), [.03]*3]

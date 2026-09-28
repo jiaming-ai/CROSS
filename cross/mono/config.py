@@ -50,6 +50,7 @@ class MonoConfig:
     mapping_interval: int = 5
     retrieval_pose: str = "da3"
     retrieval_matcher: str = "mnn"
+    two_view_rotation_check: bool = False
     filter_mode: str = "full"
     session_recovery: bool = False
     chart_aware: bool = False
@@ -94,6 +95,8 @@ class MonoConfig:
             raise ValueError("Learned retrieval matchers require metric retrieval")
         if self.retrieval_pose == "metric_two_view" and self.retrieval_matcher != "superpoint_lightglue":
             raise ValueError("Experimental two-view retrieval requires superpoint_lightglue")
+        if self.two_view_rotation_check and self.retrieval_pose != "metric_two_view":
+            raise ValueError("Learned rotation checking requires metric_two_view retrieval")
         if self.pose_refinement not in {"none", "xfeat"}:
             raise ValueError("pose_refinement must be none or xfeat")
         if self.retrieval_pose not in {"da3", "metric_pnp", "metric_two_view"}:

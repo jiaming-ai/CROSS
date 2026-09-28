@@ -62,7 +62,9 @@ class MonocularSystem:
         metric_adapter = MetricTwoViewRelativePose if self.config.retrieval_pose == "metric_two_view" else MetricRelativePose
         pose_estimator = (DA3RelativePose(self.frontend.geometry, device) if self.config.retrieval_pose == "da3"
                           else metric_adapter(camera.K, device, self.config.mask_people, self.config.retrieval_matcher,
-                                                  self.config.conditional_sources,self.config.source_log_std))
+                                                  self.config.conditional_sources,self.config.source_log_std,
+                                                  **(dict(rotation_geometry=self.frontend.geometry)
+                                                     if self.config.two_view_rotation_check else {})))
         self.mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         self.map_alignment = np.eye(4)
         self.initialized = False

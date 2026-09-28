@@ -213,6 +213,14 @@ capture-to-output p95 was 14.96–18.87 ms and maximum 35.75 ms on the RTX 5090.
 The fallback remains optional: broader pair acceptance did not improve recovery
 in this cohort. The sequences become development data for subsequent changes.
 
+`--two-view-rotation-check` adds an experimental agreement screen to this
+fallback using the configured pose model (DA3-Small by default). The learned
+and two-view rotations must agree within the existing 0.1 rad cycle threshold.
+Accepted poses, confidences, metric-source identities and delayed-commitment
+tests remain the same. The screen runs only after primary PnP fails and a
+two-view pose passes verification. It can reject useful matches as well as
+errors; its effect on recovery must be measured. It is disabled by default.
+
 `--historical-min-score 0` with reserved historical slots permits a bounded number of weaker saved-map candidates, while new query nodes retain the original score thresholds. Original retrieval scores remain available to the inherited uncertainty calculation and keyframe policy; no geometry or temporal-commitment test is relaxed. This experimental search option can spend the entire retrieval budget on historical views if all three slots are reserved. Both search and learned matching need false-association and online runtime evaluation; accepted pairs alone do not establish map recovery.
 
 After a new keyframe realizes a temporally supported branch, commitment is checked once more with the same evidence and completed graph edges. This corrects an ordering issue that otherwise requires a later successful retrieval just to examine the newly realized branch; evidence is not counted twice and thresholds are unchanged. With the older saved reference, shared 5090 tests reconnect the reversed-viewpoint query at 12.21 s with 23.1 cm post-commit fixed-reference RMSE, and the object-change query at 11.17 s with 7.9 cm afterward. Rebuilt references at source `b7ea914` recover object change in both modes (baseline 5.20 s / 5.50 cm; conditional 5.47 s / 5.25 cm), but neither recovers viewpoint or illumination. This exposes reference-construction sensitivity; the small error difference does not establish a conditional-inference benefit. Each query uses its own reference's rigid alignment, with no query fit. Errors before recovery and all failures remain part of evaluation; systematic false-association testing remains outstanding.

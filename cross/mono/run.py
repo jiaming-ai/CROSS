@@ -65,6 +65,8 @@ def main():
     parser.add_argument("--retrieval-pose", choices=["da3", "metric_pnp", "metric_two_view"], default="da3")
     parser.add_argument("--retrieval-matcher", choices=["mnn", "lighterglue", "superpoint_lightglue"], default="mnn",
                         help="Matcher for low-rate metric-PnP retrieval; local tracking is unchanged")
+    parser.add_argument("--two-view-rotation-check", action="store_true",
+                        help="Experimentally screen two-view fallback rotation with the configured pose model")
     parser.add_argument("--filter-mode", choices=["full", "skip_active", "adaptive"], default="full",
                         help="Inherited CROSS retrieval pose-update policy; delayed commitment remains enabled")
     parser.add_argument("--pose-model", default="depth-anything/DA3-SMALL")
@@ -141,6 +143,7 @@ def main():
                         anchor_interval=args.anchor_interval, mapping_interval=args.mapping_interval,
                         retrieval_pose=args.retrieval_pose,
                         retrieval_matcher=args.retrieval_matcher,
+                        two_view_rotation_check=args.two_view_rotation_check,
                         filter_mode=args.filter_mode,
                         session_recovery=args.session_recovery,
                         chart_aware=args.chart_aware,

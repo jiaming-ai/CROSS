@@ -41,6 +41,9 @@ def test_calibrated_geometry_metric_gauge_and_rotation_degeneracy():
 
 def test_two_view_configuration_preserves_default_and_requires_explicit_backend():
     assert MonoConfig().retrieval_pose == 'da3'
+    assert not MonoConfig().two_view_rotation_check
+    with pytest.raises(ValueError, match='metric_two_view'):
+        MonoConfig(two_view_rotation_check=True)
     with pytest.raises(ValueError, match='superpoint_lightglue'):
         MonoConfig(retrieval_pose='metric_two_view')
     config = MonoConfig(frontend='streaming_pnp', retrieval_pose='metric_two_view',
@@ -90,6 +93,70 @@ def test_fallback_keeps_one_component_and_deduplicates_source_factor(monkeypatch
     assert estimator.last_pair_audit[0]['reason'] == 'reused_geometric_factor'
 
 
+def test_learned_rotation_screen_rejects_without_new_evidence(monkeypatch):
+    torch = pytest.importorskip('torch')
+    pytest.importorskip('pypose')
+    from collections import OrderedDict
+    from cross.mono.two_view_retrieval import MetricTwoViewRelativePose
+    from cross.mono import two_view_retrieval as module
+
+    estimator = MetricTwoViewRelativePose.__new__(MetricTwoViewRelativePose)
+    estimator.device, estimator.conditional_sources, estimator.source_log_std = 'cpu', True, .12
+    estimator.factor_policy = 'same-physical-pair'
+    features = dict(keypoints=np.zeros((30,2)),shape=(8,8))
+    estimator.features = estimator.fallback_features = lambda rgb: features
+    estimator.refiner = SimpleNamespace(K=np.eye(3),match=lambda *_: (np.zeros((30,2)),np.zeros((30,2))))
+    estimator.fallback_refiner = estimator.refiner
+    def failed(*_):
+        estimator.refiner.last_match_audit = dict(reason='pnp_consensus')
+        return None
+    estimator.refiner.estimate = failed
+    pose = np.eye(4); pose[0,3] = .5
+    monkeypatch.setattr(module,'estimate_metric_two_view',lambda *_: (pose.copy(),dict(metric_inliers=30,median_reprojection_px=.2)))
+    calls = []
+    extrinsics = np.array([np.eye(4),np.eye(4)])
+    extrinsics[1,:3,:3] = cv2.Rodrigues(np.array([0.,.2,0.]))[0]
+    def predict(images):
+        calls.append(len(images))
+        return SimpleNamespace(extrinsics=extrinsics)
+    estimator.rotation_geometry = SimpleNamespace(prepare=lambda x:x,predict=predict,model_id='test',resolution=336)
+    estimator.rotation_cache = OrderedDict()
+    rgb, depth = torch.zeros(1,3,8,8),torch.ones(1,8,8)
+    kwargs = dict(ref_metric_sources=[dict(source_id='reference')],curr_metric_source=dict(source_id='current'))
+    _, valid, _ = estimator.estimate_pose(rgb,depth,rgb[0],depth[0],**kwargs)
+    assert not valid.any() and not estimator.last_conditional_poses
+    assert estimator.last_pair_audit[0]['reason'] == 'learned_rotation_rejected'
+    assert np.isclose(estimator.last_pair_audit[0]['rotation_check']['rotation_difference_rad'],.2)
+    extrinsics[1] = np.eye(4)
+    poses, valid, confidence = estimator.estimate_pose(rgb,depth,rgb[0],depth[0],**kwargs)
+    assert valid.tolist() == [True] and len(poses) == len(confidence) == 1
+    np.testing.assert_allclose(poses[0].matrix().numpy(),pose,atol=1e-7)
+    factor = estimator.last_conditional_poses[0].factor
+    assert factor.factor_id == hashlib.sha256(b'same-physical-pairreferencecurrent').hexdigest()
+    assert factor.keys == ('image:reference',)
+    _, valid, _ = estimator.estimate_pose(rgb,depth,rgb[0],depth[0],excluded_factor_ids=[factor.factor_id],**kwargs)
+    assert not valid.any() and calls == [2,2]
+
+
+def test_rotation_screen_uses_reference_current_convention_and_rejects_nonfinite():
+    pytest.importorskip('torch')
+    from collections import OrderedDict
+    from cross.mono.two_view_retrieval import MetricTwoViewRelativePose
+    from cross.mono.geometry import inverse
+    estimator = MetricTwoViewRelativePose.__new__(MetricTwoViewRelativePose)
+    pose = np.eye(4); pose[:3,:3] = cv2.Rodrigues(np.array([.2,-.3,.1]))[0]
+    extrinsics = np.array([np.eye(4),inverse(pose)])
+    estimator.rotation_geometry = SimpleNamespace(prepare=lambda x:x,model_id='test',resolution=336,
+        predict=lambda _:SimpleNamespace(extrinsics=extrinsics))
+    estimator.rotation_cache = OrderedDict()
+    image = np.zeros((8,8,3),np.uint8)
+    audit = estimator._check_rotation(image,image,pose)
+    assert audit['accepted'] and audit['rotation_difference_rad'] < 1e-10
+    extrinsics[1,0,0] = np.nan
+    audit = estimator._check_rotation(image,image,pose)
+    assert not audit['accepted'] and audit['reason'] == 'nonfinite_prediction'
+
+
 def test_verified_primary_pose_never_calls_fallback():
     torch = pytest.importorskip('torch')
     pytest.importorskip('pypose')
@@ -107,6 +174,7 @@ def test_verified_primary_pose_never_calls_fallback():
     def forbidden(*_):
         raise AssertionError('A verified primary pose must not request fallback features')
     estimator.fallback_features = forbidden
+    estimator.rotation_geometry = SimpleNamespace(predict=forbidden)
     rgb, depth = torch.zeros(1, 3, 8, 8), torch.ones(1, 8, 8)
     poses, valid, _ = estimator.estimate_pose(rgb, depth, rgb[0], depth[0])
     assert valid.tolist() == [True]
