@@ -109,6 +109,32 @@ def test_saved_node_conditional_model_is_separate_from_one_bias_posterior():
     assert restored.odom_edges[9,10].conditional_pose.factor.log_depth_scale
 
 
+def test_saved_nonrepresentative_edges_introduce_one_unused_prior_during_pgo():
+    hm = chain()
+    hm.source_states[0].mean[:] = .07
+    hm.source_states[0].covariance[:] = .004
+    # Both raw edges passed geometry but neither was the online cluster
+    # representative. Their shared metric prediction is not in the live state.
+    for target in (4,8):
+        pose = hm.nodes[0].pose_mu[0].Inv()@hm.nodes[target].pose_mu[0]
+        T = pose.matrix().double().numpy()
+        J = np.r_[-T[:3,:3].T@T[:3,3],np.zeros(3)][:,None]
+        edge = ConditionalPose(np.eye(6)*.0025,SourceFactor(('unused/image',),J,np.array([.0144]),
+                               factor_id=f'raw-{target}',log_depth_scale=True))
+        hm.add_edge(0,target,pose,pp.se3(torch.full((6,),.05)),EdgeType.VISUAL,conditional_pose=edge)
+    record = copy.deepcopy(hm.save_state())
+    assert record['source_belief']['keys']==['session-A/image']
+    restored = manager()
+    restored.load_state(record,SimpleNamespace(),'cpu','cpu',{})
+    restored.initialize_source_filter()
+    pg = solve(restored)
+    assert pg.conditional_belief.keys==('session-A/image','unused/image')
+    np.testing.assert_array_equal(pg.conditional_belief.mean,[.07,0.])
+    np.testing.assert_array_equal(pg.conditional_belief.covariance,np.diag([.004,.0144]))
+    # Preparing/solving a graph has not mutated the saved tracking posterior.
+    assert restored.source_states[0].keys==('session-A/image',)
+
+
 def test_representative_message_preserves_full_covariance_and_actual_source():
     from cross.core.system import System
     hm = manager()
