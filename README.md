@@ -13,6 +13,17 @@ The monocular API accepts **RGB, timestamps and camera calibration**. It does no
 
 The single-session baseline runs at camera rate in the measured consumer-GPU tests. Multi-session mapping remains experimental. Optional two-view verification recovers difficult viewpoint and lighting queries, and an accumulated three-session map also recovers the people query. A longer seven-session chain exposes a late false map merge; the experimental shared-geometry option rejects this reproduced failure in the controls below. Broad changed-session robustness is not established. The default diagonal metric bridge is not a full joint Sim(3) posterior; a conditional pose/source option is described below.
 
+The first frozen OpenLORIS home/café controls expose further failures. At 20 Hz,
+five completed runs emit all 9,799 selected frames without a 50 ms deadline miss,
+but reference ATE is 1.15 m (home) and 0.66 m (café). After the first received
+map commitment, query position RMSE is 1.52 m for home and 1.36–1.40 m for café,
+using only the original reference's rigid alignment. Home's shared-geometry
+query crashes after 554 of 2,000 outputs because another hypothesis survives
+at graph refresh. It is a failed run. Only 26.45% of the home query outputs
+have GT associations under the declared 0.1 s interpolation-gap cutoff.
+These results do not establish robust cross-environment operation; the frontend
+also accumulates substantial orientation error around tracking losses.
+
 The monocular bridge defaults to CROSS's original `full` policy: the global observation updates the active pose as well as competing hypotheses and delayed-commitment evidence. `--filter-mode skip_active` reproduces the earlier monocular bridge, where the active pose follows local motion; `adaptive` exposes the inherited adaptive gate. These select existing policies; they do not change the observation message or commitment thresholds. Report the selected policy in comparisons, including when reproducing historical runs that used `skip_active`.
 
 ## Monocular installation and usage
