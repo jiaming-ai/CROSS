@@ -158,3 +158,46 @@ def test_recycled_hypothesis_cannot_inherit_a_previous_places_evidence(old_weigh
     assert manager.last_sum_pos[1] == 0
     assert torch.count_nonzero(manager.log_c_hist[1]) == 0
     assert torch.count_nonzero(manager.log_conf_hist[1]) == 0
+
+
+@pytest.mark.parametrize("support", [True, False])
+def test_newly_realized_branch_is_checked_after_edges_without_reusing_evidence(support):
+    from cross.core.config import HypothesisConfig
+    from cross.core.hypothesis import HypothesisManager
+    from cross.core.system import System
+
+    system = System.__new__(System)
+    manager = HypothesisManager(SimpleNamespace(device="cpu", topo_map=None), 2,
+                                HypothesisConfig(session_recovery=True))
+    system.hypothesis_manager, system.last_step_diagnostics = manager, {}
+    poses = pp.identity_SE3(2)
+    poses[1, 0] = 2.
+    manager.dist = (poses, pp.se3(torch.ones(2,6)*.1), torch.tensor([.1,.9]))
+    manager.last_sum_pos[1], manager.last_hit_rate[1] = 2., .5
+    manager.log_c_hist[1] = 2. if support else -2.
+    manager.reference_support.start({1,2})
+    for i in range(4):
+        manager.reference_support.observe(i, {1:(0,1),2:(0,1)})
+    before = (manager.llr_hist.clone(), manager.log_c_hist.clone(), manager.log_conf_hist.clone(),
+              manager.reference_support.audit(1), manager.llr_hist_ptr)
+    inserted = SimpleNamespace(id=20)
+    edge_ready = []
+    detect = manager.detect_loop_closure
+    def check(ret):
+        if manager.realized[1]:
+            assert edge_ready, "Commitment checked before this observation's graph edges exist"
+        return detect(ret)
+    manager.detect_loop_closure = check
+    def insert(*_, **kwargs):
+        assert not kwargs['force_add']  # first check sees an unrealized branch
+        manager.add_node(inserted)
+        edge_ready.append(True)
+        return inserted
+    system._add_new_kf = insert
+    keyframe, result = system._add_keyframe_and_detect_loop(None,None,{}, {}, 1.)
+    assert keyframe is inserted and manager.realized[1]
+    assert result['loop_closure'] == support
+    assert system.last_step_diagnostics['commitment_rechecked_after_realization']
+    for actual, expected in zip((manager.llr_hist,manager.log_c_hist,manager.log_conf_hist),before[:3]):
+        torch.testing.assert_close(actual,expected)
+    assert manager.reference_support.audit(1) == before[3] and manager.llr_hist_ptr == before[4]

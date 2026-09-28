@@ -834,25 +834,7 @@ class System:
         #########################
         # detect loop closure
         #########################
-        lc_result = self.hypothesis_manager.detect_loop_closure(ret)
-        self.last_step_diagnostics["loop_closure_detected"] = bool(lc_result["loop_closure"])
-        self.last_step_diagnostics["commitment_audit"] = self.hypothesis_manager.last_loop_audit
-        
-        
-
-        #########################
-        # insert new keyframe
-        # if loop closure is detected, we will force add a kf for pgo
-        #########################
-        new_kf = self._add_new_kf(
-            rgb_image, 
-            depth_image, 
-            ret=ret,
-            edge_mapping=edge_mapping,
-            timestamp=timestamp,
-            force_permanent=False,
-            force_add=lc_result["loop_closure"],
-        )
+        new_kf, lc_result = self._add_keyframe_and_detect_loop(rgb_image, depth_image, ret, edge_mapping, timestamp)
 
         if lc_result["loop_closure"]:
             logger.info(
@@ -886,6 +868,28 @@ class System:
                 step_idx = self._processed_frame_num,
             )
    
+
+    def _add_keyframe_and_detect_loop(self, rgb_image, depth_image, ret, edge_mapping, timestamp):
+        """Check newly realized branches after their current graph edges exist.
+
+        Realization happens inside add_node. A final successful observation can
+        both qualify a branch and provide its last required historical support;
+        it must not need a future successful retrieval merely to check the same
+        evidence. Detection reads history and never accumulates it a second time.
+        """
+        manager = self.hypothesis_manager
+        lc_result = manager.detect_loop_closure(ret)
+        branches_before = set(manager.hypotheses)
+        new_kf = self._add_new_kf(rgb_image, depth_image, ret=ret, edge_mapping=edge_mapping,
+                                timestamp=timestamp, force_permanent=False, force_add=lc_result["loop_closure"])
+        recheck = (not lc_result["loop_closure"] and new_kf is not None
+                   and bool(set(manager.hypotheses) - branches_before))
+        if recheck:
+            lc_result = manager.detect_loop_closure(ret)
+        self.last_step_diagnostics.update(loop_closure_detected=bool(lc_result["loop_closure"]),
+                                         commitment_audit=manager.last_loop_audit,
+                                         commitment_rechecked_after_realization=recheck)
+        return new_kf, lc_result
 
     def _construct_motion_dist(
         self,
