@@ -45,12 +45,15 @@ class _SemanticTrack:
             self.kf_ids.append(kf_id)
 
 
+from cross.db.db import as_float_image  # noqa: E402  (uint8 / fp16 keyframe storage)
+
+
 def _to_pil_rgb(img: torch.Tensor) -> Image.Image:
     if not isinstance(img, torch.Tensor):
         raise TypeError(f"Expected torch.Tensor image, got {type(img)}")
     if img.ndim != 3 or img.shape[0] != 3:
         raise ValueError(f"Expected image shaped (3,H,W), got {tuple(img.shape)}")
-    img_cpu = img.detach().float().cpu().clamp(0.0, 1.0)
+    img_cpu = as_float_image(img.detach()).cpu().clamp(0.0, 1.0)
     arr = (img_cpu.permute(1, 2, 0).numpy() * 255.0).round().astype(np.uint8)
     return Image.fromarray(arr, mode="RGB")
 
@@ -327,7 +330,7 @@ class SemanticMemoryManager:
                 mask_enc = _encode_mask_roi(mask, box_xyxy_int=box_int, height=height, width=width)
 
                 p_cam, z_med, z_sigma = _estimate_object_center_cam(
-                    kf.depth_image,
+                    as_float_image(kf.depth_image),
                     camera,
                     box,
                     mask,
@@ -509,7 +512,7 @@ class SemanticMemoryManager:
                 ax.set_title(f"kf_id={kf_id} (missing image)")
                 continue
 
-            rgb = kf.raw_rgb_image.detach().float().cpu().clamp(0.0, 1.0)
+            rgb = as_float_image(kf.raw_rgb_image.detach()).cpu().clamp(0.0, 1.0)
             img = (rgb.permute(1, 2, 0).numpy() * 255.0).round().astype(np.uint8)
             h, w = int(img.shape[0]), int(img.shape[1])
 

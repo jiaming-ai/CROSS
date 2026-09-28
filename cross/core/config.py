@@ -121,8 +121,10 @@ class RetrievalConfig:
     # results.  The viewed region of a camera is the point pose_guided_depth metres along its optical axis; overlap =
     # those points within pose_guided_radius and optical axes within pose_guided_max_angle_deg.  Appearance retrieval
     # across sessions under strong appearance change is weak, the tracked pose is not.
-    # keyframe images stored as uint8 (depth fp16) instead of float32: 4x less memory per keyframe and per saved map
-    store_images_uint8: bool = False
+    # keyframe images stored as uint8 and depth as fp16 instead of float32: 4x less memory per keyframe and per saved map
+    # (images come from 8-bit sensors, so the round trip is lossless; fp16 depth resolution is < 0.1 % of the range);
+    # every consumer converts with cross.db.db.as_float_image
+    store_images_uint8: bool = True
     pose_guided_k: int = 0
     pose_guided_depth: float = 2.0
     pose_guided_radius: float = 1.0
