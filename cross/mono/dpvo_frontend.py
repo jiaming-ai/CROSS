@@ -44,6 +44,7 @@ class DPVOFrontend:
         self.initialized_before = False
         self.provide_mapping_depth = True
         self.bootstrap_metric_calls = 0
+        self.background_patchifier = None
         self.vo_cpu_rng = torch.Generator().manual_seed(self.config.seed).get_state()
         self.vo_cuda_rng = torch.Generator(device="cuda").manual_seed(self.config.seed).get_state()
 
@@ -82,7 +83,14 @@ class DPVOFrontend:
             with torch.random.fork_rng(devices=[0]):
                 torch.manual_seed(self.config.seed)
                 self.tracker = DPVO(config, self.config.dpvo_checkpoint, ht=h, wd=w, viz=False)
+            if self.config.mask_people:
+                from .background_patches import BackgroundPatchifier
+                self.background_patchifier = BackgroundPatchifier(
+                    self.tracker.network.patchify, device, self.config.mask_interval)
+                self.tracker.network.patchify = self.background_patchifier
         tracker = self.tracker
+        if self.background_patchifier is not None:
+            self.background_patchifier.observe(rgb)
         self.rgb_memory[self.index] = rgb.copy()
         image = torch.as_tensor(rgb[..., ::-1].copy(), device="cuda").permute(2, 0, 1)  # DPVO expects BGR
         intrinsics = torch.tensor([self.K[0, 0], self.K[1, 1], self.K[0, 2], self.K[1, 2]], device="cuda")
@@ -102,6 +110,11 @@ class DPVOFrontend:
         initialized = bool(tracker.is_initialized)
         diagnostics = {"frame": self.index, "valid": initialized, "frontend_seconds": pose_seconds,
                        "pose_source": "dpvo", "initializing": not initialized}
+        if self.background_patchifier is not None:
+            diagnostics.update(background_patches=self.background_patchifier.valid_patches,
+                               person_boxes=len(self.background_patchifier.current_boxes))
+            if self.background_patchifier.valid_patches < 20:
+                diagnostics["valid"] = False
         # Random inverse-depth initialization is ill-conditioned when startup
         # has little static parallax. A learned RGB-only depth initializes the
         # newly admitted patch depths; subsequent native BA remains free to
@@ -166,6 +179,8 @@ class DPVOFrontend:
         covariance = np.diag([0.005**2] * 3 + [0.01**2] * 3)
         covariance[:3, :3] += scale_translation_covariance(delta[:3, 3], self.scale_filter.uncertainty_variance)
         if not initialized:
+            covariance += np.eye(6)
+        elif not diagnostics["valid"]:
             covariance += np.eye(6)
         # Dense depth is needed only on mapping updates. It is predicted from
         # current RGB; it is never sensor depth. It is not used as VO input.

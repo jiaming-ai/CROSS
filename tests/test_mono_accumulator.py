@@ -39,3 +39,14 @@ def test_skipped_retrieval_cannot_reduce_motion_prior_uncertainty():
                               torch.ones(1), torch.ones(1), pose_update_mask=torch.tensor([False]))
         torch.testing.assert_close(manager.dist[0].tensor(), prior.tensor())
         torch.testing.assert_close(manager.dist[1].tensor(), prior_std.tensor())
+
+
+def test_background_patch_selection_excludes_people_and_reports_no_support():
+    from cross.mono.background_patches import background_indices
+    points = torch.tensor([[10., 10.], [20., 20.], [30., 30.], [40., 40.]])
+    boxes = torch.tensor([[0., 0., 25., 25.]])
+    indices, supported = background_indices(points, boxes, 3)
+    assert supported == 2
+    assert indices.tolist() == [2, 3, 2]
+    _, supported = background_indices(points, torch.tensor([[0., 0., 50., 50.]]), 3)
+    assert supported == 0

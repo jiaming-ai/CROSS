@@ -193,8 +193,14 @@ def main():
     if args.device.startswith("cuda"):
         summary["peak_gpu_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
     if args.frontend in {"dpvo", "rotation_metric"}:
-        native_tracker = frontend.tracker if args.frontend == "dpvo" else frontend.rotation_tracker.tracker
+        native_frontend = frontend if args.frontend == "dpvo" else frontend.rotation_tracker
+        native_tracker = native_frontend.tracker
         metadata["model_parameters"]["dpvo"] = sum(p.numel() for p in native_tracker.network.parameters())
+        if native_frontend.background_patchifier is not None:
+            detector_parameters = sum(p.numel() for p in native_frontend.background_patchifier.detector.parameters())
+            metadata["model_parameters"]["dpvo"] -= detector_parameters
+            metadata["model_parameters"]["dpvo_person_detector"] = detector_parameters
+            metadata["dpvo_patch_selection"] = "8x native candidate pool; exclude SSDLite320 MobileNet V3 Large COCO_V1 person boxes, score>=0.5, padding 8+4*age px"
         (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     print(json.dumps(summary, indent=2), flush=True)
