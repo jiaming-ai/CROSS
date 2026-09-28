@@ -44,6 +44,7 @@ class FilterMode(str, Enum):
 class PoseEstType(str, Enum):
     PNP = "pnp"
     VGGT = "vggt"
+    DA3 = "da3"
 
 
 class KPDetectorType(str, Enum):

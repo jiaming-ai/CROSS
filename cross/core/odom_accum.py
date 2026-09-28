@@ -18,6 +18,7 @@ class OdomAccumulator():
         std_per_radian: float = 0.1,
         min_std_translation: float = 0.01,
         min_std_rotation: float = 0.01,
+        device: str = "cuda",
     ):
         """
         Args:
@@ -31,7 +32,8 @@ class OdomAccumulator():
         self._count_since_last_reading = {}
         self.configs = {}
 
-        self.device = "cuda"
+        self.device = device
+        self._measurement_std_sums = {}
 
         # Configurable uncertainty parameters
         self.std_per_meter = std_per_meter
@@ -55,6 +57,7 @@ class OdomAccumulator():
         self.configs[name] = {
             "max_std": max_std,
         }
+        self._measurement_std_sums[name] = torch.zeros(6)
     
     def get_since_last_reading(
         self,
@@ -105,7 +108,10 @@ class OdomAccumulator():
             )
 
             # Clip to maximum allowed std
-            std = pp.se3(torch.clip(std_values, max=self.configs[name]["max_std"])).to(self.device)
+            std_values = torch.clip(std_values, max=self.configs[name]["max_std"])
+            # Supplied monocular uncertainty is never clipped by the historical
+            # odometry ceiling: low metric certainty must remain low certainty.
+            std = pp.se3(torch.maximum(std_values, self._measurement_std_sums[name])).to(self.device)
         else:
             std = None
 
@@ -120,6 +126,7 @@ class OdomAccumulator():
     def update_odom(
         self, 
         odom_reading: Union[pp.SE3, np.ndarray],
+        covariance=None,
     ):
         """Update the accumulated odom"""
         if odom_reading is None:
@@ -131,12 +138,38 @@ class OdomAccumulator():
         else:
             if isinstance(odom_reading, np.ndarray):
                 odom_reading = pp.from_matrix(odom_reading, pp.SE3_type).float()
+            odom_reading = odom_reading.cpu()
+            if covariance is not None:
+                covariance = torch.as_tensor(covariance, dtype=torch.float32, device="cpu")
+                if covariance.shape != (6, 6) or not torch.isfinite(covariance).all():
+                    raise ValueError("Motion covariance must be a finite 6x6 matrix")
+                for name, previous in self._odoms_means.items():
+                    if previous is None:
+                        continue
+                    delta = previous.Inv() @ self._accumulated_odom
+                    matrix = delta.matrix()
+                    rotation, translation = matrix[:3, :3], matrix[:3, 3]
+                    tx, ty, tz = translation
+                    skew = torch.zeros((3, 3), dtype=matrix.dtype)
+                    skew[0, 1], skew[0, 2] = -tz, ty
+                    skew[1, 0], skew[1, 2] = tz, -tx
+                    skew[2, 0], skew[2, 1] = -ty, tx
+                    adjoint = torch.zeros((6, 6), dtype=matrix.dtype)
+                    adjoint[:3, :3] = rotation
+                    adjoint[:3, 3:] = skew @ rotation
+                    adjoint[3:, 3:] = rotation
+                    transformed = adjoint @ covariance @ adjoint.T
+                    # A common learned-scale bias persists across frames.
+                    # Summing stds gives a conservative diagonal envelope even
+                    # for fully correlated increments, unlike summing variances.
+                    self._measurement_std_sums[name] += transformed.diagonal().clamp_min(0).sqrt()
             self._accumulated_odom = self._accumulated_odom @ odom_reading
 
     def reset_item(self, name: str):
         """Reset the item"""
         self._odoms_means[name] = self._accumulated_odom.clone()
         self._count_since_last_reading[name] = 0
+        self._measurement_std_sums[name] = torch.zeros(6)
 
     def reset_odom(self):
         """Reset the accumulated odom"""

@@ -57,6 +57,7 @@ class System:
         camera: Camera = None,
         visualizer: 'RRViz' = None,
         config: Union[SystemConfig, str, Path, None] = None,
+        pose_estimator=None,
         **kwargs,
     ):
         """
@@ -91,7 +92,7 @@ class System:
         self._cur_obs_lock = threading.Lock()
 
         self.device = device
-        self.storage_device = "cuda" #"cpu"
+        self.storage_device = device
         self.visualize = visualize
         self.debug = debug
         self.use_depth_pred = self.config.depth_pred.use_depth_pred
@@ -127,6 +128,7 @@ class System:
                 std_per_radian=self.odom_std_per_radian,
                 min_std_translation=self.odom_min_std_translation,
                 min_std_rotation=self.odom_min_std_rotation,
+                device=self.device,
             )
             self.odom_accumulator.register_item("since_last_step")
             self.odom_accumulator.register_item("since_last_add_kf")
@@ -143,12 +145,16 @@ class System:
         
         # pose estimation model
         self.pose_est_type = self.config.pose_est.type
-        if self.pose_est_type == PoseEstType.PNP:
+        if pose_estimator is not None:
+            self.pose_est = pose_estimator
+        elif self.pose_est_type == PoseEstType.PNP:
             from cross.cv.pose_est_pnp import PoseEstPnP
             self.pose_est = PoseEstPnP(self.device, self.config.pose_est, camera)
         elif self.pose_est_type == PoseEstType.VGGT:
             from cross.cv.pose_est_vggt import PoseEstVGGT
             self.pose_est = PoseEstVGGT(self.device)
+        elif self.pose_est_type == PoseEstType.DA3:
+            raise ValueError("DA3 retrieval requires a shared pose_estimator; use MonocularSystem")
 
         ########### mapping ###########
         # kf parameters
@@ -590,7 +596,7 @@ class System:
 
         # first accumulate the odometry
         if self.use_odometry:
-            self.odom_accumulator.update_odom(obs["delta_pose"])
+            self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"))
         
         if obs.get("rgb", None) is not None:
 
@@ -1340,6 +1346,13 @@ class System:
         retrieval_weights_normalized = self._normalize_retrieval_weights(retrieval_weights)
 
         valid_stds = self._get_std_diag(confidences, retrieval_weights)
+        # Monocular relative-pose adapters provide calibrated metric-scale
+        # uncertainty. The legacy filter stores diagonal standard deviations.
+        supplied_stds = getattr(self.pose_est, "last_stds", None)
+        if supplied_stds is not None:
+            if supplied_stds.shape != valid_stds.shape:
+                raise ValueError("Pose estimator uncertainty does not match valid poses")
+            valid_stds = pp.se3(torch.maximum(valid_stds.tensor(), supplied_stds.to(valid_stds.device)))
 
         # extract VO pose est
         vo_delta_pose = None
@@ -1418,4 +1431,3 @@ class System:
             normalized_weights: (B,)
         """
         return weights / weights.sum()
-
