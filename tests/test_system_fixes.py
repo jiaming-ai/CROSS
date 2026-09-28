@@ -1,9 +1,8 @@
-"""Unit tests of generic system fixes (projection axis, odometry drift model, VPR buffer growth on map load)."""
+"""Unit tests of generic system fixes (odometry drift model, VPR buffer growth on map load, uint8 storage, relocalization evidence)."""
 import numpy as np
 import pypose as pp
 import torch
 
-from cross.utils import lie_tensor
 from cross.dataloader.posed_rgbd import PosedRGBDLoader as StereoSequenceLoader
 
 
@@ -11,21 +10,6 @@ def _pose(x, y, z):
     T = pp.identity_SE3(1)
     T.tensor()[0, :3] = torch.tensor([x, y, z], dtype=T.dtype)
     return T
-
-
-def test_projection_vertical_axis_down_looking():
-    """With vertical_axis=2 (down-looking camera), a displacement along y separates poses; one along z (altitude)
-    does not.  The legacy projection (x, z) does the opposite."""
-    a, b, c = _pose(0, 0, 0), _pose(0, 3, 0), _pose(0, 0, 3)
-    try:
-        lie_tensor.set_projection_vertical_axis(2)
-        pa, pb, pc = (lie_tensor.project_SE3(p) for p in (a, b, c))
-        assert torch.norm(pa - pb) > 2.9 and torch.norm(pa - pc) < 1e-6
-        lie_tensor.set_projection_vertical_axis(-1)
-        pa, pb, pc = (lie_tensor.project_SE3(p) for p in (a, b, c))
-        assert torch.norm(pa - pb) < 1e-6 and torch.norm(pa - pc) > 2.9
-    finally:
-        lie_tensor.set_projection_vertical_axis(-1)
 
 
 def test_odometry_drift_model():
@@ -61,24 +45,6 @@ def test_uint8_keyframe_storage_roundtrip():
     assert as_float_image(d.half()).dtype == torch.float32
 
 
-def test_auv_noise_keeps_roll_pitch_and_depth():
-    """AUV odometry mode: the noisy step has the same gravity direction and the same depth change as the true step."""
-    from scipy.spatial.transform import Rotation
-    rng = np.random.default_rng(0)
-    ld = StereoSequenceLoader.__new__(StereoSequenceLoader)
-    ld.odom_noise_mode, ld.snr, ld.noise_rng = "auv", 2.0, rng
-    ld.odom_vertical_world = np.array([0.0, 0.0, 1.0])
-    for _ in range(20):
-        c2w_start = np.eye(4); c2w_start[:3, :3] = Rotation.random(random_state=rng.integers(1e6)).as_matrix()
-        delta = np.eye(4); delta[:3, :3] = Rotation.from_rotvec(rng.normal(0, 0.3, 3)).as_matrix(); delta[:3, 3] = rng.normal(0, 0.5, 3)
-        c2w_end = c2w_start @ delta
-        noisy = ld._noise_delta(delta, c2w_end)
-        end_noisy = c2w_start @ noisy
-        v = ld.odom_vertical_world
-        assert np.allclose(end_noisy[:3, :3].T @ v, c2w_end[:3, :3].T @ v, atol=1e-6)     # roll / pitch unchanged
-        assert np.isclose(end_noisy[:3, 3] @ v, c2w_end[:3, 3] @ v, atol=1e-6)          # depth unchanged
-
-
 def _reloc_manager(unique: bool):
     """Relocalization session (map loaded, hypothesis 0 not anchored) with three places 10 m apart."""
     import types
@@ -94,6 +60,7 @@ def _reloc_manager(unique: bool):
     hm.ttl[:] = 10
     hm.realized[:] = True
     return hm, mu, std
+
 
 
 def test_reloc_unique_evidence_counts_only_unrivalled_support():

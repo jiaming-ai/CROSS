@@ -1226,7 +1226,7 @@ class HypothesisManager:
         return { 'loop_closure': False, 'loop_closure_hypo_id': None }
     
     def handle_loop_closure(
-        self, hypo_id: int, target_node_id: Optional[int] = None, apply: bool = True, global_opt: bool = False
+        self, hypo_id: int, target_node_id: Optional[int] = None, apply: bool = True
     ) -> Dict[str, Any]:
         """
         Handle loop closure.
@@ -1277,7 +1277,7 @@ class HypothesisManager:
         with self.graph_lock:
             pg = PoseGraph(
                 self,
-                depth=(10 ** 7 if global_opt else 1000),   # global: every keyframe of every session
+                depth=1000,
                 k_hop=2,
                 device=self.device,
                 noise_fn=self.pgo_noise_fn(),
@@ -1303,11 +1303,7 @@ class HypothesisManager:
         # Fix the earliest keyframe from hypothesis 0; in a relocalization session (map loaded from a
         # previous session) all map keyframes stay fixed: the merge aligns the new session to the map
         session_start = getattr(self.system, "_session_start_kf_id", 0)
-        if global_opt:
-            # joint optimisation of the merged map (all sessions): only the very first keyframe is fixed, so the
-            # cross-session edges reconcile the sessions with each other instead of pinning every earlier session
-            fixed_ids = {min(original_kf_ids)}
-        elif session_start > 0 and any(k < session_start for k in original_kf_ids):
+        if session_start > 0 and any(k < session_start for k in original_kf_ids):
             fixed_ids = {k for k in original_kf_ids if k < session_start}
         else:
             fixed_ids = {min(original_kf_ids)}

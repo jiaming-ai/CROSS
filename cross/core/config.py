@@ -116,18 +116,8 @@ class RetrievalConfig:
     recent_split_rel_score: float = 0.85
     recent_split_recent_slots: int = 4
     map_score_threshold: float = 0.0   # VPR score threshold for map keyframes (rank-based retrieval; geometry verifies)
-    # pose-guided retrieval (relocalization sessions): once the session is anchored to the map (a verified map edge),
-    # up to pose_guided_k map keyframes whose viewed region overlaps the current one are added in front of the VPR
-    # results.  The viewed region of a camera is the point pose_guided_depth metres along its optical axis; overlap =
-    # those points within pose_guided_radius and optical axes within pose_guided_max_angle_deg.  Appearance retrieval
-    # across years / seasons is weak (SEALOC 2010 -> 2013: BoQ Recall@1 0.18), the tracked pose is not.
-    # keyframe images stored as uint8 (depth fp16) instead of float32: 4x less GPU memory per keyframe (a 1 Hz survey keeps
-    # nearly every frame as a keyframe; two 2500-frame SEALOC sessions exhausted a 24 GB GPU)
+    # keyframe images stored as uint8 (depth fp16) instead of float32: 4x less memory per keyframe and per saved map
     store_images_uint8: bool = False
-    pose_guided_k: int = 0
-    pose_guided_depth: float = 2.0
-    pose_guided_radius: float = 1.0
-    pose_guided_max_angle_deg: float = 60.0
     vpr_score_threshold_high: float = 0.3
     vpr_score_threshold_low: float = 0.3
     initial_buffer_size: int = 1000
@@ -214,10 +204,6 @@ class LoopClosureConfig:
     corroborate_window: int = 0
     corroborate_tol_t: float = 0.5
     corroborate_tol_r_deg: float = 5.0
-    # the optimisation run when a map is saved covers every keyframe of every session with only the first keyframe fixed
-    # (False: the neighbourhood of the latest keyframe, earlier sessions fixed), so a merged multi-session map is made
-    # consistent before the next session registers to it
-    global_final_opt: bool = False
     # relocalization sessions: a map edge of hypothesis 0 anchors the session to the map (prior test of the following
     # map references) when it passes the prior test through an earlier, still unanchored map edge of hypothesis 0 from
     # another observation (within anchor_corroborate_window steps) to another map keyframe.  Without it a session
@@ -417,9 +403,6 @@ class MappingConfig:
     kf_match_threshold_new_kf: int = 50
     new_component_weight_threshold: float = 0.2
     cluster_eps: float = 1.0             # DBSCAN radius (x, z, yaw) for proposal clustering
-    # vertical axis of the map frame (= first camera frame) for proposal clustering / alignment: -1 keeps the original
-    # ground-robot projection (OpenCV y-down camera), 2 for down-looking cameras (AUV surveys), 1 for forward-looking
-    vertical_axis: int = -1
     loop_closure: LoopClosureConfig = field(default_factory=LoopClosureConfig)
     local_smoothing: LocalSmoothingConfig = field(default_factory=LocalSmoothingConfig)
     cluster_std: ClusterStdConfig = field(default_factory=ClusterStdConfig)
@@ -457,6 +440,11 @@ class PoseEstConfig:
     kf_match_threshold: int = 10
     inlier_count_threshold: int = 10
     max_depth: float = 30.0
+    # measurement std of the observation update from the calibrated noise model of the verified loop closure
+    # (sigma = visual_*_a + visual_*_b |t|, times the online noise scale of the reference type; see
+    # scripts/eval/calibrate_noise.py) instead of the heuristic 0.2 / (4 inlier ratio retrieval score).  Needs
+    # mapping.loop_closure.mode = verified.
+    meas_std_from_noise_model: bool = False
 
 
 @dataclass
