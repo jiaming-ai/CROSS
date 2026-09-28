@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt", "streaming_pnp"], default="da3")
     parser.add_argument("--input-fps", type=float, help="Pace input arrivals and measure capture-to-pose deadlines")
     parser.add_argument("--warmup-models", action="store_true", help="Warm models using only the first RGB image; report startup separately")
+    parser.add_argument("--paced-input-worker", action="store_true", help="Overlap RGB preprocessing with tracking; two-frame queue, fail on overflow")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
@@ -59,6 +60,8 @@ def main():
     args = parser.parse_args()
     if args.input_fps is not None and args.input_fps <= 0:
         parser.error("--input-fps must be positive")
+    if args.paced_input_worker and args.input_fps is None:
+        parser.error("--paced-input-worker requires --input-fps")
     import torch
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -191,15 +194,24 @@ def main():
         tracking_stream = torch.cuda.Stream(device=args.device, priority=-1)
         tracking_stream.wait_stream(torch.cuda.current_stream(args.device))
     start = perf_counter()
+    input_worker = None
+    if args.paced_input_worker:
+        from .stream_input import PacedRGBStream
+        input_worker = PacedRGBStream(sequence, args.input_fps, start)
     try:
         with (args.output / "trajectory.txt").open("w") as trajectory, \
                 (args.output / "frontend_trajectory.txt").open("w") as front_trajectory, \
                 (args.output / "diagnostics.jsonl").open("w") as diagnostics:
             read_started = perf_counter()
-            for frame in sequence:
-                image_io.append(perf_counter()-read_started)
-                arrival = start + len(latencies) / args.input_fps if args.input_fps else None
-                if arrival is not None:
+            for delivered in (input_worker if input_worker is not None else sequence):
+                if input_worker is not None:
+                    frame, arrival, read_seconds = delivered
+                    image_io.append(read_seconds)
+                else:
+                    frame = delivered
+                    image_io.append(perf_counter()-read_started)
+                    arrival = start + len(latencies) / args.input_fps if args.input_fps else None
+                if arrival is not None and input_worker is None:
                     sleep(max(0., arrival-perf_counter()))
                 frame_start = perf_counter()
                 if tracking_stream is not None:
@@ -240,6 +252,8 @@ def main():
         if args.save_map and not args.frontend_only:
             tracker.save_map(args.output / "map.pkl")
     finally:
+        if input_worker is not None:
+            input_worker.close()
         if hasattr(tracker, "shutdown"):
             tracker.shutdown()
     total = perf_counter() - start
@@ -263,6 +277,9 @@ def main():
                "coverage_definition": "Frontend validity flag; DPVO reports initialization, not an independent accuracy check"}
     summary["image_read_and_preprocessing_ms"] = dict(mean=1000*float(np.mean(image_io)), p95=1000*float(np.quantile(image_io, .95)))
     summary["trajectory_and_diagnostic_output_ms"] = dict(mean=1000*float(np.mean(output_io)), p95=1000*float(np.quantile(output_io, .95)))
+    if input_worker is not None:
+        summary["input_worker"] = dict(capacity=input_worker.capacity, maximum_queued=input_worker.maximum_queued,
+                                       dropped_frames=0, overflow_policy="fail the run", preprocessing_begins_after_capture=True)
     if hasattr(frontend, "depth_worker"):
         summary["teacher_worker"] = frontend.depth_worker.statistics()
     if hasattr(tracker, "map_worker"):
