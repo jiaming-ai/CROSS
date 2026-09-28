@@ -57,13 +57,8 @@ class XFeatRefiner:
         return result
 
     @torch.inference_mode()
-    def estimate(self, ref, current, ref_depth, rotation=None):
-        self.last_rotation_only = False
-        self.last_correspondences = 0
-        self.last_match_audit = dict(reason="few_features", reference_features=len(ref["keypoints"]),
-                                    current_features=len(current["keypoints"]))
-        if min(len(ref["keypoints"]), len(current["keypoints"])) < 20:
-            return None
+    def match(self, ref, current):
+        """Return paired pixel coordinates; pose verification is shared by matchers."""
         similarity = ref["descriptors"] @ current["descriptors"].T
         scores, indices = similarity.topk(2, dim=1)
         best = indices[:, 0]
@@ -72,6 +67,17 @@ class XFeatRefiner:
         matched &= (1 - scores[:, 0]).clamp_min(0) < 0.81 * (1 - scores[:, 1]).clamp_min(0)
         xy_ref = ref["keypoints"][matched].cpu().numpy()
         xy_cur = current["keypoints"][best[matched]].cpu().numpy()
+        return xy_ref, xy_cur
+
+    @torch.inference_mode()
+    def estimate(self, ref, current, ref_depth, rotation=None):
+        self.last_rotation_only = False
+        self.last_correspondences = 0
+        self.last_match_audit = dict(reason="few_features", reference_features=len(ref["keypoints"]),
+                                    current_features=len(current["keypoints"]))
+        if min(len(ref["keypoints"]), len(current["keypoints"])) < 20:
+            return None
+        xy_ref, xy_cur = self.match(ref, current)
         if self.subpixel:
             from .photometric import refine_correspondences
             xy_ref, xy_cur = refine_correspondences(ref["gray"], current["gray"], xy_ref, xy_cur)
