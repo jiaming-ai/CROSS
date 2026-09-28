@@ -61,7 +61,9 @@ def test_fallback_keeps_one_component_and_deduplicates_source_factor(monkeypatch
     estimator.factor_policy = 'test-two-view'
     features = dict(keypoints=np.zeros((30, 2)), shape=(8, 8))
     estimator.features = lambda rgb: features
+    estimator.fallback_features = estimator.features
     estimator.refiner = SimpleNamespace(K=np.eye(3), match=lambda *_: (np.zeros((30, 2)), np.zeros((30, 2))))
+    estimator.fallback_refiner = estimator.refiner
     def failed(*_):
         estimator.refiner.last_match_audit = dict(reason='pnp_consensus')
         return None
@@ -86,3 +88,27 @@ def test_fallback_keeps_one_component_and_deduplicates_source_factor(monkeypatch
     poses, valid, _ = estimator.estimate_pose(images, depths, images[0], depths[0], excluded_factor_ids=[identity], **kwargs)
     assert not valid.any() and len(poses) == 0 and len(calls) == 1
     assert estimator.last_pair_audit[0]['reason'] == 'reused_geometric_factor'
+
+
+def test_verified_primary_pose_never_calls_fallback():
+    torch = pytest.importorskip('torch')
+    pytest.importorskip('pypose')
+    from cross.mono.two_view_retrieval import MetricTwoViewRelativePose
+    estimator = MetricTwoViewRelativePose.__new__(MetricTwoViewRelativePose)
+    estimator.device, estimator.conditional_sources = 'cpu', False
+    estimator.features = lambda rgb: rgb
+    estimator.refiner = SimpleNamespace()
+    T = np.eye(4); T[0, 3] = .4
+    values = iter([(T, 70, .2), (np.linalg.inv(T), 60, .3)])
+    def primary(*_):
+        estimator.refiner.last_match_audit = dict(reason='accepted')
+        return next(values)
+    estimator.refiner.estimate = primary
+    def forbidden(*_):
+        raise AssertionError('A verified primary pose must not request fallback features')
+    estimator.fallback_features = forbidden
+    rgb, depth = torch.zeros(1, 3, 8, 8), torch.ones(1, 8, 8)
+    poses, valid, _ = estimator.estimate_pose(rgb, depth, rgb[0], depth[0])
+    assert valid.tolist() == [True]
+    np.testing.assert_allclose(poses[0].matrix().numpy(), T, atol=1e-7)
+    assert estimator.last_pair_audit[0]['proposal_method'] == 'metric_pnp'

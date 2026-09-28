@@ -158,8 +158,9 @@ Two opt-in session experiments are available. `--session-recovery` replaces the 
 `--retrieval-matcher lighterglue` optionally uses the released XFeat LighterGlue model for `metric_pnp` retrieved pairs. Frame-rate motion keeps its original matcher. Both retrieval directions still pass the same PnP and cycle checks before entering CROSS's observation message. The adapter verifies the checkpoint hash and every learned matcher parameter. The checkpoint must be present in the XFeat torch-hub cache.
 
 The experimental `--retrieval-pose metric_two_view --retrieval-matcher superpoint_lightglue`
-keeps a verified metric-PnP proposal when available and otherwise estimates calibrated
-two-view rotation and translation direction. Reference predicted depth sets translation
+keeps a verified original XFeat/LighterGlue metric-PnP proposal when available and
+otherwise uses SuperPoint/LightGlue to estimate calibrated two-view rotation and
+translation direction. Reference predicted depth sets translation
 magnitude; current predicted depth screens compatibility. Each retrieved node still
 contributes at most one proposal to CROSS's existing global observation mixture.
 Competing hypotheses and delayed commitment remain in the existing mapper. The

@@ -1,5 +1,6 @@
 """Experimental image-geometry fallback for the existing CROSS observation mixture."""
 import hashlib
+from collections import OrderedDict
 
 import numpy as np
 import torch
@@ -18,9 +19,27 @@ class MetricTwoViewRelativePose(MetricRelativePose):
     essential-matrix covariance. This option is an experimental baseline.
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.factor_policy += ":two-view-fallback-v1"
+    def __init__(self, K, device="cuda", mask_people=False, matcher="superpoint_lightglue",
+                 conditional_sources=False, source_log_std=.12):
+        from .refinement import XFeatRefiner
+        if matcher != "superpoint_lightglue":
+            raise ValueError("Two-view fallback requires superpoint_lightglue")
+        # Preserve the original verified geometry before trying a different
+        # feature family. More accepted pairs need not mean more accurate ones.
+        super().__init__(K, device, mask_people, "lighterglue", conditional_sources, source_log_std)
+        self.fallback_refiner = XFeatRefiner(K, device, mask_people=mask_people, mask_interval=1,
+                                            matcher=matcher)
+        self.fallback_cache = OrderedDict()
+        self.factor_policy += ":superpoint-two-view-fallback-v2"
+
+    def fallback_features(self, rgb):
+        key = hashlib.sha256(rgb.tobytes()).digest()
+        if key not in self.fallback_cache:
+            self.fallback_cache[key] = self.fallback_refiner.extract(rgb)
+            if len(self.fallback_cache) > 256:
+                self.fallback_cache.popitem(last=False)
+        self.fallback_cache.move_to_end(key)
+        return self.fallback_cache[key]
 
     @torch.inference_mode()
     def estimate_pose(self, ref_image, ref_depth, curr_image, curr_depth, **kwargs):
@@ -51,14 +70,14 @@ class MetricTwoViewRelativePose(MetricRelativePose):
                 continue
             if audit["reason"] == "reused_geometric_factor":
                 continue
-            reference = self.features(DA3RelativePose.rgb(ref_image[i]))
-            current = self.features(DA3RelativePose.rgb(curr_image))
+            reference = self.fallback_features(DA3RelativePose.rgb(ref_image[i]))
+            current = self.fallback_features(DA3RelativePose.rgb(curr_image))
             if min(len(reference["keypoints"]), len(current["keypoints"])) < 20:
                 continue
-            x0, x1 = self.refiner.match(reference, current)
+            x0, x1 = self.fallback_refiner.match(reference, current)
             pose, geometry = estimate_metric_two_view(
                 x0, x1, ref_depth[i].cpu().numpy().squeeze(), curr_depth.cpu().numpy().squeeze(),
-                self.refiner.K, reference["shape"])
+                self.fallback_refiner.K, reference["shape"])
             audit["pnp_rejection"] = audit["reason"]
             audit.update(reason="two_view_rejected", two_view=geometry)
             if pose is None:
