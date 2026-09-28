@@ -18,7 +18,13 @@ class MonocularSystem:
         from .retrieval import DA3RelativePose
 
         self.config = config or MonoConfig()
-        self.frontend = frontend or MonoFrontend(K, self.config, device)
+        if frontend is not None:
+            self.frontend = frontend
+        elif self.config.frontend == "dpvo":
+            from .dpvo_frontend import DPVOFrontend
+            self.frontend = DPVOFrontend(K, self.config, device)
+        else:
+            self.frontend = MonoFrontend(K, self.config, device)
         cfg = system_config or SystemConfig()
         if cfg.async_update:
             raise ValueError("MonocularSystem currently requires synchronous mapping updates")

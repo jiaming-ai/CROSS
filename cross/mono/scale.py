@@ -71,6 +71,47 @@ def observe_scale(target_depth, source_depth, confidence=None, config=None):
     return obs
 
 
+def observe_sparse_scale(target_depth, source_depth, pixels, image_shape, config=None):
+    """Metric/VO depth ratios at mature tracked patches, with spatial support.
+
+    Each patch is a sparse correspondence in one image. This estimator uses
+    the same systematic uncertainty floor as the dense estimator, without
+    pretending the missing pixels were observed.
+    """
+    cfg = config or ScaleConfig()
+    target, source = np.asarray(target_depth), np.asarray(source_depth)
+    pixels = np.asarray(pixels)
+    if target.shape != source.shape or target.ndim != 1 or pixels.shape != (len(target), 2):
+        raise ValueError("Expected N depth pairs and Nx2 pixels")
+    valid = np.isfinite(target) & np.isfinite(source) & (target > 0) & (source > 0)
+    obs = ScaleObservation(pixels=int(valid.sum()))
+    if valid.sum() < 20:
+        return obs
+    ratios = np.log(target[valid]) - np.log(source[valid])
+    center = np.median(ratios)
+    mad = float(1.4826 * np.median(np.abs(ratios - center)))
+    good = np.abs(ratios - center) <= max(2.5 * mad, 0.08)
+    tile_ids = np.floor(pixels[valid] / [image_shape[1], image_shape[0]] * 4).astype(int)
+    tile_ids = np.clip(tile_ids, 0, 3)
+    blocks = []
+    for tile in np.unique(tile_ids, axis=0):
+        mask = good & (tile_ids == tile).all(1)
+        if mask.sum() >= 2:
+            blocks.append(np.median(ratios[mask]))
+    obs.tiles = len(blocks)
+    obs.log_mad = mad
+    obs.inlier_fraction = float(good.mean())
+    if len(blocks) < min(cfg.min_tiles, 6):
+        obs.reason = "insufficient_spatial_support"
+        return obs
+    obs.log_scale = float(np.median(blocks))
+    obs.variance = float(max(cfg.observation_std_floor**2,
+                             (1.4826 * np.median(np.abs(np.array(blocks) - obs.log_scale)))**2))
+    obs.accepted = mad <= cfg.max_log_mad and obs.inlier_fraction >= cfg.min_inlier_fraction
+    obs.reason = "accepted" if obs.accepted else "inconsistent_shape"
+    return obs
+
+
 class LogScaleFilter:
     def __init__(self, config=None):
         self.config = config or ScaleConfig()

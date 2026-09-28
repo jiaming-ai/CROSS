@@ -17,6 +17,8 @@ class ScaleConfig:
 
 @dataclass
 class MonoConfig:
+    frontend: str = "da3"
+    dpvo_checkpoint: str | None = None
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"
     resolution: int = 336
@@ -33,6 +35,8 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.frontend not in {"da3", "dpvo"}:
+            raise ValueError("frontend must be da3 or dpvo")
         if min(self.resolution, self.metric_resolution) < 56:
             raise ValueError("Model resolutions must be at least 56 pixels")
         if min(self.anchor_interval, self.mapping_interval, self.scale.interval) < 1:

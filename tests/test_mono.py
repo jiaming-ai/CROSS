@@ -34,6 +34,18 @@ def test_scale_filter_rejects_outlier_and_retains_systematic_floor():
     assert not observe_scale(np.zeros((80, 80)), np.ones((80, 80))).accepted
 
 
+def test_sparse_metric_scale_requires_spatially_distributed_patches():
+    from cross.mono.scale import observe_sparse_scale
+    rng = np.random.default_rng(12)
+    pixels = rng.uniform([0, 0], [640, 480], (96, 2))
+    source = rng.uniform(1, 4, 96)
+    observation = observe_sparse_scale(source * 1.8, source, pixels, (480, 640))
+    assert observation.accepted
+    assert np.exp(observation.log_scale) == pytest.approx(1.8)
+    collapsed = observe_sparse_scale(source * 1.8, source, pixels * 0.1, (480, 640))
+    assert not collapsed.accepted
+
+
 def test_camera_convention_and_shared_scale_covariance():
     ref, current = np.eye(4), np.eye(4)
     current[0, 3] = -0.3  # world-to-camera, camera moved +x
@@ -78,8 +90,9 @@ class SyntheticMetric:
         return np.full(output_shape, 2.0)
 
 
-def test_changing_model_gauge_does_not_change_metric_trajectory():
-    config = MonoConfig(anchor_interval=3, scale=ScaleConfig(interval=3))
+@pytest.mark.parametrize("metric_shape", [False, True])
+def test_changing_model_gauge_does_not_change_metric_trajectory(metric_shape):
+    config = MonoConfig(anchor_interval=3, scale=ScaleConfig(interval=3), metric_shape=metric_shape)
     tracker = MonoFrontend(np.diag([500., 500., 1.]), config, geometry_model=SyntheticGeometry(), metric_model=SyntheticMetric())
     for i in range(12):
         result = tracker.step(np.full((64, 64, 3), i, dtype=np.uint8), i * 0.1)

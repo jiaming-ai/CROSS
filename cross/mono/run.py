@@ -24,6 +24,8 @@ def main():
     parser.add_argument("sequence", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frontend-only", action="store_true")
+    parser.add_argument("--frontend", choices=["da3", "dpvo"], default="da3")
+    parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--start", type=int, default=0)
@@ -57,7 +59,9 @@ def main():
     if args.output.exists() and any(args.output.iterdir()):
         raise FileExistsError(f"Refusing to overwrite previous results: {args.output}")
     args.output.mkdir(parents=True, exist_ok=True)
-    config = MonoConfig(pose_model=args.pose_model, metric_model=args.metric_model,
+    config = MonoConfig(frontend=args.frontend,
+                        dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
+                        pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,
                         anchor_interval=args.anchor_interval, mapping_interval=args.mapping_interval,
                         pose_refinement=args.pose_refinement,
@@ -88,7 +92,12 @@ def main():
         torch.cuda.reset_peak_memory_stats()
     (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     loading_start = perf_counter()
-    frontend = MonoFrontend(sequence.K, config, args.device)
+    if args.frontend == "dpvo":
+        from .dpvo_frontend import DPVOFrontend
+        frontend = DPVOFrontend(sequence.K, config, args.device)
+        frontend.provide_mapping_depth = not args.frontend_only
+    else:
+        frontend = MonoFrontend(sequence.K, config, args.device)
     metadata["model_parameters"] = {
         "geometry": sum(p.numel() for p in frontend.geometry.model.parameters()),
         "metric": sum(p.numel() for p in frontend.metric.model.parameters()) if frontend.metric else 0,
@@ -148,6 +157,9 @@ def main():
                "rejected_scale_observations": frontend.scale_filter.rejected}
     if args.device.startswith("cuda"):
         summary["peak_gpu_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
+    if args.frontend == "dpvo":
+        metadata["model_parameters"]["dpvo"] = sum(p.numel() for p in frontend.tracker.network.parameters())
+        (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     print(json.dumps(summary, indent=2), flush=True)
 
