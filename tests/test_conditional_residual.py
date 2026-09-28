@@ -37,7 +37,8 @@ def test_shared_rigid_frame_cannot_be_observed_by_a_relative_pose_residual():
     assert np.linalg.norm(old.state.mean)>1.
 
 
-def test_residual_product_matches_joint_batch_gaussian_with_numeric_jacobians():
+@pytest.mark.parametrize('schmidt',[False,True])
+def test_residual_product_matches_joint_batch_gaussian_with_numeric_jacobians(schmidt):
     rng=np.random.default_rng(923)
     for _ in range(12):
         def covariance(n):
@@ -48,7 +49,8 @@ def test_residual_product_matches_joint_batch_gaussian_with_numeric_jacobians():
         J,A=rng.normal(size=(6,3))*.1,rng.normal(size=(6,3))*.1
         S,R,V,Q=covariance(6),covariance(6),covariance(3),covariance(6)*.1
         state=SourceState(S,('a','b','c'),np.zeros(3),V,J,np.ones(3))
-        result=residual_product(state,r,R,SourceFactor(state.keys,A,np.ones(3)),Q)
+        result=residual_product(state,r,R,SourceFactor(state.keys,A,np.ones(3)),Q,
+                                frozen_keys=('b','c') if schmidt else ())
         F,G=np.zeros((6,6)),np.zeros((6,6))
         for i in range(6):
             d=np.eye(6)[i]*1e-6
@@ -58,8 +60,11 @@ def test_residual_product_matches_joint_batch_gaussian_with_numeric_jacobians():
         H=np.c_[F,-G@A]
         innovation=H@joint@H.T+G@R@G.T
         gain=np.linalg.solve(innovation,H@joint).T
+        if schmidt:
+            gain[7:]=0
         expected_mean=gain@r
-        expected_cov=joint-gain@H@joint
+        projection=np.eye(9)-gain@H
+        expected_cov=projection@joint@projection.T+gain@G@R@G.T@gain.T
         posterior=result.state
         actual_cov=np.block([[posterior.marginal_covariance(),posterior.jacobian@posterior.covariance],
                              [posterior.covariance@posterior.jacobian.T,posterior.covariance]])

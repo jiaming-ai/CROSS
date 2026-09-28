@@ -36,6 +36,7 @@ class MonoConfig:
     stable_teacher_cadence: bool = False
     trace_metric_sources: bool = False
     conditional_sources: bool = False
+    schmidt_map_geometry: bool = False
     source_log_std: float = .12
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
@@ -62,6 +63,8 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.schmidt_map_geometry and not self.conditional_sources:
+            raise ValueError('Schmidt map geometry requires conditional sources')
         if self.stable_teacher_cadence and self.frontend != 'streaming_pnp':
             raise ValueError('Stable teacher cadence requires streaming_pnp')
         if self.conditional_sources:

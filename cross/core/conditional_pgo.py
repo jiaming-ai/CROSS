@@ -143,6 +143,9 @@ def solve_responses(pg, result, factors, free_ids, fixed_ids):
             SourceFactor(belief.keys,J,belief.prior_variances,belief.mean))
     pg.conditional_response_diagnostics = dict(sources=n,vertices=len(responses),edges=len(factors),
         approximation='fixed-robust-weight-gauss-newton',bias_updated=False,geometry_covariance_reused=True)
+    if pg.hypothesis_manager.schmidt_map_geometry:
+        from .map_geometry import prepare_refresh
+        pg.joint_geometry = prepare_refresh(pg,result,factors,set(free_ids),fixed_ids)
 
 
 def apply_result(hm, pg, optimized_poses, other):
@@ -238,6 +241,11 @@ def apply_result(hm, pg, optimized_poses, other):
     current_value = pp.from_matrix(torch.as_tensor(current_pose,device=hm.device,dtype=hm.dist[0].dtype),pp.SE3_type)
     current_std = pp.se3(torch.as_tensor(np.sqrt(current_state.marginal_covariance().diagonal().clip(0)),
                                        device=hm.device,dtype=hm.dist[1].dtype))
+    if hm.schmidt_map_geometry:
+        from .map_geometry import stage_refresh
+        pending,current_state,current_std,diagnostics = stage_refresh(hm,pg,pending,current_pose,current_state)
+        pg.conditional_response_diagnostics.update(geometry_covariance_reused=False,
+                                                   schmidt_map_geometry=diagnostics)
     # All potentially failing pose/covariance conversions have now succeeded.
     affected = set()
     for node,component,pose,model,std in pending:

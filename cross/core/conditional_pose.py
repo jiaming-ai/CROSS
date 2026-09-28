@@ -79,7 +79,8 @@ def log(T):
     return np.r_[v,rotation]
 
 
-def residual_product(prior, residual, observation_covariance, factor, process_covariance=None):
+def residual_product(prior, residual, observation_covariance, factor, process_covariance=None,
+                     frozen_keys=()):
     """Condition a right-tangent pose on a relative SE3 residual.
 
     Call after evaluating the observation model at ``prior.mean``. For
@@ -104,8 +105,13 @@ def residual_product(prior, residual, observation_covariance, factor, process_co
     common_factor = SourceFactor(factor.keys,G@factor.jacobian,factor.prior_variances,
                                  factor.center,factor.factor_id)
     process = None if process_covariance is None else transport_covariance(process_covariance,F)
-    result = conditional_product(common_prior,residual,
-        transport_covariance(observation_covariance,G),common_factor,process)
+    if frozen_keys:
+        from .schmidt import schmidt_product
+        result = schmidt_product(common_prior,residual,
+            transport_covariance(observation_covariance,G),common_factor,process,frozen_keys)
+    else:
+        result = conditional_product(common_prior,residual,
+            transport_covariance(observation_covariance,G),common_factor,process)
     result.state.geometry_covariance = transport_covariance(result.state.geometry_covariance,back)
     result.state.jacobian = back@result.state.jacobian
     result.pose_offset = back@result.pose_offset

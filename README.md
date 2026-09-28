@@ -81,6 +81,24 @@ Teacher outputs retain their source image and timestamp. Mapping receives accumu
 
 `--conditional-sources --chart-aware --session-recovery` enables an experimental shared-source extension with `streaming_pnp` and `metric_pnp` retrieval. Each live CROSS hypothesis retains a joint pose/source belief. Saved nodes contain conditional pose messages; the committed bias belief is persisted once. Shared source responses are combined before marginalization, so a reused teacher prediction is not treated as a fresh independent metric prior. The declared per-prediction log-depth standard deviation is 0.12 (`--source-log-std`); it has not been empirically calibrated. This mode requires rebuilding reference maps, and uses synchronous PGO inside the mapping worker. Its dense source covariance has quadratic memory; long-map scalability is unvalidated.
 
+`--schmidt-map-geometry` additionally retains shared map geometry after a committed
+graph solve. A standard Schmidt update holds mature map means and their covariance
+block fixed while updating the camera, metric biases and cross-covariances. The
+original CROSS global message and delayed commitment tests are unchanged. This
+experimental option requires conditional sources, a complete connected graph,
+one deterministic gauge and one surviving mode at the graph refresh. Unsupported
+refreshes raise an error before publishing the new state. Newly inserted node
+residuals remain independent until the next refresh; the dense representation
+does not bound long-map memory or mapping latency. Saved maps containing shared
+geometry require this option when loaded. An existing conditional map can opt in
+at its next commitment. These are established Gaussian and Schmidt operations,
+not a novelty claim.
+
+Saved node poses are conditional nominal poses. To evaluate a map, evaluate each
+`ConditionalPose` at the map's persisted `SourceState` mean; the serialized pose
+alone need not be its posterior mean. Keep the original reference alignment and
+include final mapper commitments when assessing map correctness.
+
 The conditional graph solve preserves source sensitivities through chart joins without a second bias update. It uses the final robust Gauss–Newton linearization and retains conditional node covariance rather than shrinking it on graph-edge reuse. General correlations among saved geometry/pixels are still approximated as independent given the declared sources. Global retrieval clustering, competing pose hypotheses and the delayed commitment tests remain the CROSS foundation. Improved robustness, calibrated uncertainty and publication novelty require further experiments; algebra and controlled graph tests alone do not establish them.
 
 `--delayed-recovery` enables experimental reverse-PnP correction when delayed depth arrives. It is disabled by default because it produced large pose jumps in development. Asynchronous scheduling can change anchor timing and trajectories; report repeated timed runs.

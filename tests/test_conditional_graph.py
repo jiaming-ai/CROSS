@@ -205,7 +205,8 @@ def test_representative_message_preserves_full_covariance_and_actual_source():
     assert hm.source_states[0].keys==('1',)
 
 
-def test_commitment_joins_charts_without_identifying_two_sessions_biases():
+@pytest.mark.parametrize('schmidt',[False,True])
+def test_commitment_joins_charts_without_identifying_two_sessions_biases(schmidt):
     from cross.core.hypothesis import Hypothesis
     hm=manager()
     hm.component_charts[:]=torch.tensor([1,0])
@@ -234,6 +235,9 @@ def test_commitment_joins_charts_without_identifying_two_sessions_biases():
     hm.add_edge(1,5,pose(3.5),pp.se3(torch.full((6,),.1)),EdgeType.VISUAL,
                 to_comp_id=1,conditional_pose=model(-3.5,0.))
     hm.system.last_added_kf_id=11
+    if schmidt:
+        hm.schmidt_map_geometry=True
+        hm.nodes[0].conditional_poses[0].geometry_covariance[:]=0
     pg=PoseGraph(hm,device='cpu')
     pg.construct_for_loop_closure(11,1)
     assert len(pg.vertices)==12  # physical nodes, no duplicate odometry copies
@@ -246,9 +250,14 @@ def test_commitment_joins_charts_without_identifying_two_sessions_biases():
     assert all(int(node.pose_charts[0])==0 for node in hm.nodes.values())
     assert hm.dist[0][0,0]==pytest.approx(10.5,abs=1e-5)
     assert hm.nodes[2].pose_mu[0,0]==pytest.approx(1.5,abs=1e-5)
-    np.testing.assert_allclose(hm.nodes[2].conditional_poses[0].factor.jacobian[0],[-4.5,3.],atol=2e-5)
-    assert hm.source_states[0].keys==keys
-    np.testing.assert_array_equal(hm.source_states[0].covariance,before)
+    np.testing.assert_allclose(hm.nodes[2].conditional_poses[0].factor.jacobian[0,:2],[-4.5,3.],atol=2e-5)
+    assert hm.source_states[0].keys[:2]==keys
+    np.testing.assert_array_equal(hm.source_states[0].covariance[:2,:2],before)
+    if schmidt:
+        assert len(hm.source_states[0].keys)==68
+        assert hm.nodes[2].conditional_poses[0].geometry_covariance.max()==0
+    else:
+        assert hm.source_states[0].keys==keys
     assert hm.source_states[1] is None and 1 not in hm.hypotheses
 
 
@@ -277,3 +286,96 @@ def test_initial_map_node_does_not_share_mutable_tracking_pose(conditional):
     for actual,snapshot in zip((node.pose_mu,node.pose_std,node.pose_weights),before):
         torch.testing.assert_close(actual,snapshot,rtol=0,atol=0)
     assert float(system.hypothesis_manager.dist[0][0,0])==1.
+
+
+def schmidt_chain():
+    hm=chain()
+    hm.schmidt_map_geometry=True
+    hm.source_states[1]=None
+    hm.nodes[0].conditional_poses[0].geometry_covariance[:]=0
+    return hm
+
+
+def apply_graph(hm,pg):
+    return hm.apply_pgo_result(dict(pose_graph=pg,optimized_poses=pg.optimized_poses,other_hypothesis_id=0))
+
+
+def test_joint_graph_geometry_matches_propagating_independent_odometry_errors():
+    from cross.core.conditional_pgo import _matrix
+    hm=schmidt_chain();pg=solve(hm)
+    # A tree's joint pose covariance has an independent construction by
+    # propagating each raw increment noise through the later increments.
+    responses=[]
+    for i in range(1,11):
+        row=np.zeros((6,60))
+        for j in range(1,i+1):
+            after=inverse(_matrix(pg.optimized_poses[j]))@_matrix(pg.optimized_poses[i])
+            row[:,6*(j-1):6*j]=adjoint(inverse(after))
+        responses.append(row)
+    H=np.vstack(responses)
+    Q=np.kron(np.eye(10),hm.odom_edges[0,1].conditional_pose.geometry_covariance)
+    np.testing.assert_allclose(pg.joint_geometry['covariance'],H@Q@H.T,rtol=1e-5,atol=1e-9)
+    assert apply_graph(hm,pg)['success']
+    belief=hm.source_states[0]
+    assert len(belief.keys)==61
+    assert all(np.count_nonzero(n.conditional_poses[0].geometry_covariance)==0 for n in hm.nodes.values())
+    a,b=hm.nodes[9].conditional_poses[0].factor.jacobian,hm.nodes[10].conditional_poses[0].factor.jacobian
+    # Neighbor uncertainty is mostly shared, not two independent pose errors.
+    difference=a-b
+    shared=np.trace(difference[:,1:]@belief.covariance[1:,1:]@difference[:,1:].T)
+    independent=np.trace(a[:,1:]@belief.covariance[1:,1:]@a[:,1:].T+b[:,1:]@belief.covariance[1:,1:]@b[:,1:].T)
+    assert shared < independent*.1
+
+
+def test_schmidt_refresh_marginalizes_old_geometry_and_map_roundtrip_keeps_correlations():
+    from cross.core.schmidt import schmidt_product
+    hm=schmidt_chain();assert apply_graph(hm,solve(hm))['success']
+    before=hm.source_states[0]
+    A=hm.nodes[3].conditional_poses[0].factor.jacobian
+    factor=SourceFactor(before.keys,A,before.prior_variances,before.mean,'new-retrieval')
+    updated=schmidt_product(before,np.zeros(6),np.eye(6)*.001,factor,
+                            frozen_keys=before.keys[1:]).state
+    assert np.linalg.norm(updated.covariance[0,1:]) > 1e-6
+    hm.source_states[0]=updated
+    record=copy.deepcopy(hm.save_state())
+    restored=manager();restored.schmidt_map_geometry=True
+    restored.load_state(record,SimpleNamespace(),'cpu','cpu',{})
+    restored.initialize_source_filter()
+    np.testing.assert_array_equal(restored.source_states[0].covariance,updated.covariance)
+    for node in restored.nodes.values():
+        np.testing.assert_array_equal(node.conditional_poses[0].factor.jacobian,
+                                      hm.nodes[node.id].conditional_poses[0].factor.jacobian)
+    old_keys=set(updated.keys[1:]);metric_variance=updated.covariance[:1,:1].copy()
+    assert apply_graph(hm,solve(hm))['success']
+    final=hm.source_states[0]
+    assert not old_keys.intersection(final.keys)
+    assert len(final.keys)==len(updated.keys)
+    np.testing.assert_array_equal(final.covariance[:1,:1],metric_variance)
+    np.testing.assert_array_equal(final.mean[:1],updated.mean[:1])
+    assert final.seen_factors==updated.seen_factors
+    np.testing.assert_array_equal(final.covariance[:1,1:],np.zeros((1,60)))
+
+
+def test_schmidt_refresh_rejects_live_displacement_before_publishing_any_state():
+    hm=schmidt_chain()
+    hm.dist[0][0,0]+=.03
+    pg=solve(hm)
+    before=copy.deepcopy(hm.save_state())
+    source=hm.source_states[0].record()
+    poses=[n.pose_mu.clone() for n in hm.nodes.values()]
+    with pytest.raises(ValueError,match='current pose to be a graph node'):
+        apply_graph(hm,pg)
+    assert hm.source_states[0].record()==source
+    assert hm.save_state()['source_belief']==before['source_belief']
+    for node,pose in zip(hm.nodes.values(),poses):
+        torch.testing.assert_close(node.pose_mu,pose,atol=0,rtol=0)
+        assert not any(k.startswith('geometry:') for k in node.conditional_poses[0].factor.keys)
+
+
+def test_schmidt_refresh_refuses_discarding_another_mode_or_a_stochastic_gauge():
+    hm=schmidt_chain();hm.source_states[1]=hm.source_states[0].copy()
+    with pytest.raises(ValueError,match='one surviving mode'):
+        solve(hm)
+    hm.source_states[1]=None;hm.nodes[0].conditional_poses[0].geometry_covariance=np.eye(6)*.01
+    with pytest.raises(ValueError,match='deterministic gauge'):
+        solve(hm)

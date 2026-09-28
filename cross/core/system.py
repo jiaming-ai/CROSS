@@ -502,6 +502,7 @@ class System:
         # --- 4. Combine All Data ---
         save_data = {
             "coordinate_charts_version": 1 if self.hypothesis_manager.chart_aware else 0,
+            "schmidt_map_geometry_version": 1 if self.hypothesis_manager.schmidt_map_geometry else 0,
             "conditional_sources_version": 1 if (self.hypothesis_manager.source_states is not None or
                                                    self.hypothesis_manager.saved_source_belief is not None) else 0,
             "config": config_to_dict(self.config),
@@ -548,6 +549,8 @@ class System:
             raise ValueError("This map contains coordinate charts; enable chart-aware mapping to load it")
         if bool(save_data.get('conditional_sources_version',0)) != self.config.mapping.hypothesis.conditional_sources:
             raise ValueError('Conditional source maps require the same inference mode; rebuild a legacy reference map')
+        from .map_geometry import validate_load_mode
+        validate_load_mode(save_data,self.hypothesis_manager.schmidt_map_geometry)
 
         # --- 2. Restore Class Variables ---
         Keyframe._next_id = save_data["class_vars"]["keyframe_next_id"]

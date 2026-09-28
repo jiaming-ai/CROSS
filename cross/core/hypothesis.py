@@ -171,6 +171,9 @@ class HypothesisManager:
         # ========== Component Lifecycle Metadata ==========
         self.n_components = n_components
         self.chart_aware = cfg.chart_aware
+        self.schmidt_map_geometry = cfg.schmidt_map_geometry
+        if self.schmidt_map_geometry and (not cfg.conditional_sources or not self.chart_aware):
+            raise ValueError('Schmidt map geometry requires conditional sources and coordinate charts')
         if self.chart_aware and not cfg.session_recovery:
             raise ValueError("Chart-aware mapping requires historical-support recovery")
         if self.chart_aware and cfg.no_pgo_for_lc:
@@ -1071,7 +1074,9 @@ class HypothesisManager:
                     observed = pp.from_matrix(torch.as_tensor(observation,device=self.device,dtype=prior_mu.dtype),pp.SE3_type)
                     residual = (prior_mu[component].Inv()@observed).Log().tensor().double().cpu().numpy()
                     result = residual_product(state,residual,model.geometry_covariance,model.factor,
-                        np.diag(Q[0].double().cpu().numpy()))
+                        np.diag(Q[0].double().cpu().numpy()),
+                        frozen_keys=tuple(k for k in state.keys if k.startswith('geometry:'))
+                                    if self.schmidt_map_geometry else ())
                     state = result.state
                     mean = normalize_mean(prior_mu[component] @ pp.se3(torch.as_tensor(result.pose_offset,device=self.device,dtype=prior_mu.dtype)).Exp())
                     T = right_jacobian(result.pose_offset)
