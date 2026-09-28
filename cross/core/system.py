@@ -153,8 +153,8 @@ class System:
         elif self.pose_est_type == PoseEstType.VGGT:
             from cross.cv.pose_est_vggt import PoseEstVGGT
             self.pose_est = PoseEstVGGT(self.device)
-        elif self.pose_est_type == PoseEstType.DA3:
-            raise ValueError("DA3 retrieval requires a shared pose_estimator; use MonocularSystem")
+        elif self.pose_est_type in {PoseEstType.DA3, PoseEstType.METRIC_PNP}:
+            raise ValueError("Monocular retrieval requires an injected pose_estimator; use MonocularSystem")
 
         ########### mapping ###########
         # kf parameters

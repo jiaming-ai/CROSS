@@ -45,6 +45,7 @@ class PoseEstType(str, Enum):
     PNP = "pnp"
     VGGT = "vggt"
     DA3 = "da3"
+    METRIC_PNP = "metric_pnp"
 
 
 class KPDetectorType(str, Enum):

@@ -15,7 +15,7 @@ class MonocularSystem:
         from cross.core.config import FilterMode, PoseEstType, SystemConfig
         from cross.core.system import System
         from cross.core.types import Camera
-        from .retrieval import DA3RelativePose
+        from .retrieval import DA3RelativePose, MetricRelativePose
 
         self.config = config or MonoConfig()
         if frontend is not None:
@@ -35,7 +35,7 @@ class MonocularSystem:
         cfg.tracking.use_odometry = True  # internal visual increments, never input odometry
         cfg.tracking.use_VO = False
         cfg.depth_pred.use_depth_pred = False
-        cfg.pose_est.type = PoseEstType.DA3
+        cfg.pose_est.type = PoseEstType.DA3 if self.config.retrieval_pose == "da3" else PoseEstType.METRIC_PNP
         if system_config is None:
             cfg.tracking.filter_mode = FilterMode.SKIP_ACTIVE
             cfg.tracking.odom_min_std_translation = 0.005
@@ -43,8 +43,11 @@ class MonocularSystem:
             cfg.tracking.odom_std_per_meter = 0.1
             cfg.tracking.odom_std_per_radian = 0.1
             cfg.retrieval.top_k = 3
-        self.mapper = System(device=device, visualize=False, camera=Camera(np.array(K).copy(), *image_size),
-                             config=cfg, pose_estimator=DA3RelativePose(self.frontend.geometry, device))
+        camera = Camera(np.array(K).copy(), *image_size)
+        # System rescales camera.K in place to its stored-image resolution.
+        pose_estimator = (DA3RelativePose(self.frontend.geometry, device) if self.config.retrieval_pose == "da3"
+                          else MetricRelativePose(camera.K, device, self.config.mask_people))
+        self.mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         self.map_alignment = np.eye(4)
         self.initialized = False
         self.last_estimate = None

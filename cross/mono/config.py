@@ -38,6 +38,7 @@ class MonoConfig:
     refinement_anchor_only: bool = False
     metric_shape: bool = False
     mapping_interval: int = 5
+    retrieval_pose: str = "da3"
     translation_std_floor: float = 0.005
     rotation_std_floor: float = 0.01
     max_relative_rotation: float = 1.2
@@ -54,5 +55,7 @@ class MonoConfig:
             raise ValueError("At least one recent frame is required")
         if self.pose_refinement not in {"none", "xfeat"}:
             raise ValueError("pose_refinement must be none or xfeat")
+        if self.retrieval_pose not in {"da3", "metric_pnp"}:
+            raise ValueError("retrieval_pose must be da3 or metric_pnp")
         if self.scale.mode not in {"filtered", "direct", "initial", "relative"}:
             raise ValueError(f"Unknown scale mode: {self.scale.mode}")
