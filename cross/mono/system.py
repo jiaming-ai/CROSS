@@ -18,6 +18,7 @@ class MonocularSystem:
         from cross.core.system import System
         from cross.core.types import Camera
         from .retrieval import DA3RelativePose, MetricRelativePose
+        from .two_view_retrieval import MetricTwoViewRelativePose
 
         self.config = config or MonoConfig()
         if frontend is not None:
@@ -58,8 +59,9 @@ class MonocularSystem:
             raise ValueError("Historical retrieval slots cannot exceed the total retrieval budget")
         camera = Camera(np.array(K).copy(), *image_size)
         # System rescales camera.K in place to its stored-image resolution.
+        metric_adapter = MetricTwoViewRelativePose if self.config.retrieval_pose == "metric_two_view" else MetricRelativePose
         pose_estimator = (DA3RelativePose(self.frontend.geometry, device) if self.config.retrieval_pose == "da3"
-                          else MetricRelativePose(camera.K, device, self.config.mask_people, self.config.retrieval_matcher,
+                          else metric_adapter(camera.K, device, self.config.mask_people, self.config.retrieval_matcher,
                                                   self.config.conditional_sources,self.config.source_log_std))
         self.mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         self.map_alignment = np.eye(4)

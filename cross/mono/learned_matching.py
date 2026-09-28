@@ -10,6 +10,43 @@ from pathlib import Path
 import torch
 
 LIGHTERGLUE_SHA256 = "766102df37f11189efe5b0811d1f47c72b22629b79bfabfcfff9d2a2f84654b8"
+SUPERPOINT_SHA256 = "52b6708629640ca883673b5d5c097c4ddad37d8048b33f09c8ca0d69db12c40e"
+SUPERPOINT_LIGHTGLUE_SHA256 = "6ff7040d0a497fc6639337946d7538dae07428c18f77a067a0b5a960e7cc551a"
+
+
+def load_superpoint_lightglue(device, keypoints=1600):
+    """Optional official SuperPoint/LightGlue backend, with verified weights.
+
+    Install cvg/LightGlue at eb42fee2d71449efb0aa5c10549752b5d75384d8.
+    Both networks keep the release defaults; extraction keeps image coordinates.
+    """
+    try:
+        from lightglue import LightGlue, SuperPoint
+    except ImportError as exc:
+        raise RuntimeError("SuperPoint retrieval requires the optional cvg/LightGlue package; see README") from exc
+    cache = Path(torch.hub.get_dir()) / "checkpoints"
+    cache.mkdir(parents=True, exist_ok=True)
+    for release_name, cache_name, digest in (
+        ("superpoint_v1.pth", "superpoint_v1.pth", SUPERPOINT_SHA256),
+        ("superpoint_lightglue.pth", "superpoint_lightglue_v0-1_arxiv.pth", SUPERPOINT_LIGHTGLUE_SHA256),
+    ):
+        path = cache / cache_name
+        if not path.exists():
+            torch.hub.download_url_to_file(
+                "https://github.com/cvg/LightGlue/releases/download/v0.1_arxiv/" + release_name,
+                str(path), hash_prefix=digest)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise RuntimeError(f"Unexpected retrieval checkpoint contents: {cache_name}")
+    network = SuperPoint(max_num_keypoints=keypoints).to(device).eval()
+
+    class Extractor:
+        @torch.inference_mode()
+        def detectAndCompute(self, tensor):
+            features = network.extract(tensor, resize=None)
+            return [dict(keypoints=features["keypoints"][i], descriptors=features["descriptors"][i],
+                         scores=features["keypoint_scores"][i]) for i in range(len(tensor))]
+
+    return Extractor(), LightGlue(features="superpoint").to(device).eval()
 
 
 def load_lighterglue(extractor, device):

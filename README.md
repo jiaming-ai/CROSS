@@ -157,6 +157,29 @@ Two opt-in session experiments are available. `--session-recovery` replaces the 
 
 `--retrieval-matcher lighterglue` optionally uses the released XFeat LighterGlue model for `metric_pnp` retrieved pairs. Frame-rate motion keeps its original matcher. Both retrieval directions still pass the same PnP and cycle checks before entering CROSS's observation message. The adapter verifies the checkpoint hash and every learned matcher parameter. The checkpoint must be present in the XFeat torch-hub cache.
 
+The experimental `--retrieval-pose metric_two_view --retrieval-matcher superpoint_lightglue`
+keeps a verified metric-PnP proposal when available and otherwise estimates calibrated
+two-view rotation and translation direction. Reference predicted depth sets translation
+magnitude; current predicted depth screens compatibility. Each retrieved node still
+contributes at most one proposal to CROSS's existing global observation mixture.
+Competing hypotheses and delayed commitment remain in the existing mapper. The
+conditional-source mode carries the same identified reference-depth bias through
+this proposal and deduplicates exact geometric factors.
+
+Install its optional upstream implementation with:
+
+```bash
+pip install 'git+https://github.com/cvg/LightGlue.git@eb42fee2d71449efb0aa5c10549752b5d75384d8'
+```
+
+Released SuperPoint/LightGlue checkpoints are downloaded to the Torch hub cache
+and verified by full SHA256 before loading. Upstream code and weights retain their
+respective licenses. The frame-rate tracker keeps XFeat. This is an experimental
+geometry baseline: its compatibility thresholds and inherited geometric covariance
+floors are not calibrated, and a successful pair fit is not a place commitment.
+It is disabled by default; pair-level results alone do not establish robustness,
+real-time performance, or a novel contribution.
+
 `--historical-min-score 0` with reserved historical slots permits a bounded number of weaker saved-map candidates, while new query nodes retain the original score thresholds. Original retrieval scores remain available to the inherited uncertainty calculation and keyframe policy; no geometry or temporal-commitment test is relaxed. This experimental search option can spend the entire retrieval budget on historical views if all three slots are reserved. Both search and learned matching need false-association and online runtime evaluation; accepted pairs alone do not establish map recovery.
 
 After a new keyframe realizes a temporally supported branch, commitment is checked once more with the same evidence and completed graph edges. This corrects an ordering issue that otherwise requires a later successful retrieval just to examine the newly realized branch; evidence is not counted twice and thresholds are unchanged. With the older saved reference, shared 5090 tests reconnect the reversed-viewpoint query at 12.21 s with 23.1 cm post-commit fixed-reference RMSE, and the object-change query at 11.17 s with 7.9 cm afterward. Rebuilt references at source `b7ea914` recover object change in both modes (baseline 5.20 s / 5.50 cm; conditional 5.47 s / 5.25 cm), but neither recovers viewpoint or illumination. This exposes reference-construction sensitivity; the small error difference does not establish a conditional-inference benefit. Each query uses its own reference's rigid alignment, with no query fit. Errors before recovery and all failures remain part of evaluation; systematic false-association testing remains outstanding.

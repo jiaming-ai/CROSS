@@ -62,8 +62,8 @@ def main():
     parser.add_argument("--anchor-interval", type=int, default=30)
     parser.add_argument("--metric-interval", type=int, default=30)
     parser.add_argument("--mapping-interval", type=int, default=5)
-    parser.add_argument("--retrieval-pose", choices=["da3", "metric_pnp"], default="da3")
-    parser.add_argument("--retrieval-matcher", choices=["mnn", "lighterglue"], default="mnn",
+    parser.add_argument("--retrieval-pose", choices=["da3", "metric_pnp", "metric_two_view"], default="da3")
+    parser.add_argument("--retrieval-matcher", choices=["mnn", "lighterglue", "superpoint_lightglue"], default="mnn",
                         help="Matcher for low-rate metric-PnP retrieval; local tracking is unchanged")
     parser.add_argument("--filter-mode", choices=["full", "skip_active", "adaptive"], default="full",
                         help="Inherited CROSS retrieval pose-update policy; delayed commitment remains enabled")

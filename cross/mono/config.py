@@ -64,8 +64,8 @@ class MonoConfig:
         if self.stable_teacher_cadence and self.frontend != 'streaming_pnp':
             raise ValueError('Stable teacher cadence requires streaming_pnp')
         if self.conditional_sources:
-            if self.frontend != 'streaming_pnp' or self.retrieval_pose != 'metric_pnp' or not self.chart_aware:
-                raise ValueError('Conditional sources require streaming_pnp, metric_pnp retrieval and chart-aware mapping')
+            if self.frontend != 'streaming_pnp' or self.retrieval_pose not in {'metric_pnp', 'metric_two_view'} or not self.chart_aware:
+                raise ValueError('Conditional sources require streaming_pnp, metric retrieval and chart-aware mapping')
             self.trace_metric_sources = True
         if not 0 <= self.source_log_std <= 1:
             raise ValueError('Source log standard deviation must be finite and within [0,1]')
@@ -88,14 +88,16 @@ class MonoConfig:
         if self.historical_min_score is not None:
             if not 0 <= self.historical_min_score <= 1 or not self.historical_retrieval_slots:
                 raise ValueError("Historical minimum score needs reserved slots and must be within [0,1]")
-        if self.retrieval_matcher not in {"mnn", "lighterglue"}:
+        if self.retrieval_matcher not in {"mnn", "lighterglue", "superpoint_lightglue"}:
             raise ValueError("Unknown retrieval matcher")
-        if self.retrieval_matcher != "mnn" and self.retrieval_pose != "metric_pnp":
-            raise ValueError("LighterGlue retrieval requires metric_pnp")
+        if self.retrieval_matcher != "mnn" and self.retrieval_pose not in {"metric_pnp", "metric_two_view"}:
+            raise ValueError("Learned retrieval matchers require metric retrieval")
+        if self.retrieval_pose == "metric_two_view" and self.retrieval_matcher != "superpoint_lightglue":
+            raise ValueError("Experimental two-view retrieval requires superpoint_lightglue")
         if self.pose_refinement not in {"none", "xfeat"}:
             raise ValueError("pose_refinement must be none or xfeat")
-        if self.retrieval_pose not in {"da3", "metric_pnp"}:
-            raise ValueError("retrieval_pose must be da3 or metric_pnp")
+        if self.retrieval_pose not in {"da3", "metric_pnp", "metric_two_view"}:
+            raise ValueError("Unknown retrieval pose estimator")
         if self.filter_mode not in {"full", "skip_active", "adaptive"}:
             raise ValueError("Unknown CROSS retrieval filter mode")
         if self.scale.mode not in {"filtered", "direct", "initial", "relative"}:
