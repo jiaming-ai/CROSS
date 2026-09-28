@@ -195,3 +195,80 @@ def test_proactive_requests_are_geometric_causal_and_budgeted(enabled, count, va
         assert submitted[0].valid is valid
         assert submitted[0].refresh_anchor is (enabled and valid and count < 80)
         np.testing.assert_array_equal(submitted[0].pose, estimate.pose)
+
+
+def run_request_schedule(*, stable, failures=(), weak=(), frames=181,
+                         mapping_interval=10, metric_interval=20, mapping=True):
+    """Exercise real step/bootstrap/submit with deterministic geometry only."""
+    from cross.mono.config import MonoConfig, ScaleConfig
+    frontend = StreamingPnPFrontend.__new__(StreamingPnPFrontend)
+    frontend.config = MonoConfig(frontend='streaming_pnp', stable_teacher_cadence=stable,
+                                 adaptive_anchor=bool(weak), mapping_interval=mapping_interval,
+                                 scale=ScaleConfig(interval=metric_interval))
+    frontend.anchor_features = frontend.anchor_depth = None
+    frontend.anchor_pose, frontend.metric_pose = np.eye(4), np.eye(4)
+    frontend.anchor_index, frontend.index, frontend.last_submitted = -1, 0, -1
+    frontend.last_timestamp, frontend.last_valid = None, True
+    frontend.world_std_prefix = np.zeros(6)
+    frontend.world_geometry_std_prefix = np.zeros(6)
+    frontend.provide_mapping_depth = mapping
+    frontend.ready_depths = []
+    frontend.scale_filter = SimpleNamespace(uncertainty_variance=.01)
+    frontend.refiner = SimpleNamespace(extract=lambda _: {'frame': frontend.index},
+        estimate=lambda *args: None if frontend.index in failures else
+            (np.eye(4), 60 if frontend.index in weak else 100, .5), last_correspondences=100)
+    submitted = []
+    frontend.depth_worker = SimpleNamespace(submit=submitted.append, statistics=lambda: {})
+    frontend._predict_snapshot = lambda snapshot: (snapshot, np.ones((4, 4)))
+    frontend._receive = lambda: (False, [])
+    diagnostics = [frontend.step(np.zeros((4, 4, 3)), i*.05).diagnostics for i in range(frames)]
+    requests = [d['frame'] for d in diagnostics if d['metric_request']]
+    assert requests[0] == 0 and diagnostics[0]['initializing']
+    assert [snapshot.index for snapshot in submitted] == requests[1:]
+    assert all(snapshot.timestamp == snapshot.index*.05 for snapshot in submitted)
+    return requests, diagnostics
+
+
+def test_regular_grid_reconverges_after_one_frame_difference_in_tracking_loss():
+    schedules = []
+    for failure in (137, 138):
+        requests, diagnostics = run_request_schedule(stable=True, failures={failure})
+        assert requests[:14] == list(range(0, 131, 10))
+        assert requests[14:16] == [failure, failure+5]  # defer140, keep cooldown
+        assert diagnostics[failure]['emergency_metric_request']
+        assert diagnostics[failure+5]['regular_metric_request']
+        assert not diagnostics[140]['metric_request']
+        schedules.append([frame for frame in requests if frame >= 150])
+    assert schedules[0] == schedules[1] == [150, 160, 170, 180]
+    # Default preserves the former schedule for a controlled comparison.
+    old, _ = run_request_schedule(stable=False, failures={137})
+    assert old[14:] == [137, 147, 157, 167, 177]
+
+
+@pytest.mark.parametrize('interval', [1, 3, 5, 10, 20])
+def test_stable_grid_keeps_configured_healthy_rate_and_bounds_persistent_loss(interval):
+    healthy, _ = run_request_schedule(stable=True, frames=61, mapping_interval=interval)
+    assert healthy == list(range(0, 61, interval))
+    old, _ = run_request_schedule(stable=False, frames=61, mapping_interval=interval)
+    assert healthy == old
+    failed, _ = run_request_schedule(stable=True, frames=61, mapping_interval=interval,
+                                      failures=set(range(1, 61)))
+    assert min(np.diff(failed)) >= min(5, interval)
+    assert len(failed) == len(set(failed))
+    assert all(b-a <= interval for a, b in zip(failed, failed[1:]))
+
+
+def test_proactive_request_keeps_regular_phase_and_frontend_only_uses_metric_interval():
+    requests, diagnostics = run_request_schedule(stable=True, weak={137})
+    assert requests[-6:] == [137, 142, 150, 160, 170, 180]
+    assert diagnostics[137]['proactive_metric_request']
+    assert not diagnostics[142]['proactive_metric_request']
+    requests, _ = run_request_schedule(stable=True, mapping=False, frames=81,
+                                        mapping_interval=3, metric_interval=20)
+    assert requests == [0, 20, 40, 60, 80]
+
+
+def test_stable_teacher_cadence_rejects_frontends_that_cannot_apply_it():
+    from cross.mono.config import MonoConfig
+    with pytest.raises(ValueError, match='requires streaming_pnp'):
+        MonoConfig(stable_teacher_cadence=True)

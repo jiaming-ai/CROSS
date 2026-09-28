@@ -33,6 +33,7 @@ class MonoConfig:
     delayed_recovery: bool = False
     teacher_lag_frames: int = 0
     adaptive_anchor: bool = False
+    stable_teacher_cadence: bool = False
     trace_metric_sources: bool = False
     conditional_sources: bool = False
     source_log_std: float = .12
@@ -60,6 +61,8 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.stable_teacher_cadence and self.frontend != 'streaming_pnp':
+            raise ValueError('Stable teacher cadence requires streaming_pnp')
         if self.conditional_sources:
             if self.frontend != 'streaming_pnp' or self.retrieval_pose != 'metric_pnp' or not self.chart_aware:
                 raise ValueError('Conditional sources require streaming_pnp, metric_pnp retrieval and chart-aware mapping')

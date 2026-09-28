@@ -87,6 +87,8 @@ The conditional graph solve preserves source sensitivities through chart joins w
 
 `--adaptive-anchor` is an experimental streaming option, disabled by default. When a valid PnP estimate has fewer than 80 inliers (four times the acceptance minimum), it requests metric depth before tracking fails. Requests remain at least five input frames apart. A ready proactive result renews the anchor at its verified source pose, retaining that image's timestamp and features; it never rewrites emitted poses. This can increase teacher and mapping work compared with fixed cadence. Logs record proactive requests and actual worker counts. The option retains CROSS's existing observation mixture and commitment tests; it is not a joint scale/bias inference method.
 
+`--stable-teacher-cadence` optionally fixes regular teacher requests to input-index intervals. An emergency can defer the next regular request until the five-frame cooldown ends, but cannot permanently shift later intervals. Configured intervals shorter than five frames retain their rate. There is no catch-up backlog; the existing worker still keeps one running and one replaceable pending image. This is a reference-construction sensitivity experiment, disabled by default. Compare actual teacher/map counts as well as accuracy: the rate bound is shared with the original policy, but individual request counts can differ.
+
 The native-rate consumer profile processes every RGB frame with original timestamps:
 
 ```bash

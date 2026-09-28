@@ -38,6 +38,8 @@ def main():
     parser.add_argument("--teacher-lag-frames", type=int, default=0, help="Minimum source age before applying a ready metric result; late results never block tracking")
     parser.add_argument("--adaptive-anchor", action="store_true",
                         help="Experimental metric refresh before tracking loss; request on fewer than 80 PnP inliers")
+    parser.add_argument("--stable-teacher-cadence", action="store_true",
+                        help="Experimental fixed regular request grid with bounded emergency requests; streaming_pnp only")
     parser.add_argument("--trace-metric-sources", action="store_true",
                         help="Record reused teacher identities and signed scale responses; does not change inference")
     parser.add_argument('--conditional-sources', action='store_true',
@@ -105,6 +107,8 @@ def main():
         parser.error("--teacher-lag-frames must be nonnegative and requires streaming_pnp")
     if args.adaptive_anchor and args.frontend != "streaming_pnp":
         parser.error("--adaptive-anchor requires streaming_pnp")
+    if args.stable_teacher_cadence and args.frontend != "streaming_pnp":
+        parser.error("--stable-teacher-cadence requires streaming_pnp")
     if (args.mapping_process or args.delayed_recovery) and args.frontend != "streaming_pnp":
         parser.error("--mapping-process and --delayed-recovery require streaming_pnp")
     import torch
@@ -128,6 +132,7 @@ def main():
                         mapping_process=args.mapping_process, delayed_recovery=args.delayed_recovery,
                         teacher_lag_frames=args.teacher_lag_frames,
                         adaptive_anchor=args.adaptive_anchor,
+                        stable_teacher_cadence=args.stable_teacher_cadence,
                         trace_metric_sources=args.trace_metric_sources,
                         conditional_sources=args.conditional_sources,source_log_std=args.source_log_std,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,

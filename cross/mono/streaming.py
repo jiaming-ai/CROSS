@@ -200,8 +200,20 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         # loss cannot recover the motion that was missed. Keep the existing
         # five-frame request bound and a single replaceable pending item.
         weak_support = (self.config.adaptive_anchor and not bootstrap and valid and count < 80)
-        request = (self.index-self.last_submitted >= interval
-                   or ((not valid or weak_support) and self.index-self.last_submitted >= 5))
+        elapsed = self.index-self.last_submitted
+        if self.config.stable_teacher_cadence:
+            # Each interval starts at a fixed input index. An emergency may
+            # defer its next regular request by the cooldown, but cannot shift
+            # the grid permanently. A request satisfies the current interval;
+            # missed intervals never create catch-up work. Short configured
+            # intervals retain their original rate, and emergencies keep the
+            # original five-frame bound. The latest-only worker stays bounded.
+            periodic_due = self.index//interval > self.last_submitted//interval
+            regular_request = periodic_due and elapsed >= min(5, interval)
+        else:
+            regular_request = elapsed >= interval
+        emergency_request = (not valid or weak_support) and elapsed >= 5
+        request = regular_request or emergency_request
         if bootstrap or request:
             snapshot = FrameSnapshot(self.index, timestamp, rgb.copy(), features, self.metric_pose.copy(),
                                      self.world_std_prefix.copy(), valid, refresh_anchor=weak_support,
@@ -236,6 +248,9 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                            scale=1., log_scale_std=float(np.sqrt(self.scale_filter.uncertainty_variance)),
                            metric_initialized=True, metric_seconds=bootstrap_seconds, bootstrap_seconds=bootstrap_seconds,
                            weak_anchor_support=weak_support,
+                           metric_request=bool(bootstrap or request),
+                           regular_metric_request=bool(not bootstrap and regular_request),
+                           emergency_metric_request=bool(not bootstrap and emergency_request),
                            proactive_metric_request=bool(weak_support and request),
                            frontend_seconds=perf_counter()-start-bootstrap_seconds, total_seconds=perf_counter()-start,
                            teacher_updates=[dict(source_frame=s.index, age_frames=self.index-s.index, **timing)
