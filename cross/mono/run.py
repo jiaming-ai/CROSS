@@ -24,7 +24,7 @@ def main():
     parser.add_argument("sequence", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frontend-only", action="store_true")
-    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp"], default="da3")
+    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric"], default="da3")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--device", default="cuda")
@@ -101,9 +101,10 @@ def main():
         from .dpvo_frontend import DPVOFrontend
         frontend = DPVOFrontend(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
-    elif args.frontend == "metric_pnp":
-        from .pnp_frontend import MetricPnPFrontend
-        frontend = MetricPnPFrontend(sequence.K, config, args.device)
+    elif args.frontend in {"metric_pnp", "rotation_metric"}:
+        from .pnp_frontend import MetricPnPFrontend, RotationMetricFrontend
+        factory = MetricPnPFrontend if args.frontend == "metric_pnp" else RotationMetricFrontend
+        frontend = factory(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
     else:
         frontend = MonoFrontend(sequence.K, config, args.device)
@@ -171,8 +172,9 @@ def main():
                "coverage_definition": "Frontend validity flag; DPVO reports initialization, not an independent accuracy check"}
     if args.device.startswith("cuda"):
         summary["peak_gpu_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
-    if args.frontend == "dpvo":
-        metadata["model_parameters"]["dpvo"] = sum(p.numel() for p in frontend.tracker.network.parameters())
+    if args.frontend in {"dpvo", "rotation_metric"}:
+        native_tracker = frontend.tracker if args.frontend == "dpvo" else frontend.rotation_tracker.tracker
+        metadata["model_parameters"]["dpvo"] = sum(p.numel() for p in native_tracker.network.parameters())
         (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     print(json.dumps(summary, indent=2), flush=True)

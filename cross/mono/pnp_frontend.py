@@ -36,6 +36,7 @@ class MetricPnPFrontend:
         self.index = 0
         self.last_timestamp = None
         self.provide_mapping_depth = True
+        self.rotation_prior = None
 
     def step(self, rgb, timestamp):
         if not np.isfinite(timestamp) or (self.last_timestamp is not None and timestamp <= self.last_timestamp):
@@ -57,11 +58,13 @@ class MetricPnPFrontend:
         count, error = 0, 0.0
         valid = True
         if self.anchor_features is not None:
-            result = self.refiner.estimate(self.anchor_features, features, self.anchor_depth)
+            relative_rotation = None if self.rotation_prior is None else self.rotation_prior.T @ self.anchor_pose[:3, :3]
+            result = self.refiner.estimate(self.anchor_features, features, self.anchor_depth, rotation=relative_rotation)
             if result is None:
                 # Fresh image geometry may recover overlap when the old
                 # anchor's predicted depth was poor. The direction is explicit.
-                reverse = self.refiner.estimate(features, self.anchor_features, current_depth())
+                reverse = self.refiner.estimate(features, self.anchor_features, current_depth(),
+                                               rotation=None if relative_rotation is None else relative_rotation.T)
                 if reverse is not None:
                     result = (inverse(reverse[0]), reverse[1], reverse[2])
             if result is not None:
@@ -69,6 +72,8 @@ class MetricPnPFrontend:
                 self.metric_pose = self.anchor_pose @ relative
             else:
                 valid = False
+                if self.rotation_prior is not None:
+                    self.metric_pose[:3, :3] = self.rotation_prior
         renew = self.anchor_features is None or self.index - self.anchor_index >= self.config.scale.interval or not valid
         if renew:
             self.anchor_depth = current_depth()
@@ -93,3 +98,33 @@ class MetricPnPFrontend:
         self.index += 1
         return MonoEstimate(timestamp, self.metric_pose.copy(), delta, covariance,
                             depth if depth is not None else np.ones(rgb.shape[:2], np.float32), diagnostics)
+
+
+class RotationMetricFrontend(MetricPnPFrontend):
+    """DPVO rotation plus robust translation from periodic metric anchors.
+
+    This ablates scalar-only correction: learned depth shape is needed when
+    monocular patch inverse depth is not constrained by enough static parallax.
+    """
+    def __init__(self, K, config=None, device="cuda"):
+        from dataclasses import replace
+        from .dpvo_frontend import DPVOFrontend
+        super().__init__(K, config, device)
+        config = replace(self.config, frontend="dpvo", dpvo_metric_bootstrap=False,
+                         scale=replace(self.config.scale, mode="relative"))
+        self.rotation_tracker = DPVOFrontend(K, config, device, geometry_model=self.geometry)
+        self.rotation_tracker.provide_mapping_depth = False
+        self.rotation_alignment = None
+
+    def step(self, rgb, timestamp):
+        start = perf_counter()
+        rotation_estimate = self.rotation_tracker.step(rgb, timestamp)
+        rotation = rotation_estimate.pose[:3, :3]
+        initialized = rotation_estimate.diagnostics["valid"] and np.isfinite(rotation).all()
+        self.rotation_prior = self.rotation_alignment @ rotation if initialized and self.rotation_alignment is not None else None
+        estimate = super().step(rgb, timestamp)
+        if initialized and self.rotation_alignment is None and estimate.diagnostics["valid"]:
+            self.rotation_alignment = estimate.pose[:3, :3] @ rotation.T
+        estimate.diagnostics.update(pose_source="rotation_metric", rotation_initialized=initialized,
+                                    total_seconds=perf_counter() - start)
+        return estimate

@@ -24,7 +24,7 @@ class XFeatRefiner:
         return result
 
     @torch.inference_mode()
-    def estimate(self, ref, current, ref_depth):
+    def estimate(self, ref, current, ref_depth, rotation=None):
         if min(len(ref["keypoints"]), len(current["keypoints"])) < 20:
             return None
         similarity = ref["descriptors"] @ current["descriptors"].T
@@ -47,6 +47,18 @@ class XFeatRefiner:
         pixels = np.ascontiguousarray(xy_cur[valid], dtype=np.float64)
         if len(xyz) < 20:
             return None
+        if rotation is not None:
+            from .translation import translation_given_rotation
+            solution = translation_given_rotation(xyz, pixels, self.K, rotation)
+            if solution is None:
+                return None
+            translation, inliers, error = solution
+            tiles = np.floor(pixels[inliers] / [width, height] * 4).astype(int)
+            if len(np.unique(tiles, axis=0)) < 4:
+                return None
+            transform = np.eye(4)
+            transform[:3, :3], transform[:3, 3] = rotation, translation
+            return inverse(transform), len(inliers), error
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
             np.ascontiguousarray(xyz, dtype=np.float64), pixels, self.K, None,
             iterationsCount=150, reprojectionError=3.0, confidence=0.999, flags=cv2.SOLVEPNP_EPNP)

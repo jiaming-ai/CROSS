@@ -157,3 +157,20 @@ def test_scale_replay_is_causal_and_preserves_source_geometry():
     np.testing.assert_allclose(initial[:, 1], [2., 4., 6., 8.])
     np.testing.assert_array_equal(initial[:2], prefix)
     np.testing.assert_array_equal(initial[:, 4:], rows[:, 4:])
+
+
+def test_fixed_rotation_metric_translation_with_moving_outliers():
+    from cross.mono.translation import translation_given_rotation
+    rng = np.random.default_rng(42)
+    xyz = rng.uniform([-1., -1., 2.], [1., 1., 5.], (120, 3))
+    K = np.array([[500., 0, 320.], [0, 500., 240.], [0, 0, 1.]])
+    R = Rotation.from_rotvec([0.05, -0.1, 0.02]).as_matrix()
+    t = np.array([0.02, -0.01, 0.04])
+    points = xyz @ R.T + t
+    pixels = points @ K.T
+    pixels = pixels[:, :2] / pixels[:, 2:]
+    pixels += rng.normal(0, 0.1, pixels.shape)
+    pixels[:45] += rng.uniform(-40, 40, (45, 2))
+    estimate, inliers, residual = translation_given_rotation(xyz, pixels, K, R)
+    np.testing.assert_allclose(estimate, t, atol=0.002)
+    assert len(inliers) >= 74 and residual < 0.3

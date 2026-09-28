@@ -22,14 +22,14 @@ from .scale import LogScaleFilter, observe_sparse_scale
 
 
 class DPVOFrontend:
-    def __init__(self, K, config=None, device="cuda"):
+    def __init__(self, K, config=None, device="cuda", geometry_model=None):
         self.config = config or MonoConfig(frontend="dpvo")
         if not self.config.dpvo_checkpoint or not Path(self.config.dpvo_checkpoint).is_file():
             raise FileNotFoundError("Supply --dpvo-checkpoint pointing to released dpvo.pth")
         if device not in {"cuda", "cuda:0"}:
             raise ValueError("DPVO uses cuda:0; choose physical GPU with CUDA_VISIBLE_DEVICES")
         self.K = np.asarray(K).copy()
-        self.geometry = DA3Geometry(self.config.pose_model, device, self.config.resolution)
+        self.geometry = geometry_model or DA3Geometry(self.config.pose_model, device, self.config.resolution)
         self.metric = None if self.config.scale.mode == "relative" else DA3MetricDepth(
             self.config.metric_model, device, self.config.metric_resolution)
         self.scale_filter = LogScaleFilter(self.config.scale)
