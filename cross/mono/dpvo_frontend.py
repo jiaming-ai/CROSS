@@ -43,6 +43,7 @@ class DPVOFrontend:
         self.scale_history = []
         self.initialized_before = False
         self.provide_mapping_depth = True
+        self.bootstrap_metric_calls = 0
         self.vo_cpu_rng = torch.Generator().manual_seed(self.config.seed).get_state()
         self.vo_cuda_rng = torch.Generator(device="cuda").manual_seed(self.config.seed).get_state()
 
@@ -88,6 +89,7 @@ class DPVOFrontend:
         # The geometry/metric models and BoQ can consume random numbers even
         # in eval mode (e.g. pixel subsampling). Keep VO patch choices identical
         # across scale ablations and frontend-only vs integrated runs.
+        previous_keyframes = tracker.n
         with torch.random.fork_rng(devices=[0]):
             torch.set_rng_state(self.vo_cpu_rng)
             torch.cuda.set_rng_state(self.vo_cuda_rng)
@@ -100,6 +102,26 @@ class DPVOFrontend:
         initialized = bool(tracker.is_initialized)
         diagnostics = {"frame": self.index, "valid": initialized, "frontend_seconds": pose_seconds,
                        "pose_source": "dpvo", "initializing": not initialized}
+        # Random inverse-depth initialization is ill-conditioned when startup
+        # has little static parallax. A learned RGB-only depth initializes the
+        # newly admitted patch depths; subsequent native BA remains free to
+        # refine them. This is a starting guess, not a fixed depth measurement.
+        if (self.config.dpvo_metric_bootstrap and not initialized and self.metric is not None
+                and tracker.n > previous_keyframes):
+            bootstrap_start = perf_counter()
+            predicted = self.metric.predict_metric(rgb, self.K, (h, w))
+            slot = tracker.n - 1
+            uv = tracker.pg.patches_[slot, :, :2, 1, 1].float().cpu().numpy() * tracker.RES
+            lookup = np.round(uv).astype(int)
+            lookup[:, 0] = np.clip(lookup[:, 0], 0, w - 1)
+            lookup[:, 1] = np.clip(lookup[:, 1], 0, h - 1)
+            depths = predicted[lookup[:, 1], lookup[:, 0]]
+            good = np.isfinite(depths) & (depths > 0.1) & (depths < 100)
+            indices = torch.as_tensor(np.flatnonzero(good), device="cuda")
+            inverse_depth = torch.as_tensor(1 / depths[good], device="cuda")
+            tracker.pg.patches_[slot, indices, 2] = inverse_depth[:, None, None]
+            self.bootstrap_metric_calls += 1
+            diagnostics["bootstrap_metric_seconds"] = perf_counter() - bootstrap_start
         # Only mature patch depths constrain metric scale. They belong to a
         # past image still in the active window; no future image enters inference.
         due = self.index - self.last_metric_index >= self.config.scale.interval
@@ -142,7 +164,7 @@ class DPVOFrontend:
             self.metric_pose = next_metric
             self.initialized_before = True
         covariance = np.diag([0.005**2] * 3 + [0.01**2] * 3)
-        covariance[:3, :3] += scale_translation_covariance(delta[:3, 3], self.scale_filter.variance)
+        covariance[:3, :3] += scale_translation_covariance(delta[:3, 3], self.scale_filter.uncertainty_variance)
         if not initialized:
             covariance += np.eye(6)
         # Dense depth is needed only on mapping updates. It is predicted from
@@ -162,8 +184,11 @@ class DPVOFrontend:
         active_ids = set(int(x) for x in tracker.pg.tstamps_[max(0, tracker.n - 12):tracker.n])
         self.rgb_memory = {k: v for k, v in self.rgb_memory.items() if k in active_ids}
         self.scale_history.append(self.scale_filter.scale)
-        diagnostics.update(scale=self.scale_filter.scale, log_scale_std=float(np.sqrt(self.scale_filter.variance)),
+        diagnostics.update(scale=self.scale_filter.scale, log_scale_std=float(np.sqrt(self.scale_filter.uncertainty_variance)),
                            metric_initialized=self.scale_filter.initialized, metric_seconds=metric_seconds,
+                           pending_scale_observations=len(self.scale_filter.pending),
+                           scale_reinitializations=self.scale_filter.reinitializations,
+                           bootstrap_metric_calls=self.bootstrap_metric_calls,
                            accepted_metric_observations=self.scale_filter.accepted,
                            rejected_metric_observations=self.scale_filter.rejected,
                            total_seconds=perf_counter() - start)

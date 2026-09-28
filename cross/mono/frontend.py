@@ -158,7 +158,7 @@ class MonoFrontend:
         delta_metric = delta_unit.copy()
         delta_metric[:3, 3] *= self.scale_filter.scale
         covariance = np.diag([self.config.translation_std_floor**2] * 3 + [self.config.rotation_std_floor**2] * 3)
-        covariance[:3, :3] += scale_translation_covariance(delta_metric[:3, 3], self.scale_filter.variance)
+        covariance[:3, :3] += scale_translation_covariance(delta_metric[:3, 3], self.scale_filter.uncertainty_variance)
         local_dispersion = inverse(self.unit_pose)[:3, :3] @ np.diag(dispersion**2) @ self.unit_pose[:3, :3]
         covariance[:3, :3] += local_dispersion * self.scale_filter.scale**2
         if diagnostics["valid"]:
@@ -175,7 +175,7 @@ class MonoFrontend:
         self.index += 1
         diagnostics.update(
             scale=self.scale_filter.scale,
-            log_scale_std=float(np.sqrt(self.scale_filter.variance)),
+            log_scale_std=float(np.sqrt(self.scale_filter.uncertainty_variance)),
             metric_initialized=self.scale_filter.initialized,
             metric_seconds=metric_seconds,
             accepted_metric_observations=self.scale_filter.accepted,

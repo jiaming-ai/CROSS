@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--frontend-only", action="store_true")
     parser.add_argument("--frontend", choices=["da3", "dpvo"], default="da3")
     parser.add_argument("--dpvo-checkpoint", type=Path)
+    parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--start", type=int, default=0)
@@ -41,6 +42,7 @@ def main():
     parser.add_argument("--metric-shape", action="store_true")
     parser.add_argument("--metric-model", default="depth-anything/DA3METRIC-LARGE")
     parser.add_argument("--scale-mode", choices=["filtered", "direct", "initial", "relative"], default="filtered")
+    parser.add_argument("--scale-recovery-observations", type=int, default=3)
     parser.add_argument("--intrinsics", nargs="+", type=float)
     parser.add_argument("--no-undistort", action="store_true")
     parser.add_argument("--load-map", type=Path)
@@ -61,13 +63,15 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     config = MonoConfig(frontend=args.frontend,
                         seed=args.seed,
+                        dpvo_metric_bootstrap=args.dpvo_metric_bootstrap,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
                         pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,
                         anchor_interval=args.anchor_interval, mapping_interval=args.mapping_interval,
                         pose_refinement=args.pose_refinement,
                         refinement_anchor_only=args.refinement_anchor_only, metric_shape=args.metric_shape,
-                        scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode))
+                        scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,
+                                          recovery_observations=args.scale_recovery_observations))
     sequence = RGBSequence(args.sequence, args.stride, args.start, args.frames, args.intrinsics, not args.no_undistort)
     if not len(sequence):
         raise ValueError("No selected images")
@@ -155,7 +159,10 @@ def main():
                "latency_median_ms": 1000 * float(np.median(latencies)),
                "latency_p95_ms": 1000 * float(np.quantile(latencies, 0.95)),
                "scale": frontend.scale_filter.scale, "accepted_scale_observations": frontend.scale_filter.accepted,
-               "rejected_scale_observations": frontend.scale_filter.rejected}
+               "rejected_scale_observations": frontend.scale_filter.rejected,
+               "scale_reinitializations": frontend.scale_filter.reinitializations,
+               "bootstrap_metric_calls": getattr(frontend, "bootstrap_metric_calls", 0),
+               "coverage_definition": "Frontend validity flag; DPVO reports initialization, not an independent accuracy check"}
     if args.device.startswith("cuda"):
         summary["peak_gpu_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
     if args.frontend == "dpvo":

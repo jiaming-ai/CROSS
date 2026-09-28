@@ -120,10 +120,21 @@ class LogScaleFilter:
         self.initialized = self.config.mode == "relative"
         self.accepted = 0
         self.rejected = 0
+        self.reinitializations = 0
+        self.pending = []
 
     @property
     def scale(self):
         return float(np.exp(self.mean))
+
+    @property
+    def uncertainty_variance(self):
+        # A plausible but uncommitted alternative must increase motion
+        # uncertainty. Do not increase the filter's own innovation gate.
+        if not self.pending:
+            return self.variance
+        alternative = float(np.median([x[0] for x in self.pending]))
+        return self.variance + 0.25 * (alternative - self.mean)**2
 
     def predict(self, frames=1):
         self.variance += frames * self.config.process_std_per_frame**2
@@ -131,6 +142,7 @@ class LogScaleFilter:
     def update(self, observation):
         if not observation.accepted:
             self.rejected += 1
+            self.pending.clear()
             return False
         if self.config.mode == "relative" or (self.initialized and self.config.mode == "initial"):
             return False
@@ -141,10 +153,31 @@ class LogScaleFilter:
             residual = observation.log_scale - self.mean
             innovation = self.variance + observation.variance
             if abs(residual) > self.config.innovation_gate * np.sqrt(innovation):
+                # A single outlier cannot change scale. Persistent internally
+                # consistent evidence can recover a bad bootstrap or gauge
+                # change, instead of rejecting corrections forever.
+                if self.config.recovery_observations:
+                    if self.pending:
+                        center = np.median([x[0] for x in self.pending])
+                        variance = np.median([x[1] for x in self.pending])
+                        if abs(observation.log_scale - center) > self.config.innovation_gate * np.sqrt(variance + observation.variance):
+                            self.pending.clear()
+                    self.pending.append((observation.log_scale, observation.variance))
+                    if len(self.pending) >= self.config.recovery_observations:
+                        self.mean = float(np.median([x[0] for x in self.pending]))
+                        scatter = 1.4826 * np.median(np.abs(np.array([x[0] for x in self.pending]) - self.mean))
+                        self.variance = float(max(np.median([x[1] for x in self.pending]), scatter**2,
+                                                  self.config.posterior_std_floor**2))
+                        self.pending.clear()
+                        self.reinitializations += 1
+                        self.accepted += 1
+                        observation.reason = "reinitialized_after_consistent_priors"
+                        return True
                 self.rejected += 1
                 observation.accepted = False
                 observation.reason = "innovation_gate"
                 return False
+            self.pending.clear()
             gain = self.variance / innovation
             self.mean += gain * residual
             self.variance *= 1.0 - gain

@@ -34,6 +34,23 @@ def test_scale_filter_rejects_outlier_and_retains_systematic_floor():
     assert not observe_scale(np.zeros((80, 80)), np.ones((80, 80))).accepted
 
 
+def test_scale_recovery_requires_repeated_consistent_evidence():
+    filter_ = LogScaleFilter()
+    def observation(scale):
+        return ScaleObservation(log_scale=np.log(scale), variance=0.12**2, accepted=True)
+    filter_.update(observation(4))
+    assert not filter_.update(observation(1))
+    assert filter_.uncertainty_variance > filter_.variance
+    assert not filter_.update(observation(8))  # contradicts pending alternative
+    assert not filter_.update(observation(1))
+    assert not filter_.update(observation(1.05))
+    assert filter_.scale == pytest.approx(4)
+    assert filter_.update(observation(0.95))
+    assert filter_.scale == pytest.approx(1)
+    assert filter_.reinitializations == 1
+    assert filter_.uncertainty_variance == filter_.variance
+
+
 def test_sparse_metric_scale_requires_spatially_distributed_patches():
     from cross.mono.scale import observe_sparse_scale
     rng = np.random.default_rng(12)
@@ -117,3 +134,26 @@ def test_evaluator_exposes_metric_error_hidden_by_similarity(tmp_path):
     assert metrics["sim3_alignment_scale"] == pytest.approx(0.5)
     assert metrics["metric_scale_error_percent"] == pytest.approx(100.)
     assert metrics["rpe_translation_rmse_m"] > 0.1
+
+
+def test_scale_replay_is_causal_and_preserves_source_geometry():
+    from dataclasses import asdict
+    from cross.mono.replay_scale import replay
+
+    # Unit increments of one metre; a changed teacher prior changes only new
+    # increments. Startup-only must recover a straight constant-speed track.
+    original_scales = np.array([2., 2., 3., 3.])
+    positions = np.cumsum(original_scales)
+    rows = np.zeros((4, 8))
+    rows[:, 0], rows[:, 1], rows[:, 7] = np.arange(4), positions, 1
+    diagnostics = [{"scale": s} for s in original_scales]
+    for i in (0, 2):
+        diagnostics[i]["scale_observation"] = asdict(ScaleObservation(
+            log_scale=np.log(original_scales[i]), variance=0.12**2, accepted=True, reason="accepted"))
+    direct, _ = replay(rows, diagnostics, ScaleConfig(mode="direct"))
+    initial, _ = replay(rows, diagnostics, ScaleConfig(mode="initial"))
+    prefix, _ = replay(rows[:2], diagnostics[:2], ScaleConfig(mode="initial"))
+    np.testing.assert_allclose(direct, rows)
+    np.testing.assert_allclose(initial[:, 1], [2., 4., 6., 8.])
+    np.testing.assert_array_equal(initial[:2], prefix)
+    np.testing.assert_array_equal(initial[:, 4:], rows[:, 4:])

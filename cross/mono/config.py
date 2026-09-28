@@ -13,12 +13,18 @@ class ScaleConfig:
     process_std_per_frame: float = 0.006
     posterior_std_floor: float = 0.08
     innovation_gate: float = 3.5
+    recovery_observations: int = 3  # zero reproduces permanent innovation rejection
+
+    def __post_init__(self):
+        if self.recovery_observations < 0 or self.recovery_observations == 1:
+            raise ValueError("Scale recovery needs at least two observations, or zero to disable")
 
 
 @dataclass
 class MonoConfig:
     frontend: str = "da3"
     dpvo_checkpoint: str | None = None
+    dpvo_metric_bootstrap: bool = False
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"
