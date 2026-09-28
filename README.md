@@ -11,13 +11,13 @@ The monocular API accepts **RGB, timestamps and camera calibration**. It does no
 - Mapping: the existing CROSS hypothesis lifecycle. Learned retrieval poses are verified with image correspondences; scale uncertainty enters the original diagonal SE(3) filter conservatively.
 - Evaluation: separate ground-truth reader, rigid-aligned metric ATE, similarity-aligned ATE and fitted scale, metric RPE, tracking coverage and runtime including periodic inference.
 
-The current scope is a single-session research baseline. The diagonal metric bridge is not a full joint Sim(3) posterior. Save/load starts a new session. A same-sequence restart can commit after accumulated evidence, but actual changed-session relocalization is not validated.
+The current scope is a single-session research baseline with experimental multi-session recovery. The diagonal metric bridge is not a full joint Sim(3) posterior. An opt-in historical-support policy recovers one changed-object OpenLORIS pair; viewpoint and illumination changes remain unresolved. Broad changed-session robustness is not established.
 
 The monocular bridge defaults to CROSS's original `full` policy: the global observation updates the active pose as well as competing hypotheses and delayed-commitment evidence. `--filter-mode skip_active` reproduces the earlier monocular bridge, where the active pose follows local motion; `adaptive` exposes the inherited adaptive gate. These select existing policies; they do not change the observation message or commitment thresholds. Report the selected policy in comparisons, including when reproducing historical runs that used `skip_active`.
 
 ## Monocular installation and usage
 
-The tested environment uses Linux, Python 3.11, PyTorch 2.5.1/CUDA 12.4 and an NVIDIA GPU. First install CROSS's dependencies using the instructions below, then add the monocular dependencies and pinned DA3 implementation:
+Tested environments use Linux and Python 3.11: PyTorch 2.5.1/CUDA 12.4 on A6000, and PyTorch 2.8.0/CUDA 12.8 with torchvision 0.23.0 on RTX 5090. First install CROSS's dependencies using the instructions below, then add the monocular dependencies and pinned DA3 implementation:
 
 ```bash
 uv pip install -e '.[mono,dev]'
@@ -67,7 +67,7 @@ python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
   --output outputs/desk_streaming
 ```
 
-The operating target is 20–30 FPS at 640×480 on one consumer GPU such as an RTX 4090. This is a target, not a verified hardware claim. Measure capture-to-pose latency and deadline misses as well as throughput; include initialization, mapping lag and combined GPU memory. `--warmup-models` uses only the first image and records its time separately. The paced input worker starts preprocessing after simulated capture time and fails on queue overflow (two frames by default, configurable with `--input-buffer`); it never silently drops evaluation frames. A bounded input queue does not itself bound capture-time lag when preprocessing falls behind. Check the actual input storage medium and GPU occupancy throughout timing runs: local rotational disks can still stall, and a GPU can become occupied after launch.
+The operating target is 20–30 FPS at 640×480 on one consumer GPU such as an RTX 4090. Shared RTX 5090 measurements are reported below; RTX 4090 performance remains unmeasured. Measure capture-to-pose latency and deadline misses as well as throughput; include initialization, mapping lag and combined GPU memory. `--warmup-models` uses only the first image and records its time separately. The paced input worker starts preprocessing after simulated capture time and fails on queue overflow (two frames by default, configurable with `--input-buffer`); it never silently drops evaluation frames. A bounded input queue does not itself bound capture-time lag when preprocessing falls behind. Check the actual input storage medium and GPU occupancy throughout timing runs: local rotational disks can still stall, and a GPU can become occupied after launch.
 
 The command above paces every selected image uniformly at 20 Hz. For playback at the original motion speed with approximately 20 images per second, add `--sample-fps 20 --replay-timestamps`. Sampling keeps the first available RGB image in each time bin; gaps remain gaps, timestamps and source indices remain unchanged, and the selected frame count is recorded. Arrival intervals can vary with the original capture cadence. `--input-fps 20` then specifies the 50 ms pose deadline while the recorded timestamps determine arrival times. Report this sampling protocol separately from all-frame throughput replay.
 
@@ -81,7 +81,32 @@ Teacher outputs retain their source image and timestamp. Mapping receives accumu
 
 `--adaptive-anchor` is an experimental streaming option, disabled by default. When a valid PnP estimate has fewer than 80 inliers (four times the acceptance minimum), it requests metric depth before tracking fails. Requests remain at least five input frames apart. A ready proactive result renews the anchor at its verified source pose, retaining that image's timestamp and features; it never rewrites emitted poses. This can increase teacher and mapping work compared with fixed cadence. Logs record proactive requests and actual worker counts. The option retains CROSS's existing observation mixture and commitment tests; it is not a joint scale/bias inference method.
 
-To reproduce a complete multi-seed suite on a remote server:
+The native-rate consumer profile processes every RGB frame with original timestamps:
+
+```bash
+python -m cross.mono.run /path/to/sequence \
+  --frontend streaming_pnp --filter-mode full \
+  --mask-people --mask-interval 3 --metric-interval 20 --mapping-interval 10 \
+  --retrieval-pose metric_pnp --image-size 640 480 \
+  --mapping-process --input-buffer 4 --input-fps 30 \
+  --warmup-models --paced-input-worker --replay-timestamps \
+  --output outputs/native_rate
+```
+
+Measured on a **shared RTX 5090**, source `f20bebc`, one native-rate attempt per sequence:
+
+| Sequence | Frames emitted | Pose FPS | Metric ATE (cm) | Capture-to-pose p95 (ms) |
+|---|---:|---:|---:|---:|
+| TUM fr1/desk | 613 / 613 | 30.02 | 9.54 | 16.51 |
+| TUM fr1/room | 1362 / 1362 | 30.01 | 28.18 | 16.35 |
+| TUM fr3/walking_xyz | 859 / 859 | 29.72 | 4.70 | 14.99 |
+| Bonn crowd2 | 895 / 895 | 29.83 | 6.05 | 13.91 |
+
+All-frame statistics include held invalid poses. ATE uses rigid alignment, with raw Bonn GT translations. Initialization and final draining are recorded separately. Between 0.073% and 0.326% of frames miss the 33.33 ms deadline. These development runs use a shared device and do not establish RTX 4090 performance or hard real-time guarantees. All four apply zero loop closures, so these results assess monocular tracking and inherited observation fusion, not new topological robustness.
+
+At original-time 20 Hz, two same-seed scheduling replays with `--adaptive-anchor` give ATE ranges of 9.15–9.16, 18.82–18.83, 5.388–5.389 and 7.646–7.649 cm on those sequences, with p95 13.71–18.08 ms and no 50 ms misses. The option increases teacher and mapping work. Crowd2's frontend error worsens despite better mapped error; this is not a uniform frontend improvement or a held-out evaluation.
+
+To reproduce the earlier synchronous multi-seed suite on a remote server:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_mono.py \
@@ -118,7 +143,7 @@ Two opt-in session experiments are available. `--session-recovery` replaces the 
 
 `--retrieval-matcher lighterglue` optionally uses the released XFeat LighterGlue model for `metric_pnp` retrieved pairs. Frame-rate motion keeps its original matcher. Both retrieval directions still pass the same PnP and cycle checks before entering CROSS's observation message. The adapter verifies the checkpoint hash and every learned matcher parameter. The checkpoint must be present in the XFeat torch-hub cache.
 
-`--historical-min-score 0` with reserved historical slots permits a bounded number of weaker saved-map candidates, while new query nodes retain the original score thresholds. Original retrieval scores still determine observation weights and uncertainty; no geometry or temporal-commitment test is relaxed. This experimental search option can spend the entire retrieval budget on historical views if all three slots are reserved. Both search and learned matching need false-association and online runtime evaluation; accepted pairs alone do not establish map recovery.
+`--historical-min-score 0` with reserved historical slots permits a bounded number of weaker saved-map candidates, while new query nodes retain the original score thresholds. Original retrieval scores remain available to the inherited uncertainty calculation and keyframe policy; no geometry or temporal-commitment test is relaxed. This experimental search option can spend the entire retrieval budget on historical views if all three slots are reserved. Both search and learned matching need false-association and online runtime evaluation; accepted pairs alone do not establish map recovery.
 
 Monocular code lives in `cross/mono/`; inherited mapping is in `cross/core/`. Private research notes and runs belong in ignored `docs/` and `outputs/`. External models retain their own licenses. This implementation is informed by [AMB3R-SLAM](https://arxiv.org/abs/2609.19518); it is not a reproduction of that paper.
 

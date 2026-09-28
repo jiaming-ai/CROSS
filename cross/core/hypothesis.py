@@ -1048,6 +1048,14 @@ class HypothesisManager:
         # These values do not change the inherited commitment policy.
         self.last_loop_audit = {"realized": self.realized.detach().cpu().tolist(),
                                 "weights": self.dist[2].detach().cpu().tolist(),
+                                "realization_positive_llr_sum": self.last_sum_pos.detach().cpu().tolist(),
+                                "realization_positive_llr_hit_rate": self.last_hit_rate.detach().cpu().tolist(),
+                                "realization_thresholds": dict(sum=self.realize_sum_thresh,
+                                                               hit_rate=self.realize_hitrate_thresh),
+                                "relative_overlap_history": self.log_c_hist.detach().cpu().tolist(),
+                                "relative_confidence_history": self.log_conf_hist.detach().cpu().tolist(),
+                                "historical_support": [self.reference_support.audit(i)
+                                                       for i in range(self.n_components)],
                                 "candidates": []}
         # 1) Inter-hypothesis LC detection (exclude comp 0)
         # only consider active and realized components

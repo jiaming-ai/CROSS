@@ -367,7 +367,7 @@ class KeyframeDatabase:
 
         if reserved_min_score is not None:
             # Permit at most the reserved budget of weaker historical views.
-            # Their original scores still weight the global observation; query
+            # Retain original scores for CROSS's measurement uncertainty; query
             # nodes retain the original high/low thresholds. Geometry and CROSS
             # temporal evidence decide whether any such candidate is usable.
             historical = []
