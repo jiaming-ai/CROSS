@@ -24,6 +24,8 @@ class MonoConfig:
     anchor_interval: int = 30
     recent_frames: int = 2
     pose_refinement: str = "none"  # none or xfeat
+    refinement_anchor_only: bool = False
+    metric_shape: bool = False
     mapping_interval: int = 5
     translation_std_floor: float = 0.005
     rotation_std_floor: float = 0.01

@@ -35,6 +35,8 @@ def main():
     parser.add_argument("--mapping-interval", type=int, default=5)
     parser.add_argument("--pose-model", default="depth-anything/DA3-SMALL")
     parser.add_argument("--pose-refinement", choices=["none", "xfeat"], default="none")
+    parser.add_argument("--refinement-anchor-only", action="store_true")
+    parser.add_argument("--metric-shape", action="store_true")
     parser.add_argument("--metric-model", default="depth-anything/DA3METRIC-LARGE")
     parser.add_argument("--scale-mode", choices=["filtered", "direct", "initial", "relative"], default="filtered")
     parser.add_argument("--intrinsics", nargs="+", type=float)
@@ -59,6 +61,7 @@ def main():
                         resolution=args.resolution, metric_resolution=args.metric_resolution,
                         anchor_interval=args.anchor_interval, mapping_interval=args.mapping_interval,
                         pose_refinement=args.pose_refinement,
+                        refinement_anchor_only=args.refinement_anchor_only, metric_shape=args.metric_shape,
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode))
     sequence = RGBSequence(args.sequence, args.stride, args.start, args.frames, args.intrinsics, not args.no_undistort)
     if not len(sequence):

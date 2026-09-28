@@ -122,6 +122,8 @@ class MonoFrontend:
                     relative, inliers, error = result
                     refined.append(ref.pose @ relative)
                     refined_weights.append(inliers / max(error, 0.5))
+                    if self.config.refinement_anchor_only:
+                        break
             diagnostics["refined_references"] = len(refined)
             if refined:
                 next_unit_pose = mean_pose(refined, refined_weights)
@@ -142,6 +144,11 @@ class MonoFrontend:
             metric_depth = self.metric.predict_metric(rgb, self.K, unit_depth.shape)
             observation = observe_scale(metric_depth, unit_depth, current_confidence, self.config.scale)
             self.scale_filter.update(observation)
+            if self.config.metric_shape and observation.accepted:
+                # Preserve the arbitrary VO gauge while improving anchor shape.
+                # The scalar metric observation remains separately uncertain.
+                valid_depth = np.isfinite(metric_depth) & (metric_depth > 0)
+                unit_depth = np.where(valid_depth, metric_depth / np.exp(observation.log_scale), unit_depth)
             diagnostics["scale_observation"] = {
                 key: (None if isinstance(value, float) and not np.isfinite(value) else value)
                 for key, value in asdict(observation).items()
