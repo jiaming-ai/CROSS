@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--input-buffer", type=int, default=2, help="Maximum pending input frames; overflow fails instead of dropping data")
     parser.add_argument("--mapping-process", action="store_true", help="Isolate CROSS mapping from the streaming frontend's Python process")
     parser.add_argument("--delayed-recovery", action="store_true", help="Experimental delayed reverse PnP; may cause large pose corrections")
+    parser.add_argument("--teacher-lag-frames", type=int, default=0, help="Minimum source age before applying a ready metric result; late results never block tracking")
     parser.add_argument("--freeze-gc", action="store_true", help="Freeze long-lived startup objects during the run; retain collection of new objects")
     parser.add_argument("--dpvo-checkpoint", type=Path)
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
@@ -75,6 +76,8 @@ def main():
         parser.error("--replay-timestamps requires --paced-input-worker")
     if args.input_buffer < 1:
         parser.error("--input-buffer must be positive")
+    if args.teacher_lag_frames < 0 or (args.teacher_lag_frames and args.frontend != "streaming_pnp"):
+        parser.error("--teacher-lag-frames must be nonnegative and requires streaming_pnp")
     if (args.mapping_process or args.delayed_recovery) and args.frontend != "streaming_pnp":
         parser.error("--mapping-process and --delayed-recovery require streaming_pnp")
     import torch
@@ -96,6 +99,7 @@ def main():
                         rotation_selection=args.rotation_selection,
                         subpixel=args.subpixel,
                         mapping_process=args.mapping_process, delayed_recovery=args.delayed_recovery,
+                        teacher_lag_frames=args.teacher_lag_frames,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
                         pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,

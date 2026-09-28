@@ -73,6 +73,8 @@ Teacher outputs retain their source image and timestamp. Mapping receives accumu
 
 `--delayed-recovery` enables experimental reverse-PnP correction when delayed depth arrives. It is disabled by default because it produced large pose jumps in development. Asynchronous scheduling can change anchor timing and trajectories; report repeated timed runs. The joint place/scale/shared-bias message extension remains research work, and has not yet been implemented or validated as a new contribution.
 
+`--teacher-lag-frames L` optionally holds a ready metric result until its source is at least `L` frames old. This tests sensitivity to delivery timing without blocking the pose stream. Late results are applied when available and their lateness is recorded; it is not a guarantee of deterministic tracking. The default is zero. Final shutdown drains remaining results for mapping, while already emitted poses stay unchanged.
+
 To reproduce a complete multi-seed suite on a remote server:
 
 ```bash

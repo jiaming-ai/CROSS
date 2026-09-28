@@ -31,6 +31,7 @@ class MonoConfig:
     subpixel: bool = False
     mapping_process: bool = False
     delayed_recovery: bool = False
+    teacher_lag_frames: int = 0
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
     metric_model: str = "depth-anything/DA3METRIC-LARGE"
@@ -57,6 +58,8 @@ class MonoConfig:
             raise ValueError("Intervals must be positive")
         if self.recent_frames < 1:
             raise ValueError("At least one recent frame is required")
+        if self.teacher_lag_frames < 0:
+            raise ValueError("Teacher delivery lag cannot be negative")
         if self.pose_refinement not in {"none", "xfeat"}:
             raise ValueError("pose_refinement must be none or xfeat")
         if self.retrieval_pose not in {"da3", "metric_pnp"}:

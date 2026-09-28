@@ -61,10 +61,11 @@ def test_delayed_depth_recovers_its_source_without_rewriting_emitted_pose():
     depth = np.ones((4, 4))*2
     frontend.depth_worker = SimpleNamespace(poll=lambda: [((failed, depth), {})])
     frontend.ready_depths = []
+    frontend.pending_depths, frontend.index = [], 12
     frontend.anchor_index, frontend.last_valid = 0, False
     frontend.anchor_pose = frontend.metric_pose = np.eye(4)
     frontend.anchor_features = {"frame": 0}
-    frontend.config = SimpleNamespace(scale=SimpleNamespace(interval=30), delayed_recovery=True)
+    frontend.config = SimpleNamespace(scale=SimpleNamespace(interval=30), delayed_recovery=True, teacher_lag_frames=0)
     def reverse(source, reference, received_depth):
         assert source["frame"] == 10 and reference["frame"] == 0
         assert received_depth is depth
@@ -78,6 +79,43 @@ def test_delayed_depth_recovers_its_source_without_rewriting_emitted_pose():
     assert received[0][0][0].valid
     assert failed.pose[0, 3] == 0.  # original capture record remains immutable
     assert frontend.metric_pose[0, 3] == 0.  # emitted state is not rewritten
+
+
+def test_teacher_assimilation_schedule_holds_ready_depth_without_blocking_pose():
+    frontend = StreamingPnPFrontend.__new__(StreamingPnPFrontend)
+    source_pose = np.eye(4)
+    source_pose[0, 3] = 2.
+    snapshot = FrameSnapshot(30, 1., np.zeros((4, 4, 3)), {}, source_pose, np.ones(6), True)
+    incoming = [((snapshot, np.ones((4, 4))), {})]
+    def poll():
+        result = incoming.copy()
+        incoming.clear()
+        return result
+    frontend.depth_worker = SimpleNamespace(poll=poll)
+    frontend.pending_depths, frontend.ready_depths, frontend.index = [], [], 31
+    frontend.anchor_index, frontend.last_valid = 0, True
+    frontend.anchor_pose = frontend.metric_pose = np.eye(4)
+    frontend.config = SimpleNamespace(scale=SimpleNamespace(interval=30), delayed_recovery=False, teacher_lag_frames=3)
+    assert frontend._receive() == (False, [])
+    assert len(frontend.pending_depths) == 1 and frontend.anchor_index == 0
+    frontend.index = 32
+    assert frontend._receive() == (False, [])
+    frontend.index = 33
+    renewed, received = frontend._receive()
+    assert renewed and frontend.anchor_index == 30
+    assert received[0][1]["held_ready_frames"] == 2
+    assert received[0][1]["late_delivery_frames"] == 0
+    assert frontend.metric_pose[0, 3] == 0.  # no retrospective pose correction
+    assert not frontend.pending_depths
+    # A final ready result must still reach mapping if the input stops before
+    # the configured assimilation age; no already emitted pose changes.
+    from dataclasses import replace
+    incoming.append(((replace(snapshot, index=60), np.ones((4, 4))), {}))
+    frontend.index = 61
+    assert frontend._receive() == (False, [])
+    _, drained = frontend._receive(drain=True)
+    assert drained[0][1]["final_drain"] and not frontend.pending_depths
+    assert frontend.metric_pose[0, 3] == 0.
 
 
 def test_teacher_failure_still_closes_the_mapping_worker():

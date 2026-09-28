@@ -66,6 +66,7 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         self.depth_worker = LatestWorker(self._predict_snapshot, "cross-metric-depth")
         self.world_std_prefix = np.zeros(6)
         self.ready_depths = []
+        self.pending_depths = []
         self.last_submitted = -1
         self.finished = False
 
@@ -79,11 +80,17 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                 self.depth_stream.synchronize()
         return snapshot, depth
 
-    def _receive(self):
+    def _receive(self, drain=False):
         received = []
         renewed = False
         for (snapshot, depth), timing in self.depth_worker.poll():
+            self.pending_depths.append(((snapshot, depth), dict(timing, first_ready_frame=self.index)))
+        retained = []
+        for (snapshot, depth), timing in self.pending_depths:
             if snapshot.index <= self.anchor_index:
+                continue
+            if not drain and self.index-snapshot.index < self.config.teacher_lag_frames:
+                retained.append(((snapshot, depth), timing))
                 continue
             recovered = False
             if not snapshot.valid and self.config.delayed_recovery:
@@ -95,12 +102,17 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                 if reverse is not None:
                     snapshot = replace(snapshot, pose=self.anchor_pose @ inverse(reverse[0]), valid=True)
                     recovered = True
-            timing = dict(timing, delayed_reverse_recovery=recovered)
+            timing = dict(timing, delayed_reverse_recovery=recovered,
+                          held_ready_frames=self.index-timing["first_ready_frame"],
+                          late_delivery_frames=max(0, self.index-snapshot.index-self.config.teacher_lag_frames)
+                          if self.config.teacher_lag_frames else 0,
+                          final_drain=drain)
             received.append(((snapshot, depth), timing))
             if snapshot.index - self.anchor_index >= self.config.scale.interval or not self.last_valid:
                 self.anchor_features, self.anchor_depth = snapshot.features, depth
                 self.anchor_pose, self.anchor_index = snapshot.pose, snapshot.index
                 renewed = True
+        self.pending_depths = retained
         self.ready_depths.extend(received)
         return renewed, received
 
@@ -172,7 +184,7 @@ class StreamingPnPFrontend(MetricPnPFrontend):
     def finish(self):
         if not self.finished:
             self.depth_worker.close()
-            self._receive()
+            self._receive(drain=True)
             self.finished = True
 
     def shutdown(self):
