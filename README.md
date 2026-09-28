@@ -1,54 +1,70 @@
-<div align="center">
+# CROSS-Mono
 
-# CROSS: Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation
+Experimental monocular extension of [CROSS](https://github.com/jiaming-ai/CROSS), retaining its probabilistic topological memory and delayed hypothesis commitment. This separate research repository is not the published RGB-D system; the original paper's publication status does not apply to this extension.
 
-### NeurIPS 2026
+The monocular API accepts **RGB, timestamps and camera calibration**. It does not consume sensor depth, input odometry, IMU readings or ground-truth poses. Learned metric depth supplies an uncertain prior; its absolute scale may remain biased out of distribution.
 
-Jiaming Wang, Jizhuo Chen, Diwen Liu, Atharva Ghotavadekar, Jiaxuan Da, Linh Kästner, Harold Soh
+## Monocular architecture
 
-National University of Singapore
+- Motion: compact-memory DA3-Small, optionally refined with XFeat/PnP, or DPVO with its own loop closures disabled.
+- Scale: periodic DA3-Metric-Large observations, robust spatial aggregation, innovation rejection and a systematic uncertainty floor.
+- Mapping: the existing CROSS hypothesis lifecycle. Learned retrieval poses are verified with image correspondences; scale uncertainty enters the original diagonal SE(3) filter conservatively.
+- Evaluation: separate ground-truth reader, rigid-aligned metric ATE, similarity-aligned ATE and fitted scale, metric RPE, tracking coverage and runtime including periodic inference.
 
-[![Project Page](https://img.shields.io/badge/Project-Page-e8622c)](https://jiaming.im/CROSS/)
-[![arXiv](https://img.shields.io/badge/arXiv-2605.02227-b31b1b.svg)](https://arxiv.org/abs/2605.02227)
-![NeurIPS 2026](https://img.shields.io/badge/NeurIPS-2026-4b44ce.svg)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+The current scope is a single-session research baseline. The diagonal metric bridge is not a full joint Sim(3) posterior. Save/load supports starting a new session, but does not by itself establish multi-session robustness.
 
-<a href="https://jiaming.im/CROSS/"><img src="assets/teaser.jpg" alt="A quadruped relocalizes in a crowded canteen with a map built the evening before, then navigates to a language goal" width="100%"></a>
+## Monocular installation and usage
 
-</div>
+The tested environment uses Linux, Python 3.11, PyTorch 2.5.1/CUDA 12.4 and an NVIDIA GPU. First install CROSS's dependencies using the instructions below, then add the monocular dependencies and pinned DA3 implementation:
 
-**Pose-aware topological mapping for RGB-D and monocular inputs.**
+```bash
+uv pip install -e '.[mono,dev]'
+uv pip install gtsam==4.2
 
-CROSS builds probabilistic topological maps from RGB-D or monocular camera streams. It maintains a Gaussian mixture belief over SE(3) poses, tracks multiple hypotheses, detects loop closures, and optimizes pose graphs — enabling robust long-term navigation in indoor environments.
-
-## Key Features
-
-- **Multi-hypothesis tracking** — Gaussian mixture model (GMM) over SE(3) with evidence-driven lifecycle (birth, realization, removal).
-- **Loop closure** — Overlap-based detection with asynchronous pose graph optimization (GTSAM) and hypothesis merging.
-- **Topological planning** — Lightweight graph over keyframes with odometry and proximity edges; supports A\* and Dijkstra path planning.
-- **Visual place recognition** — Keyframe database with embedding-based retrieval for relocalization.
-- **Semantic memory** — Text-conditioned object search across the map using open-vocabulary detectors.
-- **Multiple dataset formats** — R3D, ROS bags, OpenLORIS, TUM RGB-D.
-
-## Architecture
-
+git clone https://github.com/ByteDance-Seed/Depth-Anything-3.git /path/to/Depth-Anything-3
+git -C /path/to/Depth-Anything-3 checkout 3d835ec1a5802d64a8b8b15f817a1ab54809bfe4
+uv pip install --no-deps /path/to/Depth-Anything-3
 ```
-cross/
-├── core/           # System pipeline, hypothesis management, PGO, planning
-├── cv/             # Pose estimation (PnP, VGGT), feature extraction, detection
-├── db/             # Keyframe database and visual place recognition
-├── dataloader/     # Dataset loaders (R3D, ROS bag, OpenLORIS, TUM)
-├── utils/          # Math (Lie algebra, rotations), profiling, camera models
-└── visualization/  # Rerun-based 3D visualization, graph plotting
+
+For DPVO, follow its [official build instructions](https://github.com/princeton-vl/DPVO) at commit `0ac95b656d1fda91c271d2a106460d19ad966fc7`, with a CUDA toolkit matching PyTorch, matching `torch-scatter`, and `numba`. Add the built checkout to `PYTHONPATH` and obtain the official `dpvo.pth`. Models/binaries are not vendored. `HF_HOME` chooses the model cache and `CROSS_TORCH_HUB` can select an existing XFeat/BoQ hub cache.
+
+```bash
+# Fetch RGB and metadata; sensor-depth images are omitted during extraction.
+python scripts/download_mono_benchmarks.py --root /path/to/benchmarks \
+  --sequences freiburg1_desk freiburg1_xyz bonn_balloon2
+
+python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
+  --frontend dpvo --dpvo-checkpoint /path/to/dpvo.pth \
+  --output outputs/desk_dpvo --save-map
+
+# DA3 baseline / ablation
+python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
+  --frontend da3 --pose-refinement xfeat --refinement-anchor-only --metric-shape \
+  --output outputs/desk_da3
+
+# Ground truth is read only after inference.
+python -m cross.mono.evaluate outputs/desk_dpvo/trajectory.txt \
+  /path/to/benchmarks/rgbd_dataset_freiburg1_desk/groundtruth.txt \
+  --output outputs/desk_dpvo/metrics.json
+
+python scripts/summarize_mono_runs.py outputs --output outputs/summary.json
+python -m pytest tests -q
 ```
+
+`--frontend-only` isolates motion/scale and does not require GTSAM. `--scale-mode` selects `filtered`, `direct`, `initial` or `relative`. `--stride` defaults to 1 (every RGB frame). Known TUM/Bonn sequence names select calibration and distortion; custom sequences require `--intrinsics fx fy cx cy` plus a TUM-format `rgb.txt`. DPVO currently requires image dimensions divisible by 16; select its physical GPU using `CUDA_VISIBLE_DEVICES`.
+
+Each run records configuration, source fingerprint, model provenance, causal system/frontend trajectories, per-frame diagnostics and timing. Existing result directories are not overwritten. Startup and tracking failures are explicit; a held pose is not counted as successful tracking. Similarity alignment can conceal metric-scale error, so report both ATE alignments and the fitted scale.
+
+Monocular code lives in `cross/mono/`; inherited mapping is in `cross/core/`. Private research notes and runs belong in ignored `docs/` and `outputs/`. External models retain their own licenses. This implementation is informed by [AMB3R-SLAM](https://arxiv.org/abs/2609.19518); it is not a reproduction of that paper.
+
+The remaining instructions document the inherited CROSS RGB-D interface.
 
 ## Installation
 
 ### Quick Start (recommended)
 
 ```bash
-git clone https://github.com/jiaming-ai/CROSS.git
-cd CROSS
+# From this checkout:
 bash install.sh
 ```
 

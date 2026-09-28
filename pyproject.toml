@@ -3,12 +3,12 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cross"
-version = "0.1.0"
-description = "Pose-aware topological mapping for RGB-D and monocular inputs with probabilistic tracking, multi-hypothesis management, and loop-closure optimization."
+name = "cross-mono"
+version = "0.2.0"
+description = "Monocular learned odometry and uncertain metric priors for CROSS topological mapping."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 authors = [
     { name = "Jiaming" },
 ]
@@ -28,7 +28,7 @@ classifiers = [
 dependencies = [
     "torch>=2.4.0",
     "torchvision>=0.19.0",
-    "numpy",
+    "numpy>=1.24,<2",
     "opencv-python",
     "opencv-contrib-python",
     "kornia",
@@ -59,14 +59,33 @@ dev = [
     "pytest",
     "ruff",
 ]
-all = [
-    "cross[detection,recording,dev]",
+mono = [
+    "huggingface-hub",
+    "safetensors",
+    "einops",
+    "omegaconf",
+    "addict",
+    "e3nn",
+    "evo",
+    "trimesh",
+    "pycolmap",
+    "imageio",
+    "plyfile",
+    "moviepy<2",
+    "pillow-heif",
+    "yacs",
+    "numba>=0.59,<0.62",
 ]
+all = [
+    "cross-mono[detection,recording,dev,mono]",
+]
+
+[project.scripts]
+cross-mono = "cross.mono.run:main"
+cross-mono-evaluate = "cross.mono.evaluate:main"
 
 [project.urls]
 Homepage = "https://jiaming.im/CROSS/"
-Repository = "https://github.com/jiaming-ai/CROSS"
-Issues = "https://github.com/jiaming-ai/CROSS/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cross"]
