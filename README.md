@@ -6,8 +6,8 @@ The monocular API accepts **RGB, timestamps and camera calibration**. It does no
 
 ## Monocular architecture
 
-- Motion: compact-memory DA3-Small, optionally refined with XFeat/PnP, or DPVO with its own loop closures disabled.
-- Scale: periodic DA3-Metric-Large observations, robust spatial aggregation, innovation rejection and a systematic uncertainty floor.
+- Motion: lightweight XFeat features with robust PnP against periodic metric-depth anchors. Optional person exclusion reduces foreground tracking. DA3 compact-memory and DPVO scalar-scale frontends are retained as experimental alternatives.
+- Metric priors: DA3-Metric-Large supplies uncertain depth shape and scale. The DPVO alternative uses robust log-scale observations, persistent-alternative recovery and a systematic uncertainty floor.
 - Mapping: the existing CROSS hypothesis lifecycle. Learned retrieval poses are verified with image correspondences; scale uncertainty enters the original diagonal SE(3) filter conservatively.
 - Evaluation: separate ground-truth reader, rigid-aligned metric ATE, similarity-aligned ATE and fitted scale, metric RPE, tracking coverage and runtime including periodic inference.
 
@@ -34,8 +34,9 @@ python scripts/download_mono_benchmarks.py --root /path/to/benchmarks \
   --sequences freiburg1_desk freiburg1_xyz bonn_balloon2
 
 python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
-  --frontend dpvo --dpvo-checkpoint /path/to/dpvo.pth \
-  --output outputs/desk_dpvo --save-map
+  --frontend metric_pnp --mask-people --mask-interval 3 \
+  --metric-interval 30 --mapping-interval 15 \
+  --output outputs/desk_mono --save-map
 
 # DA3 baseline / ablation
 python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
@@ -43,17 +44,33 @@ python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
   --output outputs/desk_da3
 
 # Ground truth is read only after inference.
-python -m cross.mono.evaluate outputs/desk_dpvo/trajectory.txt \
+python -m cross.mono.evaluate outputs/desk_mono/trajectory.txt \
   /path/to/benchmarks/rgbd_dataset_freiburg1_desk/groundtruth.txt \
-  --output outputs/desk_dpvo/metrics.json
+  --output outputs/desk_mono/metrics.json
 
 python scripts/summarize_mono_runs.py outputs --output outputs/summary.json
 python -m pytest tests -q
 ```
 
+The recommended profile above does not require DPVO or its CUDA extensions. The motion features and optional person detector are small; the metric teacher and retrieved-pair geometry run at lower rates. These calls are synchronous, so average throughput does not guarantee a fixed frame deadline.
+
+To reproduce a complete multi-seed suite on a remote server:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_mono.py \
+  --data-root /path/to/benchmarks --output outputs/mono_suite \
+  --sequences rgbd_dataset_freiburg1_desk rgbd_dataset_freiburg1_xyz \
+    rgbd_dataset_freiburg1_desk2 rgbd_dataset_freiburg1_room \
+    rgbd_bonn_balloon2 rgbd_bonn_crowd2 \
+    rgbd_dataset_freiburg2_xyz rgbd_bonn_balloon rgbd_bonn_crowd \
+  --seeds 0 1 2
+```
+
+DPVO/scalar-only comparison: select `--frontend dpvo --dpvo-checkpoint /path/to/dpvo.pth`. `--dpvo-metric-bootstrap` is an experimental initialization option, not part of the recommended profile. `rotation_metric` tests DPVO rotation with metric-anchor translation.
+
 `--frontend-only` isolates motion/scale and does not require GTSAM. `--scale-mode` selects `filtered`, `direct`, `initial` or `relative`. `--stride` defaults to 1 (every RGB frame). Known TUM/Bonn sequence names select calibration and distortion; custom sequences require `--intrinsics fx fy cx cy` plus a TUM-format `rgb.txt`. DPVO currently requires image dimensions divisible by 16; select its physical GPU using `CUDA_VISIBLE_DEVICES`.
 
-Each run records configuration, source fingerprint, model provenance, causal system/frontend trajectories, per-frame diagnostics and timing. Existing result directories are not overwritten. Startup and tracking failures are explicit; a held pose is not counted as successful tracking. Similarity alignment can conceal metric-scale error, so report both ATE alignments and the fitted scale.
+Each run records configuration, source fingerprint, model provenance, causal system/frontend trajectories, per-frame diagnostics and timing. Existing result directories are not overwritten. Failed PnP verification holds the pose and marks the frame invalid. DPVO validity records initialization only; it is not an independent accuracy or tracking-success check. Evaluate all emitted poses and report the validity fraction separately. Similarity alignment can conceal metric-scale error, so report both ATE alignments and the fitted scale. For Bonn rotational RPE, also request `--groundtruth-frame bonn-camera`: its raw mocap orientation has a different body-frame convention. Keep raw and calibrated results separate. `cross.mono.replay_scale` enables causal scalar-policy ablations using exactly shared DPVO geometry and teacher observations, without assigning replay outputs inference timing.
 
 Monocular code lives in `cross/mono/`; inherited mapping is in `cross/core/`. Private research notes and runs belong in ignored `docs/` and `outputs/`. External models retain their own licenses. This implementation is informed by [AMB3R-SLAM](https://arxiv.org/abs/2609.19518); it is not a reproduction of that paper.
 
