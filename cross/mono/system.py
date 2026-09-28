@@ -12,6 +12,8 @@ from .geometry import inverse
 
 class MonocularSystem:
     def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None):
+        if frontend is None and getattr(config, "frontend", None) == "streaming_pnp":
+            raise ValueError("Use StreamingMonocularSystem for the streaming_pnp frontend")
         from cross.core.config import FilterMode, PoseEstType, SystemConfig
         from cross.core.system import System
         from cross.core.types import Camera
