@@ -18,7 +18,7 @@ def example(tmp_path):
     t = np.arange(12) * 0.05
     ref = np.broadcast_to(np.eye(4), (len(t), 4, 4)).copy()
     ref[:, :3, 3] = np.column_stack((np.cos(t*3), np.sin(t*3), t*t))
-    ref[:, :3, :3] = Rotation.from_euler("z", t).as_matrix()
+    ref[:, :3, :3] = Rotation.from_euler("z", t[:, None]).as_matrix()
     alignment = np.eye(4)
     alignment[:3, :3] = Rotation.from_euler("xyz", [.2, -.1, .6]).as_matrix()
     alignment[:3, 3] = [2, 3, -1]
@@ -82,7 +82,7 @@ def test_openloris_gt_preserves_shared_world_and_camera_lever_arm(tmp_path):
     from cross.mono.openloris_groundtruth import camera_groundtruth
     base = np.broadcast_to(np.eye(4), (3, 4, 4)).copy()
     base[:, :3, 3] = [[10, 2, 0], [10, 3, 0], [11, 3, 0]]
-    base[:, :3, :3] = Rotation.from_euler("z", [90, 0, -90], degrees=True).as_matrix()
+    base[:, :3, :3] = Rotation.from_euler("z", [[90], [0], [-90]], degrees=True).as_matrix()
     extrinsic = np.eye(4)
     extrinsic[0, 3] = 1.
     extrinsic[:3, :3] = Rotation.from_euler("x", 90, degrees=True).as_matrix()
