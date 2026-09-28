@@ -647,6 +647,7 @@ class System:
         """main function for step
         """
         logger.debug(f"Step work at step {self._processed_frame_num}")
+        self.last_step_diagnostics = {"loop_closure_detected": False, "loop_closure_applied": False}
         self._processed_frame_num += 1
         
         # get all synchronized observations
@@ -754,6 +755,7 @@ class System:
         # update the observation likelihood
         ################################
         ret.update(self._construct_observation_dist(rgb_image, depth_image))
+        self.last_step_diagnostics["verified_keyframes"] = len(ret["valid_keyframes"])
         # if no proposal, continue with motion-only update
         if len(ret["valid_keyframes"]) == 0:
             logger.info(f"No valid keyframes found. Continuing with motion-only update")
@@ -821,6 +823,7 @@ class System:
         # detect loop closure
         #########################
         lc_result = self.hypothesis_manager.detect_loop_closure(ret)
+        self.last_step_diagnostics["loop_closure_detected"] = bool(lc_result["loop_closure"])
         
         
 
@@ -852,6 +855,7 @@ class System:
                 )
                 if pgo_info.get("success"):
                     ret["loop_closure_pgo"] = pgo_info
+                    self.last_step_diagnostics["loop_closure_applied"] = True
                 else:
                     message = pgo_info.get("message", "Loop closure handling failed without message")
                     logger.warning(message)

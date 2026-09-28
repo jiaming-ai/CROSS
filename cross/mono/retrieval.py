@@ -13,6 +13,8 @@ class DA3RelativePose:
     def __init__(self, geometry, device="cuda"):
         self.geometry, self.device = geometry, device
         self.last_stds = None
+        self.candidates = 0
+        self.accepted = 0
 
     @staticmethod
     def rgb(image):
@@ -29,6 +31,7 @@ class DA3RelativePose:
         if ref_depth is None:
             raise ValueError("Monocular keyframes must retain their predicted metric depth")
         for i, reference in enumerate(ref_image):
+            self.candidates += 1
             reference_rgb = self.rgb(reference)
             prediction = self.geometry.predict([self.geometry.prepare(reference_rgb), current])
             verified, match_fraction = verify_pair(reference_rgb, current_rgb, prediction)
@@ -50,6 +53,7 @@ class DA3RelativePose:
             confidences.append(float(np.clip(confidence, 0.01, 1.0)))
             stds.append(np.r_[sigma_t, [0.03] * 3])
             valid[i] = True
+            self.accepted += 1
         self.last_stds = torch.as_tensor(np.array(stds).reshape(-1, 6), dtype=torch.float32)
         if not poses:
             return pp.identity_SE3(0, device=self.device), valid, torch.empty(0)

@@ -77,6 +77,8 @@ class MonocularSystem:
             graph_nodes=len(self.mapper.hypothesis_manager.nodes),
             hypotheses=len(self.mapper.hypothesis_manager.hypotheses),
         )
+        if map_now:
+            estimate.diagnostics["mapping_event"] = getattr(self.mapper, "last_step_diagnostics", {}).copy()
         self.last_estimate = estimate
         return estimate
 
