@@ -147,22 +147,22 @@ class SourceState:
         mean, covariance, jacobian, variances = np.zeros(n), np.zeros((n,n)), np.zeros((6,n)), np.zeros(n)
         mean[:old], covariance[:old,:old] = self.mean, self.covariance
         jacobian[:,:old], variances[:old] = self.jacobian, self.prior_variances
-        for key, variance in zip(factor.keys, factor.prior_variances):
-            i = locations[key]
-            if i < old:
-                if not np.isclose(variances[i], variance, rtol=1e-12, atol=1e-15):
-                    raise ValueError(f"A reused source cannot acquire a different prior: {key}")
-            else:
-                covariance[i,i] = variances[i] = variance
+        indices = np.fromiter((locations[key] for key in factor.keys), dtype=np.intp,
+                              count=len(factor.keys))
+        reused = indices < old
+        consistent = np.isclose(variances[indices[reused]], factor.prior_variances[reused],
+                                rtol=1e-12, atol=1e-15)
+        if not consistent.all():
+            position = np.flatnonzero(reused)[np.flatnonzero(~consistent)[0]]
+            raise ValueError(f"A reused source cannot acquire a different prior: {factor.keys[position]}")
+        added = indices[~reused]
+        covariance[added,added] = variances[added] = factor.prior_variances[~reused]
         result = SourceState(self.geometry_covariance, keys, mean, covariance, jacobian, variances, self.seen_factors)
         observed_J = np.zeros((6,n))
-        centered_offset = np.zeros(6)
-        for j, key in enumerate(factor.keys):
-            i = locations[key]
-            displacement = mean[i]-factor.center[j]
-            multiplier = np.exp(-displacement) if factor.log_depth_scale else 1.
-            observed_J[:,i] = factor.jacobian[:,j]*multiplier
-            centered_offset += factor.jacobian[:,j] * ((1.-multiplier) if factor.log_depth_scale else displacement)
+        displacement = mean[indices]-factor.center
+        multiplier = np.exp(-displacement) if factor.log_depth_scale else np.ones(len(indices))
+        observed_J[:,indices] = factor.jacobian*multiplier
+        centered_offset = factor.jacobian @ ((1.-multiplier) if factor.log_depth_scale else displacement)
         return result, observed_J, centered_offset
 
     def marginal_covariance(self):

@@ -5,6 +5,36 @@ import pytest
 from cross.core.conditional import SourceFactor, SourceState, conditional_product
 
 
+@pytest.mark.parametrize('log_depth_scale', [False, True])
+def test_interleaved_source_extension_keeps_joint_belief_and_exact_response(log_depth_scale):
+    state = SourceState(np.eye(6), ('a','b','c'), np.array([.2,-.1,.3]),
+        np.array([[.04,.01,.02],[.01,.03,-.01],[.02,-.01,.06]]),
+        np.arange(18).reshape(6,3)/20, np.array([.09,.16,.25]))
+    old = state.copy()
+    J = np.arange(30).reshape(6,5)/30
+    if log_depth_scale:
+        J[3:] = 0
+    factor = SourceFactor(('c','new1','a','new2','b'), J,
+        np.array([.25,.36,.09,.49,.16]), np.array([.1,.2,-.1,-.2,.3]),
+        log_depth_scale=log_depth_scale)
+    extended, response, offset = state.expand(factor)
+    assert extended.keys == ('a','b','c','new1','new2')
+    np.testing.assert_array_equal(extended.mean, [.2,-.1,.3,0,0])
+    expected_covariance = np.zeros((5,5))
+    expected_covariance[:3,:3] = old.covariance
+    expected_covariance[3,3],expected_covariance[4,4] = .36,.49
+    np.testing.assert_array_equal(extended.covariance,expected_covariance)
+    # Evaluate the declared image response directly in acquisition order.
+    displacements = np.array([.2,-.2,.3,.2,-.4])
+    weights = 1-np.exp(-displacements) if log_depth_scale else displacements
+    np.testing.assert_allclose(offset,np.sum(J*weights,axis=1),atol=1e-15)
+    derivative = J*np.exp(-displacements) if log_depth_scale else J
+    np.testing.assert_allclose(response,derivative[:,[2,4,0,1,3]],atol=1e-15)
+    np.testing.assert_array_equal(state.mean,old.mean)
+    np.testing.assert_array_equal(state.covariance,old.covariance)
+    np.testing.assert_array_equal(extended.jacobian[:,:3],old.jacobian)
+
+
 def test_conditional_product_matches_full_joint_conditioning():
     rng = np.random.default_rng(82)
     for _ in range(40):
