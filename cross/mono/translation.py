@@ -3,14 +3,58 @@
 import numpy as np
 
 
+def _refine_translation_pixels(rotated, pixels, K, translation):
+    """Refine the same pixel residual used to select and verify consensus.
+
+    Algebraic ray errors multiply image errors by depth. Fitting them without
+    whitening can let distant points destroy a valid pixel consensus. A small
+    damped solve keeps rotation fixed and rejects steps behind the camera.
+    """
+    translation = translation.copy()
+
+    def linearize(value):
+        xyz = rotated + value
+        if np.any(xyz[:, 2] <= .01):
+            return None
+        projected = xyz @ K.T
+        uv = projected[:, :2] / projected[:, 2:]
+        jacobian = (K[None, :2, :] - uv[:, :, None] * K[None, None, 2, :]) / projected[:, 2, None, None]
+        return (uv - pixels).reshape(-1), jacobian.reshape(-1, 3)
+
+    for _ in range(8):
+        current = linearize(translation)
+        if current is None:
+            return None
+        residual, jacobian = current
+        if np.linalg.matrix_rank(jacobian) < 3:
+            return None
+        hessian = jacobian.T @ jacobian
+        gradient = jacobian.T @ residual
+        diagonal = np.diag(np.maximum(np.diag(hessian), 1e-12))
+        damping, accepted = 1e-6, False
+        for _ in range(8):
+            delta = np.linalg.solve(hessian + damping * diagonal, -gradient)
+            candidate = translation + delta
+            trial = linearize(candidate)
+            if trial is not None and trial[0] @ trial[0] <= residual @ residual:
+                translation, accepted = candidate, True
+                break
+            damping *= 10
+        # Relative scene length keeps stopping consistent under metric scaling.
+        if not accepted or np.linalg.norm(delta) <= 1e-7 * np.median(np.linalg.norm(rotated, axis=1)):
+            break
+    return translation
+
+
 def translation_given_rotation(points, pixels, K, rotation, threshold=3.0, trials=128):
     """Estimate T_current_reference translation; reject moving correspondences.
 
     With fixed R, projection supplies two linear equations in translation
-    per correspondence. Two-point RANSAC is followed by inlier least squares.
+    per correspondence. Two-point RANSAC is followed by pixel reprojection
+    refinement with the same consensus threshold.
     All input depths may be learned, and their shared bias remains unobservable.
     """
-    points, pixels = np.asarray(points), np.asarray(pixels)
+    points, pixels, K = np.asarray(points), np.asarray(pixels), np.asarray(K)
     if len(points) < 20:
         return None
     rotated = points @ np.asarray(rotation).T
@@ -40,8 +84,8 @@ def translation_given_rotation(points, pixels, K, rotation, threshold=3.0, trial
     for _ in range(3):
         if inliers.sum() < 20 or inliers.mean() < 0.3:
             return None
-        translation, _, rank, _ = np.linalg.lstsq(A[inliers].reshape(-1, 3), b[inliers].reshape(-1), rcond=None)
-        if rank < 3:
+        translation = _refine_translation_pixels(rotated[inliers], pixels[inliers], K, translation)
+        if translation is None:
             return None
         residual = errors(translation[None])[0]
         inliers = residual < threshold
