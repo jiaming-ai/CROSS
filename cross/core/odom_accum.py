@@ -2,6 +2,7 @@ import pypose as pp
 from typing import Tuple, Union
 import torch
 import numpy as np
+from cross.utils.lie_tensor import normalize_se3
 MAX_STD = torch.tensor([0.3, 0.3, 0.3, 0.3, 0.3, 0.3])
 
 class OdomAccumulator():
@@ -86,7 +87,7 @@ class OdomAccumulator():
             return None, None
 
         # get delta pose
-        delta = self._odoms_means[name].Inv() @ self._accumulated_odom
+        delta = normalize_se3(self._odoms_means[name].Inv() @ self._accumulated_odom)
         if return_std:
 
             # Calculate std based on distance traveled
@@ -150,7 +151,7 @@ class OdomAccumulator():
         else:
             if isinstance(odom_reading, np.ndarray):
                 odom_reading = pp.from_matrix(odom_reading, pp.SE3_type).float()
-            odom_reading = odom_reading.cpu()
+            odom_reading = normalize_se3(odom_reading.cpu())
             if source_factor is not None:
                 from cross.core.conditional import SourceState, SourceFactor
                 from cross.core.conditional_pose import adjoint,inverse
@@ -178,7 +179,7 @@ class OdomAccumulator():
                 for name, previous in self._odoms_means.items():
                     if previous is None:
                         continue
-                    delta = previous.Inv() @ self._accumulated_odom
+                    delta = normalize_se3(previous.Inv() @ self._accumulated_odom)
                     matrix = delta.matrix()
                     rotation, translation = matrix[:3, :3], matrix[:3, 3]
                     tx, ty, tz = translation
@@ -195,10 +196,7 @@ class OdomAccumulator():
                     # Summing stds gives a conservative diagonal envelope even
                     # for fully correlated increments, unlike summing variances.
                     self._measurement_std_sums[name] += transformed.diagonal().clamp_min(0).sqrt()
-            self._accumulated_odom = self._accumulated_odom @ odom_reading
-            if self._source_factor is not None:
-                from cross.core.conditional_pose import normalize_mean
-                self._accumulated_odom = normalize_mean(self._accumulated_odom)
+            self._accumulated_odom = normalize_se3(self._accumulated_odom @ odom_reading)
 
     def reset_item(self, name: str):
         """Reset the item"""

@@ -11,7 +11,7 @@ import threading
 import numpy as np
 
 from cross.core.types import Keyframe, Edge, VisualEdge, EdgeType
-from cross.utils.lie_tensor import project_SE3
+from cross.utils.lie_tensor import project_SE3, normalize_se3
 from cross.core.pgo import (
     PoseGraph,
 )
@@ -739,7 +739,7 @@ class HypothesisManager:
             raise ValueError("A source-aware motion factor needs initialize_source_filter()")
         # Update all active components by weight threshold so priors evolve with motion
         active_mask = last_gmm_weights > self.tracking_active_threshold
-        last_gmm_mu[active_mask] = last_gmm_mu[active_mask] @ delta_pose.unsqueeze(0)
+        last_gmm_mu[active_mask] = normalize_se3(last_gmm_mu[active_mask] @ delta_pose.unsqueeze(0))
         last_gmm_sigma[active_mask] = last_gmm_sigma[active_mask] + delta_std.unsqueeze(0)
 
         self.dist = (last_gmm_mu, last_gmm_sigma, last_gmm_weights)
@@ -1289,6 +1289,8 @@ class HypothesisManager:
 
         if torch.isnan(prod_weights).any():
             logger.warning(f"prod_weights is nan: {prod_weights}")
+        if source_factors is None:
+            prod_mu = normalize_se3(prod_mu)
         self.dist = (prod_mu, prod_std_diag, prod_weights)
         if pending_sources is not None:
             for component,state in enumerate(pending_sources):

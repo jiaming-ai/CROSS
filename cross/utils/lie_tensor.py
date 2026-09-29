@@ -5,6 +5,22 @@ import pypose as pp
 import torch
 from cross.utils.rotation import quaternion_to_euler_torch
 
+
+def normalize_se3(pose: pp.LieTensor) -> pp.LieTensor:
+    """Remove roundoff in a near-unit SE3 quaternion without changing position.
+
+    Repeated float32 products otherwise drift off the group, making inverse
+    and matrix conversion inconsistent. Reject invalid inputs instead of
+    treating normalization as a repair for arbitrary poses.
+    """
+    data = pose.tensor().clone()
+    norm = torch.linalg.vector_norm(data[..., 3:], dim=-1, keepdim=True)
+    if not torch.isfinite(data).all() or torch.any((norm - 1).abs() > 1e-3):
+        raise ValueError('Pose mean has a non-unit or non-finite quaternion')
+    data[..., 3:] /= norm
+    return pp.SE3(data)
+
+
 def vec2skew(input:torch.Tensor) -> torch.Tensor:
     r"""
     Convert batched vectors to skew matrices.

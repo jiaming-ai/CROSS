@@ -40,14 +40,8 @@ def normalize_mean(pose):
     roundoff. Only normalize an already finite, near-unit quaternion; reject
     a materially invalid pose instead of projecting arbitrary matrices.
     """
-    import pypose as pp
-    import torch
-    data = pose.tensor().clone()
-    norm = torch.linalg.vector_norm(data[...,3:],dim=-1,keepdim=True)
-    if not torch.isfinite(data).all() or torch.any((norm-1).abs()>1e-3):
-        raise ValueError('Conditional pose mean has a non-unit or non-finite quaternion')
-    data[...,3:] /= norm
-    return pp.SE3(data)
+    from cross.utils.lie_tensor import normalize_se3
+    return normalize_se3(pose)
 
 
 def right_jacobian(twist):
