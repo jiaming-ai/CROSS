@@ -86,8 +86,13 @@ def prepare(pg, component):
     for a,b,factors in edges:
         conditioned = []
         for edge in factors:
+            if hm.schmidt_map_geometry and hm.map_geometry_basis == "factor":
+                from .factor_geometry import factor_identity
+                geometry_identity = factor_identity(edge,a,b)
             pose,model = edge.conditional_pose.at_known(_matrix(edge.mean),belief)
             item = copy.copy(edge)
+            if hm.schmidt_map_geometry and hm.map_geometry_basis == "factor":
+                item.geometry_factor_identity = geometry_identity
             item.mean = normalize_mean(pp.from_matrix(torch.as_tensor(pose,device=pg.device,dtype=torch.float64),pp.SE3_type))
             item.std = pp.se3(torch.as_tensor(model.geometry_covariance.diagonal().copy(),
                                              device=pg.device,dtype=edge.std.dtype).clip(1e-12).sqrt())
@@ -173,6 +178,13 @@ def apply_result(hm, pg, optimized_poses, other):
     def correction(old_pose, old_model, new_pose, new_model):
         # Right response of C(b)=X_new(b) X_old(b)^-1. It must not be
         # discarded by treating a source-dependent chart join as a constant.
+        # Factor-basis refresh may append new graph-noise coordinates after
+        # the old-node snapshot was made. Align columns before subtraction;
+        # a one-column bias Jacobian would otherwise broadcast silently.
+        if old_model.factor.keys != belief.keys:
+            old_pose,old_model = old_model.at_known(old_pose,belief)
+        if new_model.factor.keys != belief.keys:
+            new_pose,new_model = new_model.at_known(new_pose,belief)
         C = new_pose@inverse(old_pose)
         J = adjoint(old_pose)@(new_model.factor.jacobian-old_model.factor.jacobian)
         return C,J

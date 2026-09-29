@@ -18,13 +18,20 @@ def is_geometry_source(key):
     return key.startswith('geometry:')
 
 
-def validate_load_mode(saved,enabled):
+def validate_load_mode(saved,enabled,basis='epoch'):
     """Reject silently changing the inference semantics of a persisted map."""
+    if basis == 'factor':
+        from .factor_geometry import validate_load_mode as validate_factors
+        return validate_factors(saved,enabled)
+    if basis != 'epoch':
+        raise ValueError('Unknown shared map geometry basis')
     version=saved.get('schmidt_map_geometry_version',0)
     if version not in (0,1):
         raise ValueError('Unsupported Schmidt map geometry version')
     # Detect older diagnostic maps as well as explicitly versioned maps.
     belief=saved.get('hypo_data',{}).get('source_belief') or {}
+    if any(k.startswith('geometry:factor:') for k in belief.get('keys',())):
+        raise ValueError('Persistent factor maps require the factor geometry basis')
     if (version or any(is_geometry_source(k) for k in belief.get('keys',()))) and not enabled:
         raise ValueError('This map contains shared geometry; enable schmidt_map_geometry to load it')
 
@@ -34,6 +41,9 @@ def prepare_refresh(pg,result,factors,free_ids,fixed_ids):
     import gtsam
     start=time.perf_counter()
     hm=pg.hypothesis_manager
+    if hm.map_geometry_basis == 'factor':
+        from .factor_geometry import prepare_refresh as prepare_factors
+        return prepare_factors(pg,result,factors,free_ids,fixed_ids)
     if set(pg.vertex_map) != set(hm.nodes):
         raise ValueError('Schmidt map geometry requires the complete connected map')
     if any(s is not None for i,s in enumerate(hm.source_states)
@@ -65,6 +75,9 @@ def prepare_refresh(pg,result,factors,free_ids,fixed_ids):
 
 def stage_refresh(hm,pg,pending,current_pose,current_state):
     """Build replacement node/current messages before any live mutation."""
+    if hm.map_geometry_basis == 'factor':
+        from .factor_geometry import stage_refresh as stage_factors
+        return stage_factors(hm,pg,pending,current_pose,current_state)
     import pypose as pp
     import torch
     from .conditional_pgo import _matrix

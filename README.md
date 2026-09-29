@@ -17,10 +17,12 @@ The first frozen OpenLORIS home/café controls expose further failures. At 20 Hz
 five completed runs emit all 9,799 selected frames without a 50 ms deadline miss,
 but reference ATE is 1.15 m (home) and 0.66 m (café). After the first received
 map commitment, query position RMSE is 1.52 m for home and 1.36–1.40 m for café,
-using only the original reference's rigid alignment. Home's shared-geometry
+using only the original reference's rigid alignment. Home's original shared-geometry
 query crashes after 554 of 2,000 outputs because another hypothesis survives
 at graph refresh. It is a failed run. Only 26.45% of the home query outputs
 have GT associations under the declared 0.1 s interpolation-gap cutoff.
+The optional persistent factor basis below completes this query, but its
+2.92 m post-commitment RMSE still fails to recover an accurate map.
 These results do not establish robust cross-environment operation; the frontend
 also accumulates substantial orientation error around tracking losses.
 
@@ -122,6 +124,21 @@ does not bound long-map memory or mapping latency. Saved maps containing shared
 geometry require this option when loaded. An existing conditional map can opt in
 at its next commitment. These are established Gaussian and Schmidt operations,
 not a novelty claim.
+
+Adding `--map-geometry-basis factor` selects an experimental persistent basis.
+Each raw graph factor retains six whitened noise coordinates across solves;
+competing CROSS modes keep their posterior, weight and commitment history.
+The covariance stores the fixed diagonal geometry block, the full metric block
+and every metric/geometry cross-covariance. It agrees with the dense Schmidt
+update without allocating a full geometry-by-geometry matrix. Temporary nodes
+are retained to preserve factor lineage, so total memory and solve cost still
+grow with the map. Fixed robust weights and independent raw factor noises
+remain approximations. Factor and epoch maps cannot be interchanged; load a
+factor map with both `--schmidt-map-geometry --map-geometry-basis factor`.
+An ordinary conditional map can opt into either basis at its next commitment.
+The default remains `epoch`. The factor option fixes the competing-mode refresh
+failure and reduces measured storage and delay, but home accuracy remains poor;
+it does not establish broad robustness or a new statistical method.
 
 Saved node poses are conditional nominal poses. To evaluate a map, evaluate each
 `ConditionalPose` at the map's persisted `SourceState` mean; the serialized pose

@@ -38,6 +38,7 @@ class MonoConfig:
     trace_metric_sources: bool = False
     conditional_sources: bool = False
     schmidt_map_geometry: bool = False
+    map_geometry_basis: str = 'epoch'
     source_log_std: float = .12
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
@@ -64,6 +65,10 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.map_geometry_basis not in {'epoch','factor'}:
+            raise ValueError('Unknown shared map geometry basis')
+        if self.map_geometry_basis == 'factor' and not self.schmidt_map_geometry:
+            raise ValueError('Persistent factor geometry requires Schmidt map geometry')
         if self.rotation_tracker not in {"none", "dpvo"}:
             raise ValueError('Unknown streaming rotation tracker')
         if self.rotation_tracker != "none" and self.frontend != "streaming_pnp":

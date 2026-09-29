@@ -88,7 +88,9 @@ def main():
     parser.add_argument("--chart-aware", action="store_true",
                         help="Keep disconnected pose charts separate; requires --session-recovery")
     parser.add_argument("--schmidt-map-geometry", action="store_true",
-                        help="Experimental dense shared map uncertainty; requires conditional sources and a complete graph")
+                        help="Experimental shared map uncertainty; requires conditional sources and a complete graph")
+    parser.add_argument('--map-geometry-basis', choices=['epoch','factor'], default='epoch',
+                        help='Experimental shared-geometry coordinates; factor preserves noise identity across competing hypotheses')
     parser.add_argument("--historical-retrieval-slots", type=int, default=0,
                         help="Reserve saved-map candidates within the same retrieval/verification budget")
     parser.add_argument("--historical-min-score", type=float,
@@ -143,6 +145,7 @@ def main():
                         trace_metric_sources=args.trace_metric_sources,
                         conditional_sources=args.conditional_sources,source_log_std=args.source_log_std,
                         schmidt_map_geometry=args.schmidt_map_geometry,
+                        map_geometry_basis=args.map_geometry_basis,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
                         pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,

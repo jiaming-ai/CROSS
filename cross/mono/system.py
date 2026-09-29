@@ -45,6 +45,7 @@ class MonocularSystem:
         cfg.mapping.hypothesis.chart_aware = self.config.chart_aware
         cfg.mapping.hypothesis.conditional_sources = self.config.conditional_sources
         cfg.mapping.hypothesis.schmidt_map_geometry = self.config.schmidt_map_geometry
+        cfg.mapping.hypothesis.map_geometry_basis = self.config.map_geometry_basis
         if self.config.conditional_sources and (cfg.mapping.loop_closure.async_ or cfg.mapping.hypothesis.no_pgo_for_lc):
             raise ValueError('Conditional sources require synchronous graph optimization in the mapping worker')
         if system_config is None:

@@ -172,6 +172,11 @@ class HypothesisManager:
         self.n_components = n_components
         self.chart_aware = cfg.chart_aware
         self.schmidt_map_geometry = cfg.schmidt_map_geometry
+        self.map_geometry_basis = cfg.map_geometry_basis
+        if self.map_geometry_basis not in {'epoch','factor'}:
+            raise ValueError('Unknown shared map geometry basis')
+        if self.map_geometry_basis == 'factor' and not self.schmidt_map_geometry:
+            raise ValueError('Persistent factor geometry requires Schmidt map geometry')
         if self.schmidt_map_geometry and (not cfg.conditional_sources or not self.chart_aware):
             raise ValueError('Schmidt map geometry requires conditional sources and coordinate charts')
         if self.chart_aware and not cfg.session_recovery:
@@ -484,6 +489,10 @@ class HypothesisManager:
         Args:
             last_k (int): The number of last keyframes to keep.
         """
+        # Raw-factor coordinates must keep their measurement lineage. Retain
+        # temporary nodes until noise-preserving composed edges are available.
+        if self.schmidt_map_geometry and self.map_geometry_basis == 'factor':
+            return
         if not self.nodes or len(self.nodes) < 20:
             return
             

@@ -11,10 +11,13 @@ import numpy as np
 from scipy.linalg import cho_factor, cho_solve
 
 from .conditional import SourceState, ConditionalProduct, conditional_product
+from .frozen_covariance import FrozenDiagonalCovariance
 
 
 def _response(covariance, cross):
     """Factor a joint Gaussian, including deterministic source coordinates."""
+    if isinstance(covariance,FrozenDiagonalCovariance):
+        return covariance.conditional_response(cross,_response)
     active = np.flatnonzero(covariance.diagonal() > 0)
     result = np.zeros_like(cross)
     if not len(active):
@@ -59,6 +62,9 @@ def schmidt_product(prior, residual, observation_covariance, factor,
     if not frozen_keys.issubset(prior.keys):
         raise ValueError('Every frozen source must exist in the expanded belief')
     frozen = np.array([key in frozen_keys for key in prior.keys])
+    if (isinstance(prior.covariance,FrozenDiagonalCovariance) and
+            not np.array_equal(np.flatnonzero(frozen),prior.covariance.frozen_indices)):
+        raise ValueError('Structured Schmidt conditioning must freeze exactly its diagonal nuisance block')
     residual = np.asarray(residual,dtype=np.float64)+offset
     S = prior.geometry_covariance.copy()
     if process_covariance is not None:
@@ -79,9 +85,12 @@ def schmidt_product(prior, residual, observation_covariance, factor,
     pose_cross = S+prior.jacobian@U
     pose_gain = np.linalg.solve(innovation,pose_cross.T).T
     mean = prior.mean+source_gain@residual
-    V = (prior.covariance-source_gain@U.T-U@source_gain.T
-         +source_gain@innovation@source_gain.T)
-    V = (V+V.T)/2
+    if isinstance(prior.covariance,FrozenDiagonalCovariance):
+        V=prior.covariance.schmidt_update(source_gain,U,innovation)
+    else:
+        V = (prior.covariance-source_gain@U.T-U@source_gain.T
+             +source_gain@innovation@source_gain.T)
+        V = (V+V.T)/2
     pose_covariance = S+prior.jacobian@prior.covariance@prior.jacobian.T-pose_gain@pose_cross.T
     pose_covariance = (pose_covariance+pose_covariance.T)/2
     cross = prior.jacobian@prior.covariance-pose_gain@U.T

@@ -127,7 +127,8 @@ class HypothesisConfig:
     """All tuning parameters for HypothesisManager."""
 
     conditional_sources: bool = False
-    schmidt_map_geometry: bool = False  # experimental dense persistent map uncertainty
+    schmidt_map_geometry: bool = False  # experimental shared map uncertainty
+    map_geometry_basis: str = 'epoch'  # 'factor' retains raw factor identities across solves
 
     # --- Evidence tracking (LLR) ---
     llr_hist_length: int = 8

@@ -12,6 +12,8 @@ import math
 
 import numpy as np
 
+from .frozen_covariance import FrozenDiagonalCovariance
+
 
 def _symmetric(value):
     return (value + value.T) * .5
@@ -87,15 +89,17 @@ class SourceState:
     def __post_init__(self):
         self.keys = tuple(self.keys)
         self.seen_factors = frozenset(self.seen_factors)
-        for name in ("geometry_covariance", "mean", "covariance", "jacobian", "prior_variances"):
+        for name in ("geometry_covariance", "mean", "jacobian", "prior_variances"):
             setattr(self, name, np.array(getattr(self, name), dtype=np.float64, copy=True))
+        self.covariance = (self.covariance.copy() if isinstance(self.covariance,FrozenDiagonalCovariance)
+                           else np.array(self.covariance,dtype=np.float64,copy=True))
         n = len(self.keys)
         if (self.geometry_covariance.shape != (6, 6) or self.mean.shape != (n,)
                 or self.covariance.shape != (n, n) or self.jacobian.shape != (6, n)
                 or self.prior_variances.shape != (n,) or len(set(self.keys)) != n):
             raise ValueError("Conditional state dimensions do not match its keys")
         if not all(np.isfinite(getattr(self, name)).all() for name in
-                   ("geometry_covariance", "mean", "covariance", "jacobian", "prior_variances")):
+                   ("geometry_covariance", "mean", "jacobian", "prior_variances")):
             raise ValueError("Conditional state must be finite")
         if np.any(self.prior_variances < 0):
             raise ValueError("Source priors cannot have negative variance")
@@ -103,7 +107,13 @@ class SourceState:
             raise ValueError("Conditional pose covariance must be symmetric")
         if np.linalg.eigvalsh(self.geometry_covariance).min() < -1e-12:
             raise ValueError("Conditional pose covariance must be positive semidefinite")
-        if not np.allclose(self.covariance, self.covariance.T, rtol=0, atol=1e-12):
+        if isinstance(self.covariance,FrozenDiagonalCovariance):
+            expected=np.flatnonzero([key.startswith('geometry:factor:') for key in self.keys])
+            if not np.array_equal(expected,self.covariance.frozen_indices):
+                raise ValueError('Structured nuisance coordinates must match persistent graph factors')
+        elif not np.isfinite(self.covariance).all():
+            raise ValueError('Source covariance must be finite')
+        elif not np.allclose(self.covariance, self.covariance.T, rtol=0, atol=1e-12):
             raise ValueError("Source covariance must be symmetric")
         if np.any(self.covariance.diagonal() < -1e-12):
             raise ValueError("Source covariance has a negative marginal variance")
@@ -130,21 +140,25 @@ class SourceState:
         return result
 
     def record(self):
-        return dict(version=1, geometry_covariance=self.geometry_covariance.tolist(),
-                    keys=list(self.keys), mean=self.mean.tolist(), covariance=self.covariance.tolist(),
+        structured=isinstance(self.covariance,FrozenDiagonalCovariance)
+        return dict(version=2 if structured else 1, geometry_covariance=self.geometry_covariance.tolist(),
+                    keys=list(self.keys), mean=self.mean.tolist(),
+                    covariance=self.covariance.record() if structured else self.covariance.tolist(),
                     jacobian=self.jacobian.tolist(), prior_variances=self.prior_variances.tolist(),
                     seen_factors=sorted(self.seen_factors))
 
     @classmethod
     def from_record(cls, record):
-        if record.get('version') != 1:
+        if record.get('version') not in (1,2):
             raise ValueError('Unsupported conditional source state version')
         n = len(record['keys'])
+        covariance=(FrozenDiagonalCovariance.from_record(record['covariance']) if record['version']==2
+                    else np.asarray(record['covariance']).reshape(n,n))
         state = cls(record['geometry_covariance'], tuple(record['keys']), record['mean'],
-                    np.asarray(record['covariance']).reshape(n,n),
+                    covariance,
                     np.asarray(record['jacobian']).reshape(6,n), record['prior_variances'],
                     frozenset(record['seen_factors']))
-        if n and np.linalg.eigvalsh(state.covariance).min() < -1e-10:
+        if n and record['version']==1 and np.linalg.eigvalsh(state.covariance).min() < -1e-10:
             raise ValueError('Saved source covariance is not positive semidefinite')
         return state
 
@@ -210,8 +224,8 @@ class SourceState:
         keys = self.keys + tuple(k for k in factor.keys if k not in existing)
         locations = {k: i for i, k in enumerate(keys)}
         n, old = len(keys), len(self.keys)
-        mean, covariance, jacobian, variances = np.zeros(n), np.zeros((n,n)), np.zeros((6,n)), np.zeros(n)
-        mean[:old], covariance[:old,:old] = self.mean, self.covariance
+        mean, jacobian, variances = np.zeros(n), np.zeros((6,n)), np.zeros(n)
+        mean[:old] = self.mean
         jacobian[:,:old], variances[:old] = self.jacobian, self.prior_variances
         indices = np.fromiter((locations[key] for key in factor.keys), dtype=np.intp,
                               count=len(factor.keys))
@@ -222,7 +236,15 @@ class SourceState:
             position = np.flatnonzero(reused)[np.flatnonzero(~consistent)[0]]
             raise ValueError(f"A reused source cannot acquire a different prior: {factor.keys[position]}")
         added = indices[~reused]
-        covariance[added,added] = variances[added] = factor.prior_variances[~reused]
+        variances[added] = factor.prior_variances[~reused]
+        frozen=np.array([key.startswith('geometry:factor:') for key in keys])
+        if isinstance(self.covariance,FrozenDiagonalCovariance) or frozen.any():
+            previous=(self.covariance if isinstance(self.covariance,FrozenDiagonalCovariance) else
+                      FrozenDiagonalCovariance.from_dense(self.covariance,np.flatnonzero(frozen[:old])))
+            covariance=previous.append(variances[old:],frozen[old:])
+        else:
+            covariance=np.zeros((n,n));covariance[:old,:old]=self.covariance
+            covariance[added,added]=variances[added]
         result = self._with_owned_sources(keys,mean,covariance,jacobian,variances)
         observed_J = np.zeros((6,n))
         displacement = mean[indices]-factor.center
@@ -264,6 +286,8 @@ def conditional_product(prior, residual, observation_covariance, factor, process
     if factor.factor_id is not None and factor.factor_id in prior.seen_factors:
         return ConditionalProduct(prior.copy(), np.zeros(6), None, None, duplicate=True)
     prior, observed_J, offset = prior.expand(factor)
+    if isinstance(prior.covariance,FrozenDiagonalCovariance):
+        raise ValueError('Persistent fixed geometry requires Schmidt conditioning')
     residual = np.asarray(residual, dtype=np.float64) + offset
     S = prior.geometry_covariance.copy()
     if process_covariance is not None:
