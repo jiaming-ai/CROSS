@@ -273,6 +273,12 @@ CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_mono.py \
 
 DPVO/scalar-only comparison: select `--frontend dpvo --dpvo-checkpoint /path/to/dpvo.pth`. `--dpvo-metric-bootstrap` is an experimental initialization option, not part of the recommended profile. `rotation_metric` tests DPVO rotation with metric-anchor translation. `--retrieval-pose metric_pnp` is an experimental bidirectional learned-depth verification adapter; it improves proposal availability and supports the same-sequence restart experiment; changed-session robustness remains unvalidated.
 
+Metric DPVO holds translation and marks it invalid until a scale prior is
+accepted. That first prior scales the full visual displacement accumulated
+since the initial camera, including motion before metric initialization.
+Recorded unit positions permit causal scale-policy replay without relabelling
+unscaled motion as metres. Relative-only mode explicitly retains tracker units.
+
 DPVO uses parallel floating-point accumulation. Repeating a real native BA
 solve with byte-identical inputs on the 5090 produced different poses and
 depths; equal seeds therefore do not ensure identical motion observations.

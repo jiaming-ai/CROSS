@@ -19,6 +19,7 @@ from .frontend import MonoEstimate
 from .geometry import inverse, scale_translation_covariance
 from .models import DA3Geometry, DA3MetricDepth
 from .scale import LogScaleFilter, observe_sparse_scale
+from .scaled_motion import ScaledTranslation
 
 
 class DPVOFrontend:
@@ -38,6 +39,7 @@ class DPVOFrontend:
         self.index = 0
         self.metric_pose = np.eye(4)
         self.unit_pose = np.eye(4)
+        self.scaled_translation = ScaledTranslation()
         self.last_timestamp = None
         self.last_metric_index = -self.config.scale.interval
         self.rgb_memory = {}
@@ -181,6 +183,7 @@ class DPVOFrontend:
                 self.last_metric_index = self.index
                 metric_seconds = perf_counter() - metric_start
         delta = np.eye(4)
+        unit_translation = None
         if initialized:
             current = self._pose_at(self.index)
             # The VO gauge is anchored at its first camera (internal loop
@@ -189,11 +192,20 @@ class DPVOFrontend:
             # would discard corrections to already-reported motion.
             next_metric = self.metric_pose.copy()
             next_metric[:3, :3] = current[:3, :3]
-            next_metric[:3, 3] += self.scale_filter.scale * (current[:3, 3] - self.unit_pose[:3, 3])
+            unit_translation = current[:3, 3].tolist()
+            # Native initialization only establishes an arbitrary visual gauge.
+            # Until a metric prior is accepted, its displacement is not metres.
+            # The first accepted scale anchors all motion accumulated so far.
+            next_metric[:3, 3] = self.scaled_translation.update(
+                current[:3, 3], self.scale_filter.scale if self.scale_filter.initialized else None)
             delta = inverse(self.metric_pose) @ next_metric
             self.unit_pose = current
             self.metric_pose = next_metric
             self.initialized_before = True
+        diagnostics['valid'] = bool(diagnostics['valid'] and self.scale_filter.initialized)
+        diagnostics.update(unit_translation=unit_translation, scale_application='anchored_startup_v1',
+                           position_units=('tracker' if self.config.scale.mode == 'relative' else
+                                           'metres' if self.scale_filter.initialized else 'unavailable'))
         covariance = np.diag([0.005**2] * 3 + [0.01**2] * 3)
         covariance[:3, :3] += scale_translation_covariance(delta[:3, 3], self.scale_filter.uncertainty_variance)
         if not initialized:

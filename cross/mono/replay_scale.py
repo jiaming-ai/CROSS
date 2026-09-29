@@ -14,6 +14,7 @@ import numpy as np
 
 from .config import ScaleConfig
 from .scale import LogScaleFilter, ScaleObservation
+from .scaled_motion import ScaledTranslation
 
 
 def replay(rows, diagnostics, config):
@@ -26,6 +27,11 @@ def replay(rows, diagnostics, config):
     previous_source = np.zeros(3)
     current = np.zeros(3)
     filter_ = LogScaleFilter(config)
+    startup_contract = [d.get('scale_application') == 'anchored_startup_v1' for d in diagnostics]
+    if any(startup_contract) and not all(startup_contract):
+        raise ValueError('Scale application contracts cannot change within a run')
+    anchored = all(startup_contract) and len(diagnostics) > 0
+    scaled_translation = ScaledTranslation()
     scales = []
     for i, (row, diagnostic) in enumerate(zip(rows, diagnostics)):
         original_scale = diagnostic["scale"]
@@ -42,8 +48,17 @@ def replay(rows, diagnostics, config):
                 if values[name] is None:
                     values[name] = float("inf")
             filter_.update(ScaleObservation(**values))
-        unit_increment = (row[1:4] - previous_source) / original_scale
-        current = current + filter_.scale * unit_increment
+        if anchored:
+            if 'unit_translation' not in diagnostic:
+                raise ValueError('Anchored startup replay requires recorded unit positions')
+            unit_position = diagnostic['unit_translation']
+            if unit_position is not None:
+                current = scaled_translation.update(unit_position, filter_.scale if filter_.initialized else None)
+        else:
+            # Legacy recordings can contain unit-gauge motion before the first
+            # metric prior. Preserve their old convention for exact replay.
+            unit_increment = (row[1:4] - previous_source) / original_scale
+            current = current + filter_.scale * unit_increment
         result[i, 1:4] = current
         previous_source = row[1:4]
         scales.append(filter_.scale)

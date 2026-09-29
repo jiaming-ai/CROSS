@@ -410,7 +410,7 @@ def main():
                "rejected_scale_observations": frontend.scale_filter.rejected,
                "scale_reinitializations": frontend.scale_filter.reinitializations,
                "bootstrap_metric_calls": getattr(frontend, "bootstrap_metric_calls", 0),
-               "coverage_definition": "Frontend validity flag; DPVO reports initialization, not an independent accuracy check"}
+               "coverage_definition": "Frontend validity flag; DPVO requires native initialization, background support and scale availability (explicit unit gauge in relative mode), not an independent accuracy check"}
     summary["image_read_and_preprocessing_ms"] = dict(mean=1000*float(np.mean(image_io)), p95=1000*float(np.quantile(image_io, .95)))
     summary["trajectory_and_diagnostic_output_ms"] = dict(mean=1000*float(np.mean(output_io)), p95=1000*float(np.quantile(output_io, .95)))
     if input_worker is not None:
