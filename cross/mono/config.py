@@ -54,6 +54,11 @@ class MonoConfig:
     metric_shape: bool = False
     mapping_interval: int = 5
     retrieval_pose: str = "da3"
+    # retrieval_pose == "ff": feed-forward multi-view relative poses (backend da3 | vggt_omega)
+    ff_backend: str = "da3"
+    ff_checkpoint: str = "depth-anything/DA3-LARGE-1.1"
+    ff_resolution: int = 504
+    ff_min_covisibility: float = 0.3
     retrieval_matcher: str = "mnn"
     two_view_rotation_check: bool = False
     filter_mode: str = "full"
@@ -132,8 +137,12 @@ class MonoConfig:
             raise ValueError("Learned rotation checking requires metric_two_view retrieval")
         if self.pose_refinement not in {"none", "xfeat"}:
             raise ValueError("pose_refinement must be none or xfeat")
-        if self.retrieval_pose not in {"da3", "metric_pnp", "metric_two_view"}:
+        if self.retrieval_pose not in {"da3", "metric_pnp", "metric_two_view", "ff"}:
             raise ValueError("Unknown retrieval pose estimator")
+        if self.retrieval_pose == "ff" and (self.ff_backend not in {"da3", "vggt_omega"} or self.conditional_sources
+                                            or not 0 <= self.ff_min_covisibility <= 1):
+            raise ValueError("Feed-forward retrieval needs backend da3 or vggt_omega, a covisibility in [0,1], "
+                             "and no conditional sources")
         if self.filter_mode not in {"full", "skip_active", "adaptive"}:
             raise ValueError("Unknown CROSS retrieval filter mode")
         if self.scale.mode not in {"filtered", "direct", "initial", "relative"}:

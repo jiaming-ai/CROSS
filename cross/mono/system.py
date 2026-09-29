@@ -79,11 +79,17 @@ class MonocularSystem:
         camera = Camera(np.array(K).copy(), *image_size)
         # System rescales camera.K in place to its stored-image resolution.
         metric_adapter = MetricTwoViewRelativePose if self.config.retrieval_pose == "metric_two_view" else MetricRelativePose
-        pose_estimator = (DA3RelativePose(self.frontend.geometry, device) if self.config.retrieval_pose == "da3"
-                          else metric_adapter(camera.K, device, self.config.mask_people, self.config.retrieval_matcher,
-                                                  self.config.conditional_sources,self.config.source_log_std,
-                                                  **(dict(rotation_geometry=self.frontend.geometry)
-                                                     if self.config.two_view_rotation_check else {})))
+        if self.config.retrieval_pose == "ff":
+            from .ff_retrieval import FeedForwardRelativePose
+            pose_estimator = FeedForwardRelativePose(self.config.ff_backend, self.config.ff_checkpoint, device,
+                                                     self.config.ff_resolution, self.config.ff_min_covisibility)
+        elif self.config.retrieval_pose == "da3":
+            pose_estimator = DA3RelativePose(self.frontend.geometry, device)
+        else:
+            pose_estimator = metric_adapter(camera.K, device, self.config.mask_people, self.config.retrieval_matcher,
+                                            self.config.conditional_sources, self.config.source_log_std,
+                                            **(dict(rotation_geometry=self.frontend.geometry)
+                                               if self.config.two_view_rotation_check else {}))
         self.mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         self.map_alignment = np.eye(4)
         self.initialized = False
