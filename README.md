@@ -288,7 +288,21 @@ disabled, and the CROSS global observation and delayed commitment remain in
 control of map association. This scalar bridge does not support the optional
 conditional pose/source extension, nor does it calibrate learned scale bias.
 The [experimental 20 Hz configuration](configs/mono_streaming_dpvo_scale_20hz.json)
-is available for evaluation; its runtime and robustness must be measured.
+was evaluated with `ce968e6` on the same nine TUM/Bonn sequences above.
+It emits all 5,442 outputs with no input drops, capture-to-pose p95 of
+30.78–35.96 ms, and 47 deadline misses, all within the first 30 outputs.
+Mapped position ATE improves on all five TUM sequences (0.0625–0.4206 m)
+but worsens on all four Bonn sequences (0.0651–0.1382 m); mapped rotation
+RPE worsens on all nine. No loop is committed. These are whole-policy
+comparisons with different asynchronous observations, not a causal scale
+ablation. The scalar bridge remains experimental.
+
+`90c516e` additionally keeps scalar pose products on SE3 by normalizing
+finite near-unit quaternions. All 235 CPU tests pass, including a long
+motion-chain regression. Full floor/person2 reruns pass the saved-map audit
+with quaternion norm error below 1.2e-7 and retain the measured 20 Hz
+operating envelope after startup. These integrity checks do not establish
+calibrated uncertainty, broad robustness or RTX 4090 performance.
 
 DPVO uses parallel floating-point accumulation. Repeating a real native BA
 solve with byte-identical inputs on the 5090 produced different poses and
