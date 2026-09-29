@@ -75,6 +75,7 @@ class MonoConfig:
     # streaming_dpvo only: frames with fewer FAST corners (320x240, threshold 20) are degenerate views (e.g. a blank
     # wall at close range); their DPVO motion is discarded as unknown (0 disables)
     min_texture_corners: int = 0
+    degenerate_mode: str = "hold"  # hold: discard the motion; inflate: keep DPVO motion but report it as invalid
     rotation_std_per_radian: float = 0.0
     max_relative_rotation: float = 1.2
     scale: ScaleConfig = field(default_factory=ScaleConfig)

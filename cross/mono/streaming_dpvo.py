@@ -163,7 +163,8 @@ class StreamingDPVOFrontend:
             self.last_scale_request_frame = self.index - self.config.scale.interval
         corners = texture_corners(rgb) if self.config.min_texture_corners > 0 else None
         degenerate = corners is not None and corners < self.config.min_texture_corners
-        if self.degenerate and not degenerate:
+        hold = degenerate and self.config.degenerate_mode == 'hold'
+        if self.degenerate and not degenerate and self.config.degenerate_mode == 'hold':
             # visual motion during a degenerate stretch is unknown: continue from the held pose in DPVO's current gauge
             scale = self.scale_filter.scale if self.scale_filter.initialized else None
             self.gauge_origin = self.metric_pose.copy()
@@ -174,7 +175,7 @@ class StreamingDPVOFrontend:
         self.degenerate = degenerate
         initialized = not native.diagnostics['initializing']
         previous = self.metric_pose.copy()
-        if initialized and not degenerate:
+        if initialized and not hold:
             local_native = self.native_origin_inverse @ native.pose
             local = np.eye(4)
             local[:3, :3] = Rotation.from_matrix(local_native[:3, :3]).as_matrix()
