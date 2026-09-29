@@ -145,6 +145,14 @@ class StreamingDPVOFrontend:
             self.last_scale_request_frame = self.index
         return True
 
+    def _attach_native_gauge(self, native_pose):
+        """Continue emitting from the current metric pose, measuring native motion from native_pose onwards."""
+        self.gauge_origin = self.metric_pose.copy()
+        self.native_origin_inverse = inverse(native_pose)
+        self.translation = ScaledTranslation()
+        if self.scale_filter.initialized:
+            self.translation.update(np.zeros(3), self.scale_filter.scale)
+
     def step(self, rgb, timestamp):
         if self.finished:
             raise RuntimeError('Frontend already finished')
@@ -156,22 +164,15 @@ class StreamingDPVOFrontend:
         native = self.native_frontend.step(rgb, timestamp)
         if native.diagnostics.get('tracker_restarted'):
             # new native gauge and unit scale: hold the pose, re-estimate the scale, continue from here
-            self.gauge_origin = self.metric_pose.copy()
-            self.native_origin_inverse = inverse(native.pose)
             self.scale_filter = LogScaleFilter(self.config.scale)
-            self.translation = ScaledTranslation()
+            self._attach_native_gauge(native.pose)
             self.last_scale_request_frame = self.index - self.config.scale.interval
         corners = texture_corners(rgb) if self.config.min_texture_corners > 0 else None
         degenerate = corners is not None and corners < self.config.min_texture_corners
         hold = degenerate and self.config.degenerate_mode == 'hold'
         if self.degenerate and not degenerate and self.config.degenerate_mode == 'hold':
             # visual motion during a degenerate stretch is unknown: continue from the held pose in DPVO's current gauge
-            scale = self.scale_filter.scale if self.scale_filter.initialized else None
-            self.gauge_origin = self.metric_pose.copy()
-            self.native_origin_inverse = inverse(native.pose)
-            self.translation = ScaledTranslation()
-            if scale is not None:
-                self.translation.update(np.zeros(3), scale)
+            self._attach_native_gauge(native.pose)
         self.degenerate = degenerate
         initialized = not native.diagnostics['initializing']
         previous = self.metric_pose.copy()
