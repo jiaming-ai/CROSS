@@ -51,6 +51,8 @@ def test_worker_uses_snapshot_rgb_depth_timestamp_and_native_mapper_message():
     received = system.mapper.received[0]
     assert received["rgb"] is snapshot.rgb and received["depth"] is depth
     assert received["timestamp"] == snapshot.timestamp
+    np.testing.assert_array_equal(received['initial_chart_pose'], snapshot.pose)
+    assert received['initial_chart_pose'] is not snapshot.pose
     assert event["mapping_event"]["verified_keyframes"] == 3
     assert event["source_frame"] == 9
 

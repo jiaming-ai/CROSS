@@ -395,6 +395,11 @@ class StreamingMonocularSystem(MonocularSystem):
                                                covariance_bound=covariance_bound)
             observation = dict(rgb=snapshot.rgb, depth=depth, conf=None, delta_pose=delta,
                                motion_covariance=covariance, timestamp=snapshot.timestamp)
+            if self.previous_snapshot is None:
+                # Choose the fresh map's coordinates from this frozen source
+                # pose, not the later receiving pose. Loaded maps ignore this
+                # gauge choice and retain CROSS's independent chart policy.
+                observation['initial_chart_pose'] = snapshot.pose.copy()
             if getattr(snapshot, "metric_source", None) is not None:
                 previous = self.previous_snapshot
                 jacobians = relative_scale_response(previous.pose, previous.scale_response, snapshot.pose,

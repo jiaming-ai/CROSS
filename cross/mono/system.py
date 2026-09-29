@@ -86,6 +86,7 @@ class MonocularSystem:
             "delta_pose": estimate.delta_pose,
             "motion_covariance": estimate.motion_covariance,
             "timestamp": timestamp,
+            "initial_chart_pose": estimate.pose.copy() if map_now and not self.initialized else None,
         })
         if map_now:
             mapped = self.mapper.get_current_pose().matrix().detach().cpu().numpy()

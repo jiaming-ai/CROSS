@@ -304,6 +304,16 @@ with quaternion norm error below 1.2e-7 and retain the measured 20 Hz
 operating envelope after startup. These integrity checks do not establish
 calibrated uncertainty, broad robustness or RTX 4090 performance.
 
+Fresh monocular maps now initialize at the frozen source image's frontend
+pose. The first asynchronous mapper receipt therefore preserves the output
+coordinate frame already used by the frontend; saved nodes use that same
+frame. Loaded maps keep CROSS's existing independent-chart initialization
+and delayed relocalization policy. The earlier nine-run results above include
+a startup coordinate jump. A frozen-output diagnostic attributes part of
+their rotation error to that jump, but later mapping error remains. The
+repair passes 28 targeted CPU tests; full remote tests and real-input reruns
+are pending, so the earlier performance numbers do not validate this repair.
+
 DPVO uses parallel floating-point accumulation. Repeating a real native BA
 solve with byte-identical inputs on the 5090 produced different poses and
 depths; equal seeds therefore do not ensure identical motion observations.

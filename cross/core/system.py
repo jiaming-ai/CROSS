@@ -2,7 +2,7 @@ import numpy as np
 from typing import Tuple, Union
 from collections import deque
 from cross.core.atlas import new_atlas_center
-from cross.utils.lie_tensor import project_SE3, rotation_angle_from_quat
+from cross.utils.lie_tensor import normalize_se3, project_SE3, rotation_angle_from_quat
 from cross.utils.profile import timeit
 from cross.utils.fps import fps_monitor, start_fps_monitoring, stop_fps_monitoring
 from cross.core.hypothesis import HypothesisManager
@@ -298,8 +298,16 @@ class System:
         rgb_image: torch.Tensor,
         depth_image: torch.Tensor,
         timestamp: float = None,
+        initial_chart_pose=None,
     ):
-        """Initialize the system."""
+        """Initialize tracking, optionally choosing a fresh map's coordinates.
+
+        A delayed monocular snapshot may arrive after local motion has already
+        been emitted. Its frontend pose can select the fresh map's gauge so
+        initialization does not reset those coordinates. This is a coordinate
+        choice, not another measurement or a constraint on a loaded map.
+        Existing maps retain the original independent-atlas initialization.
+        """
         
         # currently atlas not used. So we just use the last atlas.
         all_atlases = self.db.get_all_atlases()
@@ -322,6 +330,15 @@ class System:
         else:
             # init from scratch
             mu = pp.identity_SE3(self.kf_gmm_n_components, device=self.storage_device)
+            if initial_chart_pose is not None:
+                matrix = np.asarray(initial_chart_pose, dtype=np.float64)
+                if (matrix.shape != (4, 4) or not np.isfinite(matrix).all()
+                        or not np.allclose(matrix[3], [0., 0., 0., 1.], atol=1e-6, rtol=0)
+                        or not np.allclose(matrix[:3, :3].T @ matrix[:3, :3], np.eye(3), atol=1e-5, rtol=0)
+                        or not np.isclose(np.linalg.det(matrix[:3, :3]), 1., atol=1e-5, rtol=0)):
+                    raise ValueError('Initial chart pose must be a finite rigid 4x4 camera pose')
+                mu[0] = normalize_se3(pp.mat2SE3(torch.as_tensor(matrix, dtype=mu.dtype,
+                                                               device=self.storage_device)))
             sigma= pp.identity_se3(self.kf_gmm_n_components, device=self.storage_device)
             weights = torch.zeros(self.kf_gmm_n_components, device=self.storage_device)
             weights[0] = 1.0
@@ -620,6 +637,8 @@ class System:
                 - confidence_map: the confidence map of the depth image, np.ndarray
                 - delta_pose: the delta pose between current and last step, np.ndarray
                 - timestamp: the timestamp of the observation
+                - initial_chart_pose: optional fresh-map gauge at this image;
+                  only used for the first image when the database is empty
         """
 
 
@@ -714,7 +733,8 @@ class System:
 
         ############ initialize the system ############
         if self._processed_frame_num == 1:
-            kf = self._init_system(rgb_image, depth_image, timestamp=timestamp)
+            kf = self._init_system(rgb_image, depth_image, timestamp=timestamp,
+                                   initial_chart_pose=last_obs.get('initial_chart_pose'))
 
             if self.visualize:
                 self.visualizer.visualize_tracking_step(
