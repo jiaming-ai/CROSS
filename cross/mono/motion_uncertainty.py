@@ -18,12 +18,21 @@ def diagonal_envelope(covariance):
     if covariance.shape != (6, 6) or not np.isfinite(covariance).all():
         raise ValueError('Motion covariance must be a finite 6x6 matrix')
     covariance = (covariance + covariance.T) / 2
-    # diag(row sum of absolute values) - covariance is PSD for a symmetric
-    # PSD covariance. The downstream diagonal interface cannot keep its cross
-    # terms, but must not just delete them and claim the same upper bound.
+    # Apply diagonal dominance in correlation coordinates, then restore units.
+    # A plain row sum of a mixed metre/radian covariance would make this bound
+    # depend on the numerical choice of translation units.
     if np.linalg.eigvalsh(covariance).min() < -1e-10 * max(1., np.linalg.norm(covariance)):
         raise ValueError('Motion covariance lost positive semidefiniteness')
-    return np.diag(np.abs(covariance).sum(axis=1))
+    variances = covariance.diagonal()
+    if np.any(variances < 0):
+        raise ValueError('Motion covariance has negative marginal variance')
+    support = variances > 0
+    if np.any(covariance[~support] != 0):
+        raise ValueError('Deterministic motion coordinates have nonzero cross covariance')
+    std = np.sqrt(variances[support])
+    bound = np.zeros(6)
+    bound[support] = std * (np.abs(covariance[np.ix_(support, support)]) @ (1/std))
+    return np.diag(bound)
 
 
 def correlated_interval_bound(previous_prefix, current_prefix, world_to_current, steps):

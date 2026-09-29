@@ -40,6 +40,15 @@ def test_diagonal_interface_does_not_discard_covariance_cross_terms():
     assert np.linalg.eigvalsh(diagonal_envelope(Q) - Q).min() >= -1e-12
 
 
+def test_diagonal_bound_respects_translation_units_and_deterministic_coordinates():
+    v = np.array([1., -2., 3., 0., .2, -.3])
+    Q = np.outer(v, v)
+    units = np.diag([1000., 1000., 1000., 1., 1., 1.])
+    np.testing.assert_allclose(diagonal_envelope(units @ Q @ units),
+                               units @ diagonal_envelope(Q) @ units, rtol=1e-14)
+    assert diagonal_envelope(Q)[3, 3] == 0
+
+
 def test_motion_bound_is_invariant_to_world_chart_and_retains_skipped_frames():
     pytest.importorskip('torch')
     from cross.mono.streaming import snapshot_motion
