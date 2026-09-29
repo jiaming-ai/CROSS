@@ -100,6 +100,24 @@ python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
 
 The operating target is 20–30 FPS at 640×480 on one consumer GPU such as an RTX 4090. Shared RTX 5090 measurements are reported below; RTX 4090 performance remains unmeasured. Measure capture-to-pose latency and deadline misses as well as throughput; include initialization, mapping lag and combined GPU memory. `--warmup-models` uses only the first image and records its time separately. The paced input worker starts preprocessing after simulated capture time and fails on queue overflow (two frames by default, configurable with `--input-buffer`); it never silently drops evaluation frames. A bounded input queue does not itself bound capture-time lag when preprocessing falls behind. Check the actual input storage medium and GPU occupancy throughout timing runs: local rotational disks can still stall, and a GPU can become occupied after launch.
 
+The experimental [20 Hz DPVO rotation profile](configs/mono_streaming_dpvo_20hz.json)
+records the combined settings for source-aware mapping, persistent factor geometry,
+and two-view retrieval. It requires the DPVO installation above. Inspect its
+commands with `--dry-run`, then remove that flag to run complete sequences:
+
+```bash
+python scripts/benchmark_mono.py --data-root /path/to/benchmarks \
+  --sequences rgbd_dataset_freiburg1_360 rgbd_bonn_person_tracking \
+  --profile configs/mono_streaming_dpvo_20hz.json \
+  --dpvo-checkpoint /path/to/dpvo.pth --seeds 0 \
+  --output outputs/streaming_dpvo --dry-run
+```
+
+The runner saves its exact command plan and retains failed runs. Optional cadence
+arguments override the profile explicitly. This research profile keeps uncertain
+metric sources and CROSS's original delayed commitment; its additional options
+are experimental and do not establish calibrated uncertainty or broad robustness.
+
 `--freeze-gc` performs a collection before capture starts and freezes startup objects, while leaving collection of new objects enabled. On the shared 5090, two counterbalanced repeats each of TUM room and walking reduced post-bootstrap maximum latency from 131–145 ms to 20.7–24.1 ms, with zero post-bootstrap 33 ms deadline misses and no input drops. Every run still missed its first-frame deadline. These short controls test the combined collection/freezing policy, not each operation separately or long-session guarantees. Scheduling can affect geometry: walking frontend error improved while mapped ATE changed from 3.87 cm to 4.06 cm.
 
 The command above paces every selected image uniformly at 20 Hz. For playback at the original motion speed with approximately 20 images per second, add `--sample-fps 20 --replay-timestamps`. Sampling keeps the first available RGB image in each time bin; gaps remain gaps, timestamps and source indices remain unchanged, and the selected frame count is recorded. Arrival intervals can vary with the original capture cadence. `--input-fps 20` then specifies the 50 ms pose deadline while the recorded timestamps determine arrival times. Report this sampling protocol separately from all-frame throughput replay.
