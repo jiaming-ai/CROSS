@@ -31,6 +31,7 @@ class ScaleRequest:
     unit_depth: np.ndarray
     update_scale: bool
     requested_frame: int
+    gauge: int = 0            # native tracker generation whose unit depths this request compares
 
 
 class StreamingDPVOFrontend:
@@ -48,6 +49,9 @@ class StreamingDPVOFrontend:
         self.scale_filter = LogScaleFilter(config.scale)
         self.translation = ScaledTranslation()
         self.metric_pose = np.eye(4)
+        # a restarted native tracker starts a new unit gauge; attach it to the last emitted metric pose
+        self.gauge_origin = np.eye(4)
+        self.native_origin_inverse = np.eye(4)
         self.world_std_prefix = np.zeros(6)
         self.index, self.last_timestamp = 0, None
         self.last_request_frame = self.last_scale_request_frame = -config.scale.interval
@@ -86,7 +90,8 @@ class StreamingDPVOFrontend:
             if not self.last_received_source < source < self.index:
                 raise ValueError('Metric results must have unique, increasing past source frames')
             self.last_received_source = source
-            applied = self.scale_filter.update(observation) if request.update_scale else False
+            same_gauge = request.gauge == getattr(self.native_frontend, 'restarts', 0)
+            applied = self.scale_filter.update(observation) if request.update_scale and same_gauge else False
             record = {k: None if isinstance(v, float) and not np.isfinite(v) else v
                       for k, v in asdict(observation).items()}
             event = dict(source_frame=source, source_timestamp=request.snapshot.timestamp,
@@ -102,13 +107,13 @@ class StreamingDPVOFrontend:
     def _submit_mature(self):
         native = self.native_frontend
         tracker = native.tracker
-        if not tracker.is_initialized:
+        if tracker is None or not tracker.is_initialized:
             return False
         interval = min(self.config.scale.interval, self.config.mapping_interval) if self.provide_mapping_depth else self.config.scale.interval
         if self.index - self.last_request_frame < interval:
             return False
         slot = max(0, tracker.n - 4)
-        source = int(tracker.pg.tstamps_[slot])
+        source = native.input_index(tracker.pg.tstamps_[slot])
         if source <= self.last_request_source or source not in self.history:
             return False
         snapshot = self.history[source]
@@ -118,7 +123,7 @@ class StreamingDPVOFrontend:
         due = self.index - self.last_scale_request_frame >= self.config.scale.interval
         if self.config.scale.mode == 'initial' and self.scale_filter.initialized:
             due = False
-        self.depth_worker.submit(ScaleRequest(snapshot, pixels, unit_depth, due, self.index))
+        self.depth_worker.submit(ScaleRequest(snapshot, pixels, unit_depth, due, self.index, native.restarts))
         self.last_request_frame, self.last_request_source = self.index, source
         if due:
             self.last_scale_request_frame = self.index
@@ -133,12 +138,22 @@ class StreamingDPVOFrontend:
         self.scale_filter.predict()
         received = self._receive()
         native = self.native_frontend.step(rgb, timestamp)
+        if native.diagnostics.get('tracker_restarted'):
+            # new native gauge and unit scale: hold the pose, re-estimate the scale, continue from here
+            self.gauge_origin = self.metric_pose.copy()
+            self.native_origin_inverse = inverse(native.pose)
+            self.scale_filter = LogScaleFilter(self.config.scale)
+            self.translation = ScaledTranslation()
+            self.last_scale_request_frame = self.index - self.config.scale.interval
         initialized = not native.diagnostics['initializing']
         previous = self.metric_pose.copy()
         if initialized:
-            self.metric_pose[:3, :3] = Rotation.from_matrix(native.pose[:3, :3]).as_matrix()
-            self.metric_pose[:3, 3] = self.translation.update(native.pose[:3, 3],
+            local_native = self.native_origin_inverse @ native.pose
+            local = np.eye(4)
+            local[:3, :3] = Rotation.from_matrix(local_native[:3, :3]).as_matrix()
+            local[:3, 3] = self.translation.update(local_native[:3, 3],
                 self.scale_filter.scale if self.scale_filter.initialized else None)
+            self.metric_pose = self.gauge_origin @ local
         valid = bool(native.diagnostics['valid'] and self.scale_filter.initialized)
         delta = inverse(previous) @ self.metric_pose
         step_t = self.config.translation_std_floor + self.config.translation_std_per_meter * float(np.linalg.norm(delta[:3, 3]))
@@ -157,7 +172,8 @@ class StreamingDPVOFrontend:
         diagnostics = dict(frame=self.index, valid=valid, pose_source='streaming_dpvo',
             initializing=not initialized, metric_initialized=self.scale_filter.initialized,
             position_units='metres' if self.scale_filter.initialized else 'unavailable',
-            unit_translation=native.pose[:3, 3].tolist() if initialized else None,
+            unit_translation=(self.native_origin_inverse @ native.pose)[:3, 3].tolist() if initialized else None,
+            tracker_restarts=native.diagnostics.get('tracker_restarts', 0),
             scale_application='anchored_startup_v1', scale=self.scale_filter.scale,
             log_scale_std=float(np.sqrt(self.scale_filter.uncertainty_variance)),
             accepted_metric_observations=self.scale_filter.accepted,

@@ -49,12 +49,32 @@ class DPVOFrontend:
         self.bootstrap_metric_calls = 0
         self.background_patchifier = None
         self.external_masks = external_masks
+        # A diverged tracker (non-finite pose) is restarted: its frame counter starts again at 0, and its new
+        # arbitrary gauge is attached to the last emitted pose.
+        self.frame_offset = 0
+        self.gauge_origin = np.eye(4)
+        self.restarts = 0
         self.vo_cpu_rng = torch.Generator().manual_seed(self.config.seed).get_state()
         self.vo_cuda_rng = torch.Generator(device="cuda").manual_seed(self.config.seed).get_state()
+
+    def input_index(self, tracker_stamp):
+        """Input frame index of a tracker frame counter (the counter restarts with the tracker)."""
+        return int(tracker_stamp) + self.frame_offset
+
+    def _restart_tracker(self):
+        self.tracker = None
+        self.background_patchifier = None
+        self.frame_offset = self.index + 1
+        self.gauge_origin = self.metric_pose.copy()
+        self.scaled_translation = ScaledTranslation()
+        self.scale_filter = LogScaleFilter(self.config.scale)
+        self.rgb_memory = {}
+        self.restarts += 1
 
     def _pose_at(self, index):
         """Resolve an input frame through DPVO's keyframe-removal chain."""
         from dpvo.lietorch import SE3
+        index -= self.frame_offset
         tracker = self.tracker
         entries = {int(tracker.pg.tstamps_[i]): tracker.pg.poses_[i] for i in range(tracker.n)}
         visited = set()
@@ -135,8 +155,16 @@ class DPVOFrontend:
         pose_seconds = perf_counter() - start
         self.scale_filter.predict()
         initialized = bool(tracker.is_initialized)
+        restarted = False
+        if initialized and not np.isfinite(self._pose_at(self.index)).all():
+            # Diverged native BA (non-finite pose): hold the last pose, report tracking loss and start a new tracker
+            # (new gauge and unit scale) from the next frame instead of aborting the run.
+            self._restart_tracker()
+            tracker = None
+            initialized, restarted = False, True
         diagnostics = {"frame": self.index, "valid": initialized, "frontend_seconds": pose_seconds,
-                       "pose_source": "dpvo", "initializing": not initialized}
+                       "pose_source": "dpvo", "initializing": not initialized, "tracker_restarted": restarted,
+                       "tracker_restarts": self.restarts}
         if self.background_patchifier is not None:
             diagnostics.update(background_patches=self.background_patchifier.valid_patches,
                                person_boxes=len(self.background_patchifier.current_boxes))
@@ -146,7 +174,7 @@ class DPVOFrontend:
         # has little static parallax. A learned RGB-only depth initializes the
         # newly admitted patch depths; subsequent native BA remains free to
         # refine them. This is a starting guess, not a fixed depth measurement.
-        if (self.config.dpvo_metric_bootstrap and not initialized and self.metric is not None
+        if (self.config.dpvo_metric_bootstrap and not initialized and self.metric is not None and tracker is not None
                 and tracker.n > previous_keyframes):
             bootstrap_start = perf_counter()
             predicted = self.metric.predict_metric(rgb, self.K, (h, w))
@@ -170,7 +198,7 @@ class DPVOFrontend:
         metric_seconds = 0.0
         if initialized and due and self.metric is not None:
             slot = max(0, tracker.n - 4)
-            input_id = int(tracker.pg.tstamps_[slot])
+            input_id = self.input_index(tracker.pg.tstamps_[slot])
             if input_id in self.rgb_memory:
                 metric_start = perf_counter()
                 metric_depth = self.metric.predict_metric(self.rgb_memory[input_id], self.K, (h, w))
@@ -197,14 +225,15 @@ class DPVOFrontend:
             # closures/normalization are disabled). Include local-BA corrections
             # to the current pose; differencing two freshly optimized poses
             # would discard corrections to already-reported motion.
-            next_metric = self.metric_pose.copy()
-            next_metric[:3, :3] = current[:3, :3]
+            local = np.eye(4)
+            local[:3, :3] = current[:3, :3]
             unit_translation = current[:3, 3].tolist()
             # Native initialization only establishes an arbitrary visual gauge.
             # Until a metric prior is accepted, its displacement is not metres.
             # The first accepted scale anchors all motion accumulated so far.
-            next_metric[:3, 3] = self.scaled_translation.update(
+            local[:3, 3] = self.scaled_translation.update(
                 current[:3, 3], self.scale_filter.scale if self.scale_filter.initialized else None)
+            next_metric = self.gauge_origin @ local
             delta = inverse(self.metric_pose) @ next_metric
             self.unit_pose = current
             self.metric_pose = next_metric
@@ -233,7 +262,8 @@ class DPVOFrontend:
             diagnostics["mapping_depth_seconds"] = perf_counter() - depth_start
         # Keep only frames still eligible for scale observations (plus a small
         # safety tail for active-window reindexing). Images are bounded memory.
-        active_ids = set(int(x) for x in tracker.pg.tstamps_[max(0, tracker.n - 12):tracker.n])
+        active_ids = set() if tracker is None else set(
+            self.input_index(x) for x in tracker.pg.tstamps_[max(0, tracker.n - 12):tracker.n])
         self.rgb_memory = {k: v for k, v in self.rgb_memory.items() if k in active_ids}
         self.scale_history.append(self.scale_filter.scale)
         diagnostics.update(scale=self.scale_filter.scale, log_scale_std=float(np.sqrt(self.scale_filter.uncertainty_variance)),

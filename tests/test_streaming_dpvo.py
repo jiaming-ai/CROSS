@@ -23,6 +23,8 @@ def bare_frontend():
     f.last_request_frame = f.last_scale_request_frame = -20
     f.scale_filter, f.translation = LogScaleFilter(f.config.scale), ScaledTranslation()
     f.metric_pose, f.world_std_prefix = np.eye(4), np.zeros(6)
+    f.gauge_origin, f.native_origin_inverse = np.eye(4), np.eye(4)
+    f.native_frontend = SimpleNamespace(restarts=0, input_index=int, rgb_memory={})
     f.history, f.ready_depths, f.scale_events = {}, [], []
     f.provide_mapping_depth, f.finished = True, False
     f.depth_worker = SimpleNamespace(poll=lambda: [])
@@ -93,7 +95,7 @@ def test_mature_request_copies_patches_and_does_not_repeat_source():
     patches = torch.ones((8, 24, 3, 3, 3))
     tracker = SimpleNamespace(is_initialized=True, n=8, RES=4,
                               pg=SimpleNamespace(tstamps_=np.arange(8), patches_=patches))
-    f.native_frontend = SimpleNamespace(tracker=tracker)
+    f.native_frontend = SimpleNamespace(tracker=tracker, restarts=0, input_index=int)
     requests = []
     f.depth_worker.submit = requests.append
     assert f._submit_mature()
@@ -149,3 +151,42 @@ def test_incompatible_streaming_dpvo_options_are_explicit(options):
     values.update(options)
     with pytest.raises(ValueError):
         MonoConfig(**values)
+
+
+def test_tracker_restart_holds_pose_resets_scale_and_continues_from_last_pose():
+    f = bare_frontend()
+    f._submit_mature = lambda: False
+    script = {0: (1., False), 1: (2., False), 2: (None, True), 3: (0., False), 4: (4., False)}
+    class Native:
+        rgb_memory = {}
+        restarts = 0
+        pose = np.eye(4)
+        def step(self, rgb, timestamp):
+            x, restarted = script[f.index]
+            self.rgb_memory = {f.index: rgb}
+            if restarted:
+                self.restarts += 1          # native pose is held at its last value
+            else:
+                self.pose = self.pose.copy() if f.index < 3 else Native.origin @ np.eye(4)
+                if f.index < 3:
+                    self.pose[0, 3] = x
+                else:
+                    self.pose = Native.origin.copy(); self.pose[0, 3] += x   # new gauge, unit scale 1 again
+            return MonoEstimate(timestamp, self.pose.copy(), np.eye(4), np.eye(6), None,
+                                dict(valid=not restarted, initializing=restarted, total_seconds=.01,
+                                     tracker_restarted=restarted, tracker_restarts=self.restarts))
+    native = Native()
+    f.native_frontend = native
+    rgb = np.zeros((8, 8, 3), dtype=np.uint8)
+    f.scale_filter.update(ScaleObservation(log_scale=np.log(.5), variance=.0144, accepted=True))
+    f.step(rgb, 0.)
+    held = f.step(rgb, .05).pose.copy()           # 2 units at 0.5 m/unit
+    Native.origin = native.pose.copy()
+    restart = f.step(rgb, .1)
+    assert not restart.diagnostics['valid'] and np.allclose(restart.pose, held)
+    assert not f.scale_filter.initialized          # the new gauge needs a new scale
+    f.scale_filter.update(ScaleObservation(log_scale=np.log(.25), variance=.0144, accepted=True))
+    f.step(rgb, .15)
+    after = f.step(rgb, .2)
+    assert held[0, 3] == pytest.approx(1.)
+    assert after.pose[0, 3] == pytest.approx(held[0, 3] + 4 * .25)   # continues from the held pose in the new scale
