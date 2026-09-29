@@ -963,9 +963,16 @@ class System:
         # behind the robot): fusing them as independent evidence re-applies the estimator's bias at every observation
         # (their keyframe poses came from the same belief) and drifts the map; they still weigh the hypotheses and
         # become graph edges
+        rotation_only_mask = None
         if self.config.mapping.hypothesis.h0_informative_only and self.hypothesis_manager.comp0_informative is False:
-            pose_update_mask[0] = False
-            ret["h0_pose_update_skipped"] = True
+            if self.config.mapping.hypothesis.h0_informative_rotation:
+                # rotation-only update of hypothesis 0 (its evidence is computed from the full measurement as before)
+                rotation_only_mask = torch.zeros_like(pose_update_mask)
+                rotation_only_mask[0] = True
+                ret["h0_translation_update_skipped"] = True
+            else:
+                pose_update_mask[0] = False
+                ret["h0_pose_update_skipped"] = True
 
         self.hypothesis_manager.gmm_filtering(
             proposal_gmm_mu,
@@ -973,6 +980,7 @@ class System:
             proposal_gmm_weights,
             proposal_gmm_confidence,
             pose_update_mask=pose_update_mask,
+            rotation_only_mask=rotation_only_mask,
         )
         current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
 
