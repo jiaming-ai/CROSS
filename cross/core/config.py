@@ -460,6 +460,15 @@ class PoseEstConfig:
     # scripts/eval/calibrate_noise.py) instead of the heuristic 0.2 / (4 inlier ratio retrieval score).  Needs
     # mapping.loop_closure.mode = verified.
     meas_std_from_noise_model: bool = False
+    # observation cadence: retrieval + relative pose estimation are skipped until the robot moved at least
+    # obs_min_translation (m) or turned obs_min_rotation (rad) since the last observation, or obs_max_interval_steps
+    # frames elapsed; the motion model carries the belief in between (odometry is cheap, the observation is not).
+    # 0 / 0 / 1 = observe every frame (original behaviour).  Every frame is observed for obs_warmup_steps frames after
+    # (re)initialisation so that a relocalization starts quickly.
+    obs_min_translation: float = 0.0
+    obs_min_rotation: float = 0.0
+    obs_max_interval_steps: int = 1
+    obs_warmup_steps: int = 10
 
 
 @dataclass

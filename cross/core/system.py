@@ -133,6 +133,7 @@ class System:
             self.odom_accumulator.register_item("since_last_step")
             self.odom_accumulator.register_item("since_last_add_kf")
             self.odom_accumulator.register_item("since_last_retrieval")
+            self.odom_accumulator.register_item("since_last_obs")
 
         self.use_VO = self.config.tracking.use_VO
         # Retrieval filtering mode configuration
@@ -148,6 +149,7 @@ class System:
         self._anchor_pending = deque()   # candidate session anchors (anchor_corroborate_window)
         self._contra_pending = deque()   # rejected map measurements that may contradict the anchor (anchor_contradict_min)
         self._session_start_frame = 0
+        self._steps_since_obs = 0      # observation cadence (pose_est.obs_*)
         # intra-hypothesis loop closure bookkeeping: (step, n_long_range_edges) of recent keyframes
         self._intra_lc_events: deque = deque()
         self._last_intra_pgo_step = -10**9
@@ -369,6 +371,7 @@ class System:
         self.last_added_kf_id = kf.id
         self.odom_accumulator.reset_odom()
         self._session_start_frame = self._processed_frame_num
+        self._steps_since_obs = 0
         if self._lc_verifier is not None:
             self._lc_verifier.reset_session()
         return kf
@@ -887,6 +890,27 @@ class System:
             return
 
         ################################
+        # observation cadence gating (pose_est.obs_*): skip retrieval + relative pose estimation until the robot moved
+        # enough, and let the motion model carry the belief in between
+        ################################
+        if self._should_skip_observation():
+            current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
+            ret['current_mu'] = current_mu
+            ret['current_sigma'] = current_sigma
+            ret['current_weights'] = current_weights
+            ret['hypotheses'] = self.hypothesis_manager.hypotheses
+            ret['observation_skipped'] = True
+            ret['valid_keyframes'] = []
+            if self.visualize:
+                self.visualizer.visualize_tracking_step(
+                    kf=None, state_info=ret, gt_info=kwargs.get("data"), step_idx=self._processed_frame_num,
+                )
+            return
+        if self.use_odometry:
+            self.odom_accumulator.get_since_last_reading("since_last_obs", reset=True, return_std=False)
+        self._steps_since_obs = 0
+
+        ################################
         # update the observation likelihood
         ################################
         ret.update(self._construct_observation_dist(rgb_image, depth_image))
@@ -1353,6 +1377,23 @@ class System:
             return True
         logger.warning(pgo_info.get("message", "intra-hypothesis PGO failed without message"))
         return False
+
+    def _should_skip_observation(self) -> bool:
+        """Observation cadence (pose_est.obs_*): skip retrieval + relative pose estimation at this step?"""
+        cfg = self.config.pose_est
+        if not self.use_odometry or (cfg.obs_min_translation <= 0 and cfg.obs_min_rotation <= 0 and cfg.obs_max_interval_steps <= 1):
+            return False
+        self._steps_since_obs += 1
+        if self._processed_frame_num - self._session_start_frame <= cfg.obs_warmup_steps:
+            return False   # warm-up after (re)initialisation: observe every frame to relocalize quickly
+        if self._steps_since_obs >= cfg.obs_max_interval_steps:
+            return False
+        delta_pose, _ = self.odom_accumulator.get_since_last_reading("since_last_obs", reset=False, return_std=False)
+        if delta_pose is None:
+            return False
+        moved = cfg.obs_min_translation > 0 and bool(torch.norm(delta_pose.tensor()[:3]) >= cfg.obs_min_translation)
+        rotated = cfg.obs_min_rotation > 0 and bool(rotation_angle_from_quat(delta_pose.tensor()[3:]) >= cfg.obs_min_rotation)
+        return not (moved or rotated)
 
     def _construct_motion_dist(
         self,
