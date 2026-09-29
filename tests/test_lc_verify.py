@@ -1,0 +1,353 @@
+"""Unit tests of the verified loop closure (cross/core/lc_verify.py) on synthetic graphs (CPU only)."""
+import math
+import types
+
+import gtsam
+import numpy as np
+import pypose as pp
+import pytest
+import torch
+
+from cross.core.config import LoopClosureConfig, NoiseModelConfig
+from cross.core.lc_verify import (ChainPredictor, LoopClosureVerifier, NoiseModel, chi2_of, chi2_threshold, logmap,
+                                  residual, to_gtsam, transport)
+from cross.core.types import Edge, EdgeType, Keyframe
+
+
+def _lie(T: gtsam.Pose3) -> pp.LieTensor:
+    q = T.rotation().toQuaternion().coeffs()      # x y z w
+    t = T.translation()
+    return pp.SE3(torch.tensor([t[0], t[1], t[2], q[0], q[1], q[2], q[3]], dtype=torch.float32))
+
+
+class FakeHM:
+    def __init__(self):
+        self.nodes = {}
+        self.odom_edges = {}
+        self.hypotheses = {0: types.SimpleNamespace(visual_edges={}, visual_adjacency={})}
+
+
+class FakeSystem:
+    def __init__(self, hm, session_start=0):
+        self.hypothesis_manager = hm
+        self._session_start_kf_id = session_start
+
+
+def make_chain(n=120, step=0.25, turn_every=30, rng=None, k_t=0.06, k_r=0.07):
+    """Square-ish trajectory: keyframe poses (gtsam), noisy odometry edges with the per-unit-motion noise model."""
+    rng = rng or np.random.default_rng(0)
+    gt = [gtsam.Pose3()]
+    edges = {}
+    for i in range(1, n):
+        d = gtsam.Pose3(gtsam.Rot3.Ypr(math.pi / 2 if i % turn_every == 0 else 0.0, 0, 0), gtsam.Point3(step, 0, 0))
+        gt.append(gt[-1].compose(d))
+        L = float(np.linalg.norm(d.translation())); th = float(np.linalg.norm(logmap(d)[:3]))
+        s = np.array([k_r * th + 1e-3] * 3 + [k_t * L + 2e-3] * 3)
+        noisy = d.compose(gtsam.Pose3.Expmap(rng.normal(0, s)))
+        e = Edge(_lie(noisy), pp.se3(torch.full((6,), 0.1)), EdgeType.ODOMETRY)
+        e.n_frames = 1
+        edges[(i - 1, i)] = e
+    return gt, edges
+
+
+def test_chain_covariance_matches_monte_carlo():
+    hm = FakeHM()
+    gt, hm.odom_edges = make_chain(n=100)
+    noise = NoiseModel(NoiseModelConfig())
+    cp = ChainPredictor(hm, noise)
+    T, cov = cp.predict(0, 99)
+    assert T is not None
+    # Monte Carlo with the same per-edge sigmas
+    rng = np.random.default_rng(1)
+    S = []
+    for _ in range(400):
+        acc = gtsam.Pose3()
+        for k in range(99):
+            e = hm.odom_edges[(k, k + 1)]
+            s = noise.odom_from_factor(e)
+            acc = acc.compose(to_gtsam(e.mean)).compose(gtsam.Pose3.Expmap(rng.normal(0, s)))
+        S.append(logmap(T.between(acc)))
+    emp = np.cov(np.array(S).T)
+    ratio = np.sqrt(np.diag(emp) / np.diag(cov))
+    assert np.all(ratio > 0.75) and np.all(ratio < 1.35), ratio
+    # reverse order gives the inverse transform and a consistent covariance
+    Ti, covi = cp.predict(99, 0)
+    assert np.allclose(Ti.matrix(), T.inverse().matrix(), atol=1e-9)
+    assert np.allclose(covi, transport(cov, T.inverse()), atol=1e-9)
+
+
+def test_prior_gate_accepts_true_and_rejects_aliased():
+    hm = FakeHM()
+    gt, hm.odom_edges = make_chain(n=120)
+    for i, g in enumerate(gt):
+        kf = Keyframe(pose_mu=_lie(g).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+        kf.id = i
+        kf.step_created = i
+        hm.nodes[i] = kf
+    cfg = LoopClosureConfig()
+    v = LoopClosureVerifier(FakeSystem(hm), cfg)
+    last = 119
+    # current pose = last keyframe (no motion since)
+    refs = [hm.nodes[5], hm.nodes[40], hm.nodes[110]]
+    true_meas = [_lie(gt[r.id].between(gt[last])) for r in refs]
+    ok, chis = v.prior_gate(refs, true_meas, last, gtsam.Pose3(), 1)
+    assert all(o is True for o in ok), (ok, chis)
+    # aliased measurement: same rotation, 8 m off
+    off = gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(8.0, 0, 0))
+    bad = [_lie(gt[r.id].between(gt[last]).compose(off)) for r in refs]
+    ok_b, chis_b = v.prior_gate(refs, bad, last, gtsam.Pose3(), 1)
+    assert ok_b[2] is False, (ok_b, chis_b)     # short chain: certainly inconsistent
+    assert all(c > 0 for c in chis_b)
+
+
+def test_inpass_gate_drops_wrong_reference():
+    hm = FakeHM()
+    gt, hm.odom_edges = make_chain(n=60)
+    for i, g in enumerate(gt):
+        kf = Keyframe(pose_mu=_lie(g).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+        kf.id = i
+        hm.nodes[i] = kf
+    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    refs = [hm.nodes[10], hm.nodes[11], hm.nodes[12], hm.nodes[40]]
+    # pass poses: current at gt[13]; correct references at their true poses, reference 40 placed as if it were keyframe 12
+    cur = gt[13]
+    c2w = [cur.matrix(), gt[10].matrix(), gt[11].matrix(), gt[12].matrix(), gt[12].compose(gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(0.05, 0, 0))).matrix()]
+    keep = v.inpass_gate(np.asarray(c2w), refs, np.array([True, True, True, True]), covis=[0.5, 0.5, 0.5, 0.9])
+    assert keep.tolist() == [True, True, True, False], keep
+    # all consistent -> nothing dropped
+    c2w_ok = [cur.matrix()] + [gt[r.id].matrix() for r in refs]
+    keep2 = v.inpass_gate(np.asarray(c2w_ok), refs, np.array([True, True, True, True]))
+    assert keep2.all()
+
+
+def test_chi2_threshold_and_residual():
+    assert abs(chi2_threshold(0.999) - 22.4577) < 1e-2
+    T = gtsam.Pose3(gtsam.Rot3.Yaw(0.1), gtsam.Point3(1, 2, 3))
+    r = residual(T, T)
+    assert np.allclose(r, 0)
+    assert chi2_of(np.ones(6), np.eye(6)) == pytest.approx(6.0)
+
+
+def test_chain_cache_follows_edge_replacement():
+    """A removed temporary keyframe (bridged) plus a new keyframe leaves the edge count unchanged: the chain
+    predictor must still see the new edge (the stale cache made every reference untestable and 'informative')."""
+    import types, yaml, torch, pypose as pp
+    from cross.core.hypothesis import HypothesisManager
+    from cross.core.config import HypothesisConfig, LoopClosureConfig
+    from cross.core.types import EdgeType, Keyframe
+    from cross.core.lc_verify import LoopClosureVerifier, NoiseModel
+    sys_ = types.SimpleNamespace(_lc_verifier=None, topo_map=None, _session_start_kf_id=0)
+    hm = HypothesisManager(sys_, n_components=3, config=HypothesisConfig()); sys_.hypothesis_manager = hm
+    sd = pp.se3(torch.full((6,), 0.1)); step = pp.SE3(torch.tensor([0.3, 0, 0, 0, 0, 0, 1.0]))
+
+    def add(i):
+        k = Keyframe(pp.SE3(torch.tensor([[0.3 * i, 0, 0, 0, 0, 0, 1.0]] * 3)), pp.identity_se3(3), torch.ones(3) / 3, None, None)
+        k.id = i; hm.add_node(k)
+        if i > 0:
+            hm.add_edge(id1=i - 1, id2=i, rel_pose_mean=step, rel_pose_std=sd, type=EdgeType.ODOMETRY, meta={"n_frames": 3})
+    for i in range(4):
+        add(i)
+    v = LoopClosureVerifier(sys_, LoopClosureConfig()); sys_._lc_verifier = v
+    assert v.chain.predict(0, 3)[0] is not None
+    # remove keyframe 2 (bridge 1->3) and add keyframe 4: the count of odometry edges is unchanged
+    hm.nodes[2].temporary = True
+    hm.odom_edges[(1, 3)] = hm.odom_edges[(1, 2)]; del hm.odom_edges[(1, 2)]; del hm.odom_edges[(2, 3)]
+    hm.odom_edges_version += 1
+    add(4)
+    T, cov = v.chain.predict(0, 4)
+    assert T is not None and abs(T.translation()[0] - 0.9) < 1e-6   # 0->1, 1->3 (one step: the bridge kept edge 1->2), 3->4
+    # floors: a zero intercept never yields a zero sigma
+    v.noise.cfg.visual_t_a = 0.0; v.noise.cfg.visual_t_b = 0.1
+    assert v.noise.visual(0.0)[3] == NoiseModel.FLOOR_T and v.noise.visual(1.0)[3] == 0.1
+
+
+def test_chain_prefix_matches_walk():
+    """The prefix-product chain predictor equals edge-by-edge compounding (both orders, inflation, appends, bridging)."""
+    import types, torch, pypose as pp, numpy as np, gtsam
+    from cross.core.hypothesis import HypothesisManager
+    from cross.core.config import HypothesisConfig, LoopClosureConfig
+    from cross.core.types import EdgeType, Keyframe
+    from cross.core.lc_verify import LoopClosureVerifier
+    rng = np.random.default_rng(0)
+    sys_ = types.SimpleNamespace(_lc_verifier=None, topo_map=None, _session_start_kf_id=0)
+    hm = HypothesisManager(sys_, n_components=3, config=HypothesisConfig()); sys_.hypothesis_manager = hm
+    sd = pp.se3(torch.full((6,), 0.1))
+
+    def add(i):
+        k = Keyframe(pp.identity_SE3(3), pp.identity_se3(3), torch.ones(3) / 3, None, None); k.id = i; hm.add_node(k)
+        if i > 0:
+            w = rng.normal(0, 0.3, 3); t = rng.normal(0, 0.5, 3)
+            T = gtsam.Pose3(gtsam.Rot3.Expmap(w), t); q = T.rotation().toQuaternion(); tt = T.translation()
+            hm.add_edge(id1=i - 1, id2=i, rel_pose_mean=pp.SE3(torch.tensor([tt[0], tt[1], tt[2], q.x(), q.y(), q.z(), q.w()])),
+                        rel_pose_std=sd, type=EdgeType.ODOMETRY, meta={"n_frames": int(rng.integers(1, 5))})
+    for i in range(40):
+        add(i)
+    v = LoopClosureVerifier(sys_, LoopClosureConfig()); c = v.chain
+    A = gtsam.Pose3(gtsam.Rot3.Expmap([0.2, -0.1, 0.3]), [1.0, -2.0, 0.5])
+    assert np.allclose(c._adjoint(A.matrix()[None])[0], A.AdjointMap())
+    for a, b in [(0, 39), (39, 0), (5, 6), (6, 5), (12, 30), (30, 12), (3, 3)]:
+        for infl in (1.0, 2.0):
+            T1, C1 = c.predict(a, b, infl); T2, C2 = c.predict_walk(a, b, infl)
+            assert np.allclose(T1.matrix(), T2.matrix(), atol=1e-9) and np.allclose(C1, C2, rtol=1e-6, atol=1e-10), (a, b)
+    add(40)                                     # O(1) append path
+    T1, C1 = c.predict(2, 40, 2.0); T2, C2 = c.predict_walk(2, 40, 2.0)
+    assert np.allclose(T1.matrix(), T2.matrix(), atol=1e-9) and np.allclose(C1, C2, rtol=1e-6, atol=1e-10)
+    # bridging (two edges replaced by one) + append: rebuild path
+    e12, e23 = hm.odom_edges[(20, 21)], hm.odom_edges[(21, 22)]
+    from cross.core.types import Edge
+    br = Edge(e12.mean @ e23.mean, sd, EdgeType.ODOMETRY); br.n_frames = 5
+    hm.odom_edges[(20, 22)] = br; del hm.odom_edges[(20, 21)]; del hm.odom_edges[(21, 22)]; hm.odom_edges_version += 1
+    add(41)
+    T1, C1 = c.predict(10, 41); T2, C2 = c.predict_walk(10, 41)
+    assert np.allclose(T1.matrix(), T2.matrix(), atol=1e-9) and np.allclose(C1, C2, rtol=1e-6, atol=1e-10)
+    assert c.predict(21, 41)[0] is None          # the removed node is off the chain
+
+
+def test_online_metric_scale():
+    """Measurements 1.2x longer than the odometry chain: the verifier's scale ratio converges to 1.2."""
+    import types, torch, pypose as pp, numpy as np
+    from cross.core.hypothesis import HypothesisManager
+    from cross.core.config import HypothesisConfig, LoopClosureConfig
+    from cross.core.types import EdgeType, Keyframe
+    from cross.core.lc_verify import LoopClosureVerifier
+    sys_ = types.SimpleNamespace(_lc_verifier=None, topo_map=None, _session_start_kf_id=0)
+    hm = HypothesisManager(sys_, n_components=3, config=HypothesisConfig()); sys_.hypothesis_manager = hm
+    sd = pp.se3(torch.full((6,), 0.1)); step = pp.SE3(torch.tensor([0.3, 0, 0, 0, 0, 0, 1.0]))
+    for i in range(60):
+        k = Keyframe(pp.SE3(torch.tensor([[0.3 * i, 0, 0, 0, 0, 0, 1.0]] * 3)), pp.identity_se3(3), torch.ones(3) / 3, None, None)
+        k.id = i; hm.add_node(k)
+        if i > 0:
+            hm.add_edge(id1=i - 1, id2=i, rel_pose_mean=step, rel_pose_std=sd, type=EdgeType.ODOMETRY, meta={"n_frames": 3})
+    v = LoopClosureVerifier(sys_, LoopClosureConfig())
+    for last in range(5, 60):
+        refs = [hm.nodes[last - 4]]                                   # 4 edges back: chain 1.2 m
+        meas = [pp.SE3(torch.tensor([1.2 * 1.2, 0, 0, 0, 0, 0, 1.0]))]  # measured 1.2x too long
+        v.prior_gate(refs, meas, last, pp.identity_SE3(), 1)
+    assert abs(v.scale_ratio - 1.2) < 1e-6
+
+
+def test_pgo_result_keeps_keyframe_std():
+    """Applying an optimisation result must not shrink the keyframe std (repeated halving underflowed to zero)."""
+    import types, torch, pypose as pp
+    from cross.core.hypothesis import HypothesisManager
+    from cross.core.config import HypothesisConfig
+    from cross.core.types import Keyframe
+    sys_ = types.SimpleNamespace(_lc_verifier=None, topo_map=None, _session_start_kf_id=0, last_added_kf_id=None)
+    hm = HypothesisManager(sys_, n_components=3, config=HypothesisConfig()); sys_.hypothesis_manager = hm
+    k = Keyframe(pp.identity_SE3(3), pp.se3(torch.full((3, 6), 0.05)), torch.ones(3) / 3, None, None); k.id = 0; hm.add_node(k)
+    for _ in range(200):
+        hm.apply_pgo_result({"optimized_poses": {0: pp.SE3(torch.tensor([1.0, 0, 0, 0, 0, 0, 1.0]))}, "other_hypothesis_id": 0})
+    assert float(hm.nodes[0].pose_std[0].tensor().min()) >= 0.05 - 1e-6
+
+
+def test_pose_conversion_round_trip_stays_unit():
+    """pypose -> gtsam -> pypose round trips (one per optimisation) must not de-normalise the quaternion: gtsam
+    builds a scaled, non-orthonormal rotation from a non-unit quaternion and the error compounded to |q| = 1.67
+    after ~100 optimisations of an HSSD map."""
+    import numpy as np, torch, pypose as pp
+    from cross.core.pgo import pypose_to_gtsam_pose3, gtsam_to_pypose_pose3
+    q = np.array([0.1, 0.2, -0.3, 0.9]); q = q / np.linalg.norm(q) * 1.02      # slightly off unit, as float32 storage can leave it
+    p = pp.SE3(torch.tensor([1.0, -2.0, 0.5, *q], dtype=torch.float32))
+    P0 = pypose_to_gtsam_pose3(p)
+    for _ in range(1000):
+        p = gtsam_to_pypose_pose3(pypose_to_gtsam_pose3(p), "cpu")
+    v = p.tensor().numpy()
+    assert abs(np.linalg.norm(v[3:7]) - 1.0) < 1e-5
+    P1 = pypose_to_gtsam_pose3(p)
+    assert np.linalg.norm(P0.between(P1).translation()) < 1e-4 and np.linalg.norm(P0.rotation().between(P1.rotation()).xyz()) < 1e-4
+
+
+def test_anchored_chi2_corroborates_map_edges_through_the_chain():
+    """Relocalization session: a map edge from an earlier observation, carried through the session's odometry chain,
+    predicts a later map measurement; the true one passes, an aliased one (8 m off) does not."""
+    hm = FakeHM()
+    gt, edges = make_chain(n=120)
+    start = 50
+    for i, g in enumerate(gt):
+        # session keyframes hold the (kidnapped) belief: arbitrary frame
+        pose = g if i < start else gtsam.Pose3(gtsam.Rot3.Ypr(1.0, 0, 0), gtsam.Point3(30, -12, 0)).compose(g)
+        kf = Keyframe(pose_mu=_lie(pose).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+        kf.id = i
+        kf.step_created = i
+        hm.nodes[i] = kf
+    hm.odom_edges = {k: e for k, e in edges.items() if k[0] >= start}
+    v = LoopClosureVerifier(FakeSystem(hm, session_start=start), LoopClosureConfig())
+    assert v.anchor is None
+    anchor = v.make_anchor(45, 55, _lie(gt[45].between(gt[55])))
+    true_meas = _lie(gt[48].between(gt[60]))
+    c2 = v.anchored_chi2(anchor, 48, true_meas, 60, gtsam.Pose3(), 1)
+    assert c2 is not None and c2 <= v.thr, c2
+    off = gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(8.0, 0, 0))
+    c2_bad = v.anchored_chi2(anchor, 48, _lie(gt[48].between(gt[60]).compose(off)), 60, gtsam.Pose3(), 1)
+    assert c2_bad > v.thr, c2_bad
+    assert v.anchor is None      # the candidate is only borrowed for the test
+
+
+def test_contradict_anchor_drops_wrong_anchor_on_separated_consensus():
+    """A session anchored to a wrong place: true map measurements of three separated places, all rejected, agree with
+    each other through the odometry chain and drop the anchor; without enough separation they do not."""
+    from collections import deque
+    from cross.core.system import System
+    hm = FakeHM()
+    gt, edges = make_chain(n=120)
+    start = 50
+    for i, g in enumerate(gt):
+        pose = g if i < start else gtsam.Pose3(gtsam.Rot3.Ypr(1.0, 0, 0), gtsam.Point3(30, -12, 0)).compose(g)
+        kf = Keyframe(pose_mu=_lie(pose).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+        kf.id = i
+        kf.step_created = i
+        hm.nodes[i] = kf
+    hm.odom_edges = {k: e for k, e in edges.items() if k[0] >= start}
+
+    def run(sep):
+        cfg = LoopClosureConfig(anchor_contradict_min=2, anchor_contradict_window=100, anchor_min_separation=sep,
+                                anchor_contradict_min_offset=2.0)
+        v = LoopClosureVerifier(FakeSystem(hm, session_start=start), cfg)
+        off = gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(8.0, 0, 0))
+        v.update_anchor(40, 52, _lie(gt[40].between(gt[52]).compose(off)))      # wrong anchor
+        fake = types.SimpleNamespace(_lc_verifier=v, hypothesis_manager=hm, last_added_kf_id=90, _session_start_kf_id=start,
+                                     _processed_frame_num=90, _contra_pending=deque(), _anchor_pending=deque(),
+                                     config=types.SimpleNamespace(mapping=types.SimpleNamespace(loop_closure=cfg)))
+        fake._kf_position = types.MethodType(System._kf_position, fake)
+        fake._separated = types.MethodType(System._separated, fake)
+        for kf_s, map_kf in ((60, 44), (70, 45), (80, 46)):
+            fake._contra_pending.append((kf_s, map_kf, v.make_anchor(map_kf, kf_s, _lie(gt[map_kf].between(gt[kf_s])))))
+        h0_ok = [False]
+        System._contradict_anchor(fake, [hm.nodes[48]], [_lie(gt[48].between(gt[90]))], h0_ok, pp.identity_SE3(), 1)
+        return v.anchor, h0_ok
+
+    anchor, ok = run(sep=0.0)
+    assert anchor is None and ok == [None]
+    anchor, ok = run(sep=1000.0)            # no two places that far apart: no consensus
+    assert anchor is not None and ok == [False]
+
+
+def test_corroborate_anchor_needs_a_separated_earlier_map_edge():
+    from collections import deque
+    from cross.core.system import System
+    hm = FakeHM()
+    gt, edges = make_chain(n=120)
+    start = 50
+    for i, g in enumerate(gt):
+        pose = g if i < start else gtsam.Pose3(gtsam.Rot3.Ypr(1.0, 0, 0), gtsam.Point3(30, -12, 0)).compose(g)
+        kf = Keyframe(pose_mu=_lie(pose).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+        kf.id = i
+        kf.step_created = i
+        hm.nodes[i] = kf
+    hm.odom_edges = {k: e for k, e in edges.items() if k[0] >= start}
+
+    def run(sep):
+        cfg = LoopClosureConfig(anchor_corroborate_window=100, anchor_min_separation=sep)
+        v = LoopClosureVerifier(FakeSystem(hm, session_start=start), cfg)
+        fake = types.SimpleNamespace(_lc_verifier=v, hypothesis_manager=hm, last_added_kf_id=70, _session_start_kf_id=start,
+                                     _processed_frame_num=70, _anchor_pending=deque(),
+                                     config=types.SimpleNamespace(mapping=types.SimpleNamespace(loop_closure=cfg)))
+        fake._kf_position = types.MethodType(System._kf_position, fake)
+        fake._separated = types.MethodType(System._separated, fake)
+        fake._anchor_pending.append((58, 45, v.make_anchor(45, 58, _lie(gt[45].between(gt[58])))))
+        h0_ok = [None]
+        System._corroborate_anchor(fake, [hm.nodes[48]], [_lie(gt[48].between(gt[70]))], h0_ok, pp.identity_SE3(), 1)
+        return h0_ok
+
+    assert run(0.0) == [True]
+    assert run(1000.0) == [None]

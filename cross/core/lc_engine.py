@@ -80,6 +80,8 @@ class LoopClosureEngine:
                         depth=self.depth,
                         k_hop=self.k_hop,
                         device=self.device,
+                        noise_fn=self.hm.pgo_noise_fn(),
+                        skip_fn=self.hm.pgo_skip_fn(),
                     )
                     pg.construct_for_loop_closure(
                         target_node_id=target_node_id,

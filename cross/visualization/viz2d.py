@@ -11,8 +11,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-matplotlib.use('TkAgg')  # Use TkAgg backend for interactive plotting
-plt.ion()  # Turn on interactive mode
+import os
+if os.environ.get("DISPLAY") and not os.environ.get("MPLBACKEND"):
+    try:
+        matplotlib.use('TkAgg')  # interactive plotting when a display is available
+        plt.ion()
+    except ImportError:
+        matplotlib.use('Agg')  # headless (no X display): never crash the pipeline on import
+else:
+    matplotlib.use('Agg')
 
 def cm_RdGn(x):
     """Custom colormap: red (0) -> yellow (0.5) -> green (1)."""

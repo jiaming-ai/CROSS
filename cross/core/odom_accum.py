@@ -3,6 +3,7 @@ from typing import Tuple, Union
 import torch
 import numpy as np
 from cross.utils.lie_tensor import normalize_se3
+from cross.utils.lie_tensor import normalize_SE3
 MAX_STD = torch.tensor([0.3, 0.3, 0.3, 0.3, 0.3, 0.3])
 
 class OdomAccumulator():

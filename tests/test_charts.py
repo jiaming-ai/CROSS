@@ -114,6 +114,7 @@ def test_realization_stores_new_branch_pose_and_chart_in_its_first_keyframe():
     hm.dist[0][1,0] = 12.
     hm.dist[2][:] = torch.tensor([.1,.9,0.])
     hm.last_sum_pos[1], hm.last_hit_rate[1] = 2., .5
+    hm.hist_valid[1, :2], hm.llr_hist[1, :2] = True, 1.  # two recorded supporting frames
     kf = node(20, 0)
     hm.add_node(kf)
     assert kf.pose_charts.tolist() == [0,7,-1]
@@ -126,6 +127,7 @@ def test_chart_recovery_keeps_temporal_support_after_an_earlier_join():
     hm.component_charts[1] = 3
     hm.dist[2][:] = .5
     hm.realized[:] = True
+    hm.hist_valid[1] = True  # recorded (not empty) evidence frames
     hm.log_c_hist[1] = 2.
     hm.reference_support.start({10,11})
     hm.reference_support.mark_anchored()  # a prior join does not anchor every saved chart

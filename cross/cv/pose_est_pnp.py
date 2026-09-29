@@ -722,7 +722,7 @@ class PoseEstPnP(PoseEst):
         matches = self.match_keypoints_adaptive(ref_kp_det_res, curr_kp_det_res, img_size)
 
         ref_points_3d = depth_to_xyz(ref_depth, self.camera) # [B x H x W x 3]
-        valid_depth_mask = ref_depth < self.max_depth # max depth is 20m
+        valid_depth_mask = (ref_depth > 0) & (ref_depth < self.max_depth)  # 0 = invalid (SGBM / GT holes), max depth is 20m
         
 
         # Process matches and estimate pose for each batch

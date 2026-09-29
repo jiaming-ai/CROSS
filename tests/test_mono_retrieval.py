@@ -77,6 +77,7 @@ def test_historical_recovery_keeps_temporal_gates_independent_of_chart_distance(
     poses[1, 0] = distance
     manager.dist = (poses, pp.se3(torch.ones(2, 6) * .1), torch.tensor([.5, .5]))
     manager.realized[:] = True
+    manager.hist_valid[1] = True  # recorded (not empty) evidence frames
     manager.log_c_hist[1] = 2.
     manager.reference_support.start({1, 2})
     for i in range(4):
@@ -179,6 +180,7 @@ def test_newly_realized_branch_is_checked_after_edges_without_reusing_evidence(s
     poses[1, 0] = 2.
     manager.dist = (poses, pp.se3(torch.ones(2,6)*.1), torch.tensor([.1,.9]))
     manager.last_sum_pos[1], manager.last_hit_rate[1] = 2., .5
+    manager.hist_valid[1], manager.llr_hist[1] = True, 1.  # recorded supporting frames
     manager.log_c_hist[1] = 2. if support else -2.
     manager.reference_support.start({1,2})
     for i in range(4):

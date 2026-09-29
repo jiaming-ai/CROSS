@@ -12,6 +12,7 @@ import numpy as np
 
 from cross.core.types import Keyframe, Edge, VisualEdge, EdgeType
 from cross.utils.lie_tensor import project_SE3, normalize_se3
+from cross.utils.lie_tensor import project_SE3, normalize_SE3
 from cross.core.pgo import (
     PoseGraph,
 )
@@ -155,6 +156,8 @@ class HypothesisManager:
     """
     def __init__(self, system, n_components: int, config: Optional[HypothesisConfig] = None):
         cfg = config or HypothesisConfig()
+        self.cfg = cfg
+        self._adopt_counter = (None, 0)
 
         # ========== Core Data Structures ==========
         self.dist: Tuple[pp.LieTensor, pp.LieTensor, torch.Tensor] = None
@@ -196,6 +199,12 @@ class HypothesisManager:
         # ========== Evidence Tracking (LLR & Windowing) ==========
         self.llr_hist_length = cfg.llr_hist_length
         self.llr_bias = cfg.llr_bias
+        self.filter_process_std = cfg.filter_process_std
+        self.motion_std_accumulation = cfg.motion_std_accumulation
+        self.h0_informative_only = cfg.h0_informative_only
+        self.unmatched_evidence = cfg.unmatched_evidence
+        self.unmatched_miss_margin = cfg.unmatched_miss_margin
+        self.comp0_informative = None
 
         # ========== Active Distribution ==========
         self.active_dist_threshold = cfg.active_dist_threshold
@@ -208,6 +217,7 @@ class HypothesisManager:
         # ========== Realize: Tracking (Unrealized) → Tracking (Realized) ==========
         self.realize_sum_thresh = cfg.realize_sum_thresh
         self.realize_hitrate_thresh = cfg.realize_hitrate_thresh
+        self.realize_min_frames = cfg.realize_min_frames
 
         # ========== Death (Tracking → Free) ==========
         self.death_ttl_base = cfg.death_ttl_base
@@ -230,6 +240,15 @@ class HypothesisManager:
         self.reference_support = ReferenceSupport(n_components, self.llr_hist_length,
                                                   self.detect_overlap_hitrate_thresh, cfg.session_recovery,
                                                   track_after_anchor=self.chart_aware)
+        self.detect_min_frames = cfg.detect_min_frames
+        self.detect_llr_cap = cfg.detect_llr_cap
+        self.detect_min_weight = cfg.detect_min_weight
+        self.reloc_unique_evidence = cfg.reloc_unique_evidence
+        self.reloc_unique_min_dist = cfg.reloc_unique_min_dist
+        self.reloc_min_frames = cfg.reloc_min_frames
+        self.detect_reject_cooldown_steps = cfg.detect_reject_cooldown_steps
+        self.verify_outlier_sigma = cfg.verify_outlier_sigma
+        self.verify_max_outlier_frac = cfg.verify_max_outlier_frac
 
         # ========== Self LC Detection (comp 0, aligned confidence) ==========
         self.self_lc_conf_thresh = cfg.self_lc_conf_thresh
@@ -271,6 +290,13 @@ class HypothesisManager:
         """
         topo_map = getattr(self.system, "topo_map", None)
         return topo_map.proximity_adjacency if topo_map is not None else {}
+
+    def latest_kf_id_before(self, step: int):
+        """Id of the newest permanent keyframe created before processing step `step` (None if there is none)."""
+        # NOTE: keyframes record their creation step in `step_created`; the previous fallback compared keyframe *ids*
+        # with step counts, which made RetrievalConfig.recent_window_steps inert after the first ~200 steps.
+        ids = [kf.id for kf in self.nodes.values() if not kf.temporary and getattr(kf, "step_created", kf.id) < step]
+        return max(ids) if ids else None
 
     def get_active_dist(self):
         """
@@ -348,7 +374,12 @@ class HypothesisManager:
         self.last_sum_pos = torch.zeros(self.n_components, device=self.device)
         self.last_hit_rate = torch.zeros(self.n_components, device=self.device)
         self.log_c_hist = torch.zeros(self.n_components, self.llr_hist_length, device=self.device)
+        # relocalization evidence: log-likelihood against the best other place (see reloc_unique_evidence)
+        self.log_u_hist = torch.zeros(self.n_components, self.llr_hist_length, device=self.device)
         self.log_conf_hist = torch.zeros(self.n_components, self.llr_hist_length, device=self.device)
+        # which history slots hold real evidence (component active and past its birth frame)
+        self.hist_valid = torch.zeros(self.n_components, self.llr_hist_length, dtype=torch.bool, device=self.device)
+        self._lc_reject_until: Dict[int, int] = {}
 
         # Mark existing hypotheses as realized and give them base TTL
         for comp_id in self.hypotheses.keys():
@@ -382,9 +413,12 @@ class HypothesisManager:
             # not initialized yet, skip
             return
         # Vectorized realization check
+        n_valid = self.hist_valid.sum(dim=1)
+        hit_valid = ((self.llr_hist > 0) & self.hist_valid).float().sum(dim=1) / n_valid.clamp(min=1)
         to_realize_mask = unrealized_mask & \
                           (self.last_sum_pos >= self.realize_sum_thresh) & \
-                          (self.last_hit_rate >= self.realize_hitrate_thresh)
+                          (hit_valid >= self.realize_hitrate_thresh) & \
+                          (n_valid >= self.realize_min_frames)
 
         to_realize_indices = torch.where(to_realize_mask)[0].tolist()
         for comp_id in to_realize_indices:
@@ -427,6 +461,30 @@ class HypothesisManager:
         return new_comp_id
 
 
+    def graph_cost_now(self) -> tuple:
+        """Diagnostics: cost of the hypothesis-0 graph at the current poses (no optimisation), its factor counts and
+        the five most expensive factors."""
+        pg = PoseGraph(self, depth=1000, k_hop=2, device=self.device, noise_fn=self.pgo_noise_fn(), skip_fn=self.pgo_skip_fn())
+        pg.eval_only = True
+        with self.graph_lock:
+            pg.construct_for_loop_closure(target_node_id=max(self.nodes.keys()), other_hypothesis_id=0)
+        ids = [v.id for v in pg.vertices if v.id in self.nodes]
+        pg.solve(optim_node_ids=set(ids) - {min(ids)}, fixed_node_ids={min(ids)})
+        return pg.initial_cost, getattr(pg, "n_factors", None), getattr(pg, "factor_costs", None)
+
+    def pgo_noise_fn(self):
+        """Calibrated noise model of the verified loop closure for the pose-graph optimisation (None: stored stds)."""
+        v = getattr(self.system, "_lc_verifier", None)
+        return v.noise.factor_sigmas_pypose if v is not None else None
+
+    def pgo_skip_fn(self):
+        """Information criterion of the verified loop closure: visual measurements that the odometry chain already
+        explained better at the time of the observation do not constrain the graph (None: keep every factor)."""
+        v = getattr(self.system, "_lc_verifier", None)
+        if v is None:
+            return None
+        return lambda f: f.type == EdgeType.VISUAL and getattr(f, "informative", True) is False
+
     def add_edge(
         self,
         id1: int,
@@ -437,6 +495,7 @@ class HypothesisManager:
         from_comp_id: int = 0,
         to_comp_id: int = 0,
         conditional_pose=None,
+        meta: Optional[Dict[str, Any]] = None,
     ):
         """
         Adds a measurement (edge) to the relevant hypothesis graphs.
@@ -462,9 +521,12 @@ class HypothesisManager:
         if type == EdgeType.ODOMETRY:
             factor = Edge(rel_pose_mean, rel_pose_std, type) # comp_ids are not used for odom edges
             factor.conditional_pose = conditional_pose
+            for k, v in (meta or {}).items():
+                setattr(factor, k, v)
             # Structural mutation under lock
             with self.graph_lock:
                 self.odom_edges[(id1, id2)] = factor # it's directed edge, from id1 to id2
+                self.odom_edges_version = getattr(self, "odom_edges_version", 0) + 1
 
         # --- Logic for Visual Edges 
         elif type == EdgeType.VISUAL:
@@ -476,6 +538,8 @@ class HypothesisManager:
                 rel_pose_mean, rel_pose_std, type, from_comp_id, to_comp_id
             )
             factor.conditional_pose = conditional_pose
+            for k, v in (meta or {}).items():
+                setattr(factor, k, v)
             # NOTE: the visual edge is only added to the target hypothesis,
             with self.graph_lock:
                 self.hypotheses[to_comp_id].add_visual_edge(id1, id2, factor)
@@ -554,6 +618,7 @@ class HypothesisManager:
                         bridging_factor.std = pp.se3(torch.as_tensor(np.sqrt(model.geometry_covariance.diagonal().clip(0)),
                                                                   device=self.device,dtype=combined_std.dtype))
                         bridging_factor.conditional_pose = model
+                    bridging_factor.n_frames = (getattr(pred_edge, "n_frames", None) or 1) + (getattr(succ_edge, "n_frames", None) or 1)
                     self.odom_edges[(predecessor_id, successor_id)] = bridging_factor
                     
                     # Note: No need to maintain adjacency list since odometry edges are sequential
@@ -570,6 +635,7 @@ class HypothesisManager:
             for edge_key in edges_to_remove:
                 del self.odom_edges[edge_key]
                 logger.debug(f"Removed odometry edge {edge_key}")
+            self.odom_edges_version = getattr(self, "odom_edges_version", 0) + 1
             
             # Note: No odometry adjacency list to update since odometry edges are sequential
             
@@ -739,8 +805,11 @@ class HypothesisManager:
             raise ValueError("A source-aware motion factor needs initialize_source_filter()")
         # Update all active components by weight threshold so priors evolve with motion
         active_mask = last_gmm_weights > self.tracking_active_threshold
-        last_gmm_mu[active_mask] = normalize_se3(last_gmm_mu[active_mask] @ delta_pose.unsqueeze(0))
-        last_gmm_sigma[active_mask] = last_gmm_sigma[active_mask] + delta_std.unsqueeze(0)
+        last_gmm_mu[active_mask] = normalize_SE3(last_gmm_mu[active_mask] @ delta_pose.unsqueeze(0))
+        if self.motion_std_accumulation == "variance":
+            last_gmm_sigma[active_mask] = pp.se3((last_gmm_sigma[active_mask].tensor() ** 2 + delta_std.tensor().unsqueeze(0) ** 2) ** 0.5)
+        else:
+            last_gmm_sigma[active_mask] = last_gmm_sigma[active_mask] + delta_std.unsqueeze(0)
 
         self.dist = (last_gmm_mu, last_gmm_sigma, last_gmm_weights)
 
@@ -774,6 +843,7 @@ class HypothesisManager:
         
         # Key: kf_id (from_node_id), Value: List of (from_comp_id, to_comp_id)
         edge_mapping: Dict[int, Tuple[int, int]] = {}
+        self.comp0_informative = None
 
         proposal_mu = torch.stack([h['pose'] for h in proposal_hypotheses])
         
@@ -802,6 +872,27 @@ class HypothesisManager:
                 audit['chart_id'] = proposal['chart_id']
                 if not math.isfinite(audit['nearest_prior_distance']):
                     audit['nearest_prior_distance'] = None
+        # verified loop closure: a proposal that failed the prior-consistency test against hypothesis 0 must not be
+        # matched to (fused into) hypothesis 0; it may still feed or spawn another hypothesis
+        h0_flags = [h.get("h0_ok") for h in proposal_hypotheses]
+        row0 = int((active_comp_indices == 0).nonzero()[0].item()) if (active_comp_indices == 0).any() else None
+        dropped = set()
+        if row0 is not None:
+            for j, f in enumerate(h0_flags):
+                if f is False:
+                    if float(dist_matrix[row0, j]) < self.alignment_threshold:
+                        # inconsistent with hypothesis 0 yet within its alignment radius: an outlier measurement of
+                        # the same place, not a new place -- neither fused nor born (it would spawn a hypothesis
+                        # seeded by the outlier that can take over the belief)
+                        dropped.add(j)
+                        dist_matrix[:, j] = float("inf")
+                    else:
+                        dist_matrix[row0, j] = float("inf")
+        if dropped:
+            v = getattr(self.system, "_lc_verifier", None)
+            if v is not None:
+                v.stats["outliers_dropped"] = v.stats.get("outliers_dropped", 0) + len(dropped)
+            logger.debug(f"proposals {sorted(dropped)} dropped as outliers of hypothesis 0")
 
         # Prepare tensors for the new, aligned GMM. Default to low-confidence values.
         num_components = current_mu.shape[0]
@@ -832,6 +923,8 @@ class HypothesisManager:
             
             # --- A match is found: update the aligned GMM ---
             proposal = proposal_hypotheses[proposal_idx]
+            if true_comp_idx == 0:
+                self.comp0_informative = proposal.get('informative', True)
             aligned_mu[true_comp_idx] = proposal['pose']
             aligned_sigma[true_comp_idx] = proposal['std']
             aligned_weights[true_comp_idx] = proposal['score']
@@ -877,8 +970,17 @@ class HypothesisManager:
 
 
         # Handle proposals that were not matched (new hypothesis birth with capacity/eviction)
-        unmatched_proposals_indices = set(range(len(proposal_hypotheses))) - matched_proposals
+        unmatched_proposals_indices = set(range(len(proposal_hypotheses))) - matched_proposals - dropped
         for proposal_idx in unmatched_proposals_indices:
+            if h0_flags[proposal_idx] is True:
+                # consistent with hypothesis 0 along the odometry chain but beyond the alignment radius (drift):
+                # a loop closure of hypothesis 0, not a new hypothesis.  Its measurements become hypothesis-0 edges
+                # and the pose-graph optimisation moves the belief; no component is born for it.
+                for kf_id, source_comp_id in proposal_hypotheses[proposal_idx]['source_indices']:
+                    if source_comp_id == 0:
+                        edge_mapping[kf_id] = (0, 0)
+                logger.debug(f"proposal {proposal_idx} is a verified loop closure of hypothesis 0 (no birth)")
+                continue
             # Find the first empty slot in the GMM.
             available_slots = torch.where(aligned_weights == 0)[0]
             if len(available_slots) == 0:
@@ -957,6 +1059,7 @@ class HypothesisManager:
         pose_update_mask: Optional[torch.Tensor] = None, # K bool mask; True means apply retrieval update
         source_factors=None,
         source_covariances=None,
+        rotation_only_mask: Optional[torch.Tensor] = None, # K bool mask; True: fuse only the rotation of the proposal
     ):
         """
         Computes the final distribution p = alpha * (p_proposal * p_prior) + (1 - alpha) * p_proposal.
@@ -986,6 +1089,8 @@ class HypothesisManager:
                 # independent support for delayed commitment.
                 self.last_conditional_audit = [dict(component=i,duplicate=True) for i in source_factors]
                 return
+        # candidate poses are compositions of stored keyframe poses and relative poses: keep them on SE(3)
+        proposal_mu = normalize_SE3(proposal_mu)
         # Clamp confidences for numerical stability in LLR downstream
         proposal_confidence_clamped = torch.clamp(proposal_confidence, min=0.1, max=10)
 
@@ -1008,8 +1113,8 @@ class HypothesisManager:
         # NOTE: this is required, otherwise the prior std will keep shrinking
         # and kalman gain will goes to zero.
         # TODO: use the motion std?
-        proc_std = torch.tensor([0.05, 0.05, 0.05, 0.05, 0.05, 0.05], 
-                        device=prior_var_diag.device, dtype=prior_var_diag.dtype)
+        proc_std = torch.full((6,), float(self.filter_process_std),
+                              device=prior_var_diag.device, dtype=prior_var_diag.dtype)
         Q = (proc_std**2).view(1,6)
 
         prior_var_diag = prior_var_diag + Q
@@ -1031,9 +1136,18 @@ class HypothesisManager:
 
         # Posterior mean offset in prior tangent (δ)
         prod_log_mu = prod_var_diag * (inv_var1_diag * r)       # δ = Σ * (Σ1^{-1} r)
+        if rotation_only_mask is not None and bool(rotation_only_mask.any()):
+            # the proposal's translation carries no information for these components (se(3) order: t t t r r r)
+            m = rotation_only_mask.to(device=prod_log_mu.device, dtype=torch.bool)
+            prod_log_mu = prod_log_mu.clone(); prod_var_diag = prod_var_diag.clone()
+            prod_log_mu[m, :3] = 0.0
+            prod_var_diag[m, :3] = prior_var_diag_noQ[m, :3]
 
         # Map back to the group: μ_prod = μ_prior ∘ Exp(δ)
         prod_mu = prior_mu @ pp.se3(prod_log_mu).Exp()
+        logger.debug(f"filter comp0: prior std {[round(float(x), 4) for x in prior_var_diag[0].sqrt()]} proposal std "
+                     f"{[round(float(x), 4) for x in proposal_var_diag[0].sqrt()]} residual {[round(float(x), 4) for x in r[0]]} "
+                     f"delta {[round(float(x), 4) for x in prod_log_mu[0]]}")
 
         # Gaussian-overlap factor  c_k = N(r_k ; 0, S_k),  with S_k = Σ1_k + Σ2_k  (all diag)
         S_diag = (proposal_var_diag + prior_var_diag).clamp_min(eps)   # (C,6)
@@ -1041,6 +1155,24 @@ class HypothesisManager:
         maha = (r * r * inv_S_diag).sum(dim=-1)                            # (C,)
         log_det_S = torch.log(S_diag).sum(dim=-1)                          # (C,)
         log_c = -0.5 * (maha + (6.0 * math.log(2.0 * math.pi) + log_det_S))
+        if self.unmatched_evidence == "miss":
+            # a component that no proposal was aligned to (keep-alive: its own mean, confidence 0) explains none of the
+            # observations.  Scoring that self-match with zero residual gave a confident component (tight odometry) a
+            # density no real measurement can reach, so a kidnapped hypothesis 0 out-scored every map hypothesis and no
+            # relocalization session ever converged.  Its evidence is that of the weakest supported component minus a
+            # margin: a supported hypothesis always beats an unsupported one, and aliased support must still persist over
+            # the realisation window and pass the merge verification.
+            unmatched = proposal_confidence <= 0
+            supported = (~unmatched) & (prior_weights > self.tracking_active_threshold)
+            # hypothesis 0 is exempt while it is localized: in a mapping session, or once a relocalization session is
+            # anchored to the map by a verified map edge, it is supported by its own odometry chain even when the only
+            # proposals of an observation are aliased places (they spawn hypotheses of their own)
+            if not self._h0_unlocalized() and unmatched.numel() > 0:
+                unmatched = unmatched.clone()
+                unmatched[0] = False
+            if bool(unmatched.any()) and bool(supported.any()):
+                floor = log_c[supported].min() - float(self.unmatched_miss_margin)
+                log_c = torch.where(unmatched, torch.minimum(log_c, floor), log_c)
 
         pending_sources = None
         conditional_newborns = {}
@@ -1130,7 +1262,19 @@ class HypothesisManager:
         log_c_rel = (log_c - log_c[0])  # relative log-likelihood
         log_conf = torch.log(conf_ratio)  # log confidence ratio
         self.log_c_hist[:, self.llr_hist_ptr] = torch.where(active_tracking_mask, log_c_rel, torch.zeros_like(log_c_rel))
+        if self.reloc_unique_evidence:
+            # evidence of each component against the best competing place: the active components farther than
+            # reloc_unique_min_dist (hypothesis 0 included; unsupported ones carry their miss score)
+            pos_t = prior_mu.tensor()[:, :3]
+            far = (torch.cdist(pos_t, pos_t) > self.reloc_unique_min_dist) & active_tracking_mask.unsqueeze(0)
+            far.fill_diagonal_(False)
+            alt = torch.where(far, log_c.unsqueeze(0).expand_as(far), torch.full_like(far, float("-inf"), dtype=log_c.dtype)).max(dim=1).values
+            alt = torch.where(torch.isfinite(alt), alt, log_c[0].expand_as(alt))
+            log_u_rel = log_c - alt
+            self.log_u_hist[:, self.llr_hist_ptr] = torch.where(active_tracking_mask, log_u_rel, torch.zeros_like(log_u_rel))
         self.log_conf_hist[:, self.llr_hist_ptr] = torch.where(active_tracking_mask, log_conf, torch.zeros_like(log_conf))
+        # a newborn is seeded with its proposal (zero residual): its birth frame is not evidence
+        self.hist_valid[:, self.llr_hist_ptr] = active_tracking_mask & ~self.newborn
 
         self.llr_hist[:, self.llr_hist_ptr] = pos
         self.llr_hist_ptr = (self.llr_hist_ptr + 1) % self.llr_hist_length
@@ -1225,6 +1369,10 @@ class HypothesisManager:
                     prod_var_diag[dead_full_mask] = pp.identity_se3(n_dead, device=prod_var_diag.device)
                     self.realized[dead_full_mask] = False
                     self.ttl[dead_full_mask] = 0
+                    self.hist_valid[dead_full_mask] = False
+                    self.log_c_hist[dead_full_mask] = 0.0
+                    self.log_u_hist[dead_full_mask] = 0.0
+                    self.log_conf_hist[dead_full_mask] = 0.0
 
                     # Remove realized hypothesis branches for dead comps (data-structure loop)
                     for comp_idx in dead_indices.tolist():
@@ -1286,6 +1434,7 @@ class HypothesisManager:
             self.newborn[newborn_mask] = False
 
         prod_std_diag = pp.se3(prod_var_diag**0.5)
+        prod_mu = normalize_SE3(prod_mu)
 
         if torch.isnan(prod_weights).any():
             logger.warning(f"prod_weights is nan: {prod_weights}")
@@ -1339,17 +1488,44 @@ class HypothesisManager:
         # 1) Inter-hypothesis LC detection (exclude comp 0)
         # only consider active and realized components
         active_mask = torch.logical_and(self.dist[2] > self.active_dist_threshold, self.realized)[1:]
+        # relocalization (hypothesis 0 not anchored to the stored map): evidence against the best other place
+        reloc = self.reloc_unique_evidence and self._h0_unlocalized()
+        ev_hist = self.log_u_hist if reloc else self.log_c_hist
+        min_frames = max(self.detect_min_frames, self.reloc_min_frames) if reloc else self.detect_min_frames
+        # diagnostics: the dominant component is not hypothesis 0 -> why is it not merged?  (every observation step)
+        kd = int(torch.argmax(self.dist[2]).item())
+        if kd != 0 and float(self.dist[2][kd]) >= 0.5:
+            valid_d = self.hist_valid[kd]; nv = int(valid_d.sum())
+            net = float((ev_hist[kd].clamp(-self.detect_llr_cap, self.detect_llr_cap) * valid_d).sum())
+            hit = float(((ev_hist[kd] + self.detect_overlap_rel_margin > 0) & valid_d).float().sum() / max(nv, 1))
+            chit = float(((self.log_conf_hist[kd] + self.detect_conf_rel_margin > 0) & valid_d).float().sum() / max(nv, 1))
+            dist_d = float(torch.norm(self.dist[0][kd].tensor()[:3] - self.dist[0][0].tensor()[:3]))
+            logger.debug(f"LC gate: comp {kd} w={float(self.dist[2][kd]):.2f} realized={bool(self.realized[kd])} ttl={int(self.ttl[kd])} "
+                         f"n_valid={nv} net_llr={net:.2f} hit={hit:.2f} conf_hit={chit:.2f} dist={dist_d:.1f} "
+                         f"sum_pos={float(self.last_sum_pos[kd]) if self.last_sum_pos is not None else -1:.2f} "
+                         f"hit_rate={float(self.last_hit_rate[kd]) if self.last_hit_rate is not None else -1:.2f} "
+                         f"cooldown={self._lc_reject_until.get(kd, -1) >= int(self.step_counter)} reloc={reloc}")
         if active_mask.any():
             realized_ids = torch.nonzero(active_mask, as_tuple=False).squeeze(-1) + 1 # +1 because we exclude comp 0
 
             # Stack and index using realized IDs
-            log_c_rel_realized = self.log_c_hist[realized_ids, :] # (C, L)
+            log_c_rel_realized = ev_hist[realized_ids, :] # (C, L)
             log_conf_rel_realized = self.log_conf_hist[realized_ids, :] # (C, L)
 
-            log_c_pos_sum = torch.relu(log_c_rel_realized + self.detect_overlap_rel_margin).sum(dim=1)
-            log_c_pos_hit_rate = (log_c_rel_realized + self.detect_overlap_rel_margin > 0).float().mean(dim=1)
-
-            log_conf_hit_rate = (log_conf_rel_realized + self.detect_conf_rel_margin > 0).float().mean(dim=1) # bias to allow lower than H0
+            valid = self.hist_valid[realized_ids, :]                                  # (C, L) real evidence only
+            n_valid = valid.sum(dim=1)
+            rel = log_c_rel_realized + self.detect_overlap_rel_margin
+            # net LLR over the valid frames (clamped per frame): negative frames count against the candidate
+            log_c_pos_sum = (log_c_rel_realized.clamp(-self.detect_llr_cap, self.detect_llr_cap) * valid).sum(dim=1)
+            log_c_pos_hit_rate = ((rel > 0) & valid).float().sum(dim=1) / n_valid.clamp(min=1)
+            log_conf_hit_rate = ((log_conf_rel_realized + self.detect_conf_rel_margin > 0) & valid).float().sum(dim=1) / n_valid.clamp(min=1)
+            enough = n_valid >= min_frames
+            # the belief must actually have moved to the candidate, and a candidate whose merge was just rejected
+            # (geometric verification) is ignored for a while
+            weights = self.dist[2][realized_ids]
+            heavy = weights >= self.detect_min_weight
+            not_rejected = torch.tensor([self._lc_reject_until.get(int(c), -1) < int(self.step_counter) for c in realized_ids.tolist()],
+                                        device=weights.device, dtype=torch.bool)
 
             # Reject LC if the candidate is too close to the current pose, i.e. likely to be a false positive
             current_pose = self.dist[0][0][:3].unsqueeze(0) # (1, 3)
@@ -1367,7 +1543,7 @@ class HypothesisManager:
             detected_mask = (log_c_pos_sum >= self.detect_overlap_sum_thresh) \
                 & (log_c_pos_hit_rate >= self.detect_overlap_hitrate_thresh) \
                 & (log_conf_hit_rate >= self.detect_conf_hitrate_thresh) \
-                & separation_gate
+                & separation_gate & enough & heavy & not_rejected
 
             for j, component in enumerate(realized_ids.tolist()):
                 self.last_loop_audit["candidates"].append({
@@ -1383,6 +1559,8 @@ class HypothesisManager:
                     "reference_support": reference_audits[j],
                     "separation_rule": "historical_support" if bool(cross_chart[j]) else "legacy_three_meters",
                     "passes_separation_gate": bool(separation_gate[j]),
+                    "valid_frames": int(n_valid[j]),
+                    "weight": float(weights[j]),
                     "detected": bool(detected_mask[j]),
                 })
 
@@ -1402,7 +1580,7 @@ class HypothesisManager:
         return { 'loop_closure': False, 'loop_closure_hypo_id': None }
     
     def handle_loop_closure(
-        self, hypo_id: int, target_node_id: Optional[int] = None
+        self, hypo_id: int, target_node_id: Optional[int] = None, apply: bool = True, global_opt: bool = False
     ) -> Dict[str, Any]:
         """
         Handle loop closure.
@@ -1433,7 +1611,7 @@ class HypothesisManager:
         }
         assert hypo_id in self.hypotheses, f"Hypothesis {hypo_id} does not exist"
 
-        if self.no_pgo_for_lc:
+        if self.no_pgo_for_lc and hypo_id != 0:
             # instead of merging, we just change the hypothesis 0 to the new hypothesis
             # this is only for test
             self.change_hypo_to_first(hypo_id)
@@ -1444,15 +1622,20 @@ class HypothesisManager:
             target_node_id = max(self.nodes.keys())
         result["target_node_id"] = target_node_id
 
-        logger.info(f"Handling loop closure: merging hypothesis {hypo_id} with hypothesis 0")
+        if hypo_id == 0:
+            logger.info("Handling intra-hypothesis loop closure: optimising the graph of hypothesis 0")
+        else:
+            logger.info(f"Handling loop closure: merging hypothesis {hypo_id} with hypothesis 0")
 
         # Step 1: Construct the pose graph for loop closure (under graph lock)
         with self.graph_lock:
             pg = PoseGraph(
                 self,
-                depth=1000,
+                depth=(10 ** 7 if global_opt else 1000),   # global: every keyframe of every session
                 k_hop=2,
                 device=self.device,
+                noise_fn=self.pgo_noise_fn(),
+                skip_fn=self.pgo_skip_fn(),
             )
             pg.construct_for_loop_closure(
                 target_node_id=target_node_id,
@@ -1471,9 +1654,23 @@ class HypothesisManager:
         original_kf_ids = [v.id for v in pg.vertices if v.id in self.nodes]
         temp_vertex_ids = [v.id for v in pg.vertices if v.id not in self.nodes]
 
-        # Fix the earliest keyframe from hypothesis 0
-        fixed_node_id = pg.preferred_fixed_node if self.chart_aware else min(original_kf_ids)
-        optim_node_ids = set(original_kf_ids + temp_vertex_ids) - {fixed_node_id}
+        # Fix the earliest keyframe from hypothesis 0; in a relocalization session (map loaded from a
+        # previous session) all map keyframes stay fixed: the merge aligns the new session to the map
+        session_start = getattr(self.system, "_session_start_kf_id", 0)
+        if global_opt:
+            # joint optimisation of the merged map (all sessions): only the very first keyframe is fixed, so the
+            # cross-session edges reconcile the sessions with each other instead of pinning every earlier session
+            fixed_ids = {min(original_kf_ids)}
+        elif session_start > 0 and any(k < session_start for k in original_kf_ids):
+            fixed_ids = {k for k in original_kf_ids if k < session_start}
+        else:
+            fixed_ids = {min(original_kf_ids)}
+        if self.chart_aware:
+            # the reference-chart anchor selected by the chart join keeps the output coordinates
+            fixed_ids = ({k for k in fixed_ids if k != min(original_kf_ids)} | {pg.preferred_fixed_node}) \
+                if session_start > 0 and not global_opt else {pg.preferred_fixed_node}
+        fixed_node_id = pg.preferred_fixed_node if self.chart_aware else min(fixed_ids)
+        optim_node_ids = set(original_kf_ids + temp_vertex_ids) - fixed_ids
 
         if self.visualize_pose_graph:
             visualize_pose_graph(
@@ -1484,24 +1681,85 @@ class HypothesisManager:
                 show_interactive=False,
             )
 
-        pg.solve(
-            optim_node_ids=optim_node_ids,
-            fixed_node_ids={fixed_node_id},
-        )
+        try:
+            pg.solve(
+                optim_node_ids=optim_node_ids,
+                fixed_node_ids=fixed_ids,
+            )
+        except RuntimeError as ex:      # e.g. a graph piece without prior (indeterminant system): keep the map as is
+            logger.warning(f"Loop closure PGO failed ({type(ex).__name__}: {str(ex).splitlines()[0]}); graph left unchanged")
+            return {"success": False, "message": f"PGO failed: {ex}"}
 
         logger.info(f"Loop closure PGO completed with cost: {pg.optimization_cost}")
 
-        # Step 3: Apply updates via unified method (also used by async engine)
-        applied = self.apply_pgo_result({
-            "success": True,
-            "pose_graph": pg,
-            "optimized_poses": pg.optimized_poses,
-            "other_hypothesis_id": hypo_id,
-            "target_node_id": target_node_id,
-        })
-        if not applied['success']:
-            result['message'] = applied.get('message')
-            return result
+        # --- geometric verification: the candidate's visual edges must fit the optimised graph ---
+        if hypo_id != 0:
+            verifier = getattr(self.system, "_lc_verifier", None)
+            if verifier is not None:
+                frac, n_edges = verifier.merged_edge_outlier_fraction(pg)      # calibrated posterior chi^2 test
+            else:
+                frac, n_edges = self._candidate_edge_outlier_fraction(pg)
+            if n_edges > 0 and frac > self.verify_max_outlier_frac:
+                message = (f"Loop closure with hypothesis {hypo_id} rejected: {frac:.0%} of its {n_edges} visual edges "
+                           f"remain outliers after the optimisation")
+                logger.warning(message)
+                self._lc_reject_until[int(hypo_id)] = int(self.step_counter) + self.detect_reject_cooldown_steps
+                result["message"] = message
+                return result
+        # --- diagnostics (merges only): how far did the session keyframes move, and where are their twins ---
+        # (per-edge pypose residuals on the device: seconds for a 500-keyframe graph, so never for hypothesis 0)
+        try:
+            if hypo_id == 0:
+                raise StopIteration
+            start_idx = self.hypotheses[hypo_id].start_idx
+            n_map_v = sum(1 for v in pg.vertices if v.id in self.nodes and v.id < start_idx)
+            n_sess_v = sum(1 for v in pg.vertices if v.id in self.nodes and v.id >= start_idx)
+            types = {}
+            for (a, b, fs) in pg.edges:
+                for f in fs:
+                    types[f.type.name] = types.get(f.type.name, 0) + 1
+            twins = {v.original_kf_id: v for v in pg.vertices if v.id not in self.nodes}
+            lines = []
+            for v in pg.vertices:
+                if v.id in self.nodes and v.id >= start_idx:
+                    init_p = v.pose.tensor()[:3].tolist()
+                    twin_p = twins[v.id].pose.tensor()[:3].tolist() if v.id in twins else None
+                    opt_p = pg.optimized_poses[v.id].tensor()[:3].tolist() if v.id in pg.optimized_poses else None
+                    lines.append(f"kf {v.id}: init {[round(x, 1) for x in init_p]} twin {[round(x, 1) for x in twin_p] if twin_p else None} opt {[round(x, 1) for x in opt_p] if opt_p else None}")
+            # residuals of edges touching the session at the *initial* poses
+            import pypose as _pp
+            vm = pg.vertex_map
+            sess_ids = {v.id for v in pg.vertices if (v.id in self.nodes and v.id >= start_idx) or v.id not in self.nodes}
+            res_lines = []
+            for (a, b, fs) in pg.edges:
+                if a in sess_ids or b in sess_ids:
+                    if a not in vm or b not in vm:
+                        continue
+                    pred = vm[a].pose.Inv() @ vm[b].pose
+                    for f in fs:
+                        r = (f.mean.Inv() @ pred).Log().tensor()
+                        res_lines.append((float(r[:3].norm()), f"{f.type.name} {a}->{b} |t_res|={float(r[:3].norm()):.1f} |r_res|={float(r[3:].norm()):.2f} std={[round(x, 3) for x in f.std.tensor()[:3].tolist()]}"))
+            res_lines.sort(key=lambda x: -x[0])
+            lines.append("worst initial residuals: " + " ; ".join(t for _, t in res_lines[:6]))
+            logger.debug(f"LC-PGO diag: fixed={len(fixed_ids)} map_vertices={n_map_v} session_vertices={n_sess_v} twins={len(twins)} edges={types}\n" + "\n".join(lines[-4:]))
+        except StopIteration:
+            pass
+        except Exception as e:  # diagnostics must never break the pipeline
+            logger.debug(f"LC-PGO diag failed: {e}")
+
+        # Step 3: Apply updates via unified method (also used by async engine); apply=False returns the solution without
+        # writing it back (the verified loop closure tests it first and discards it when new edges turn out outliers)
+        if apply:
+            applied = self.apply_pgo_result({
+                "success": True,
+                "pose_graph": pg,
+                "optimized_poses": pg.optimized_poses,
+                "other_hypothesis_id": hypo_id,
+                "target_node_id": target_node_id,
+            })
+            if not applied['success']:
+                result['message'] = applied.get('message')
+                return result
 
         result.update(
             {
@@ -1510,12 +1768,35 @@ class HypothesisManager:
                 "pose_graph": pg,
                 "optimized_poses": pg.optimized_poses,
                 "optim_nodes_ids": optim_node_ids,
-                "fixed_nodes_ids": {fixed_node_id},
+                "fixed_nodes_ids": fixed_ids,
                 "message": None,
             }
         )
 
         return result
+
+    def _candidate_edge_outlier_fraction(self, pg) -> Tuple[float, int]:
+        """Fraction of the merged hypothesis' visual edges (edges touching a twin vertex) whose Mahalanobis residual
+        at the optimised poses exceeds `verify_outlier_sigma`."""
+        vm = pg.vertex_map
+        n_out, n = 0, 0
+        for (a, b, factors) in pg.edges:
+            if a in self.nodes and b in self.nodes:
+                continue                      # hypothesis-0 edge
+            if a not in vm or b not in vm:
+                continue
+            pa = pg.optimized_poses.get(a, vm[a].pose)
+            pb = pg.optimized_poses.get(b, vm[b].pose)
+            pred = pa.Inv() @ pb
+            for f in factors:
+                if f.type != EdgeType.VISUAL:
+                    continue
+                r = (f.mean.Inv() @ pred).Log().tensor()
+                std = f.std.tensor().clamp(min=1e-3)
+                if float(torch.norm(r / std)) > self.verify_outlier_sigma * math.sqrt(6.0):
+                    n_out += 1
+                n += 1
+        return (n_out / n if n else 0.0), n
 
     def apply_pgo_result(self, pgo_result: Dict[str, Any]) -> Dict[str, Any]:
         """Apply a PGO result to update node poses and optionally merge hypotheses.
@@ -1561,8 +1842,10 @@ class HypothesisManager:
                     kf.pose_mu[0] = optimized_pose
                     if self.chart_aware:
                         kf.pose_charts[0] = pg.output_chart
-                    # Reduce uncertainty after optimization
-                    kf.pose_std[0] = kf.pose_std[0] * 0.5
+                    # The keyframe's std is left as it is: the optimisation does not compute marginals, and halving
+                    # it at every optimisation (the previous behaviour) underflowed to exactly zero after ~100
+                    # optimisations (HSSD house: 1037 of 1045 keyframes at std 0), after which the belief fusion
+                    # produced garbage poses that no later optimisation could repair
                     kf.last_pgo_step = int(self.step_counter)
                     logger.debug(f"Applied PGO update to KF {node_id}")
 
@@ -1631,10 +1914,27 @@ class HypothesisManager:
         if self.system.topo_map is not None:
             self.system.topo_map.rebuild_graph()
 
+    def _h0_unlocalized(self) -> bool:
+        """Relocalization session whose hypothesis 0 is not (or no longer) anchored to the stored map."""
+        sysm = self.system
+        v = getattr(sysm, "_lc_verifier", None)
+        return getattr(sysm, "_session_start_kf_id", 0) > 0 and (v is None or v.anchor is None)
+
+    def _reset_session_anchor(self):
+        """Hypothesis 0 is being replaced (merge / adoption): its link to the stored map is void."""
+        v = getattr(self.system, "_lc_verifier", None)
+        if v is not None:
+            v.anchor = None
+        for name in ("_anchor_pending", "_contra_pending"):
+            pend = getattr(self.system, name, None)
+            if pend is not None:
+                pend.clear()
+
     def merge_hypotheses(self, comp_idx: int, conditional_transport_done=False):
         """
         Merges the hypothesis after loop closure
         """
+        self._reset_session_anchor()
         if self.source_states is not None and not conditional_transport_done:
             raise NotImplementedError("Conditional pose/source graph transport is required before merging hypotheses")
         logger.debug(f"Merging hypothesis {comp_idx} after loop closure")
@@ -1671,58 +1971,99 @@ class HypothesisManager:
 
         # Reset evidence history if present
         self.llr_hist[comp_idx, :] = 0.0
+        self.hist_valid[comp_idx, :] = False
+        self.log_c_hist[comp_idx, :] = 0.0
+        self.log_u_hist[comp_idx, :] = 0.0
+        self.log_conf_hist[comp_idx, :] = 0.0
         self.last_sum_pos[comp_idx] = 0.0
         self.last_hit_rate[comp_idx] = 0.0
 
     def change_hypo_to_first(self, comp_idx: int):
         """
-        Changes the hypothesis with the highest weight to the first component, and remove it
+        Adopt hypothesis `comp_idx` as hypothesis 0: its keyframe poses (from its start index on), its
+        visual edges and its mixture component replace those of hypothesis 0, and the slot is freed.
         """
         if self.source_states is not None:
             raise NotImplementedError("Conditional pose/source graph transport is required before promoting a hypothesis")
         logger.debug(f"Changing hypothesis {comp_idx} to first component")
+        logger.info(f"Adopting hypothesis {comp_idx} as hypothesis 0")
         hypothesis_exist = comp_idx in self.hypotheses
-
         if not hypothesis_exist:
             logger.debug(f"Hypothesis {comp_idx} does not exist, skipping")
             return
-
-        # copy edges and adjs
-        # TODO: this is not correct, as the edge comp_ids are not updated
-        self.hypotheses[0].visual_edges.update(self.hypotheses[comp_idx].visual_edges)
-        
-        # Merge adjacency sets - set union automatically handles duplicates
-        for node_id, neighbors in self.hypotheses[comp_idx].visual_adjacency.items():
-            if node_id not in self.hypotheses[0].visual_adjacency:
-                self.hypotheses[0].visual_adjacency[node_id] = neighbors.copy()
-            else:
-                self.hypotheses[0].visual_adjacency[node_id] |= neighbors
-
-        # update the poses in the keyframes
-        # only hypothesis existing, new components is added
-        for kf in self.nodes.values():
-            if kf.id >= self.hypotheses[comp_idx].start_idx:
-                kf.pose_mu[0] = kf.pose_mu[comp_idx]
-                kf.pose_std[0] = kf.pose_std[comp_idx]
-                kf.pose_weights[0] = kf.pose_weights[comp_idx]
-                kf.pose_mu[comp_idx] = pp.identity_SE3(1, device=kf.pose_mu.device)
-                kf.pose_std[comp_idx] = pp.identity_se3(1, device=kf.pose_mu.device)
-                kf.pose_weights[comp_idx] = 0.0
-        
-        # remove the hypothesis
-        del self.hypotheses[comp_idx]
-
-
+        with self.graph_lock:
+            for edge_key, edge_factors in self.hypotheses[comp_idx].visual_edges.items():
+                for edge_factor in edge_factors:
+                    if edge_factor.from_comp_id == comp_idx:
+                        edge_factor.from_comp_id = 0
+                    if edge_factor.to_comp_id == comp_idx:
+                        edge_factor.to_comp_id = 0
+                    if edge_factor.from_comp_id == 0 and edge_factor.to_comp_id == 0:
+                        bucket = self.hypotheses[0].visual_edges.setdefault(edge_key, [])
+                        if not any(e is edge_factor for e in bucket):
+                            bucket.append(edge_factor)
+                        self.hypotheses[0].visual_adjacency.setdefault(edge_key[0], set()).add(edge_key[1])
+                        self.hypotheses[0].visual_adjacency.setdefault(edge_key[1], set()).add(edge_key[0])
+            start_idx = self.hypotheses[comp_idx].start_idx
+            for kf in self.nodes.values():
+                if kf.id >= start_idx:
+                    kf.pose_mu[0] = kf.pose_mu[comp_idx]
+                    kf.pose_std[0] = kf.pose_std[comp_idx]
+                    kf.pose_weights[0] = kf.pose_weights[0] + kf.pose_weights[comp_idx]
+                    kf.pose_mu[comp_idx] = pp.identity_SE3(1, device=kf.pose_mu.device)
+                    kf.pose_std[comp_idx] = pp.identity_se3(1, device=kf.pose_mu.device)
+                    kf.pose_weights[comp_idx] = 0.0
+            del self.hypotheses[comp_idx]
         mu, sigma, weights = self.dist
         mu[0] = mu[comp_idx]
         sigma[0] = sigma[comp_idx]
-        weights[0] = weights[comp_idx]
+        weights[0] = weights[0] + weights[comp_idx]
         mu[comp_idx] = pp.identity_SE3(1, device=mu.device)
         sigma[comp_idx] = pp.identity_se3(1, device=sigma.device)
         weights[comp_idx] = 0.0
         weights = weights / weights.sum()
         self.dist = (mu, sigma, weights)
-    
+        self.realized[comp_idx] = False
+        self.ttl[comp_idx] = 0
+        self.newborn[comp_idx] = False
+        self.llr_hist[comp_idx, :] = 0.0
+        self.hist_valid[comp_idx, :] = False
+        self.log_c_hist[comp_idx, :] = 0.0
+        self.log_u_hist[comp_idx, :] = 0.0
+        self.log_conf_hist[comp_idx, :] = 0.0
+        self.last_sum_pos[comp_idx] = 0.0
+        self.last_hit_rate[comp_idx] = 0.0
+        self._adopt_counter = (None, 0)
+
+    def maybe_adopt_dominant_hypothesis(self, force: bool = False) -> bool:
+        """Adopt a realized hypothesis that has held the belief while hypothesis 0 died (see config
+        adopt_*).  With `force`, adopt immediately whenever the dominant component is not 0 (used before
+        the map is saved)."""
+        weights = self.dist[2]
+        if weights.numel() < 2:
+            return False
+        k = int(torch.argmax(weights).item())
+        cfg_steps = getattr(self.cfg, "adopt_dominant_steps", 20)
+        w0_max = getattr(self.cfg, "adopt_w0_max", 0.05)
+        wk_min = getattr(self.cfg, "adopt_wk_min", 0.9)
+        dominant = k != 0 and k in self.hypotheses and bool(self.realized[k]) and float(weights[k]) > wk_min \
+            and float(weights[0]) < w0_max
+        if not dominant:
+            self._adopt_counter = (None, 0)
+            return False
+        comp, count = getattr(self, "_adopt_counter", (None, 0))
+        count = count + 1 if comp == k else 1
+        self._adopt_counter = (k, count)
+        dist = float(torch.norm(self.dist[0][k].tensor()[:3] - self.dist[0][0].tensor()[:3]))
+        if dist < getattr(self.cfg, "adopt_close_dist", 3.0):
+            cfg_steps = min(cfg_steps, getattr(self.cfg, "adopt_close_steps", 5))
+        if force or count >= cfg_steps:
+            logger.info(f"Adopting dominant hypothesis {k} as hypothesis 0 ({dist:.1f} m away, after {count} steps)")
+            self._reset_session_anchor()
+            self.change_hypo_to_first(k)
+            return True
+        return False
+
     def save_state(self):
         """Save the hypothesis manager state for map persistence.
         Only saves hypothesis 0 (ground truth) and temporary keyframes.
@@ -1767,6 +2108,7 @@ class HypothesisManager:
                 "std": edge.std.cpu(),
                 "type": edge.type.name,
                 "conditional_pose": edge.conditional_pose.record() if edge.conditional_pose is not None else None,
+                "n_frames": getattr(edge, "n_frames", None),
             }
 
         # --- 3. Save only hypothesis 0 (ground truth) ---
@@ -1783,6 +2125,9 @@ class HypothesisManager:
                         "from_comp_id": edge.from_comp_id,
                         "to_comp_id": edge.to_comp_id,
                         "conditional_pose": edge.conditional_pose.record() if edge.conditional_pose is not None else None,
+                        "conf": getattr(edge, "conf", None),
+                        "noise_scale": getattr(edge, "noise_scale", None),
+                        "informative": getattr(edge, "informative", None),
                     }
                     for edge in edge_list
                 ]
@@ -1822,7 +2167,7 @@ class HypothesisManager:
             atlas = db.get_atlas(kf_data["atlas_id"]) if kf_data["atlas_id"] is not None else None
 
             kf = Keyframe(
-                pose_mu=kf_data["pose_mu"].to(storage_device) if kf_data["pose_mu"] is not None else None,
+                pose_mu=normalize_SE3(kf_data["pose_mu"]).to(storage_device) if kf_data["pose_mu"] is not None else None,   # maps saved before the renormalization fix carry |q| < 1
                 pose_std=kf_data["pose_std"].to(storage_device) if kf_data["pose_std"] is not None else None,
                 pose_weights=kf_data["pose_weights"].to(storage_device) if kf_data["pose_weights"] is not None else None,
                 atlas=atlas,
@@ -1846,12 +2191,14 @@ class HypothesisManager:
 
         # --- 3. Restore odometry edges ---
         self.odom_edges.clear()
+        self.odom_edges_version = getattr(self, "odom_edges_version", 0) + 1
         for edge_key, edge_data in hypo_data["odom_edges"].items():
             edge = Edge(
                 mean=edge_data["mean"].to(device),
                 std=edge_data["std"].to(device),
                 type=EdgeType[edge_data["type"]],
             )
+            edge.n_frames = edge_data.get("n_frames")
             self.odom_edges[edge_key] = edge
             if edge_data.get('conditional_pose') is not None:
                 edge.conditional_pose = ConditionalPose.from_record(edge_data['conditional_pose'])
@@ -1878,6 +2225,9 @@ class HypothesisManager:
                         from_comp_id=edge_data["from_comp_id"],
                         to_comp_id=edge_data["to_comp_id"],
                     )
+                    edge.conf = edge_data.get("conf")
+                    edge.noise_scale = edge_data.get("noise_scale")
+                    edge.informative = edge_data.get("informative")
                     hypothesis.visual_edges.setdefault(edge_key, []).append(edge)
                     if edge_data.get('conditional_pose') is not None:
                         edge.conditional_pose = ConditionalPose.from_record(edge_data['conditional_pose'])

@@ -17,6 +17,7 @@ class SimpleTopoConfig:
     proximity_std_rot: float = 0.1
     use_proximity_grid: bool = False
     enable_incremental_proximity: bool = False
+    enabled: bool = True     # False: no proximity graph (planning only); its refresh after a PGO is O(N^2)
 
 
 class SimpleTopo:
@@ -143,7 +144,7 @@ class SimpleTopo:
         This mirrors the previous `_update_proximity_edges_after_pgo` logic but is
         encapsulated here. Assumes affected_ids is a set of keyframe IDs.
         """
-        if not affected_ids:
+        if not affected_ids or not getattr(self.config, "enabled", True):
             return
 
         with self._hm.graph_lock:

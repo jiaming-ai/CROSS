@@ -11,12 +11,14 @@ from cross.core.types import Edge, EdgeType
 from cross.utils.profile import timeit, timeblock
 
 
-def pypose_to_gtsam_pose3(pose: pp.LieTensor) -> 'gtsam.Pose3':
-    """Converts a pypose SE3 LieTensor to a gtsam.Pose3 object."""
-    pose_tensor = pose.tensor().cpu().numpy().astype(np.float64)
-    # pypose quat: [qx, qy, qz, qw]
-    # gtsam quat: [w, x, y, z]
-    rot = gtsam.Rot3(pose_tensor[6], pose_tensor[3], pose_tensor[4], pose_tensor[5])
+def pypose_to_gtsam_pose3(pose) -> 'gtsam.Pose3':
+    """Converts a pypose SE3 LieTensor (or a (7,) array) to a gtsam.Pose3 object."""
+    pose_tensor = np.asarray(pose, dtype=np.float64).reshape(-1) if isinstance(pose, np.ndarray) else pose.tensor().detach().cpu().numpy().astype(np.float64).reshape(-1)
+    # pypose quat: [qx, qy, qz, qw]; gtsam quat: [w, x, y, z].  The quaternion is renormalised: gtsam builds the
+    # rotation matrix assuming a unit quaternion, and a non-unit one gives a scaled, non-orthonormal matrix whose
+    # errors compound through the pypose <-> gtsam round trip of every optimisation (|q| reached 1.67 after ~100)
+    q = pose_tensor[3:7] / max(float(np.linalg.norm(pose_tensor[3:7])), 1e-12)
+    rot = gtsam.Rot3(q[3], q[0], q[1], q[2])
     trans = gtsam.Point3(pose_tensor[0], pose_tensor[1], pose_tensor[2])
     
     return gtsam.Pose3(rot, trans)
@@ -24,7 +26,8 @@ def pypose_to_gtsam_pose3(pose: pp.LieTensor) -> 'gtsam.Pose3':
 
 def gtsam_to_pypose_pose3(pose: 'gtsam.Pose3', device: str) -> pp.LieTensor:
     """Converts a gtsam.Pose3 object to a pypose SE3 LieTensor."""
-    rot_quat = pose.rotation().toQuaternion().coeffs()  # [x, y, z, w]
+    rot_quat = np.asarray(pose.rotation().toQuaternion().coeffs(), dtype=np.float64)  # [x, y, z, w]
+    rot_quat = rot_quat / max(float(np.linalg.norm(rot_quat)), 1e-12)
     trans = pose.translation()  # [x, y, z]
     # pypose quat: [qx, qy, qz, qw]
     pypose_tensor = np.concatenate([trans, rot_quat])
@@ -53,6 +56,8 @@ class PoseGraph:
         k_hop: int = 2,
         device: str = "cuda",
         uncertainty_scales: Optional[Dict[EdgeType, float]] = None,
+        noise_fn=None,
+        skip_fn=None,
         ):
         """
         Args:
@@ -62,7 +67,14 @@ class PoseGraph:
             k_hop: Visual edge expansion hops
             device: Device for tensor operations
             uncertainty_scales: Optional scaling factors for edge uncertainties by type
+            noise_fn: optional callable factor -> sigmas (pypose order, 6) replacing the factor's own std
+                      (calibrated noise model of the verified loop closure); None keeps the stored std
+            skip_fn: optional callable factor -> bool; True excludes the factor from the optimisation (visual
+                     measurements that the odometry chain already explains better: the information criterion of
+                     the verified loop closure)
         """
+        self.noise_fn = noise_fn
+        self.skip_fn = skip_fn
         self.nodes = hypothesis_manager.nodes
         self.odom_edges = hypothesis_manager.odom_edges
         self.hypothesis_manager = hypothesis_manager
@@ -373,10 +385,18 @@ class PoseGraph:
             previous_kf_id = None
             # Important: temp vertex ids start from the last keyframe id in the nodes
             # to avoid conflicts with the original keyframe ids
-            temp_vertex_id = max(self.nodes) + 1 if self.chart_aware else len(self.nodes)
+            # (must not collide with any keyframe id: ids are not dense once temporary keyframes are
+            # pruned or a map is loaded, so len(nodes) can be far below the maximum id)
+            temp_vertex_id = max(self.nodes.keys()) + 1
             
             for kf_id in common_kf_ids:
                 kf = self.nodes[kf_id]
+                # keyframes created before the hypothesis carried any weight have no pose in it
+                # (identity placeholder): twinning them would tie the chain to the origin
+                if float(kf.pose_weights[other_hypothesis_id]) <= 0.0:
+                    previous_temp_id = None
+                    previous_kf_id = None
+                    continue
                 
                 # Create a temp vertex for this keyframe in the other hypothesis
                 kf_to_temp_vertex[kf_id] = temp_vertex_id
@@ -428,9 +448,7 @@ class PoseGraph:
                     temp_u = kf_to_temp_vertex[u]
                     temp_v = kf_to_temp_vertex[v]
                 else:
-                    if self.chart_aware:
-                        continue  # retired or absent pose components have no vertex
-                    raise KeyError((u, v))
+                    continue   # an endpoint has no twin (keyframe predates the hypothesis): skip the edge
 
                 # Filter factors that belong to this hypothesis
                 # Accept edges where:
@@ -447,6 +465,43 @@ class PoseGraph:
                 edges.append((temp_u, temp_v, relevant_factors))
         
         # Store constructed graph
+        # Initialize the new-session vertices of hypothesis 0 (kf_id >= start_idx) from their twins in the
+        # other hypothesis: their hypothesis-0 poses form an odometry chain hanging off the new atlas
+        # centre, possibly hundreds of metres from the map, and LM does not recover from that; the
+        # tracked hypothesis already encodes the loop-closure alignment (identity LC edges make this exact).
+        # (chart-aware graphs keep each chart's own coordinates; the join transports them after the solve)
+        if other_hypothesis_id != 0 and other_hypothesis_id in hypotheses and not self.chart_aware:
+            start_idx = hypotheses[other_hypothesis_id].start_idx
+            # every keyframe of the current session (including the initial one created before the
+            # hypothesis was born) is re-initialised, otherwise the odometry edge from the session's
+            # initial keyframe (still at the atlas centre) drags the merged chain
+            sess_start = getattr(getattr(self.hypothesis_manager, "system", None), "_session_start_kf_id", 0) or start_idx
+            start_idx = min(start_idx, sess_start) if sess_start > 0 else start_idx
+            twin_of = {v.original_kf_id: v for v in vertices if v.id not in self.nodes}
+            # session keyframes without a twin (created before the hypothesis) are re-initialised by
+            # composing the nearest twinned keyframe with the odometry chain
+            for v in vertices:
+                if v.original_comp_id == 0 and v.id in self.nodes and v.id >= start_idx:
+                    if v.id in twin_of:
+                        v.pose = twin_of[v.id].pose
+            for v in vertices:
+                if v.original_comp_id == 0 and v.id in self.nodes and v.id >= start_idx and v.id not in twin_of:
+                    # walk forward along odometry edges to the first twinned keyframe
+                    chain, cur, ok = [], v.id, False
+                    for _ in range(10000):
+                        nxt = [b for (a, b) in self.odom_edges if a == cur]
+                        if not nxt:
+                            break
+                        chain.append((cur, nxt[0]))
+                        cur = nxt[0]
+                        if cur in twin_of:
+                            ok = True
+                            break
+                    if ok:
+                        T = twin_of[cur].pose
+                        for (a, b) in reversed(chain):
+                            T = T @ self.odom_edges[(a, b)].mean.Inv()
+                        v.pose = T
         self.vertices = vertices
         self.edges = edges
         self.vertex_map = {v.id: v for v in vertices}
@@ -670,12 +725,13 @@ class PoseGraph:
         initial = gtsam.Values()
         all_node_ids = optim_node_ids.union(fixed_node_ids)
         
-        # 1. Prepare initial estimates for all nodes
-        for node_id in all_node_ids:
+        # 1. Prepare initial estimates for all nodes (one device transfer for all vertices)
+        ids_list = [i for i in all_node_ids]
+        for node_id in ids_list:
             assert node_id in self.vertex_map, f"Node {node_id} not found in vertex map"
-            vertex = self.vertex_map[node_id]
-            initial_pose_gtsam = pypose_to_gtsam_pose3(vertex.pose)
-            initial.insert(node_id, initial_pose_gtsam)
+        poses_np = torch.stack([self.vertex_map[i].pose.tensor().reshape(-1) for i in ids_list]).detach().cpu().numpy().astype(np.float64) if ids_list else np.zeros((0, 7))
+        for node_id, p in zip(ids_list, poses_np):
+            initial.insert(node_id, pypose_to_gtsam_pose3(p))
         
         # 2. Add prior factors for fixed nodes
         prior_noise = gtsam.noiseModel.Diagonal.Sigmas(np.full(6, 1e-9))
@@ -687,23 +743,43 @@ class PoseGraph:
         # 3. Add between factors for all edges
         has_edges = False
         conditional_factors = []
+        self.n_factors = {"used_visual": 0, "skipped_visual": 0, "odometry": 0, "loop_closure": 0}
         for (id1, id2, factors) in self.edges:
             if id1 in all_node_ids and id2 in all_node_ids:
+                if self.skip_fn is not None:
+                    kept = [f for f in factors if not self.skip_fn(f)]
+                    self.n_factors["skipped_visual"] += sum(1 for f in factors if f.type == EdgeType.VISUAL) - sum(1 for f in kept if f.type == EdgeType.VISUAL)
+                    factors = kept
+                    if not factors:
+                        continue
+                for f in factors:
+                    if f.type == EdgeType.VISUAL:
+                        self.n_factors["used_visual"] += 1
+                    elif f.type == EdgeType.ODOMETRY:
+                        self.n_factors["odometry"] += 1
+                    else:
+                        self.n_factors["loop_closure"] += 1
                 num_visual_edges = sum(1 for f in factors if f.type == EdgeType.VISUAL)
                 for factor in factors:
                     has_edges = True
-                    # Convert measurement from pypose to gtsam
-                    measurement_gtsam = pypose_to_gtsam_pose3(factor.mean)
+                    # Convert measurement from pypose to gtsam (cached numpy copy of the measurement)
+                    measurement_gtsam = pypose_to_gtsam_pose3(factor.mean_np if hasattr(factor, "mean_np") else factor.mean)
                     
-                    # Convert diagonal std from pypose to gtsam noise model
-                    pypose_stds = factor.std.tensor().cpu().numpy().flatten().copy()
+                    # Convert diagonal std from pypose to gtsam noise model (calibrated model if available)
+                    pypose_stds = None
+                    if self.noise_fn is not None:
+                        s = self.noise_fn(factor)
+                        if s is not None:
+                            pypose_stds = np.asarray(s, dtype=np.float64).copy()
+                    if pypose_stds is None:
+                        pypose_stds = (factor.std_np if hasattr(factor, "std_np") else factor.std.tensor().cpu().numpy().flatten()).astype(np.float64).copy()
 
                     # Apply uncertainty scaling factor
                     if factor.type in self.uncertainty_scales:
                         pypose_stds *= self.uncertainty_scales[factor.type]
 
                     # Scale std by number of visual edges
-                    if factor.type == EdgeType.VISUAL and num_visual_edges > 0:
+                    if factor.type == EdgeType.VISUAL and num_visual_edges > 0 and getattr(self, "scale_by_multiplicity", True):
                         pypose_stds *= num_visual_edges
 
                     # Ensure non-negative stds
@@ -727,7 +803,7 @@ class PoseGraph:
                         conditional_factors.append((nonlinear,factor))
 
         # Log edge statistics for debugging
-        if has_edges:
+        if has_edges and logger.level("DEBUG").no >= 100:   # disabled: costs a device sync per factor
             edge_stats = {'LOOP_CLOSURE': [], 'ODOMETRY': [], 'VISUAL': []}
             for (id1, id2, factors) in self.edges:
                 if id1 in all_node_ids and id2 in all_node_ids:
@@ -753,16 +829,42 @@ class PoseGraph:
             return
         
         # 4. Setup and run optimizer
+        # a vertex without any factor (all its edges skipped or quarantined) is not part of the elimination ordering
+        # and makes GTSAM abort ("inconsistent arguments"): drop such variables, they keep their current pose
+        used = set()
+        for i in range(graph.size()):
+            f = graph.at(i)
+            if f is not None:
+                used.update(int(k) for k in f.keys())
+        unused = [int(k) for k in initial.keys() if int(k) not in used]
+        for k in unused:
+            initial.erase(k)
+        if unused:
+            logger.debug(f"PGO: {len(unused)} unconstrained vertices dropped ({unused[:8]})")
+            optim_node_ids = [n for n in optim_node_ids if n not in set(unused)]
         params = gtsam.LevenbergMarquardtParams()
+        self.initial_cost = graph.error(initial)
+        if getattr(self, "eval_only", False):          # diagnostics: cost at the initial values, no optimisation
+            self.lm_iterations = 0
+            self.optimization_cost = self.initial_cost
+            self.optimized_poses = {}
+            # per-factor costs (largest first) for the diagnostics
+            self.factor_costs = sorted(((float(graph.at(i).error(initial)), str(graph.at(i).keys())) for i in range(graph.size())), reverse=True)[:5]
+            self._graph, self._initial = graph, initial
+            return
         optimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial, params)
         with timeblock("GTSAM PGO"):
             result = optimizer.optimize()
+        self.lm_iterations = int(optimizer.iterations())
+        self._graph, self._result, self._initial = graph, result, initial     # diagnostics
         
         # 5. Extract results
         self.optimization_cost = graph.error(result)
         
         self.optimized_poses = {}
         for node_id in optim_node_ids:
+            if not result.exists(node_id):
+                continue
             optimized_pose_gtsam = result.atPose3(node_id)
             optimized_pose_pypose = gtsam_to_pypose_pose3(optimized_pose_gtsam, self.device)
             self.optimized_poses[node_id] = optimized_pose_pypose
