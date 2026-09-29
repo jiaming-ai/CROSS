@@ -59,6 +59,7 @@ class MonoConfig:
     ff_checkpoint: str = "depth-anything/DA3-LARGE-1.1"
     ff_resolution: int = 504
     ff_min_covisibility: float = 0.3
+    ff_fallback_only: bool = False  # run the feed-forward model only on references the two-view matcher rejects
     retrieval_matcher: str = "mnn"
     two_view_rotation_check: bool = False
     filter_mode: str = "full"

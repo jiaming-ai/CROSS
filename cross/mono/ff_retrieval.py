@@ -1,8 +1,9 @@
-"""Relative poses of retrieved keyframes from one feed-forward multi-view pass (DA3 or VGGT-Omega).
+"""Relative poses of retrieved keyframes from feed-forward two-view passes (DA3 or VGGT-Omega).
 
-The current image and all retrieved keyframes share one forward pass, so every relative pose comes from the same
-model gauge. Each reference's stored metric depth fixes the scale of its own relative pose: a pose to a keyframe of
-a loaded map is expressed in that map's scale, independent of the current session's learned-scale bias. A symmetric
+Each retrieved keyframe is paired with the current image in its own (batched) two-view pass; a joint pass over all
+references lets a single non-overlapping reference corrupt the others. The reference's stored metric depth fixes the
+scale of its relative pose, so a pose to a keyframe of a loaded map is expressed in that map's scale, independent of
+the current session's learned-scale bias. A symmetric
 covisibility score (predicted depth of one view reprojected into the other with consistent depth) replaces the PnP
 inlier ratio as the verification and confidence. CROSS's hypothesis filter and delayed commitment are unchanged.
 """
@@ -30,19 +31,35 @@ def _homogeneous(T):
 
 
 class _DA3:
+    """Batched two-view passes through the raw DA3 network (ImageNet-normalized, sides multiple of 14)."""
+
     def __init__(self, checkpoint, device):
         from depth_anything_3.api import DepthAnything3
         self.model = DepthAnything3.from_pretrained(checkpoint).to(device).eval()
         self.device = device
+        self.mean = torch.tensor([0.485, 0.456, 0.406], device=device)[:, None, None]
+        self.std = torch.tensor([0.229, 0.224, 0.225], device=device)[:, None, None]
+
+    def _prepare(self, rgb, resolution):
+        import cv2
+        h, w = rgb.shape[:2]
+        ratio = resolution / max(h, w)
+        size = (max(14, round(w * ratio / 14) * 14), max(14, round(h * ratio / 14) * 14))
+        image = torch.as_tensor(cv2.resize(rgb, size, interpolation=cv2.INTER_AREA), device=self.device)
+        return (image.permute(2, 0, 1).float() / 255. - self.mean) / self.std
 
     @torch.inference_mode()
-    def __call__(self, rgbs, resolution):
-        pred = self.model.inference(list(rgbs), process_res=resolution, process_res_method="upper_bound_resize",
-                                    ref_view_strategy="first")
-        c2w = np.stack([_inverse(T) for T in _homogeneous(pred.extrinsics)])
-        depth = torch.as_tensor(np.asarray(pred.depth, dtype=np.float32), device=self.device)
-        conf = None if pred.conf is None else torch.as_tensor(np.asarray(pred.conf, dtype=np.float32), device=self.device)
-        return c2w, np.asarray(pred.intrinsics, dtype=np.float64), depth, conf
+    def __call__(self, pairs, resolution):
+        """pairs: list of (reference_rgb, current_rgb); returns per-pair (c2w[2], K[2], depth[2], conf[2])."""
+        batch = torch.stack([torch.stack([self._prepare(a, resolution), self._prepare(b, resolution)]) for a, b in pairs])
+        result = self.model(batch, ref_view_strategy="first", export_feat_layers=[])
+        depth = result["depth"].float()
+        depth = depth[..., 0] if depth.dim() == 5 else depth
+        conf = result["depth_conf"].float() if "depth_conf" in result else None
+        extrinsics = result["extrinsics"].float().cpu().numpy()
+        intrinsics = result["intrinsics"].float().cpu().numpy().astype(np.float64)
+        return [(np.stack([_inverse(T) for T in _homogeneous(extrinsics[i])]), intrinsics[i], depth[i],
+                 None if conf is None else conf[i]) for i in range(len(pairs))]
 
 
 class _VGGTOmega:
@@ -63,24 +80,26 @@ class _VGGTOmega:
         self.device = device
 
     @torch.inference_mode()
-    def __call__(self, rgbs, resolution):
+    def __call__(self, pairs, resolution):
         import cv2
-        h, w = rgbs[0].shape[:2]
+        h, w = pairs[0][0].shape[:2]
         width = resolution
         height = max(16, int(round(h * resolution / w / 16)) * 16)
-        images = torch.stack([torch.from_numpy(cv2.resize(x, (width, height), interpolation=cv2.INTER_AREA))
-                              .permute(2, 0, 1).float() / 255. for x in rgbs])[None].to(self.device)
+        prepare = lambda x: torch.from_numpy(cv2.resize(x, (width, height), interpolation=cv2.INTER_AREA)).permute(2, 0, 1).float() / 255.
+        images = torch.stack([torch.stack([prepare(a), prepare(b)]) for a, b in pairs]).to(self.device)
         with torch.autocast(device_type="cuda", dtype=self.dtype):
             pred = self.model(images)
         extrinsics, intrinsics = self.decode(pred["pose_enc"], (height, width))
-        c2w = np.stack([_inverse(T) for T in _homogeneous(extrinsics[0].float().cpu().numpy())])
-        depth = pred["depth"][0].float()
-        depth = depth[..., 0] if depth.dim() == 4 else depth
+        depth = pred["depth"].float()
+        depth = depth[..., 0] if depth.dim() == 5 else depth
         conf = pred.get("depth_conf")
         if conf is not None:
-            conf = conf[0].float()
-            conf = conf[..., 0] if conf.dim() == 4 else conf
-        return c2w, intrinsics[0].float().cpu().numpy().astype(np.float64), depth, conf
+            conf = conf.float()
+            conf = conf[..., 0] if conf.dim() == 5 else conf
+        extrinsics = extrinsics.float().cpu().numpy()
+        intrinsics = intrinsics.float().cpu().numpy().astype(np.float64)
+        return [(np.stack([_inverse(T) for T in _homogeneous(extrinsics[i])]), intrinsics[i], depth[i],
+                 None if conf is None else conf[i]) for i in range(len(pairs))]
 
 
 def covisibility(c2w, K, depth, conf, source, target, grid=48, tolerance=0.15, conf_quantile=0.3):
@@ -157,18 +176,17 @@ class FeedForwardRelativePose:
             raise ValueError("Feed-forward retrieval needs the stored metric depth of every keyframe")
         current = self.rgb(curr_image)
         size = (current.shape[1], current.shape[0])
-        views = [current] + [cv2.resize(self.rgb(image), size, interpolation=cv2.INTER_AREA) for image in ref_image]
-        c2w, K, depth, conf = self.model(views, self.resolution)
-        depth_np = depth.cpu().numpy()
-        conf_np = None if conf is None else conf.cpu().numpy()
+        # Independent (reference, current) passes, batched: a non-overlapping reference in a joint
+        # multi-view pass corrupts the poses of the overlapping ones.
+        pairs = [(cv2.resize(self.rgb(image), size, interpolation=cv2.INTER_AREA), current) for image in ref_image]
+        predictions = self.model(pairs, self.resolution) if pairs else []
         poses, confidences, stds = [], [], []
         valid = np.zeros(len(ref_image), dtype=bool)
         self.last_pair_audit = []
-        for i in range(len(ref_image)):
-            view = 1 + i
-            covis = min(covisibility(c2w, K, depth, conf, 0, view), covisibility(c2w, K, depth, conf, view, 0))
-            log_scale, mad = depth_scale(ref_depth[i].detach().cpu().float().numpy().squeeze(), depth_np[view],
-                                         None if conf_np is None else conf_np[view])
+        for i, (c2w, K, depth, conf) in enumerate(predictions):
+            covis = min(covisibility(c2w, K, depth, conf, 0, 1), covisibility(c2w, K, depth, conf, 1, 0))
+            log_scale, mad = depth_scale(ref_depth[i].detach().cpu().float().numpy().squeeze(), depth[0].cpu().numpy(),
+                                         None if conf is None else conf[0].cpu().numpy())
             audit = dict(proposal_method="feed_forward", backend=self.backend_name, covisibility=covis,
                          log_scale=log_scale, log_scale_mad=mad, accepted=False)
             self.last_pair_audit.append(audit)
@@ -178,7 +196,7 @@ class FeedForwardRelativePose:
             if covis < self.min_covisibility:
                 audit["reason"] = "low_covisibility"
                 continue
-            pose = _inverse(c2w[view]) @ c2w[0]
+            pose = _inverse(c2w[0]) @ c2w[1]        # T_ref_current
             pose[:3, 3] *= np.exp(log_scale)
             distance = float(np.linalg.norm(pose[:3, 3]))
             if not np.isfinite(pose).all() or distance > self.max_distance:
@@ -197,3 +215,42 @@ class FeedForwardRelativePose:
             return pp.identity_SE3(0, device=self.device), valid, torch.empty(0)
         matrices = torch.as_tensor(np.array(poses), dtype=torch.float32, device=self.device)
         return pp.from_matrix(matrices, pp.SE3_type), valid, torch.tensor(confidences)
+
+
+class FallbackFeedForwardRelativePose:
+    """Keep a matcher-based estimator's accepted poses; ask the feed-forward model only about rejected references.
+
+    Matching succeeds on most same-session and easy revisit pairs; the learned two-view model is reserved for the
+    references it rejects (large viewpoint or appearance change), which bounds its GPU load in steady state.
+    """
+
+    def __init__(self, primary, feed_forward):
+        self.primary, self.feed_forward = primary, feed_forward
+        self.last_stds = None
+        self.last_pair_audit = []
+
+    def estimate_pose(self, ref_image, ref_depth, curr_image, curr_depth, **kwargs):
+        import pypose as pp
+        poses, valid, confidences = self.primary.estimate_pose(ref_image, ref_depth, curr_image, curr_depth, **kwargs)
+        audits = list(getattr(self.primary, "last_pair_audit", None) or [dict() for _ in range(len(ref_image))])
+        stds = self.primary.last_stds
+        by_index = {int(i): (poses[k], confidences[k], stds[k]) for k, i in enumerate(np.flatnonzero(valid))}
+        rejected = np.flatnonzero(~valid)
+        if len(rejected):
+            index = torch.as_tensor(rejected, device=ref_image.device if torch.is_tensor(ref_image) else "cpu")
+            ff_poses, ff_valid, ff_conf = self.feed_forward.estimate_pose(
+                ref_image[index], ref_depth[index.to(ref_depth.device)], curr_image, curr_depth)
+            for k, (i, audit) in enumerate(zip(rejected, self.feed_forward.last_pair_audit)):
+                audits[i] = dict(audits[i], feed_forward=audit, reason=audit["reason"] if audit["accepted"] else audits[i].get("reason"))
+            for k, i in enumerate(rejected[ff_valid]):
+                by_index[int(i)] = (ff_poses[k], ff_conf[k], self.feed_forward.last_stds[k])
+                valid[i] = True
+        self.last_pair_audit = audits
+        order = sorted(by_index)
+        if not order:
+            self.last_stds = torch.empty((0, 6))
+            return pp.identity_SE3(0, device=self.feed_forward.device), valid, torch.empty(0)
+        device = self.feed_forward.device
+        self.last_stds = torch.stack([torch.as_tensor(by_index[i][2]).float().cpu() for i in order])
+        stacked = torch.stack([by_index[i][0].tensor().to(device) for i in order])
+        return pp.SE3(stacked), valid, torch.stack([torch.as_tensor(by_index[i][1]).float().cpu() for i in order])

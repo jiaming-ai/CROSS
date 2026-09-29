@@ -80,9 +80,13 @@ class MonocularSystem:
         # System rescales camera.K in place to its stored-image resolution.
         metric_adapter = MetricTwoViewRelativePose if self.config.retrieval_pose == "metric_two_view" else MetricRelativePose
         if self.config.retrieval_pose == "ff":
-            from .ff_retrieval import FeedForwardRelativePose
+            from .ff_retrieval import FallbackFeedForwardRelativePose, FeedForwardRelativePose
             pose_estimator = FeedForwardRelativePose(self.config.ff_backend, self.config.ff_checkpoint, device,
                                                      self.config.ff_resolution, self.config.ff_min_covisibility)
+            if self.config.ff_fallback_only:
+                pose_estimator = FallbackFeedForwardRelativePose(
+                    MetricTwoViewRelativePose(camera.K, device, self.config.mask_people, "superpoint_lightglue"),
+                    pose_estimator)
         elif self.config.retrieval_pose == "da3":
             pose_estimator = DA3RelativePose(self.frontend.geometry, device)
         else:
