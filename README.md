@@ -121,11 +121,42 @@ uv run python examples/multi_session.py
 uv run python examples/planner.py --map-scene data/r3d/lab_obj.r3d --reloc-scene data/rosbag/lab_office_dog
 ```
 
+### Benchmark: mapping accuracy and relocalization success
+
+`scripts/eval/map_and_reloc.py` builds a map on one posed RGB-D sequence and measures relocalization success on another
+(independent 100-frame trials that start without knowing the pose; a trial succeeds when its final estimate is within
+`--r-d` of the pose the map implies, 2 m indoors), plus the keyframe ATE of the map.
+
+```bash
+# OpenLORIS-Scene (package format) -> posed RGB-D folders; the robot's wheel odometry is kept and used as odometry
+python scripts/eval/convert_openloris.py data/openloris/home1-1 data/posed/home1-1
+python scripts/eval/convert_openloris.py data/openloris/home1-2 data/posed/home1-2
+python scripts/eval/map_and_reloc.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home
+# TUM RGB-D: scripts/eval/convert_tum.py (simulated noisy odometry: --snr 10 --seed 0)
+```
+
+### Noise calibration for a new robot (optional)
+
+The verified loop closure uses a noise model of the relative-pose estimator and the odometry.  The defaults work for
+wheeled indoor robots; for another platform, record about a minute of data and calibrate without ground truth:
+
+```bash
+python scripts/eval/map_and_reloc.py --map <seq> --query <seq> --out outputs/calib --map-end 600 --skip-reloc --dump-graph
+python scripts/eval/calibrate_noise.py --graph outputs/calib/graph_s0.json --out configs/noise/my_robot.yaml
+# then: mapping.loop_closure.noise_file: configs/noise/my_robot.yaml
+```
+
+Main defaults: verified loop closure (consistency tests at one chi-square level), hypothesis 0 updated only by
+measurements that are more informative than the odometry chain, keyframe images stored as uint8, observation gating
+(retrieval + pose estimation after 0.3 m / 0.15 rad of motion or every third frame).
+
 ## Datasets
 
 ### OpenLORIS
 
-Download the [TUM version](https://lifelong-robotic-vision.github.io/dataset/scene.html) and place it in `data/loris/`.
+Download the package format from [Hugging Face](https://huggingface.co/datasets/shixuesong/openloris-scene) (see the
+[dataset page](https://lifelong-robotic-vision.github.io/dataset/scene.html)) and convert sequences with
+`scripts/eval/convert_openloris.py` (above); the legacy `data/loris/` loader (`--loader loris`) still works.
 
 ### R3D
 
