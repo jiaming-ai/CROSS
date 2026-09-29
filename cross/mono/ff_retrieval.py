@@ -226,11 +226,14 @@ class FallbackFeedForwardRelativePose:
     references it rejects (large viewpoint or appearance change), which bounds its GPU load in steady state.
     """
 
-    def __init__(self, primary, feed_forward, map_relocalization_only=False):
+    def __init__(self, primary, feed_forward, scope="all"):
         self.primary, self.feed_forward = primary, feed_forward
-        # only loaded-map references while the session is not yet joined to the map (bounds the model's load to the
+        # which rejected references the model sees: "all", "map" (loaded-map references), or "relocalization"
+        # (loaded-map references while the session is not yet joined to the map; bounds the model's load to the
         # relocalization window)
-        self.map_relocalization_only = map_relocalization_only
+        if scope not in {"all", "map", "relocalization"}:
+            raise ValueError("Feed-forward scope must be all, map or relocalization")
+        self.scope = scope
         self.last_stds = None
         self.last_pair_audit = []
 
@@ -241,9 +244,10 @@ class FallbackFeedForwardRelativePose:
         stds = self.primary.last_stds
         by_index = {int(i): (poses[k], confidences[k], stds[k]) for k, i in enumerate(np.flatnonzero(valid))}
         candidates = ~valid
-        if self.map_relocalization_only:
-            loaded = np.asarray(kwargs.get("ref_loaded", [False] * len(ref_image)), dtype=bool)
-            candidates &= loaded & bool(kwargs.get("session_unanchored", False))
+        if self.scope != "all":
+            candidates &= np.asarray(kwargs.get("ref_loaded", [False] * len(ref_image)), dtype=bool)
+        if self.scope == "relocalization":
+            candidates &= bool(kwargs.get("session_unanchored", False))
         rejected = np.flatnonzero(candidates)
         if len(rejected):
             index = torch.as_tensor(rejected, device=ref_image.device if torch.is_tensor(ref_image) else "cpu")

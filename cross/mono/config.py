@@ -60,7 +60,7 @@ class MonoConfig:
     ff_resolution: int = 504
     ff_min_covisibility: float = 0.3
     ff_fallback_only: bool = False  # run the feed-forward model only on references the two-view matcher rejects
-    ff_relocalization_only: bool = False  # with ff_fallback_only: only loaded-map references before the map join
+    ff_scope: str = "all"  # with ff_fallback_only: all | map (loaded-map references) | relocalization (map, before the join)
     retrieval_matcher: str = "mnn"
     two_view_rotation_check: bool = False
     filter_mode: str = "full"
