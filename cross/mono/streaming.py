@@ -44,20 +44,34 @@ class FrameSnapshot:
     scale_response: TranslationResponse | None = None
     world_geometry_std_prefix: np.ndarray | None = None
     rotation_prior: np.ndarray | None = None
+    world_geometry_covariance_prefix: np.ndarray | None = None
 
 
-def snapshot_motion(previous, current, conditional=False):
+def snapshot_motion(previous, current, conditional=False, covariance_bound='axes'):
     """All intermediate motion survives replacement of pending map images.
 
     Prefixes sum world-coordinate marginal standard deviations. Mapping to
     the previous camera uses |Ad| to conservatively allow unknown correlation;
     treating the diagonal as a full independent covariance would be unsafe.
     """
+    if covariance_bound not in {'axes', 'matrix'}:
+        raise ValueError('Unknown motion covariance bound')
+    if covariance_bound == 'matrix' and not conditional:
+        raise ValueError('Matrix motion bounds require conditional sources')
     if previous is None:
         return np.eye(4), np.zeros((6, 6))
     if current.index <= previous.index:
         raise ValueError("Mapping snapshots must increase")
     if conditional:
+        if covariance_bound == 'matrix':
+            from .motion_uncertainty import correlated_interval_bound
+            if (previous.world_geometry_covariance_prefix is None or
+                    current.world_geometry_covariance_prefix is None):
+                raise ValueError('Matrix motion bounds need full geometry prefixes')
+            covariance = correlated_interval_bound(previous.world_geometry_covariance_prefix,
+                current.world_geometry_covariance_prefix, adjoint(inverse(current.pose)),
+                current.index - previous.index)
+            return inverse(previous.pose) @ current.pose, covariance
         if previous.world_geometry_std_prefix is None or current.world_geometry_std_prefix is None:
             raise ValueError('Conditional mapping needs a geometry-only uncertainty prefix')
         world_std = np.maximum(current.world_geometry_std_prefix-previous.world_geometry_std_prefix,0.)
@@ -90,6 +104,7 @@ class StreamingPnPFrontend(MetricPnPFrontend):
             self.depth_stream.wait_stream(torch.cuda.current_stream(device))
         self.world_std_prefix = np.zeros(6)
         self.world_geometry_std_prefix = np.zeros(6)
+        self.world_geometry_covariance_prefix = np.zeros((6, 6))
         self.ready_depths = []
         self.pending_depths = []
         self.last_submitted = -1
@@ -237,6 +252,8 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         geometry_transported = adjoint(self.metric_pose)@geometry_covariance@adjoint(self.metric_pose).T
         if hasattr(self,'world_geometry_std_prefix'):
             self.world_geometry_std_prefix += np.sqrt(geometry_transported.diagonal().clip(0))
+        if hasattr(self, 'world_geometry_covariance_prefix'):
+            self.world_geometry_covariance_prefix += geometry_transported
         interval = min(self.config.scale.interval, self.config.mapping_interval) if self.provide_mapping_depth else self.config.scale.interval
         bootstrap = self.anchor_features is None
         # The experimental policy asks while the current pose still has a
@@ -262,9 +279,12 @@ class StreamingPnPFrontend(MetricPnPFrontend):
             snapshot = FrameSnapshot(self.index, timestamp, rgb.copy(), features, self.metric_pose.copy(),
                                      self.world_std_prefix.copy(), valid, refresh_anchor=weak_support,
                                      world_geometry_std_prefix=getattr(self,'world_geometry_std_prefix',None),
+                                     world_geometry_covariance_prefix=getattr(self,'world_geometry_covariance_prefix',None),
                                      rotation_prior=None if self.rotation_prior is None else self.rotation_prior.copy())
             if snapshot.world_geometry_std_prefix is not None:
                 snapshot = replace(snapshot,world_geometry_std_prefix=snapshot.world_geometry_std_prefix.copy())
+            if snapshot.world_geometry_covariance_prefix is not None:
+                snapshot = replace(snapshot,world_geometry_covariance_prefix=snapshot.world_geometry_covariance_prefix.copy())
             if getattr(self, "trace_metric_sources", False):
                 source = identify_prediction(snapshot.rgb, self.K, model_id=self.config.metric_model,
                                              revision=self.metric_revision, resolution=self.config.metric_resolution,
@@ -364,7 +384,9 @@ class StreamingMonocularSystem(MonocularSystem):
         snapshot, depth = item
         def process():
             conditional = getattr(getattr(self,'config',None),'conditional_sources',False)
-            delta, covariance = snapshot_motion(self.previous_snapshot, snapshot,conditional=conditional)
+            covariance_bound = getattr(getattr(self, 'config', None), 'motion_covariance_bound', 'axes')
+            delta, covariance = snapshot_motion(self.previous_snapshot, snapshot, conditional=conditional,
+                                               covariance_bound=covariance_bound)
             observation = dict(rgb=snapshot.rgb, depth=depth, conf=None, delta_pose=delta,
                                motion_covariance=covariance, timestamp=snapshot.timestamp)
             if getattr(snapshot, "metric_source", None) is not None:

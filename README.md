@@ -140,6 +140,18 @@ The default remains `epoch`. The factor option fixes the competing-mode refresh
 failure and reduces measured storage and delay, but home accuracy remains poor;
 it does not establish broad robustness or a new statistical method.
 
+`--motion-covariance-bound matrix` is a separate experimental option requiring
+`--conditional-sources`. It accumulates full geometric error moments and
+transports them into the receiving camera before constructing a diagonal
+bound. For an interval of `n` camera increments, it uses the conservative
+bound `n * sum(Cov(error_i))`, allowing arbitrary correlation between those
+increments. Metric bias remains in the separate source belief. This avoids
+the extra dependence on the frontend's world origin introduced by discarding
+cross terms before transport. The declared frame noise and failure penalties
+are still uncalibrated; matrix bounds can increase uncertainty on some
+intervals. The default `axes` retains the previous behavior. Numerical bounds
+and coordinate changes are tested; mapping accuracy is under evaluation.
+
 Saved node poses are conditional nominal poses. To evaluate a map, evaluate each
 `ConditionalPose` at the map's persisted `SourceState` mean; the serialized pose
 alone need not be its posterior mean. Keep the original reference alignment and

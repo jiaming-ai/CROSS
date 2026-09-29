@@ -39,6 +39,7 @@ class MonoConfig:
     conditional_sources: bool = False
     schmidt_map_geometry: bool = False
     map_geometry_basis: str = 'epoch'
+    motion_covariance_bound: str = 'axes'
     source_log_std: float = .12
     seed: int = 0
     pose_model: str = "depth-anything/DA3-SMALL"
@@ -65,6 +66,10 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.motion_covariance_bound not in {'axes', 'matrix'}:
+            raise ValueError('Unknown motion covariance bound')
+        if self.motion_covariance_bound == 'matrix' and not self.conditional_sources:
+            raise ValueError('Matrix motion bounds require conditional sources')
         if self.map_geometry_basis not in {'epoch','factor'}:
             raise ValueError('Unknown shared map geometry basis')
         if self.map_geometry_basis == 'factor' and not self.schmidt_map_geometry:

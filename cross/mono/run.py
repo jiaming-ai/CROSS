@@ -44,6 +44,8 @@ def main():
                         help="Record reused teacher identities and signed scale responses; does not change inference")
     parser.add_argument('--conditional-sources', action='store_true',
                         help='Experimental shared source inference; requires streaming_pnp, metric_pnp, chart-aware and session-recovery')
+    parser.add_argument('--motion-covariance-bound', choices=['axes', 'matrix'], default='axes',
+                        help='Experimental full-moment correlation bound before diagonal motion input; requires conditional sources')
     parser.add_argument('--source-log-std', type=float, default=.12,
                         help='Declared per-prediction log-depth prior std for conditional inference; not empirically calibrated')
     parser.add_argument("--freeze-gc", action="store_true", help="Freeze long-lived startup objects during the run; retain collection of new objects")
@@ -144,6 +146,7 @@ def main():
                         stable_teacher_cadence=args.stable_teacher_cadence,
                         trace_metric_sources=args.trace_metric_sources,
                         conditional_sources=args.conditional_sources,source_log_std=args.source_log_std,
+                        motion_covariance_bound=args.motion_covariance_bound,
                         schmidt_map_geometry=args.schmidt_map_geometry,
                         map_geometry_basis=args.map_geometry_basis,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
