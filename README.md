@@ -140,6 +140,15 @@ The default remains `epoch`. The factor option fixes the competing-mode refresh
 failure and reduces measured storage and delay, but home accuracy remains poor;
 it does not establish broad robustness or a new statistical method.
 
+Frozen map geometry is transported as a composed SE(3) action through pose
+corrections and metric-bias recentering. For prior and posterior responses
+`J0, J1` and correction `d`, its new response is
+`Ad(Exp(-d)) J0 + Jr(d) (J1-J0)`. Active metric sources retain the additive
+response `Jr(d) J1`. This prevents successive relative observations from
+spuriously observing a common rigid map transform. Finite-difference and
+repeated-update tests cover this property. It remains a local approximation;
+large covariance does not establish calibration or global consistency.
+
 `--motion-covariance-bound matrix` is a separate experimental option requiring
 `--conditional-sources`. It accumulates full geometric error moments and
 transports them into the receiving camera before constructing a diagonal

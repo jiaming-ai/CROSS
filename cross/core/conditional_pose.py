@@ -65,6 +65,29 @@ def right_jacobian(twist):
     raise ValueError('SE3 response exceeds the local linearization domain')
 
 
+def retract_frozen_response(keys, response, offset, prior_response=None):
+    """Retain a frozen map action through a finite right-tangent correction.
+
+    For zero-mean frozen geometry g, use the local conditional pose family
+    P Exp(J0 g) Exp(d + (J1-J0) g). Its response at P Exp(d) is
+    Ad(Exp(-d)) J0 + Jr(d) (J1-J0). This preserves a common rigid map action
+    when an observation has no information about it (J1 == J0), including
+    when a saved message is evaluated at an updated metric-bias mean.
+
+    ``response`` is J1; ``prior_response`` is J0 and defaults to J1 for saved
+    message evaluation. Active metric sources keep their additive-tangent
+    response. This is a first-order conditional model, not a global Gaussian
+    approximation for arbitrarily large map uncertainty.
+    """
+    T = right_jacobian(offset)
+    result = T @ response
+    frozen = np.array([k.startswith('geometry:') for k in keys])
+    if frozen.any():
+        before = response if prior_response is None else prior_response
+        result[:, frozen] += (adjoint(exp(-np.asarray(offset))) - T) @ before[:, frozen]
+    return result
+
+
 def exp(twist):
     twist = np.asarray(twist, dtype=np.float64)
     result = np.eye(4)
@@ -156,7 +179,7 @@ class ConditionalPose:
         """
         state, J, offset = belief.expand(self.factor)
         transport = right_jacobian(offset)
-        factor = SourceFactor(state.keys,transport@J,state.prior_variances,state.mean,self.factor.factor_id)
+        factor = SourceFactor(state.keys,retract_frozen_response(state.keys,J,offset),state.prior_variances,state.mean,self.factor.factor_id)
         return pose @ exp(offset), ConditionalPose(transport_covariance(self.geometry_covariance,transport),factor), state
 
     def at_known(self, pose, belief):
@@ -167,7 +190,7 @@ class ConditionalPose:
         """
         J, offset = belief.factor_response(self.factor)
         transport = right_jacobian(offset)
-        factor = SourceFactor(belief.keys, transport@J, belief.prior_variances,
+        factor = SourceFactor(belief.keys, retract_frozen_response(belief.keys,J,offset), belief.prior_variances,
                               belief.mean, self.factor.factor_id)
         return pose @ exp(offset), ConditionalPose(
             transport_covariance(self.geometry_covariance, transport), factor)

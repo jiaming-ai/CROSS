@@ -1047,7 +1047,7 @@ class HypothesisManager:
         conditional_evidence_mask = None
         if source_factors is not None:
             from cross.core.conditional import transport_covariance
-            from cross.core.conditional_pose import ConditionalPose, right_jacobian, normalize_mean, residual_product
+            from cross.core.conditional_pose import ConditionalPose, right_jacobian, normalize_mean, residual_product, retract_frozen_response
             pending_sources = list(self.source_states)
             conditional_evidence_mask = torch.zeros_like(currently_tracking)
             self.last_conditional_audit = []
@@ -1069,7 +1069,7 @@ class HypothesisManager:
                     mean = normalize_mean(proposal_mu[component] @ pp.se3(torch.as_tensor(offset,device=self.device,dtype=prior_mu.dtype)).Exp())
                     T = right_jacobian(offset)
                     state.geometry_covariance = transport_covariance(state.geometry_covariance,T)
-                    state.jacobian = T@state.jacobian
+                    state.jacobian = retract_frozen_response(state.keys,state.jacobian,offset)
                     variance = torch.as_tensor(state.marginal_covariance().diagonal().copy(),device=self.device,dtype=prod_var_diag.dtype)
                     conditional_newborns[component] = (mean,variance)
                     audit = dict(component=component,newborn=True,source_count=len(state.keys))
@@ -1082,6 +1082,7 @@ class HypothesisManager:
                         proposal_mu[component].matrix().double().cpu().numpy(),state)
                     observed = pp.from_matrix(torch.as_tensor(observation,device=self.device,dtype=prior_mu.dtype),pp.SE3_type)
                     residual = (prior_mu[component].Inv()@observed).Log().tensor().double().cpu().numpy()
+                    source_before = state.jacobian.copy()
                     result = residual_product(state,residual,model.geometry_covariance,model.factor,
                         np.diag(Q[0].double().cpu().numpy()),
                         frozen_keys=tuple(k for k in state.keys if k.startswith('geometry:'))
@@ -1090,7 +1091,7 @@ class HypothesisManager:
                     mean = normalize_mean(prior_mu[component] @ pp.se3(torch.as_tensor(result.pose_offset,device=self.device,dtype=prior_mu.dtype)).Exp())
                     T = right_jacobian(result.pose_offset)
                     state.geometry_covariance = transport_covariance(state.geometry_covariance,T)
-                    state.jacobian = T@state.jacobian
+                    state.jacobian = retract_frozen_response(state.keys,state.jacobian,result.pose_offset,source_before)
                     variance = torch.as_tensor(state.marginal_covariance().diagonal().copy(),device=self.device,dtype=prod_var_diag.dtype)
                     log_c[component] = result.log_overlap
                     conditional_evidence_mask[component] = True
