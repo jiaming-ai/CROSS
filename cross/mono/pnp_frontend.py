@@ -9,6 +9,7 @@ from time import perf_counter
 
 import cv2
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from .config import MonoConfig
 from .frontend import MonoEstimate
@@ -60,7 +61,13 @@ class MetricPnPFrontend:
         count, error = 0, 0.0
         valid = True
         if self.anchor_features is not None:
-            relative_rotation = None if self.rotation_prior is None else self.rotation_prior.T @ self.anchor_pose[:3, :3]
+            relative_rotation = None
+            if self.rotation_prior is not None:
+                # Compose on SO(3). Rounded model matrices are not exactly
+                # orthogonal: a transpose round trip through a global anchor
+                # otherwise amplifies its Gram error at every renewal.
+                relative_rotation = (Rotation.from_matrix(self.rotation_prior).inv()
+                                     * Rotation.from_matrix(self.anchor_pose[:3, :3])).as_matrix()
             result = self.refiner.estimate(self.anchor_features, features, self.anchor_depth, rotation=relative_rotation)
             if result is None:
                 # Fresh image geometry may recover overlap when the old
@@ -149,7 +156,6 @@ class LearnedRotationPnPFrontend(MetricPnPFrontend):
         self.rotation_anchor_image = None
 
     def step(self, rgb, timestamp):
-        from scipy.spatial.transform import Rotation
         from .geometry import relative_pose
 
         if not np.isfinite(timestamp) or (self.last_timestamp is not None and timestamp <= self.last_timestamp):
@@ -163,7 +169,8 @@ class LearnedRotationPnPFrontend(MetricPnPFrontend):
             prediction = self.geometry.predict([self.rotation_anchor_image, image])
             relative = relative_pose(prediction.extrinsics[0], prediction.extrinsics[1])
             if np.isfinite(relative[:3, :3]).all():
-                rotation = self.anchor_pose[:3, :3] @ relative[:3, :3]
+                rotation = (Rotation.from_matrix(self.anchor_pose[:3, :3])
+                            * Rotation.from_matrix(relative[:3, :3])).as_matrix()
                 step_angle = Rotation.from_matrix(self.metric_pose[:3, :3].T @ rotation).magnitude()
                 if step_angle <= self.config.max_relative_rotation:
                     self.rotation_prior = rotation

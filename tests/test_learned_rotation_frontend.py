@@ -89,3 +89,39 @@ def test_invalid_prediction_falls_back_to_geometric_pnp_without_poisoning_state(
     with pytest.raises(ValueError,match='timestamps'):
         frontend.step(np.ones((2,2,3),np.uint8),1.)
     assert len(pairs)==1
+
+
+@pytest.mark.parametrize('failure_every',[None,7])
+def test_float32_rotation_priors_remain_on_so3_through_repeated_anchor_renewal(failure_every):
+    """A rigid pose cannot accumulate symmetric matrix scale from rounded R.
+
+    The fixed-R fitter returns the supplied rotation. With unconstrained
+    matrices, absolute->relative->absolute multiplies anchor Gram error at
+    each renewal, although every model rotation is accurate to float32.
+    Include held-translation renewals, which still update learned rotation.
+    """
+    from scipy.spatial.transform import Rotation
+    frontend,_,_=fixture()
+    increment=Rotation.from_rotvec([.013,-.011,.009]).as_matrix()
+    extrinsics=np.repeat(np.eye(4)[None],2,axis=0)
+    extrinsics[1,:3,:3]=increment.T.astype(np.float32)
+    frontend.geometry.predict=lambda images:SimpleNamespace(extrinsics=extrinsics.copy())
+    def estimate(ref,current,depth,rotation=None):
+        if failure_every and frontend.index % failure_every == 0:
+            return None
+        transform=np.eye(4)
+        transform[:3,:3]=rotation
+        return inverse(transform),100,0.
+    frontend.refiner.estimate=estimate
+    image=np.zeros((2,2,3),np.uint8)
+    frontend.step(image,0.)
+    expected=Rotation.identity()
+    model_increment=Rotation.from_matrix(extrinsics[1,:3,:3]).inv()
+    for index in range(1,201):
+        result=frontend.step(image,float(index))
+        expected=expected*model_increment
+        rotation=result.pose[:3,:3]
+        np.testing.assert_allclose(rotation.T@rotation,np.eye(3),atol=1e-10,rtol=0)
+        assert abs(np.linalg.det(rotation)-1.) < 1e-10
+        np.testing.assert_allclose(rotation,expected.as_matrix(),atol=2e-7,rtol=0)
+        assert result.diagnostics['valid'] == (not failure_every or index % failure_every != 0)
