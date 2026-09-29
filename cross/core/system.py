@@ -980,6 +980,16 @@ class System:
         self.last_step_diagnostics["verified_keyframes"] = len(ret["valid_keyframes"])
         self.last_step_diagnostics["retrieval_audit"] = ret["retrieval_audit"]
         self.last_step_diagnostics["loaded_node_count"] = len(self.loaded_node_ids)
+        if ret.get("h0_ok") is not None:
+            # prior-consistency verdicts of the verified loop closure for this observation's references
+            self.last_step_diagnostics["prior_gate"] = dict(
+                keyframes=[int(k.id) for k in ret["valid_keyframes"]],
+                consistent=[None if o is None else bool(o) for o in ret["h0_ok"]],
+                chi2=[None if c is None else float(c) for c in (ret.get("h0_chi2") or [])],
+                loop_candidate=[bool(x) for x in (ret.get("h0_loop") or [])])
+        if getattr(self, "_lc_verifier", None) is not None:
+            self.last_step_diagnostics["verifier_stats"] = {k: (float(v) if isinstance(v, float) else v)
+                                                            for k, v in self._lc_verifier.stats.items()}
         # if no proposal, continue with motion-only update
         if len(ret["valid_keyframes"]) == 0:
             self.hypothesis_manager.reference_support.observe(self._processed_frame_num, {})
