@@ -51,14 +51,20 @@ class ReferenceSupport:
             self.history[component].append(frozenset(ids))
             self.ever_historical[component] |= bool(ids)
 
-    def audit(self, component, cross_chart=None):
+    def current(self, component):
+        """Loaded-map keyframes verified for this component in the latest observation."""
+        return self.history[component][-1]
+
+    def audit(self, component, cross_chart=None, min_hits=None):
         history = self.history[component]
         hits = sum(bool(ids) for ids in history)
         references = sorted(set().union(*history))
         cross_chart = (self.unanchored if cross_chart is None else cross_chart) and self.ever_historical[component]
         # Use the inherited overlap hit-rate/window and require redundancy
         # across at least two reference images. Neither is place proof alone.
-        eligible = cross_chart and hits / self.window >= self.hit_rate and len(references) >= 2
+        # min_hits replaces the hit rate when the evidence itself models missed detections.
+        enough = hits >= min_hits if min_hits is not None else hits / self.window >= self.hit_rate
+        eligible = cross_chart and enough and len(references) >= 2
         return dict(unanchored_reference_candidate=bool(cross_chart),
                     supported_frames=hits, window=self.window, reference_ids=references,
                     eligible=bool(eligible))

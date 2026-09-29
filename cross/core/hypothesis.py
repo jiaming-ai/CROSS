@@ -246,6 +246,13 @@ class HypothesisManager:
         self.reloc_unique_evidence = cfg.reloc_unique_evidence
         self.reloc_unique_min_dist = cfg.reloc_unique_min_dist
         self.reloc_min_frames = cfg.reloc_min_frames
+        self.reloc_association_evidence = cfg.reloc_association_evidence
+        self.reloc_detection_prob = cfg.reloc_detection_prob
+        self.reloc_consistency_nats = cfg.reloc_consistency_nats
+        self.reloc_min_verified_frames = cfg.reloc_min_verified_frames
+        self.reloc_realize_nats = cfg.reloc_realize_nats
+        if self.reloc_association_evidence and not (cfg.session_recovery and cfg.chart_aware):
+            raise ValueError("Association evidence requires session_recovery with chart_aware")
         self.detect_reject_cooldown_steps = cfg.detect_reject_cooldown_steps
         self.verify_outlier_sigma = cfg.verify_outlier_sigma
         self.verify_max_outlier_frac = cfg.verify_max_outlier_frac
@@ -340,7 +347,16 @@ class HypothesisManager:
 
     def reference_audit(self, component):
         cross_chart = (int(self.component_charts[component]) != int(self.component_charts[0])) if self.chart_aware else None
-        return self.reference_support.audit(component, cross_chart=cross_chart)
+        return self.reference_support.audit(component, cross_chart=cross_chart,
+                                            min_hits=self.reloc_min_verified_frames if self.reloc_association_evidence else None)
+
+    def association_components(self):
+        """Components scored by loaded-map association evidence (unjoined session, other chart than h0)."""
+        mask = torch.zeros(self.n_components, dtype=torch.bool, device=self.device)
+        if self.reloc_association_evidence and self.reference_support.unanchored:
+            mask = self.component_charts.to(self.device) != self.component_charts[0].to(self.device)
+            mask[0] = False
+        return mask
 
     def reset_tracking_state(self):
         """
@@ -419,6 +435,16 @@ class HypothesisManager:
                           (self.last_sum_pos >= self.realize_sum_thresh) & \
                           (hit_valid >= self.realize_hitrate_thresh) & \
                           (n_valid >= self.realize_min_frames)
+        association = self.association_components()
+        if bool(association.any()):
+            # sequential association evidence: signed sum over the valid window and enough verified frames
+            signed = (self.log_c_hist * self.hist_valid).sum(dim=1)
+            verified_frames = torch.tensor([self.reference_support.audit(k)["supported_frames"]
+                                            for k in range(self.n_components)], device=signed.device)
+            to_realize_mask = torch.where(association,
+                                          unrealized_mask & (signed >= self.reloc_realize_nats)
+                                          & (verified_frames >= min(2, self.reloc_min_verified_frames)),
+                                          to_realize_mask)
 
         to_realize_indices = torch.where(to_realize_mask)[0].tolist()
         for comp_id in to_realize_indices:
@@ -1244,6 +1270,14 @@ class HypothesisManager:
         conf_ratio = (proposal_confidence_clamped + eps_c) / (proposal_confidence_clamped[0] + eps_c)
         conf_ratio = torch.clamp(conf_ratio, max=1.0) # low confidence penalize hypothesis, while high confidence neutral to avoid false positives
         llr = (log_c - log_c[0]) + torch.log(conf_ratio) + llr_bias
+        association = self.association_components()
+        if bool(association.any()):
+            verified = torch.tensor([bool(self.reference_support.current(k)) for k in range(self.n_components)],
+                                    device=llr.device)
+            miss = math.log(max(1.0 - self.reloc_detection_prob, 1e-6))
+            assoc_llr = torch.where(verified, self.reloc_consistency_nats - 0.5 * maha,
+                                    torch.full_like(llr, miss))
+            llr = torch.where(association, assoc_llr, llr)
 
         # keep positive support
         pos = torch.relu(llr)
@@ -1261,6 +1295,10 @@ class HypothesisManager:
         # Debug history: log individual LLR components (for tuning/visualization)
         log_c_rel = (log_c - log_c[0])  # relative log-likelihood
         log_conf = torch.log(conf_ratio)  # log confidence ratio
+        if bool(association.any()):
+            log_c_rel = torch.where(association, llr, log_c_rel)
+            # a missed map detection is not low geometric confidence
+            log_conf = torch.where(association & ~verified, torch.zeros_like(log_conf), log_conf)
         self.log_c_hist[:, self.llr_hist_ptr] = torch.where(active_tracking_mask, log_c_rel, torch.zeros_like(log_c_rel))
         if self.reloc_unique_evidence:
             # evidence of each component against the best competing place: the active components farther than

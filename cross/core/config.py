@@ -390,6 +390,18 @@ class HypothesisConfig:
     reloc_unique_evidence: bool = False
     reloc_unique_min_dist: float = 3.0
     reloc_min_frames: int = 0
+    # Loaded-map recovery with sparse verification (monocular): while the session is not yet joined to the map, a
+    # component in another chart than hypothesis 0 is scored by map-association evidence instead of by its Gaussian
+    # overlap relative to hypothesis 0 (whose own-session observations say nothing about map association). A frame
+    # with a verified loaded-map edge contributes reloc_consistency_nats - 0.5 * Mahalanobis(residual); a frame
+    # without one contributes log(1 - reloc_detection_prob) (a missed detection). The sequential sum over the
+    # evidence window then realizes and commits the branch; at least reloc_min_verified_frames verified frames from
+    # two distinct map keyframes are required. Requires session_recovery with chart_aware.
+    reloc_association_evidence: bool = False
+    reloc_detection_prob: float = 0.3
+    reloc_consistency_nats: float = 3.0
+    reloc_min_verified_frames: int = 3
+    reloc_realize_nats: float = 2.0
     detect_reject_cooldown_steps: int = 30   # steps a candidate is ignored after a rejected merge
     # geometric verification of a merge: fraction of the candidate's visual edges that remain outliers
     # (Mahalanobis norm > verify_outlier_sigma) after the loop-closure optimisation
