@@ -42,12 +42,13 @@ def prepare(pg, component):
     belief = hm.source_states[component].copy()
     id_map = {v.id:v.original_kf_id for v in pg.vertices}
     models = {}
+    required_factors = []
     for vertex in pg.vertices:
         kf = hm.nodes[vertex.original_kf_id]
         if kf.conditional_poses is None or kf.conditional_poses[vertex.original_comp_id] is None:
             raise ValueError('Conditional PGO requires a model for every active node')
         model = kf.conditional_poses[vertex.original_comp_id]
-        belief,_,_ = belief.expand(model.factor)
+        required_factors.append(model.factor)
         models[vertex.id] = model
     edges, seen = [],set()
     for a,b,factors in pg.edges:
@@ -61,15 +62,16 @@ def prepare(pg, component):
             seen.add(id(edge))
             if edge.conditional_pose is None:
                 raise ValueError('Conditional PGO cannot use a legacy edge without source provenance')
-            belief,_,_ = belief.expand(edge.conditional_pose.factor)
+            required_factors.append(edge.conditional_pose.factor)
             selected.append(edge)
         if selected:
             edges.append((u,v,selected))
-    # Expand the complete source set before evaluating any node/edge model.
+    # Expand the complete source set once before evaluating node/edge models.
+    belief = belief.expand_many(required_factors)
     chosen = {}
     pg.conditional_source_nodes = {}
     for vertex in pg.vertices:
-        pose,model,_ = models[vertex.id].at(_matrix(vertex.pose),belief)
+        pose,model = models[vertex.id].at_known(_matrix(vertex.pose),belief)
         if vertex.original_comp_id == 0:
             pg.conditional_source_nodes[vertex.original_kf_id] = (pose,model)
         # A realized alternative supplies the initialization of duplicated
@@ -84,7 +86,7 @@ def prepare(pg, component):
     for a,b,factors in edges:
         conditioned = []
         for edge in factors:
-            pose,model,_ = edge.conditional_pose.at(_matrix(edge.mean),belief)
+            pose,model = edge.conditional_pose.at_known(_matrix(edge.mean),belief)
             item = copy.copy(edge)
             item.mean = normalize_mean(pp.from_matrix(torch.as_tensor(pose,device=pg.device,dtype=torch.float64),pp.SE3_type))
             item.std = pp.se3(torch.as_tensor(model.geometry_covariance.diagonal().copy(),
@@ -176,7 +178,10 @@ def apply_result(hm, pg, optimized_poses, other):
         return C,J
 
     def transport(pose,model,C,J):
-        pose,model,_ = model.at(pose,belief)
+        if set(model.factor.keys).issubset(belief.keys):
+            pose,model = model.at_known(pose,belief)
+        else:
+            pose,model,_ = model.at(pose,belief)
         response = adjoint(inverse(pose))@J+model.factor.jacobian
         moved = ConditionalPose(model.geometry_covariance,
                                 SourceFactor(belief.keys,response,belief.prior_variances,belief.mean))
@@ -198,7 +203,7 @@ def apply_result(hm, pg, optimized_poses, other):
         return dict(success=False,message='Conditional PGO has no anchor for the selected live hypothesis')
     latest = max(eligible)
     kf = hm.nodes[latest]
-    old_pose,old_model,_ = kf.conditional_poses[other].at(_matrix(kf.pose_mu[other]),belief)
+    old_pose,old_model = kf.conditional_poses[other].at_known(_matrix(kf.pose_mu[other]),belief)
     C,J = correction(old_pose,old_model,_matrix(optimized[latest]),
                      pg.optimized_conditional_poses[latest])
     current_pose,current_model = transport(selected_pose,current_model,C,J)
@@ -217,8 +222,13 @@ def apply_result(hm, pg, optimized_poses, other):
                 pose,moved = transport(_matrix(node.pose_mu[component]),model,*transforms[chart])
             else:
                 continue
-            state,_ = belief.with_pose(moved)
-            marginal = np.sqrt(state.marginal_covariance().diagonal().clip(0))
+            if set(moved.factor.keys).issubset(belief.keys):
+                response,_ = belief.factor_response(moved.factor)
+                covariance = moved.geometry_covariance+response@belief.covariance@response.T
+                marginal = np.sqrt(covariance.diagonal().clip(0))
+            else:
+                state,_ = belief.with_pose(moved)
+                marginal = np.sqrt(state.marginal_covariance().diagonal().clip(0))
             value = pp.from_matrix(torch.as_tensor(pose,device=node.pose_mu.device,dtype=node.pose_mu.dtype),pp.SE3_type)
             std = pp.se3(torch.as_tensor(marginal,device=node.pose_std.device,dtype=node.pose_std.dtype))
             pending.append((node,component,value,moved,std))

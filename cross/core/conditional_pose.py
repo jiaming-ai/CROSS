@@ -159,6 +159,19 @@ class ConditionalPose:
         factor = SourceFactor(state.keys,transport@J,state.prior_variances,state.mean,self.factor.factor_id)
         return pose @ exp(offset), ConditionalPose(transport_covariance(self.geometry_covariance,transport),factor), state
 
+    def at_known(self, pose, belief):
+        """Evaluate a pose without copying an already complete source belief.
+
+        Graph preparation expands the union of its raw priors first. No source
+        mean/covariance is returned or shared with a mutable tracking state.
+        """
+        J, offset = belief.factor_response(self.factor)
+        transport = right_jacobian(offset)
+        factor = SourceFactor(belief.keys, transport@J, belief.prior_variances,
+                              belief.mean, self.factor.factor_id)
+        return pose @ exp(offset), ConditionalPose(
+            transport_covariance(self.geometry_covariance, transport), factor)
+
 
 def compose(first_pose, first, second_pose, second, belief):
     """Convolve a saved node's conditional message with a relative-pose fit."""

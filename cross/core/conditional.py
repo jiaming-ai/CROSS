@@ -155,6 +155,55 @@ class SourceState:
         result.jacobian = observed_J
         return result, offset
 
+    def factor_response(self, factor):
+        """Evaluate a factor whose priors already exist, without copying V.
+
+        This read-only operation returns owned response/offset arrays. Unknown
+        sources must be introduced explicitly with expand or expand_many.
+        """
+        locations = {key: i for i, key in enumerate(self.keys)}
+        if any(key not in locations for key in factor.keys):
+            raise ValueError('Factor response requires all source priors in the belief')
+        indices = np.fromiter((locations[key] for key in factor.keys), dtype=np.intp,
+                              count=len(factor.keys))
+        consistent = np.isclose(self.prior_variances[indices], factor.prior_variances,
+                                rtol=1e-12, atol=1e-15)
+        if not consistent.all():
+            key = factor.keys[np.flatnonzero(~consistent)[0]]
+            raise ValueError(f'A reused source cannot acquire a different prior: {key}')
+        displacement = self.mean[indices]-factor.center
+        multiplier = np.exp(-displacement) if factor.log_depth_scale else np.ones(len(indices))
+        J = np.zeros((6, len(self.keys)))
+        J[:, indices] = factor.jacobian*multiplier
+        offset = factor.jacobian @ ((1.-multiplier) if factor.log_depth_scale else displacement)
+        return J, offset
+
+    def expand_many(self, factors):
+        """Append a union of independent priors in first-appearance order.
+
+        Equivalent to repeated expand calls with their pose responses ignored,
+        but copies the dense covariance only once. Return a fully owned state.
+        """
+        variances = dict(zip(self.keys, self.prior_variances))
+        added = []
+        for factor in factors:
+            reused = [i for i, key in enumerate(factor.keys) if key in variances]
+            expected = np.array([variances[factor.keys[i]] for i in reused])
+            consistent = np.isclose(expected, factor.prior_variances[reused],
+                                    rtol=1e-12, atol=1e-15)
+            if not consistent.all():
+                key = factor.keys[reused[np.flatnonzero(~consistent)[0]]]
+                raise ValueError(f'A reused source cannot acquire a different prior: {key}')
+            if len(reused) == len(factor.keys):
+                continue
+            for key, variance in zip(factor.keys, factor.prior_variances):
+                if key not in variances:
+                    variances[key] = variance
+                    added.append(key)
+        prior = SourceFactor(tuple(added), np.zeros((6, len(added))),
+                             np.array([variances[key] for key in added]))
+        return self.expand(prior)[0]
+
     def expand(self, factor):
         """Append previously unseen priors, preserving every old correlation."""
         existing = set(self.keys)
