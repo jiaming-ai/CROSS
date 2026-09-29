@@ -147,8 +147,9 @@ python scripts/eval/calibrate_noise.py --graph outputs/calib/graph_s0.json --out
 ```
 
 Main defaults: verified loop closure (consistency tests at one chi-square level), hypothesis 0 updated only by
-measurements that are more informative than the odometry chain, keyframe images stored as uint8, observation gating
-(retrieval + pose estimation after 0.3 m / 0.15 rad of motion or every third frame).
+measurements that are more informative than the odometry chain, keyframe images stored as uint8.  For speed, observation
+gating (`pose_est.obs_min_translation: 0.3`, `obs_min_rotation: 0.15`, `obs_max_interval_steps: 3`) runs 1.4-1.8x faster;
+it is off by default because it cost relocalization success on one real-robot scene (OpenLORIS home).
 
 ## Datasets
 

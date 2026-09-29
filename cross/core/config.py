@@ -469,12 +469,12 @@ class PoseEstConfig:
     # obs_min_translation (m) or turned obs_min_rotation (rad) since the last observation, or obs_max_interval_steps
     # frames elapsed; the motion model carries the belief in between (odometry is cheap, the observation is not).
     # 0 / 0 / 1 = observe every frame (original behaviour).  Every frame is observed for obs_warmup_steps frames after
-    # (re)initialisation so that a relocalization starts quickly.  Default (2026-09-30, the values CROSS-stereo's
-    # benchmarks use): 1.4-1.8x faster mapping / relocalization with unchanged accuracy (HSSD house: 4.1 -> 5.8 FPS,
-    # map ATE 0.085 / 0.092 m, relocalization success 1.00 / 0.98 and 0.80 / 0.83).
-    obs_min_translation: float = 0.3
-    obs_min_rotation: float = 0.15
-    obs_max_interval_steps: int = 3
+    # (re)initialisation so that a relocalization starts quickly.  Runtime option (off by default): with 0.3 m / 0.15 rad /
+    # 3 frames, mapping and relocalization run 1.4-1.8x faster (HSSD house 4.1 -> 5.8 FPS, accuracy unchanged), but on
+    # the real OpenLORIS home sessions relocalization success dropped 0.83 -> 0.70 and the map ATE rose 0.13 -> 0.20 m.
+    obs_min_translation: float = 0.0
+    obs_min_rotation: float = 0.0
+    obs_max_interval_steps: int = 1
     obs_warmup_steps: int = 10
 
 
