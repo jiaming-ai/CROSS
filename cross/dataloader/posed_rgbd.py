@@ -6,9 +6,11 @@ Layout::
     <root>/left/*.png        RGB images (sorted by name); `rgb/` is accepted as well
     <root>/depth/*.npy       metric depth in metres (float), or depth/*.png as uint16 millimetres
     <root>/poses_left.txt    one camera-to-world pose per image (16 values per row, OpenCV camera convention)
+    <root>/odom_left.txt     optional: camera poses from the robot's own odometry (same format)
 
-The ground-truth poses serve as ground truth and, through their consecutive differences, as simulated odometry
-(white SNR noise and optional systematic drift, see `Dataloader`).
+The ground-truth poses serve as ground truth.  The odometry is the consecutive difference of odom_left.txt when it
+exists (real odometry, e.g. wheel encoders; no simulated noise is added), otherwise of the ground truth with simulated
+white SNR noise and optional systematic drift (see `Dataloader`).
 """
 
 from __future__ import annotations
@@ -44,6 +46,12 @@ class PosedRGBDLoader(Dataloader):
             assert len(self.depth_paths) == len(self.rgb_paths), f"{root}: {len(self.depth_paths)} depth maps, {len(self.rgb_paths)} images"
         self.c2w = np.loadtxt(self.root / "poses_left.txt").reshape(-1, 4, 4)
         assert len(self.c2w) == len(self.rgb_paths), f"{root}: {len(self.c2w)} poses, {len(self.rgb_paths)} images"
+        self.odom_c2w = None
+        if (self.root / "odom_left.txt").is_file():
+            self.odom_c2w = np.loadtxt(self.root / "odom_left.txt").reshape(-1, 4, 4)
+            assert len(self.odom_c2w) == len(self.rgb_paths)
+            self.snr = None                   # real odometry: no simulated noise
+            self.odom_scale_bias = self.odom_yaw_drift = 0.0
         self.rgb_K = np.asarray(calib["K"], dtype=np.float64)
         self.rgb_width, self.rgb_height = int(calib["width"]), int(calib["height"])
         self.fps = float(calib.get("fps", 10.0))
@@ -82,7 +90,8 @@ class PosedRGBDLoader(Dataloader):
 
     def __getitem__(self, idx: int):
         rgb = cv2.cvtColor(cv2.imread(str(self.rgb_paths[idx])), cv2.COLOR_BGR2RGB)
-        delta = np.eye(4) if idx == 0 else _invert(self.c2w[idx - 1]) @ self.c2w[idx]
+        src = self.c2w if self.odom_c2w is None else self.odom_c2w
+        delta = np.eye(4) if idx == 0 else _invert(src[idx - 1]) @ src[idx]
         return {
             "rgb": rgb,
             "depth": self._depth(idx),
@@ -100,7 +109,9 @@ class PosedRGBDLoader(Dataloader):
         prev = None
         for i in range(start_idx, end_idx, stride):
             item = self.get_item(i, first_item=(prev is None))
-            if prev is not None and stride > 1:
+            if prev is not None and stride > 1 and self.odom_c2w is not None:
+                item["delta_pose"] = _invert(self.odom_c2w[prev]) @ self.odom_c2w[i]
+            elif prev is not None and stride > 1:
                 T = np.eye(4)
                 for j in range(prev + 1, i + 1):
                     d = _invert(self.c2w[j - 1]) @ self.c2w[j]
