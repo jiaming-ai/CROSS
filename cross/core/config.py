@@ -295,8 +295,13 @@ class HypothesisConfig:
     motion_std_accumulation: str = "linear"
     # hypothesis 0's pose (and covariance) is updated only by informative proposals (verified-LC loop candidates, map
     # references of a relocalization session); measurements to the keyframes just behind the robot only weigh the
-    # hypotheses and become graph edges.  Needs mapping.loop_closure.mode = verified (loop flags).
-    h0_informative_only: bool = False
+    # hypotheses and become graph edges (their keyframe poses came from the same belief, so fusing them re-applies the
+    # estimator's bias at every observation).  Needs mapping.loop_closure.mode = verified (loop flags).  On by default
+    # (2026-09-30): original CROSS relocalization success +0.3 on the hard HSSD variants, +0.2 on OpenLORIS home,
+    # TUM 0.79 -> 0.96; CROSS-stereo mapping ATE OpenLORIS office 0.117 -> 0.052 m, cafe 0.52 -> 0.17 m, KITTI 3/3 better,
+    # relocalization unchanged.  Known weakness: abrupt on-the-spot turns with noisy odometry (Lone Monk, 23 deg per
+    # frame): the lagging hypothesis 0 is out-scored and replaced repeatedly.
+    h0_informative_only: bool = True
     # with h0_informative_only: a non-informative measurement still corrects the ROTATION of hypothesis 0 (only its
     # translation update is skipped).  The information criterion compares translation covariances (a rotation criterion
     # admits every edge to the pose graph, see cross/core/lc_verify.py:informative); at an on-the-spot turn the odometry
