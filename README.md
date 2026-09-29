@@ -97,6 +97,36 @@ python -m cross.mono.run /path/to/benchmarks/rgbd_dataset_freiburg1_desk \
 
 The operating target is 20–30 FPS at 640×480 on one consumer GPU such as an RTX 4090. Shared RTX 5090 measurements are reported below; RTX 4090 performance remains unmeasured. Measure capture-to-pose latency and deadline misses as well as throughput; include initialization, mapping lag and combined GPU memory. `--warmup-models` uses only the first image and records its time separately. The paced input worker starts preprocessing after simulated capture time and fails on queue overflow (two frames by default, configurable with `--input-buffer`); it never silently drops evaluation frames. A bounded input queue does not itself bound capture-time lag when preprocessing falls behind. Check the actual input storage medium and GPU occupancy throughout timing runs: local rotational disks can still stall, and a GPU can become occupied after launch.
 
+### Recommended profile (v2)
+
+[`configs/mono_streaming_dpvo_v2_20hz.json`](configs/mono_streaming_dpvo_v2_20hz.json) is the current recommended
+RGB-only setup. It combines three things:
+
+- **Frontend:** DPVO relative motion with an asynchronous DA3 metric-scale prior.
+- **Mapper:** the improved CROSS core. It has verified loop closure with an odometry noise model for the DPVO chain,
+  plus fixes to hypothesis evidence and pose-graph optimisation.
+- **Relocalization geometry:** metric two-view retrieval geometry. Pairs of the current image with a saved-map
+  keyframe that matching rejects get a second opinion from a feed-forward two-view model (DA3-LARGE at 336 px). This
+  happens only until the session is joined to the map. The model runs on each (keyframe, current) pair separately.
+  The keyframe's stored depth sets the metric scale, so poses stay in the map's scale. A symmetric covisibility test
+  verifies each pair.
+
+```bash
+# map one session, then relocalize a second session in it
+python scripts/benchmark_mono.py --data-root /path/to/openloris --sequences office1-1 \
+  --profile configs/mono_streaming_dpvo_v2_20hz.json --dpvo-checkpoint /path/to/dpvo.pth \
+  --seeds 0 --output outputs/office_map          # saves outputs/office_map/office1-1_s0/map.pkl
+python -m cross.mono.run /path/to/openloris/office1-2 --output outputs/office12 \
+  $(python -c "import json;print(' '.join(json.load(open('configs/mono_streaming_dpvo_v2_20hz.json'))['arguments']))") \
+  --dpvo-checkpoint /path/to/dpvo.pth \
+  --load-map outputs/office_map/office1-1_s0/map.pkl --historical-retrieval-slots 3 --historical-min-score 0.0
+```
+
+- `--ff-backend vggt_omega --ff-checkpoint /path/to/vggt_omega_1b_512.pt --ff-resolution 512` uses VGGT-Omega
+  instead of DA3. The `vggt_omega` package must be on `PYTHONPATH`, and its weights are gated on Hugging Face.
+- `--cross-config dotted.key=value` overrides any CROSS setting, for example
+  `mapping.hypothesis.h0_informative_only=true`.
+
 The experimental [20 Hz DPVO rotation profile](configs/mono_streaming_dpvo_20hz.json)
 records the combined settings for source-aware mapping, persistent factor geometry,
 and two-view retrieval. It requires the DPVO installation above. Inspect its
