@@ -370,6 +370,7 @@ class StreamingMonocularSystem(MonocularSystem):
         if self.map_stream is not None:
             self.map_stream.wait_stream(torch.cuda.current_stream(device))
         self.previous_snapshot = None
+        self.last_mapping_submission = -self.config.mapping_interval
         self.map_worker = LatestWorker(self._map_snapshot, "cross-global-observation")
         self.map_events = []
         self.finished = False
@@ -431,9 +432,16 @@ class StreamingMonocularSystem(MonocularSystem):
 
     def _submit_depths(self):
         for (snapshot, depth), _ in self.frontend.take_depths():
-            if snapshot.valid:
+            # RGB can support a global observation when local motion failed.
+            # Keep that failure and its accumulated covariance intact. Bound
+            # extra loss-time observations by the normal mapping interval;
+            # the existing latest-only worker also bounds queued work.
+            loss_observation = (self.config.retrieve_during_loss and
+                                snapshot.index-self.last_mapping_submission >= self.config.mapping_interval)
+            if snapshot.valid or loss_observation:
                 # Mapping needs RGB/depth/motion, not frontend CUDA features.
                 self.map_worker.submit((replace(snapshot, features={}), depth))
+                self.last_mapping_submission = snapshot.index
 
     def _receive_maps(self):
         events = []

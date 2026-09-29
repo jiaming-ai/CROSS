@@ -40,6 +40,8 @@ def main():
                         help="Experimental metric refresh before tracking loss; request on fewer than 80 PnP inliers")
     parser.add_argument("--stable-teacher-cadence", action="store_true",
                         help="Experimental fixed regular request grid with bounded emergency requests; streaming_pnp only")
+    parser.add_argument('--retrieve-during-loss', action='store_true',
+                        help='Experimental global observations during local tracking loss; preserve failed motion uncertainty and mapping cadence')
     parser.add_argument("--trace-metric-sources", action="store_true",
                         help="Record reused teacher identities and signed scale responses; does not change inference")
     parser.add_argument('--conditional-sources', action='store_true',
@@ -144,6 +146,7 @@ def main():
                         teacher_lag_frames=args.teacher_lag_frames,
                         adaptive_anchor=args.adaptive_anchor,
                         stable_teacher_cadence=args.stable_teacher_cadence,
+                        retrieve_during_loss=args.retrieve_during_loss,
                         trace_metric_sources=args.trace_metric_sources,
                         conditional_sources=args.conditional_sources,source_log_std=args.source_log_std,
                         motion_covariance_bound=args.motion_covariance_bound,

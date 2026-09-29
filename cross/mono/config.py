@@ -35,6 +35,7 @@ class MonoConfig:
     teacher_lag_frames: int = 0
     adaptive_anchor: bool = False
     stable_teacher_cadence: bool = False
+    retrieve_during_loss: bool = False
     trace_metric_sources: bool = False
     conditional_sources: bool = False
     schmidt_map_geometry: bool = False
@@ -66,6 +67,8 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.retrieve_during_loss and (self.frontend != 'streaming_pnp' or self.mapping_interval < 1):
+            raise ValueError('Retrieval during tracking loss requires streaming_pnp and a positive mapping interval')
         if self.motion_covariance_bound not in {'axes', 'matrix'}:
             raise ValueError('Unknown motion covariance bound')
         if self.motion_covariance_bound == 'matrix' and not self.conditional_sources:

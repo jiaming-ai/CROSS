@@ -140,6 +140,14 @@ The default remains `epoch`. The factor option fixes the competing-mode refresh
 failure and reduces measured storage and delay, but home accuracy remains poor;
 it does not establish broad robustness or a new statistical method.
 
+`--retrieve-during-loss` experimentally admits ready RGB/learned-depth
+observations to global retrieval when local PnP fails. Extra observations are
+limited to the normal mapping interval and use the existing bounded queue.
+Failed poses retain their motion uncertainty and invalid status. Geometric
+verification, competing hypotheses and delayed commitment still govern map
+association. This addresses observation starvation; it does not recover the
+missing local motion by itself.
+
 Frozen map geometry is transported as a composed SE(3) action through pose
 corrections and metric-bias recentering. For prior and posterior responses
 `J0, J1` and correction `d`, its new response is
