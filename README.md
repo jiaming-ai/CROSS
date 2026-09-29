@@ -13,18 +13,15 @@ The monocular API accepts **RGB, timestamps and camera calibration**. It does no
 
 The single-session baseline runs at camera rate in the measured consumer-GPU tests. Multi-session mapping remains experimental. Optional two-view verification recovers difficult viewpoint and lighting queries, and an accumulated three-session map also recovers the people query. A longer seven-session chain exposes a late false map merge; the experimental shared-geometry option rejects this reproduced failure in the controls below. Broad changed-session robustness is not established. The default diagonal metric bridge is not a full joint Sim(3) posterior; a conditional pose/source option is described below.
 
-The first frozen OpenLORIS home/café controls expose further failures. At 20 Hz,
-five completed runs emit all 9,799 selected frames without a 50 ms deadline miss,
-but reference ATE is 1.15 m (home) and 0.66 m (café). After the first received
-map commitment, query position RMSE is 1.52 m for home and 1.36–1.40 m for café,
-using only the original reference's rigid alignment. Home's original shared-geometry
-query crashes after 554 of 2,000 outputs because another hypothesis survives
-at graph refresh. It is a failed run. Only 26.45% of the home query outputs
-have GT associations under the declared 0.1 s interpolation-gap cutoff.
-The optional persistent factor basis below completes this query, but its
-2.92 m post-commitment RMSE still fails to recover an accurate map.
-These results do not establish robust cross-environment operation; the frontend
-also accumulates substantial orientation error around tracking losses.
+The current experimental profile completes OpenLORIS home/café queries at
+20 Hz and 640×480, with post-relocalization position RMSE of 0.52 m and
+0.68 m respectively under a fixed reference alignment. A finite-pose correction
+fixes transport of shared map uncertainty; a recorded-input control reduces
+the reproduced home jump from 4.17 m to 0.48 m RMSE, while café is essentially
+unchanged. The live comparison has different asynchronous observations and
+does not isolate that fix. Only 26.45% of the home outputs have GT associations
+under the 0.1 s interpolation-gap cutoff. Deadline misses and substantial
+frontend errors remain; broad cross-environment robustness is not established.
 
 The monocular bridge defaults to CROSS's original `full` policy: the global observation updates the active pose as well as competing hypotheses and delayed-commitment evidence. `--filter-mode skip_active` reproduces the earlier monocular bridge, where the active pose follows local motion; `adaptive` exposes the inherited adaptive gate. These select existing policies; they do not change the observation message or commitment thresholds. Report the selected policy in comparisons, including when reproducing historical runs that used `skip_active`.
 
@@ -117,6 +114,39 @@ The runner saves its exact command plan and retains failed runs. Optional cadenc
 arguments override the profile explicitly. This research profile keeps uncertain
 metric sources and CROSS's original delayed commitment; its additional options
 are experimental and do not establish calibrated uncertainty or broad robustness.
+
+This profile was frozen before evaluating nine additional complete sequences
+with estimator `b244b4d`, seed 0, 640×480 and original timestamps sampled at
+20 Hz. All 5,442 selected frames were emitted, including held invalid poses;
+4,708 translations were marked valid. Every saved map passed its integrity
+audit. Position ATE uses rigid alignment, with raw-format Bonn translations.
+
+| Sequence | Metric ATE (m) | Valid / emitted |
+|---|---:|---:|
+| TUM fr1/360 | 0.2018 | 364/504 |
+| TUM fr1/rpy | 0.0718 | 368/482 |
+| TUM fr1/floor | 0.4370 | 765/831 |
+| TUM fr1/plant | 0.2216 | 614/761 |
+| TUM fr1/teddy | 0.2420 | 702/946 |
+| Bonn/person_tracking | 0.0625 | 383/389 |
+| Bonn/person_tracking2 | 0.0488 | 380/380 |
+| Bonn/moving_nonobstructing_box | 0.0336 | 512/521 |
+| Bonn/moving_nonobstructing_box2 | 0.0432 | 620/628 |
+
+On the shared RTX 5090, capture-to-pose p95 is 33.05–45.82 ms. There are
+66 misses of the 50 ms deadline, including six after the first 30 outputs,
+and no input drops. Eight sequences emit about 20 FPS; floor's original
+capture gaps limit both its selected input and output cadence to about
+17.93 FPS. No loop is committed in these runs, so they do not establish
+perceptual-alias resistance or exercise the shared-map correction above.
+
+A complete joint-PnP control on the same timestamps improves position ATE on
+six sequences and has no 50 ms misses, but worsens camera-frame one-second
+rotation RPE on seven sequences, including all five TUM cases. It is not a
+uniform replacement for DPVO rotation. A separate RGB-only depth diagnostic
+finds systematic learned metric bias on floor; good depth shape does not
+certify accurate scale. These are development findings, with one attempt per
+policy, rather than a matched-protocol ranking against published systems.
 
 `--freeze-gc` performs a collection before capture starts and freezes startup objects, while leaving collection of new objects enabled. On the shared 5090, two counterbalanced repeats each of TUM room and walking reduced post-bootstrap maximum latency from 131–145 ms to 20.7–24.1 ms, with zero post-bootstrap 33 ms deadline misses and no input drops. Every run still missed its first-frame deadline. These short controls test the combined collection/freezing policy, not each operation separately or long-session guarantees. Scheduling can affect geometry: walking frontend error improved while mapped ATE changed from 3.87 cm to 4.06 cm.
 
