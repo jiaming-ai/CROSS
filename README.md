@@ -311,7 +311,10 @@ frame. Loaded maps keep CROSS's existing independent-chart initialization
 and delayed relocalization policy. The earlier nine-run results above include
 a startup coordinate jump. A frozen-output diagnostic attributes part of
 their rotation error to that jump, but later mapping error remains. The
-repair passes 28 targeted CPU tests; full remote tests and real-input reruns
+repair passes the complete 244-test CPU suite after updating two conditional
+graph callers to GTSAM's base-factor Jacobian interface. Gaussian, Huber and
+Cauchy factor checks preserve noise weighting and key order across the tested
+4.3a1 and 4.3.0 bindings. Production-environment tests and real-input reruns
 are pending, so the earlier performance numbers do not validate this repair.
 
 DPVO uses parallel floating-point accumulation. Repeating a real native BA

@@ -119,7 +119,9 @@ def solve_responses(pg, result, factors, free_ids, fixed_ids):
     for row,(nonlinear,edge) in enumerate(factors):
         jacobian = nonlinear.linearize(result)
         keys = list(jacobian.keys())
-        dense = jacobian.getA()
+        # linearize() may expose the GaussianFactor base in Python. Its
+        # public Jacobian interface includes the same noise whitening.
+        dense, _ = jacobian.jacobian()
         a,b = keys
         Ai,Aj = dense[:,:6][:,permutation],dense[:,6:][:,permutation]
         Xi,Xj = result.atPose3(a).matrix(),result.atPose3(b).matrix()

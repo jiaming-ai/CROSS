@@ -85,7 +85,9 @@ def prepare_refresh(pg, result, factors, free_ids, fixed_ids):
             raise ValueError('Raw factors cannot re-observe a derived map posterior')
         factor_keys.extend(f'{PREFIX}{edge.geometry_factor_identity}:{d}' for d in range(6))
         jac = nonlinear.linearize(result)
-        dense = jac.getA()
+        # Use the base-factor API; newer bindings need not downcast the
+        # result of linearize() to JacobianFactor. Noise is already included.
+        dense, _ = jac.jacobian()
         for column, key in enumerate(jac.keys()):
             if key in positions:
                 offset = positions[key]
