@@ -25,7 +25,7 @@ def main():
     parser.add_argument("sequence", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frontend-only", action="store_true")
-    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt", "streaming_pnp"], default="da3")
+    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt", "streaming_pnp"], default="da3")
     parser.add_argument("--input-fps", type=float, help="Pose deadline rate; also pace arrivals uniformly unless --replay-timestamps")
     parser.add_argument("--sample-fps", type=float, help="Select the first RGB in each timestamp bin at this rate; keep original timestamps")
     parser.add_argument("--replay-timestamps", action="store_true", help="Pace arrivals with original RGB timestamp differences; requires the paced input worker")
@@ -198,10 +198,10 @@ def main():
         from .dpvo_frontend import DPVOFrontend
         frontend = DPVOFrontend(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
-    elif args.frontend in {"metric_pnp", "rotation_metric", "metric_klt"}:
-        from .pnp_frontend import MetricPnPFrontend, RotationMetricFrontend, MetricKLTFrontend
+    elif args.frontend in {"metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt"}:
+        from .pnp_frontend import MetricPnPFrontend, RotationMetricFrontend, LearnedRotationPnPFrontend, MetricKLTFrontend
         factory = {"metric_pnp": MetricPnPFrontend, "rotation_metric": RotationMetricFrontend,
-                   "metric_klt": MetricKLTFrontend}[args.frontend]
+                   "learned_rotation_pnp": LearnedRotationPnPFrontend, "metric_klt": MetricKLTFrontend}[args.frontend]
         frontend = factory(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
     else:

@@ -77,7 +77,7 @@ class MonoConfig:
             raise ValueError("Metric source tracing requires streaming_pnp")
         if self.chart_aware and not self.session_recovery:
             raise ValueError("Chart-aware mapping requires session_recovery")
-        if self.frontend not in {"da3", "dpvo", "metric_pnp", "rotation_metric", "metric_klt", "streaming_pnp"}:
+        if self.frontend not in {"da3", "dpvo", "metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt", "streaming_pnp"}:
             raise ValueError("Unknown monocular frontend")
         if min(self.resolution, self.metric_resolution) < 56:
             raise ValueError("Model resolutions must be at least 56 pixels")

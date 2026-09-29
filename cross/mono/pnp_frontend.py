@@ -135,6 +135,58 @@ class RotationMetricFrontend(MetricPnPFrontend):
         return estimate
 
 
+class LearnedRotationPnPFrontend(MetricPnPFrontend):
+    """Experimental compact learned rotation with metric PnP translation.
+
+    DA3 sees only the current RGB and the metric anchor's RGB. Its translation
+    and depth predictions are not used. Translation still requires the existing
+    calibrated correspondence consensus against uncertain metric depth. This
+    is a frontend baseline, not an independent likelihood or a mapping change.
+    """
+
+    def __init__(self, K, config=None, device="cuda"):
+        super().__init__(K, config, device)
+        self.rotation_anchor_image = None
+
+    def step(self, rgb, timestamp):
+        from scipy.spatial.transform import Rotation
+        from .geometry import relative_pose
+
+        if not np.isfinite(timestamp) or (self.last_timestamp is not None and timestamp <= self.last_timestamp):
+            raise ValueError("Frame timestamps must increase")
+        start = perf_counter()
+        image = self.geometry.prepare(rgb)
+        anchor_index = self.anchor_index
+        self.rotation_prior = None
+        reason = "bootstrap"
+        if self.rotation_anchor_image is not None:
+            prediction = self.geometry.predict([self.rotation_anchor_image, image])
+            relative = relative_pose(prediction.extrinsics[0], prediction.extrinsics[1])
+            if np.isfinite(relative[:3, :3]).all():
+                rotation = self.anchor_pose[:3, :3] @ relative[:3, :3]
+                step_angle = Rotation.from_matrix(self.metric_pose[:3, :3].T @ rotation).magnitude()
+                if step_angle <= self.config.max_relative_rotation:
+                    self.rotation_prior = rotation
+                    reason = "accepted"
+                else:
+                    reason = "implausible_rotation"
+            else:
+                reason = "nonfinite_rotation"
+        geometry_seconds = perf_counter()-start
+        estimate = super().step(rgb, timestamp)
+        # Renewal is decided by the metric frontend. Retain exactly its image,
+        # including a held-translation anchor whose rotation could be recovered.
+        if estimate.diagnostics["anchor_renewed"]:
+            self.rotation_anchor_image = image
+        elapsed = perf_counter()-start
+        estimate.diagnostics.update(pose_source="learned_rotation_pnp",
+            learned_rotation_anchor_frame=anchor_index,
+            learned_rotation_used=self.rotation_prior is not None,
+            learned_rotation_reason=reason, geometry_seconds=geometry_seconds,
+            frontend_seconds=elapsed-estimate.diagnostics["metric_seconds"], total_seconds=elapsed)
+        return estimate
+
+
 class MetricKLTFrontend(MetricPnPFrontend):
     """Track persistent image points between frames against metric anchors.
 
