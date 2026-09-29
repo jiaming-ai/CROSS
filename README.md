@@ -279,6 +279,17 @@ since the initial camera, including motion before metric initialization.
 Recorded unit positions permit causal scale-policy replay without relabelling
 unscaled motion as metres. Relative-only mode explicitly retains tracker units.
 
+`--frontend streaming_dpvo` additionally runs learned metric scale in a
+bounded background worker. Native DPVO keeps its relative geometry; mature
+sparse depths and the RGB image they belong to are frozen together for scale
+estimation. The existing CROSS worker receives delayed metric-depth images
+with their original emitted poses and timestamps. Native loop closure remains
+disabled, and the CROSS global observation and delayed commitment remain in
+control of map association. This scalar bridge does not support the optional
+conditional pose/source extension, nor does it calibrate learned scale bias.
+The [experimental 20 Hz configuration](configs/mono_streaming_dpvo_scale_20hz.json)
+is available for evaluation; its runtime and robustness must be measured.
+
 DPVO uses parallel floating-point accumulation. Repeating a real native BA
 solve with byte-identical inputs on the 5090 produced different poses and
 depths; equal seeds therefore do not ensure identical motion observations.

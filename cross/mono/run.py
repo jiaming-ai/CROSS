@@ -25,7 +25,7 @@ def main():
     parser.add_argument("sequence", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frontend-only", action="store_true")
-    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt", "streaming_pnp"], default="da3")
+    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt", "streaming_pnp", "streaming_dpvo"], default="da3")
     parser.add_argument("--input-fps", type=float, help="Pose deadline rate; also pace arrivals uniformly unless --replay-timestamps")
     parser.add_argument("--sample-fps", type=float, help="Select the first RGB in each timestamp bin at this rate; keep original timestamps")
     parser.add_argument("--replay-timestamps", action="store_true", help="Pace arrivals with original RGB timestamp differences; requires the paced input worker")
@@ -121,8 +121,10 @@ def main():
         parser.error("--adaptive-anchor requires streaming_pnp")
     if args.stable_teacher_cadence and args.frontend != "streaming_pnp":
         parser.error("--stable-teacher-cadence requires streaming_pnp")
-    if (args.mapping_process or args.delayed_recovery) and args.frontend != "streaming_pnp":
-        parser.error("--mapping-process and --delayed-recovery require streaming_pnp")
+    if args.mapping_process and args.frontend not in {"streaming_pnp", "streaming_dpvo"}:
+        parser.error("--mapping-process requires a streaming frontend")
+    if args.delayed_recovery and args.frontend != "streaming_pnp":
+        parser.error("--delayed-recovery requires streaming_pnp")
     import torch
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -202,7 +204,11 @@ def main():
         torch.cuda.reset_peak_memory_stats()
     (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     loading_start = perf_counter()
-    if args.frontend == "streaming_pnp":
+    if args.frontend == "streaming_dpvo":
+        from .streaming_dpvo import StreamingDPVOFrontend
+        frontend = StreamingDPVOFrontend(sequence.K, config, args.device)
+        frontend.provide_mapping_depth = not args.frontend_only
+    elif args.frontend == "streaming_pnp":
         from .streaming import StreamingPnPFrontend
         frontend = StreamingPnPFrontend(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
@@ -239,7 +245,7 @@ def main():
     (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     tracker = frontend
     if not args.frontend_only:
-        if args.frontend == "streaming_pnp":
+        if args.frontend in {"streaming_pnp", "streaming_dpvo"}:
             from .streaming import StreamingMonocularSystem as MonocularSystem
         else:
             from .system import MonocularSystem
@@ -251,15 +257,18 @@ def main():
     warmup_seconds = 0.
     warmup_metric_calls = 0
     if args.warmup_models:
-        if not hasattr(frontend, "refiner"):
-            raise ValueError("Model warmup is currently supported for PnP frontends")
+        if not hasattr(frontend, "refiner") and args.frontend != 'streaming_dpvo':
+            raise ValueError("Model warmup requires PnP or streaming_dpvo")
         warmup_start = perf_counter()
         rgb = next(iter(sequence)).rgb
         def warm_features(refiner):
             old_index, old_boxes = refiner.frame_index, refiner.boxes
             refiner.extract(rgb)
             refiner.frame_index, refiner.boxes = old_index, old_boxes
-        warm_features(frontend.refiner)
+        if args.frontend == 'streaming_dpvo':
+            frontend.initialize_tracker(*rgb.shape[:2])
+        else:
+            warm_features(frontend.refiner)
         frontend.metric.predict_metric(rgb, sequence.K, rgb.shape[:2])
         warmup_metric_calls = 1
         image = frontend.geometry.prepare(rgb)
@@ -280,7 +289,7 @@ def main():
     latencies, arrival_latencies, image_io, output_io = [], [], [], []
     valid_count, metric_count = 0, 0
     tracking_stream = None
-    if args.frontend == "streaming_pnp" and args.device.startswith("cuda"):
+    if args.frontend in {"streaming_pnp", "streaming_dpvo"} and args.device.startswith("cuda"):
         tracking_stream = torch.cuda.Stream(device=args.device, priority=-1)
         tracking_stream.wait_stream(torch.cuda.current_stream(args.device))
     if args.freeze_gc:
@@ -420,6 +429,9 @@ def main():
                                        dropped_frames=0, overflow_policy="fail the run", preprocessing_begins_after_capture=True)
     if hasattr(frontend, "depth_worker"):
         summary["teacher_worker"] = frontend.depth_worker.statistics()
+    if hasattr(frontend, 'scale_events'):
+        (args.output / 'scale_events.json').write_text(json.dumps(frontend.scale_events, indent=2) + '\n')
+        summary['received_metric_observations'] = sum(e['scale_update_requested'] for e in frontend.scale_events)
     if hasattr(tracker, "map_worker"):
         summary["mapping_worker"] = tracker.map_worker.statistics()
         summary["mapping_audit_complete"] = summary["mapping_worker"]["unread_results_replaced"] == 0
@@ -440,8 +452,9 @@ def main():
             child_peak = max((e.get("mapper_process_peak_gpu_allocated_gb", 0.) for e in tracker.map_events), default=0.)
             summary["mapper_process_peak_gpu_allocated_gb"] = child_peak
             summary["sum_process_peak_gpu_allocated_gb"] = summary["peak_gpu_allocated_gb"]+child_peak
-    if args.frontend in {"dpvo", "rotation_metric"} or args.rotation_tracker == 'dpvo':
-        native_frontend = frontend if args.frontend == "dpvo" else frontend.rotation_tracker
+    if args.frontend in {"dpvo", "rotation_metric", "streaming_dpvo"} or args.rotation_tracker == 'dpvo':
+        native_frontend = (frontend if args.frontend == "dpvo" else frontend.native_frontend
+                           if args.frontend == 'streaming_dpvo' else frontend.rotation_tracker)
         native_tracker = native_frontend.tracker
         metadata["model_parameters"]["dpvo"] = sum(p.numel() for p in native_tracker.network.parameters())
         if native_frontend.background_patchifier is not None:

@@ -67,6 +67,27 @@ class DPVOFrontend:
             transform = transform * relative
         return (transform * SE3(entries[index])).inv().matrix().float().cpu().numpy()
 
+    def initialize_tracker(self, height, width):
+        """Load the native tracker without consuming an image or pose."""
+        if height % 16 or width % 16:
+            raise ValueError('DPVO input dimensions must be multiples of 16')
+        if self.tracker is not None:
+            return
+        from dpvo.config import cfg
+        from dpvo.dpvo import DPVO
+        config = cfg.clone()
+        config.LOOP_CLOSURE = False
+        config.CLASSIC_LOOP_CLOSURE = False
+        config.PATCHES_PER_FRAME = 96
+        with torch.random.fork_rng(devices=[0]):
+            torch.manual_seed(self.config.seed)
+            self.tracker = DPVO(config, self.config.dpvo_checkpoint, ht=height, wd=width, viz=False)
+        if self.config.mask_people:
+            from .background_patches import BackgroundPatchifier
+            self.background_patchifier = BackgroundPatchifier(
+                self.tracker.network.patchify, self.device, self.config.mask_interval, self.external_masks)
+            self.tracker.network.patchify = self.background_patchifier
+
     @torch.inference_mode()
     def step(self, rgb, timestamp, exclusion_boxes=None):
         # The pinned upstream extensions launch kernels on CUDA's default
@@ -91,21 +112,7 @@ class DPVOFrontend:
         h, w = rgb.shape[:2]
         if h % 16 or w % 16:
             raise ValueError("DPVO input dimensions must be multiples of 16")
-        if self.tracker is None:
-            from dpvo.config import cfg
-            from dpvo.dpvo import DPVO
-            config = cfg.clone()
-            config.LOOP_CLOSURE = False
-            config.CLASSIC_LOOP_CLOSURE = False
-            config.PATCHES_PER_FRAME = 96
-            with torch.random.fork_rng(devices=[0]):
-                torch.manual_seed(self.config.seed)
-                self.tracker = DPVO(config, self.config.dpvo_checkpoint, ht=h, wd=w, viz=False)
-            if self.config.mask_people:
-                from .background_patches import BackgroundPatchifier
-                self.background_patchifier = BackgroundPatchifier(
-                    self.tracker.network.patchify, self.device, self.config.mask_interval, self.external_masks)
-                self.tracker.network.patchify = self.background_patchifier
+        self.initialize_tracker(h, w)
         tracker = self.tracker
         if self.background_patchifier is not None:
             self.background_patchifier.observe(rgb, exclusion_boxes)

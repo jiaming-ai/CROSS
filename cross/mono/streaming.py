@@ -353,7 +353,12 @@ class StreamingMonocularSystem(MonocularSystem):
     """A single owner updates the inherited CROSS mapper in capture order."""
 
     def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None):
-        frontend = frontend or StreamingPnPFrontend(K, config, device)
+        if frontend is None:
+            if getattr(config, 'frontend', None) == 'streaming_dpvo':
+                from .streaming_dpvo import StreamingDPVOFrontend
+                frontend = StreamingDPVOFrontend(K, config, device)
+            else:
+                frontend = StreamingPnPFrontend(K, config, device)
         self.pool = None
         if config is not None and config.mapping_process:
             from concurrent.futures import ProcessPoolExecutor

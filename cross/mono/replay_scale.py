@@ -38,8 +38,11 @@ def replay(rows, diagnostics, config):
         if not np.isfinite(original_scale) or original_scale <= 0:
             raise ValueError("Recorded scale must be finite and positive")
         filter_.predict()
-        if "scale_observation" in diagnostic:
-            values = dict(diagnostic["scale_observation"])
+        observations = ([diagnostic['scale_observation']] if 'scale_observation' in diagnostic else [])
+        observations += [event['observation'] for event in diagnostic.get('metric_result_events', [])
+                         if event['scale_update_requested']]
+        for observation in observations:
+            values = dict(observation)
             # Online innovation rejection depends on the old filter state;
             # repeat it under the policy being tested. Shape rejection stays.
             if values["reason"] == "innovation_gate":
@@ -73,7 +76,7 @@ def main():
     parser.add_argument("--recovery-observations", type=int)
     args = parser.parse_args()
     metadata = json.loads((args.source / "run.json").read_text())
-    if metadata["config"]["frontend"] != "dpvo":
+    if metadata["config"]["frontend"] not in {"dpvo", "streaming_dpvo"}:
         raise ValueError("Replay currently requires the DPVO increment convention")
     if metadata["config"]["scale"]["mode"] in {"initial", "relative"}:
         raise ValueError("Source must contain periodic metric observations")

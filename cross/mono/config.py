@@ -67,6 +67,11 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.frontend == 'streaming_dpvo':
+            if not self.dpvo_checkpoint or self.scale.mode == 'relative':
+                raise ValueError('Streaming metric DPVO requires a checkpoint and a metric scale mode')
+            if self.dpvo_metric_bootstrap or self.delayed_recovery or self.adaptive_anchor or self.teacher_lag_frames:
+                raise ValueError('PnP anchor recovery, teacher lag and metric depth bootstrap are not supported by streaming_dpvo')
         if self.retrieve_during_loss and (self.frontend != 'streaming_pnp' or self.mapping_interval < 1):
             raise ValueError('Retrieval during tracking loss requires streaming_pnp and a positive mapping interval')
         if self.motion_covariance_bound not in {'axes', 'matrix'}:
@@ -97,7 +102,7 @@ class MonoConfig:
             raise ValueError("Metric source tracing requires streaming_pnp")
         if self.chart_aware and not self.session_recovery:
             raise ValueError("Chart-aware mapping requires session_recovery")
-        if self.frontend not in {"da3", "dpvo", "metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt", "streaming_pnp"}:
+        if self.frontend not in {"da3", "dpvo", "metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt", "streaming_pnp", "streaming_dpvo"}:
             raise ValueError("Unknown monocular frontend")
         if min(self.resolution, self.metric_resolution) < 56:
             raise ValueError("Model resolutions must be at least 56 pixels")
