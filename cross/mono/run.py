@@ -20,6 +20,15 @@ from .data import RGBSequence
 from .frontend import MonoFrontend
 
 
+def motion_std_kwargs(values):
+    if not values:
+        return {}
+    if len(values) not in (2, 4) or any(not np.isfinite(v) or v < 0 for v in values):
+        raise ValueError("--motion-std takes 2 or 4 nonnegative values")
+    keys = ["translation_std_floor", "rotation_std_floor", "translation_std_per_meter", "rotation_std_per_radian"]
+    return dict(zip(keys, values))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sequence", type=Path)
@@ -100,6 +109,11 @@ def main():
     parser.add_argument("--historical-min-score", type=float,
                         help="Experimental score floor for reserved saved-map candidates only; default uses existing thresholds")
     parser.add_argument("--save-map", action="store_true")
+    parser.add_argument("--motion-std", type=float, nargs="+", metavar="V",
+                        help="Per-frame motion std: translation floor (m), rotation floor (rad) "
+                             "[, translation per metre, rotation per radian] (streaming_dpvo)")
+    parser.add_argument("--cross-config", action="append", default=[], metavar="KEY=VALUE",
+                        help="Override a CROSS SystemConfig entry, e.g. mapping.hypothesis.h0_informative_only=true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--threads", type=int, default=4)
     args = parser.parse_args()
@@ -168,6 +182,8 @@ def main():
                         historical_min_score=args.historical_min_score,
                         pose_refinement=args.pose_refinement,
                         refinement_anchor_only=args.refinement_anchor_only, metric_shape=args.metric_shape,
+                        cross_overrides=tuple(args.cross_config),
+                        **motion_std_kwargs(args.motion_std),
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,
                                           recovery_observations=args.scale_recovery_observations))
     sequence = RGBSequence(args.sequence, args.stride, args.start, args.frames, args.intrinsics,

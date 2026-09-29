@@ -10,6 +10,22 @@ from .frontend import MonoFrontend
 from .geometry import inverse
 
 
+def apply_overrides(cfg, overrides):
+    """Set 'dotted.path=value' entries on a nested config; values are parsed as YAML scalars."""
+    import yaml
+    for item in overrides:
+        path, _, text = item.partition("=")
+        if not _:
+            raise ValueError(f"Override needs key=value: {item}")
+        *parents, name = path.strip().split(".")
+        target = cfg
+        for part in parents:
+            target = getattr(target, part)
+        if not hasattr(target, name):
+            raise ValueError(f"Unknown CROSS config key: {path}")
+        setattr(target, name, yaml.safe_load(text))
+
+
 class MonocularSystem:
     def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None):
         if frontend is None and getattr(config, "frontend", None) in {"streaming_pnp", "streaming_dpvo"}:
@@ -55,6 +71,7 @@ class MonocularSystem:
             cfg.tracking.odom_std_per_meter = 0.1
             cfg.tracking.odom_std_per_radian = 0.1
             cfg.retrieval.top_k = 3
+        apply_overrides(cfg, self.config.cross_overrides)
         cfg.retrieval.historical_slots = self.config.historical_retrieval_slots
         cfg.retrieval.historical_min_score = self.config.historical_min_score
         if cfg.retrieval.historical_slots > cfg.retrieval.top_k:

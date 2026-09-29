@@ -63,8 +63,13 @@ class MonoConfig:
     historical_min_score: float | None = None
     translation_std_floor: float = 0.005
     rotation_std_floor: float = 0.01
+    # streaming_dpvo only: per-frame motion std proportional to the frame's own translation / rotation
+    translation_std_per_meter: float = 0.0
+    rotation_std_per_radian: float = 0.0
     max_relative_rotation: float = 1.2
     scale: ScaleConfig = field(default_factory=ScaleConfig)
+    # 'dotted.path=value' overrides of the CROSS SystemConfig, applied after the monocular defaults
+    cross_overrides: tuple = ()
 
     def __post_init__(self):
         if self.frontend == 'streaming_dpvo':

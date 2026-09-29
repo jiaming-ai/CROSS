@@ -141,7 +141,10 @@ class StreamingDPVOFrontend:
                 self.scale_filter.scale if self.scale_filter.initialized else None)
         valid = bool(native.diagnostics['valid'] and self.scale_filter.initialized)
         delta = inverse(previous) @ self.metric_pose
-        covariance = np.diag([self.config.translation_std_floor**2] * 3 + [self.config.rotation_std_floor**2] * 3)
+        step_t = self.config.translation_std_floor + self.config.translation_std_per_meter * float(np.linalg.norm(delta[:3, 3]))
+        step_r = self.config.rotation_std_floor + self.config.rotation_std_per_radian * float(
+            Rotation.from_matrix(delta[:3, :3]).magnitude())
+        covariance = np.diag([step_t**2] * 3 + [step_r**2] * 3)
         covariance[:3, :3] += scale_translation_covariance(delta[:3, 3], self.scale_filter.uncertainty_variance)
         if not valid:
             covariance += np.eye(6)
