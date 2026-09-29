@@ -302,12 +302,6 @@ class HypothesisConfig:
     # relocalization unchanged.  Known weakness: abrupt on-the-spot turns with noisy odometry (Lone Monk, 23 deg per
     # frame): the lagging hypothesis 0 is out-scored and replaced repeatedly.
     h0_informative_only: bool = True
-    # with h0_informative_only: a non-informative measurement still corrects the ROTATION of hypothesis 0 (only its
-    # translation update is skipped).  The information criterion compares translation covariances (a rotation criterion
-    # admits every edge to the pose graph, see cross/core/lc_verify.py:informative); at an on-the-spot turn the odometry
-    # chain has no translation uncertainty, so every measurement is "non-informative" and, without this, the heading
-    # error of the turn is never corrected (Lone Monk: 23 deg per frame turns).
-    h0_informative_rotation: bool = False
     # measurements to keyframes of previous sessions (the loaded map) count as informative pose-graph constraints (they are
     # independent of the session's odometry drift); for the pose update of hypothesis 0: "always", or "belief" = only while hypothesis 0 is less certain
     # than the measurement (translation), "off" / False = the loop-candidate test alone

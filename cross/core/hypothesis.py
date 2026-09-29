@@ -864,7 +864,6 @@ class HypothesisManager:
         proposal_weights: torch.Tensor, # C1
         proposal_confidence: torch.Tensor, # C1
         pose_update_mask: Optional[torch.Tensor] = None, # K bool mask; True means apply retrieval update
-        rotation_only_mask: Optional[torch.Tensor] = None, # K bool mask; True: fuse only the rotation of the proposal
     ):
         """
         Computes the final distribution p = alpha * (p_proposal * p_prior) + (1 - alpha) * p_proposal.
@@ -916,13 +915,6 @@ class HypothesisManager:
 
         # Posterior mean offset in prior tangent (δ)
         prod_log_mu = prod_var_diag * (inv_var1_diag * r)       # δ = Σ * (Σ1^{-1} r)
-        if rotation_only_mask is not None and bool(rotation_only_mask.any()):
-            # the proposal's translation carries no information for these components (se(3) order: t t t r r r)
-            m = rotation_only_mask.to(device=prod_log_mu.device, dtype=torch.bool)
-            prod_log_mu = prod_log_mu.clone(); prod_var_diag = prod_var_diag.clone()
-            prod_log_mu[m, :3] = 0.0
-            prod_var_diag[m, :3] = prior_var_diag_noQ[m, :3]
-
         # Map back to the group: μ_prod = μ_prior ∘ Exp(δ)
         prod_mu = prior_mu @ pp.se3(prod_log_mu).Exp()
         logger.debug(f"filter comp0: prior std {[round(float(x), 4) for x in prior_var_diag[0].sqrt()]} proposal std "

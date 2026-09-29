@@ -85,29 +85,3 @@ def test_relocalization_options_default_off():
     cfg = HypothesisConfig()
     assert not cfg.reloc_unique_evidence and cfg.reloc_min_frames == 0
 
-
-def test_rotation_only_update_keeps_translation_and_evidence():
-    """h0_informative_rotation: a rotation-only update moves the heading of hypothesis 0 but not its position, and the
-    hypothesis evidence (log-likelihood history) is the same as with the full update."""
-    import math
-    out = {}
-    for mode in ("full", "rot"):
-        hm, mu, std = _reloc_manager(unique=False)
-        yaw = 0.1
-        q = torch.tensor([0.0, math.sin(yaw / 2), 0.0, math.cos(yaw / 2)])
-        m = mu.tensor().detach().cpu()
-        prop = pp.SE3(torch.stack([torch.cat([torch.tensor([0.5, 0.0, 0.0]), q]), m[1], m[2]]).to(hm.device))
-        pstd = pp.se3(torch.full((3, 6), 0.2, device=hm.device))
-        mask = torch.zeros(3, dtype=torch.bool, device=hm.device)
-        if mode == "rot":
-            mask[0] = True
-        hm.gmm_filtering(prop, pstd, torch.tensor([0.4, 0.3, 0.3], device=hm.device), torch.ones(3, device=hm.device),
-                         pose_update_mask=torch.ones(3, dtype=torch.bool, device=hm.device),
-                         rotation_only_mask=mask if mode == "rot" else None)
-        out[mode] = (hm.dist[0].tensor()[0].detach().cpu().clone(), hm.log_c_hist.detach().cpu().clone())
-    t_full, t_rot = out["full"][0][:3], out["rot"][0][:3]
-    assert float(t_full[0]) > 0.1                       # the full update moves the position towards the proposal
-    assert float(torch.norm(t_rot)) < 1e-3              # the rotation-only update does not
-    ang = lambda v: 2 * math.atan2(float(torch.norm(v[3:6])), float(v[6]))
-    assert abs(ang(out["rot"][0]) - ang(out["full"][0])) < 0.02 and ang(out["rot"][0]) > 0.02   # heading corrected
-    assert torch.allclose(out["full"][1], out["rot"][1])  # evidence unchanged
