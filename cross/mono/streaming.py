@@ -11,6 +11,7 @@ from time import perf_counter
 
 import numpy as np
 import torch
+from scipy.spatial.transform import Rotation
 
 from .frontend import MonoEstimate
 from .geometry import inverse, scale_translation_covariance
@@ -42,6 +43,7 @@ class FrameSnapshot:
     metric_source: MetricSource | None = None
     scale_response: TranslationResponse | None = None
     world_geometry_std_prefix: np.ndarray | None = None
+    rotation_prior: np.ndarray | None = None
 
 
 def snapshot_motion(previous, current, conditional=False):
@@ -70,6 +72,18 @@ class StreamingPnPFrontend(MetricPnPFrontend):
     def __init__(self, K, config=None, device="cuda"):
         super().__init__(K, config, device)
         self.device = device
+        self.rotation_tracker = None
+        self.rotation_alignment = None
+        if self.config.rotation_tracker == 'dpvo':
+            from .config import MonoConfig
+            from .dpvo_frontend import DPVOFrontend
+            rotation_config = MonoConfig(frontend='dpvo', dpvo_checkpoint=self.config.dpvo_checkpoint,
+                seed=self.config.seed, mask_people=self.config.mask_people, mask_interval=self.config.mask_interval,
+                pose_model=self.config.pose_model, resolution=self.config.resolution,
+                scale=replace(self.config.scale, mode='relative'))
+            self.rotation_tracker = DPVOFrontend(K, rotation_config, device,
+                geometry_model=self.geometry, external_masks=True)
+            self.rotation_tracker.provide_mapping_depth = False
         self.depth_stream = torch.cuda.Stream(device=device, priority=0) if device.startswith("cuda") else None
         # Models were constructed on the calling stream before the worker.
         if self.depth_stream is not None:
@@ -128,7 +142,15 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                 # image's depth arrives. Correct the internal delayed anchor,
                 # never a previously emitted pose. The next increment carries
                 # the correction and retains the failed-frame uncertainty.
-                reverse = self.refiner.estimate(snapshot.features, self.anchor_features, depth)
+                if snapshot.rotation_prior is None:
+                    reverse = self.refiner.estimate(snapshot.features, self.anchor_features, depth)
+                else:
+                    # Use the rotation available at this source image, never
+                    # a later native pose or the receiving frame's rotation.
+                    relative_rotation = (Rotation.from_matrix(self.anchor_pose[:3, :3]).inv()
+                                         * Rotation.from_matrix(snapshot.rotation_prior)).as_matrix()
+                    reverse = self.refiner.estimate(snapshot.features, self.anchor_features, depth,
+                                                    rotation=relative_rotation)
                 if reverse is not None:
                     relative = inverse(reverse[0])
                     snapshot = replace(snapshot, pose=self.anchor_pose @ relative, valid=True)
@@ -167,11 +189,28 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         start = perf_counter()
         renewed, received = self._receive()
         features = self.refiner.extract(rgb)
+        self.rotation_prior = None
+        rotation_estimate = None
+        rotation_initialized = False
+        if getattr(self, 'rotation_tracker', None) is not None:
+            rotation_estimate = self.rotation_tracker.step(rgb, timestamp,
+                exclusion_boxes=features.get('exclusion_boxes'))
+            native_rotation = rotation_estimate.pose[:3, :3]
+            rotation_initialized = bool(rotation_estimate.diagnostics['valid'] and np.isfinite(native_rotation).all())
+            if rotation_initialized and self.rotation_alignment is not None:
+                self.rotation_prior = (Rotation.from_matrix(self.rotation_alignment)
+                                       * Rotation.from_matrix(native_rotation)).as_matrix()
         previous = self.metric_pose.copy()
         valid, count, error = True, 0, 0.
         bootstrap_seconds = 0.
         if self.anchor_features is not None:
-            result = self.refiner.estimate(self.anchor_features, features, self.anchor_depth)
+            if self.rotation_prior is None:
+                result = self.refiner.estimate(self.anchor_features, features, self.anchor_depth)
+            else:
+                relative_rotation = (Rotation.from_matrix(self.rotation_prior).inv()
+                                     * Rotation.from_matrix(self.anchor_pose[:3, :3])).as_matrix()
+                result = self.refiner.estimate(self.anchor_features, features, self.anchor_depth,
+                                               rotation=relative_rotation)
             if result is not None:
                 relative, count, error = result
                 self.metric_pose = self.anchor_pose @ relative
@@ -181,6 +220,11 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                                            self.anchor_pose[:3, :3] @ relative[:3, 3])
             else:
                 valid = False  # keep the held output and its failure in evaluation
+                if self.rotation_prior is not None:
+                    self.metric_pose[:3, :3] = self.rotation_prior
+        if rotation_initialized and self.rotation_alignment is None and valid:
+            self.rotation_alignment = (Rotation.from_matrix(self.metric_pose[:3, :3])
+                                       * Rotation.from_matrix(native_rotation).inv()).as_matrix()
         delta = inverse(previous) @ self.metric_pose
         covariance = np.diag([self.config.translation_std_floor**2]*3 + [self.config.rotation_std_floor**2]*3)
         geometry_covariance = covariance.copy()
@@ -217,7 +261,8 @@ class StreamingPnPFrontend(MetricPnPFrontend):
         if bootstrap or request:
             snapshot = FrameSnapshot(self.index, timestamp, rgb.copy(), features, self.metric_pose.copy(),
                                      self.world_std_prefix.copy(), valid, refresh_anchor=weak_support,
-                                     world_geometry_std_prefix=getattr(self,'world_geometry_std_prefix',None))
+                                     world_geometry_std_prefix=getattr(self,'world_geometry_std_prefix',None),
+                                     rotation_prior=None if self.rotation_prior is None else self.rotation_prior.copy())
             if snapshot.world_geometry_std_prefix is not None:
                 snapshot = replace(snapshot,world_geometry_std_prefix=snapshot.world_geometry_std_prefix.copy())
             if getattr(self, "trace_metric_sources", False):
@@ -256,6 +301,13 @@ class StreamingPnPFrontend(MetricPnPFrontend):
                            teacher_updates=[dict(source_frame=s.index, age_frames=self.index-s.index, **timing)
                                             for (s, _), timing in received],
                            teacher_worker=self.depth_worker.statistics())
+        if rotation_estimate is not None:
+            diagnostics.update(rotation_tracker='dpvo', rotation_initialized=rotation_initialized,
+                               rotation_prior_used=self.rotation_prior is not None,
+                               rotation_tracker_seconds=rotation_estimate.diagnostics['total_seconds'],
+                               native_rotation_matrix=rotation_estimate.pose[:3, :3].tolist(),
+                               shared_person_mask=self.config.mask_people,
+                               actual_torch_threads=torch.get_num_threads())
         if getattr(self, "trace_metric_sources", False):
             diagnostics.update(metric_anchor_source=self.anchor_metric_source.source_id,
                                metric_session_id=self.metric_session_id,

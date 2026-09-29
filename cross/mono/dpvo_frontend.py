@@ -22,7 +22,7 @@ from .scale import LogScaleFilter, observe_sparse_scale
 
 
 class DPVOFrontend:
-    def __init__(self, K, config=None, device="cuda", geometry_model=None):
+    def __init__(self, K, config=None, device="cuda", geometry_model=None, external_masks=False):
         self.config = config or MonoConfig(frontend="dpvo")
         if not self.config.dpvo_checkpoint or not Path(self.config.dpvo_checkpoint).is_file():
             raise FileNotFoundError("Supply --dpvo-checkpoint pointing to released dpvo.pth")
@@ -46,6 +46,7 @@ class DPVOFrontend:
         self.provide_mapping_depth = True
         self.bootstrap_metric_calls = 0
         self.background_patchifier = None
+        self.external_masks = external_masks
         self.vo_cpu_rng = torch.Generator().manual_seed(self.config.seed).get_state()
         self.vo_cuda_rng = torch.Generator(device="cuda").manual_seed(self.config.seed).get_state()
 
@@ -65,7 +66,7 @@ class DPVOFrontend:
         return (transform * SE3(entries[index])).inv().matrix().float().cpu().numpy()
 
     @torch.inference_mode()
-    def step(self, rgb, timestamp):
+    def step(self, rgb, timestamp, exclusion_boxes=None):
         if rgb.dtype != np.uint8 or rgb.ndim != 3 or rgb.shape[2] != 3:
             raise ValueError("Expected uint8 RGB")
         if not np.isfinite(timestamp) or (self.last_timestamp is not None and timestamp <= self.last_timestamp):
@@ -87,11 +88,11 @@ class DPVOFrontend:
             if self.config.mask_people:
                 from .background_patches import BackgroundPatchifier
                 self.background_patchifier = BackgroundPatchifier(
-                    self.tracker.network.patchify, self.device, self.config.mask_interval)
+                    self.tracker.network.patchify, self.device, self.config.mask_interval, self.external_masks)
                 self.tracker.network.patchify = self.background_patchifier
         tracker = self.tracker
         if self.background_patchifier is not None:
-            self.background_patchifier.observe(rgb)
+            self.background_patchifier.observe(rgb, exclusion_boxes)
         self.rgb_memory[self.index] = rgb.copy()
         image = torch.as_tensor(rgb[..., ::-1].copy(), device="cuda").permute(2, 0, 1)  # DPVO expects BGR
         intrinsics = torch.tensor([self.K[0, 0], self.K[1, 1], self.K[0, 2], self.K[1, 2]], device="cuda")
@@ -105,7 +106,9 @@ class DPVOFrontend:
             tracker(timestamp, image, intrinsics)
             self.vo_cpu_rng = torch.get_rng_state()
             self.vo_cuda_rng = torch.cuda.get_rng_state()
-        torch.cuda.synchronize()
+        # A streaming metric teacher owns another CUDA stream. Waiting for the
+        # whole device here would make its delayed work block every fast pose.
+        torch.cuda.current_stream().synchronize()
         pose_seconds = perf_counter() - start
         self.scale_filter.predict()
         initialized = bool(tracker.is_initialized)

@@ -25,6 +25,7 @@ class MonoConfig:
     frontend: str = "da3"
     dpvo_checkpoint: str | None = None
     dpvo_metric_bootstrap: bool = False
+    rotation_tracker: str = "none"  # optional streaming rotation; metric translation remains PnP
     mask_people: bool = False
     mask_interval: int = 1
     rotation_selection: bool = False
@@ -63,6 +64,12 @@ class MonoConfig:
     scale: ScaleConfig = field(default_factory=ScaleConfig)
 
     def __post_init__(self):
+        if self.rotation_tracker not in {"none", "dpvo"}:
+            raise ValueError('Unknown streaming rotation tracker')
+        if self.rotation_tracker != "none" and self.frontend != "streaming_pnp":
+            raise ValueError('A streaming rotation tracker requires streaming_pnp')
+        if self.rotation_tracker == "dpvo" and not self.dpvo_checkpoint:
+            raise ValueError('DPVO rotation requires a released dpvo_checkpoint')
         if self.schmidt_map_geometry and not self.conditional_sources:
             raise ValueError('Schmidt map geometry requires conditional sources')
         if self.stable_teacher_cadence and self.frontend != 'streaming_pnp':

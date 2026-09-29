@@ -99,6 +99,90 @@ def test_reverse_recovery_uses_new_depth_identity_without_rewriting_held_trace()
     assert frontend._capture_scale_response() == held and frontend.metric_pose[0,3] == 0.
 
 
+def test_native_rotation_keeps_metric_lineage_and_failed_translation_causal():
+    """Native gauge/translation cannot become metric evidence or rewrite output."""
+    from scipy.spatial.transform import Rotation
+    from cross.mono.frontend import MonoEstimate
+    from cross.mono.geometry import inverse
+    frontend=make_frontend(True)
+    frontend.config.scale.interval=frontend.config.mapping_interval=1
+    frontend.rotation_alignment=None
+    masks=[];calls=[]
+    box=np.array([[1.,2.,3.,4.]],np.float32)
+    frontend.refiner.extract=lambda _: dict(frame=frontend.index,exclusion_boxes=box)
+    gauge=Rotation.from_rotvec([.3,-.2,.1])
+    native=[]
+    def track(rgb,timestamp,exclusion_boxes=None):
+        masks.append(exclusion_boxes)
+        pose=np.eye(4);pose[:3,:3]=(gauge*Rotation.from_rotvec([0,0,.1*frontend.index])).as_matrix().astype(np.float32)
+        pose[:3,3]=[1000.,-500.,200.]  # arbitrary VO units must never enter metric translation
+        native.append(pose.copy())
+        return MonoEstimate(timestamp,pose,np.eye(4),np.eye(6),None,
+                            dict(valid=frontend.index>=1,total_seconds=0.))
+    frontend.rotation_tracker=SimpleNamespace(step=track)
+    def estimate(anchor,current,depth,rotation=None):
+        calls.append((anchor['frame'],current['frame'],None if rotation is None else rotation.copy()))
+        if current['frame']==3:return None
+        relative=np.eye(4)
+        relative[:3,:3]=(Rotation.from_matrix(rotation).inv().as_matrix() if rotation is not None
+                         else Rotation.from_rotvec([0,0,.2*(current['frame']-anchor['frame'])]).as_matrix())
+        relative[:3,3]=[float(depth[0,0]),.2,.1]
+        return relative,100,.1
+    frontend.refiner.estimate=estimate
+    outputs=[];traces=[]
+    for i in range(5):
+        result=frontend.step(np.full((4,4,3),i,np.uint8),i*.05)
+        outputs.append(result.pose.copy());traces.append(frontend._capture_scale_response())
+        assert result.diagnostics['rotation_prior_used']==(i>=2)
+        np.testing.assert_allclose(result.pose[:3,:3].T@result.pose[:3,:3],np.eye(3),atol=1e-12)
+        biases={source:np.log(2.) for source,_ in traces[-1].terms}
+        np.testing.assert_allclose(traces[-1].translation_at(result.pose[:3,3],biases),
+                                   result.pose[:3,3]*.5,atol=1e-12)
+    assert all(x is box for x in masks)
+    assert calls[0][2] is None  # initialize alignment only after a valid metric pose
+    np.testing.assert_allclose(calls[1][2],outputs[2][:3,:3].T@outputs[1][:3,:3],atol=1e-12)
+    np.testing.assert_array_equal(outputs[3][:3,3],outputs[2][:3,3])
+    assert not np.array_equal(outputs[3][:3,:3],outputs[2][:3,:3])
+    assert traces[3]==traces[2]
+    expected=Rotation.from_matrix(outputs[1][:3,:3])*Rotation.from_matrix(native[1][:3,:3]).inv()*Rotation.from_matrix(native[4][:3,:3])
+    np.testing.assert_allclose(outputs[4][:3,:3],expected.as_matrix(),atol=1e-12)
+    assert np.linalg.norm(outputs[4][:3,3])<10.
+
+
+def test_delayed_reverse_uses_source_rotation_and_new_metric_identity():
+    from scipy.spatial.transform import Rotation
+    from cross.mono.geometry import inverse
+    frontend=make_frontend(True)
+    frontend.step(np.zeros((4,4,3),np.uint8),0.)
+    frontend.anchor_pose=np.eye(4)
+    frontend.anchor_pose[:3,:3]=Rotation.from_rotvec([.1,.2,-.1]).as_matrix()
+    R_source=Rotation.from_rotvec([-.2,.1,.3]).as_matrix()
+    source=identify_prediction(np.ones((4,4,3),np.uint8),frontend.K,
+        model_id='teacher',revision='weights',resolution=504,session_id='acquisition')
+    held_response=frontend._capture_scale_response()
+    snapshot=FrameSnapshot(10,.5,np.ones((4,4,3),np.uint8),{},np.eye(4),np.zeros(6),False,
+        metric_source=source,scale_response=held_response,rotation_prior=R_source.copy())
+    frontend.config.delayed_recovery=True
+    frontend.index,frontend.last_valid=12,False
+    frontend.rotation_prior=Rotation.from_rotvec([1.,0.,0.]).as_matrix()  # receiving frame differs
+    frontend.depth_worker=SimpleNamespace(poll=lambda:[((snapshot,np.ones((4,4))),{})])
+    anchor_before=frontend.anchor_pose.copy();emitted_before=frontend.metric_pose.copy();calls=[]
+    def estimate(*args,rotation):
+        calls.append(rotation.copy())
+        transform=np.eye(4);transform[:3,:3]=rotation;transform[:3,3]=[.2,.1,-.1]
+        return inverse(transform),100,.1
+    frontend.refiner.estimate=estimate
+    renewed,received=frontend._receive()
+    recovered=received[0][0][0]
+    assert renewed and recovered.valid
+    np.testing.assert_allclose(calls[0],anchor_before[:3,:3].T@R_source,atol=1e-12)
+    np.testing.assert_allclose(recovered.pose[:3,:3],R_source,atol=1e-12)
+    np.testing.assert_allclose(recovered.scale_response.record()[source.source_id],-recovered.pose[:3,3],atol=1e-12)
+    np.testing.assert_array_equal(frontend.metric_pose,emitted_before)
+    assert not snapshot.valid and snapshot.scale_response==held_response
+    np.testing.assert_array_equal(snapshot.rotation_prior,R_source)
+
+
 def test_mapping_drop_keeps_signed_interval_and_does_not_mislabel_node_posterior():
     import torch
     captured = []

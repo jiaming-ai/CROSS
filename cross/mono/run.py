@@ -48,6 +48,8 @@ def main():
                         help='Declared per-prediction log-depth prior std for conditional inference; not empirically calibrated')
     parser.add_argument("--freeze-gc", action="store_true", help="Freeze long-lived startup objects during the run; retain collection of new objects")
     parser.add_argument("--dpvo-checkpoint", type=Path)
+    parser.add_argument('--rotation-tracker', choices=['none', 'dpvo'], default='none',
+                        help='Experimental native rotation with streaming_pnp; shares masks and preserves delayed source poses')
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
     parser.add_argument("--mask-interval", type=int, default=1)
@@ -129,6 +131,7 @@ def main():
     config = MonoConfig(frontend=args.frontend,
                         seed=args.seed,
                         dpvo_metric_bootstrap=args.dpvo_metric_bootstrap,
+                        rotation_tracker=args.rotation_tracker,
                         mask_people=args.mask_people,
                         mask_interval=args.mask_interval,
                         rotation_selection=args.rotation_selection,
@@ -428,15 +431,26 @@ def main():
             child_peak = max((e.get("mapper_process_peak_gpu_allocated_gb", 0.) for e in tracker.map_events), default=0.)
             summary["mapper_process_peak_gpu_allocated_gb"] = child_peak
             summary["sum_process_peak_gpu_allocated_gb"] = summary["peak_gpu_allocated_gb"]+child_peak
-    if args.frontend in {"dpvo", "rotation_metric"}:
+    if args.frontend in {"dpvo", "rotation_metric"} or args.rotation_tracker == 'dpvo':
         native_frontend = frontend if args.frontend == "dpvo" else frontend.rotation_tracker
         native_tracker = native_frontend.tracker
         metadata["model_parameters"]["dpvo"] = sum(p.numel() for p in native_tracker.network.parameters())
         if native_frontend.background_patchifier is not None:
-            detector_parameters = sum(p.numel() for p in native_frontend.background_patchifier.detector.parameters())
+            detector = native_frontend.background_patchifier.detector
+            detector_parameters = sum(p.numel() for p in detector.parameters()) if detector is not None else 0
             metadata["model_parameters"]["dpvo"] -= detector_parameters
             metadata["model_parameters"]["dpvo_person_detector"] = detector_parameters
+            metadata['dpvo_shared_person_detector'] = detector is None
             metadata["dpvo_patch_selection"] = "8x native candidate pool; exclude SSDLite320 MobileNet V3 Large COCO_V1 person boxes, score>=0.5, padding 8+4*age px"
+        import importlib
+        metadata['dpvo_runtime'] = dict(
+            checkpoint_sha256=hashlib.sha256(Path(config.dpvo_checkpoint).read_bytes()).hexdigest(),
+            actual_torch_threads=torch.get_num_threads(),
+            binaries={})
+        for module_name in ('cuda_ba', 'cuda_corr', 'lietorch_backends'):
+            path = Path(importlib.import_module(module_name).__file__)
+            metadata['dpvo_runtime']['binaries'][module_name] = dict(
+                path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
         (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     print(json.dumps(summary, indent=2), flush=True)

@@ -23,16 +23,27 @@ class BackgroundPatchifier(torch.nn.Module):
     The released network's feature extraction, patch descriptors and optimizer
     are unchanged. This wrapper does not modify the DPVO checkout or weights.
     """
-    def __init__(self, original, device="cuda", interval=3):
+    def __init__(self, original, device="cuda", interval=3, external_masks=False):
         super().__init__()
         from .person_detector import make_person_detector
         self.original = original
-        self.detector = make_person_detector(device)
+        self.detector = None if external_masks else make_person_detector(device)
+        self.device = device
         self.interval, self.frame_index, self.boxes, self.valid_patches = interval, 0, None, 0
         self.current_boxes = None
 
     @torch.inference_mode()
-    def observe(self, rgb):
+    def observe(self, rgb, exclusion_boxes=None):
+        if self.detector is None:
+            if exclusion_boxes is None:
+                raise ValueError('External patch masks require the current frame exclusion boxes')
+            boxes = torch.as_tensor(exclusion_boxes, device=self.device, dtype=torch.float32)
+            if boxes.ndim != 2 or boxes.shape[1] != 4 or not torch.isfinite(boxes).all():
+                raise ValueError('Exclusion boxes must be finite with shape (N,4)')
+            # The feature extractor already applied the age-dependent padding.
+            self.current_boxes = boxes
+            self.frame_index += 1
+            return
         age = self.frame_index % self.interval
         if self.boxes is None or age == 0:
             image = torch.as_tensor(np.array(rgb), device=next(self.detector.parameters()).device).permute(2, 0, 1).float()/255.

@@ -41,6 +41,24 @@ uv pip install --no-deps /path/to/Depth-Anything-3
 
 For DPVO, follow its [official build instructions](https://github.com/princeton-vl/DPVO) at commit `0ac95b656d1fda91c271d2a106460d19ad966fc7`, with a CUDA toolkit matching PyTorch, matching `torch-scatter`, and `numba`. Add the built checkout to `PYTHONPATH` and obtain the official `dpvo.pth`. Models/binaries are not vendored. `HF_HOME` chooses the model cache and `CROSS_TORCH_HUB` can select an existing XFeat/BoQ hub cache.
 
+On the tested PyTorch 2.8/CUDA 12.8 setup, apply
+[this compatibility patch](patches/dpvo-torch28-dispatch.patch) before building:
+
+```bash
+git -C /path/to/DPVO apply --check /path/to/CROSS/patches/dpvo-torch28-dispatch.patch
+git -C /path/to/DPVO apply /path/to/CROSS/patches/dpvo-torch28-dispatch.patch
+```
+
+It replaces 42 deprecated tensor dispatch calls with `scalar_type()` in the
+correlation and Lie-group extensions; optimizer equations and model weights are
+unchanged. The patch contains MIT-licensed DPVO context; its notice is retained
+in [DPVO-LICENSE](patches/DPVO-LICENSE). Our 5090 build used CUDA 12.8,
+`TORCH_CUDA_ARCH_LIST=12.0`, Eigen 3.4.0, `yacs==0.1.8`, `ninja==1.11.1.4`,
+`numba==0.61.2` and the matching `torch_scatter==2.1.2+pt28cu128`
+[PyG wheel](https://data.pyg.org/whl/torch-2.8.0%2Bcu128.html).
+Choose the CUDA architecture for the target GPU and rebuild there; the tested
+5090 binary does not establish 4090 compatibility or performance.
+
 ```bash
 # Fetch RGB and metadata; sensor-depth images are omitted during extraction.
 python scripts/download_mono_benchmarks.py --root /path/to/benchmarks \
@@ -160,6 +178,23 @@ CUDA_VISIBLE_DEVICES=0 python scripts/benchmark_mono.py \
 ```
 
 DPVO/scalar-only comparison: select `--frontend dpvo --dpvo-checkpoint /path/to/dpvo.pth`. `--dpvo-metric-bootstrap` is an experimental initialization option, not part of the recommended profile. `rotation_metric` tests DPVO rotation with metric-anchor translation. `--retrieval-pose metric_pnp` is an experimental bidirectional learned-depth verification adapter; it improves proposal availability and supports the same-sequence restart experiment; changed-session robustness remains unvalidated.
+
+DPVO uses parallel floating-point accumulation. Repeating a real native BA
+solve with byte-identical inputs on the 5090 produced different poses and
+depths; equal seeds therefore do not ensure identical motion observations.
+Report repeated runs and actual observation parity when comparing downstream
+scale or mapping policies. The native constructor also sets PyTorch's CPU
+thread count to two, overriding `--threads` for these frontends.
+
+`--frontend streaming_pnp --rotation-tracker dpvo --dpvo-checkpoint /path/to/dpvo.pth`
+enables an optional causal streaming comparison. DPVO supplies rotation; the
+periodic metric teacher and calibrated image matches supply translation.
+The feature extractor and DPVO share the current padded person mask. Delayed
+reverse recovery uses the rotation recorded at the depth's source frame and
+does not rewrite emitted poses. Existing metric-source identities and CROSS's
+global message and delayed commitment are retained. This option is disabled by
+default; its source-bias uncertainty remains an approximation, and synchronous
+DPVO quality results do not establish this streaming path's performance.
 
 `--frontend learned_rotation_pnp --frontend-only` tests DA3-Small rotation between the current image and the metric anchor, with translation fitted from calibrated matches and metric depth. It ignores the small model's translation and depth. This synchronous experimental frontend uses at most two images per prediction; it has no shared-source mapping integration or validated robustness advantage. Invalid or implausible learned rotations fall back to geometric PnP.
 
