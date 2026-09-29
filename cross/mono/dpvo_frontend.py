@@ -67,6 +67,20 @@ class DPVOFrontend:
 
     @torch.inference_mode()
     def step(self, rgb, timestamp, exclusion_boxes=None):
+        # The pinned upstream extensions launch kernels on CUDA's default
+        # stream. Keep their PyTorch allocations and consumers on that same
+        # stream; CROSS may call us from its high-priority tracking stream.
+        caller = torch.cuda.current_stream(self.device)
+        native = torch.cuda.default_stream(self.device)
+        if caller == native:
+            return self._step(rgb, timestamp, exclusion_boxes)
+        native.wait_stream(caller)
+        with torch.cuda.stream(native):
+            result = self._step(rgb, timestamp, exclusion_boxes)
+        caller.wait_stream(native)
+        return result
+
+    def _step(self, rgb, timestamp, exclusion_boxes=None):
         if rgb.dtype != np.uint8 or rgb.ndim != 3 or rgb.shape[2] != 3:
             raise ValueError("Expected uint8 RGB")
         if not np.isfinite(timestamp) or (self.last_timestamp is not None and timestamp <= self.last_timestamp):
