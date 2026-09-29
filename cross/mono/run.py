@@ -123,6 +123,8 @@ def main():
     parser.add_argument("--motion-std", type=float, nargs="+", metavar="V",
                         help="Per-frame motion std: translation floor (m), rotation floor (rad) "
                              "[, translation per metre, rotation per radian] (streaming_dpvo)")
+    parser.add_argument("--min-texture-corners", type=int, default=0,
+                        help="streaming_dpvo: treat frames with fewer FAST corners as degenerate views (motion unknown)")
     parser.add_argument("--cross-config", action="append", default=[], metavar="KEY=VALUE",
                         help="Override a CROSS SystemConfig entry, e.g. mapping.hypothesis.h0_informative_only=true")
     parser.add_argument("--seed", type=int, default=0)
@@ -196,7 +198,7 @@ def main():
                         historical_min_score=args.historical_min_score,
                         pose_refinement=args.pose_refinement,
                         refinement_anchor_only=args.refinement_anchor_only, metric_shape=args.metric_shape,
-                        cross_overrides=tuple(args.cross_config),
+                        cross_overrides=tuple(args.cross_config), min_texture_corners=args.min_texture_corners,
                         **motion_std_kwargs(args.motion_std),
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,
                                           recovery_observations=args.scale_recovery_observations))

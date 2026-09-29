@@ -34,6 +34,21 @@ class ScaleRequest:
     gauge: int = 0            # native tracker generation whose unit depths this request compares
 
 
+_FAST = None
+
+
+def texture_corners(rgb):
+    """FAST corners (threshold 20) on a 320-pixel-wide grayscale image: a cheap degenerate-view test."""
+    import cv2
+    global _FAST
+    if _FAST is None:
+        _FAST = cv2.FastFeatureDetector_create(20)
+    h, w = rgb.shape[:2]
+    gray = cv2.cvtColor(cv2.resize(rgb, (320, max(1, round(h * 320 / w))), interpolation=cv2.INTER_AREA),
+                        cv2.COLOR_RGB2GRAY)
+    return len(_FAST.detect(gray))
+
+
 class StreamingDPVOFrontend:
     def __init__(self, K, config, device='cuda'):
         self.config, self.device = config, device
@@ -52,6 +67,7 @@ class StreamingDPVOFrontend:
         # a restarted native tracker starts a new unit gauge; attach it to the last emitted metric pose
         self.gauge_origin = np.eye(4)
         self.native_origin_inverse = np.eye(4)
+        self.degenerate = False
         self.world_std_prefix = np.zeros(6)
         self.index, self.last_timestamp = 0, None
         self.last_request_frame = self.last_scale_request_frame = -config.scale.interval
@@ -145,16 +161,27 @@ class StreamingDPVOFrontend:
             self.scale_filter = LogScaleFilter(self.config.scale)
             self.translation = ScaledTranslation()
             self.last_scale_request_frame = self.index - self.config.scale.interval
+        corners = texture_corners(rgb) if self.config.min_texture_corners > 0 else None
+        degenerate = corners is not None and corners < self.config.min_texture_corners
+        if self.degenerate and not degenerate:
+            # visual motion during a degenerate stretch is unknown: continue from the held pose in DPVO's current gauge
+            scale = self.scale_filter.scale if self.scale_filter.initialized else None
+            self.gauge_origin = self.metric_pose.copy()
+            self.native_origin_inverse = inverse(native.pose)
+            self.translation = ScaledTranslation()
+            if scale is not None:
+                self.translation.update(np.zeros(3), scale)
+        self.degenerate = degenerate
         initialized = not native.diagnostics['initializing']
         previous = self.metric_pose.copy()
-        if initialized:
+        if initialized and not degenerate:
             local_native = self.native_origin_inverse @ native.pose
             local = np.eye(4)
             local[:3, :3] = Rotation.from_matrix(local_native[:3, :3]).as_matrix()
             local[:3, 3] = self.translation.update(local_native[:3, 3],
                 self.scale_filter.scale if self.scale_filter.initialized else None)
             self.metric_pose = self.gauge_origin @ local
-        valid = bool(native.diagnostics['valid'] and self.scale_filter.initialized)
+        valid = bool(native.diagnostics['valid'] and self.scale_filter.initialized and not degenerate)
         delta = inverse(previous) @ self.metric_pose
         step_t = self.config.translation_std_floor + self.config.translation_std_per_meter * float(np.linalg.norm(delta[:3, 3]))
         step_r = self.config.rotation_std_floor + self.config.rotation_std_per_radian * float(
@@ -174,6 +201,7 @@ class StreamingDPVOFrontend:
             position_units='metres' if self.scale_filter.initialized else 'unavailable',
             unit_translation=(self.native_origin_inverse @ native.pose)[:3, 3].tolist() if initialized else None,
             tracker_restarts=native.diagnostics.get('tracker_restarts', 0),
+            texture_corners=corners, degenerate_view=degenerate,
             scale_application='anchored_startup_v1', scale=self.scale_filter.scale,
             log_scale_std=float(np.sqrt(self.scale_filter.uncertainty_variance)),
             accepted_metric_observations=self.scale_filter.accepted,

@@ -24,6 +24,7 @@ def bare_frontend():
     f.scale_filter, f.translation = LogScaleFilter(f.config.scale), ScaledTranslation()
     f.metric_pose, f.world_std_prefix = np.eye(4), np.zeros(6)
     f.gauge_origin, f.native_origin_inverse = np.eye(4), np.eye(4)
+    f.degenerate = False
     f.native_frontend = SimpleNamespace(restarts=0, input_index=int, rgb_memory={})
     f.history, f.ready_depths, f.scale_events = {}, [], []
     f.provide_mapping_depth, f.finished = True, False
@@ -190,3 +191,29 @@ def test_tracker_restart_holds_pose_resets_scale_and_continues_from_last_pose():
     after = f.step(rgb, .2)
     assert held[0, 3] == pytest.approx(1.)
     assert after.pose[0, 3] == pytest.approx(held[0, 3] + 4 * .25)   # continues from the held pose in the new scale
+
+
+def test_degenerate_views_hold_the_pose_and_discard_hallucinated_motion(monkeypatch):
+    import cross.mono.streaming_dpvo as module
+    f = bare_frontend()
+    f.config.min_texture_corners = 40
+    f._submit_mature = lambda: False
+    corners = iter([100, 100, 5, 5, 100, 100])
+    monkeypatch.setattr(module, "texture_corners", lambda rgb: next(corners))
+    xs = iter([1., 2., 7., 9., 10., 11.])     # frames 2-3: DPVO hallucinates 5 + 2 units on a blank wall
+    class Native:
+        rgb_memory = {}
+        restarts = 0
+        def step(self, rgb, timestamp):
+            self.rgb_memory = {f.index: rgb}
+            self.pose = np.eye(4); self.pose[0, 3] = next(xs)
+            return MonoEstimate(timestamp, self.pose.copy(), np.eye(4), np.eye(6), None,
+                                dict(valid=True, initializing=False, total_seconds=.01))
+    f.native_frontend = Native()
+    f.scale_filter.update(ScaleObservation(log_scale=0., variance=.0144, accepted=True))
+    rgb = np.zeros((8, 8, 3), dtype=np.uint8)
+    poses = [f.step(rgb, .05 * i) for i in range(6)]
+    assert [p.diagnostics['valid'] for p in poses] == [True, True, False, False, True, True]
+    assert poses[3].pose[0, 3] == pytest.approx(2.)      # held through the degenerate stretch
+    assert poses[4].pose[0, 3] == pytest.approx(2.)      # re-attached: DPVO's jump 2 -> 10 is discarded
+    assert poses[5].pose[0, 3] == pytest.approx(3.)      # later motion continues normally
