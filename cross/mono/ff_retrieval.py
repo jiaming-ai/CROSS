@@ -206,8 +206,10 @@ class FeedForwardRelativePose:
             poses.append(pose)
             confidences.append(float(np.clip(covis, .01, 1.)))
             # translation: base + range + depth-scale scatter; rotation grows as covisibility drops
-            sigma_t = 0.05 + 0.05 * distance + distance * mad
-            sigma_r = 0.02 + 0.04 * (1. - covis)
+            # (inflated 1.5x over the office probe's median errors, so a fused learned pose does not outweigh later
+            # matcher-based corrections)
+            sigma_t = 1.5 * (0.05 + 0.05 * distance + distance * mad)
+            sigma_r = 1.5 * (0.02 + 0.04 * (1. - covis))
             stds.append([sigma_t] * 3 + [sigma_r] * 3)
             valid[i] = True
         self.last_stds = torch.as_tensor(np.array(stds, dtype=np.float32).reshape(-1, 6))
@@ -224,8 +226,11 @@ class FallbackFeedForwardRelativePose:
     references it rejects (large viewpoint or appearance change), which bounds its GPU load in steady state.
     """
 
-    def __init__(self, primary, feed_forward):
+    def __init__(self, primary, feed_forward, map_relocalization_only=False):
         self.primary, self.feed_forward = primary, feed_forward
+        # only loaded-map references while the session is not yet joined to the map (bounds the model's load to the
+        # relocalization window)
+        self.map_relocalization_only = map_relocalization_only
         self.last_stds = None
         self.last_pair_audit = []
 
@@ -235,7 +240,11 @@ class FallbackFeedForwardRelativePose:
         audits = list(getattr(self.primary, "last_pair_audit", None) or [dict() for _ in range(len(ref_image))])
         stds = self.primary.last_stds
         by_index = {int(i): (poses[k], confidences[k], stds[k]) for k, i in enumerate(np.flatnonzero(valid))}
-        rejected = np.flatnonzero(~valid)
+        candidates = ~valid
+        if self.map_relocalization_only:
+            loaded = np.asarray(kwargs.get("ref_loaded", [False] * len(ref_image)), dtype=bool)
+            candidates &= loaded & bool(kwargs.get("session_unanchored", False))
+        rejected = np.flatnonzero(candidates)
         if len(rejected):
             index = torch.as_tensor(rejected, device=ref_image.device if torch.is_tensor(ref_image) else "cpu")
             ff_poses, ff_valid, ff_conf = self.feed_forward.estimate_pose(

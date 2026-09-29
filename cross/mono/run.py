@@ -86,6 +86,8 @@ def main():
     parser.add_argument("--ff-min-covisibility", type=float, default=0.3)
     parser.add_argument("--ff-fallback-only", action="store_true",
                         help="Keep metric two-view poses; run the feed-forward model only on rejected references")
+    parser.add_argument("--ff-relocalization-only", action="store_true",
+                        help="With --ff-fallback-only: only loaded-map references while the session is not joined")
     parser.add_argument("--retrieval-matcher", choices=["mnn", "lighterglue", "superpoint_lightglue"], default="mnn",
                         help="Matcher for low-rate metric-PnP retrieval; local tracking is unchanged")
     parser.add_argument("--two-view-rotation-check", action="store_true",
@@ -183,7 +185,7 @@ def main():
                         retrieval_pose=args.retrieval_pose,
                         ff_backend=args.ff_backend, ff_checkpoint=args.ff_checkpoint,
                         ff_resolution=args.ff_resolution, ff_min_covisibility=args.ff_min_covisibility,
-                        ff_fallback_only=args.ff_fallback_only,
+                        ff_fallback_only=args.ff_fallback_only, ff_relocalization_only=args.ff_relocalization_only,
                         retrieval_matcher=args.retrieval_matcher,
                         two_view_rotation_check=args.two_view_rotation_check,
                         filter_mode=args.filter_mode,

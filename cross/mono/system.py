@@ -86,7 +86,7 @@ class MonocularSystem:
             if self.config.ff_fallback_only:
                 pose_estimator = FallbackFeedForwardRelativePose(
                     MetricTwoViewRelativePose(camera.K, device, self.config.mask_people, "superpoint_lightglue"),
-                    pose_estimator)
+                    pose_estimator, map_relocalization_only=self.config.ff_relocalization_only)
         elif self.config.retrieval_pose == "da3":
             pose_estimator = DA3RelativePose(self.frontend.geometry, device)
         else:

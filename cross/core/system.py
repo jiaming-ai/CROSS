@@ -2158,6 +2158,9 @@ class System:
                                   curr_metric_source=self._current_metric_source)
         if self.hypothesis_manager.source_states is not None:
             source_context['excluded_factor_ids'] = set().union(*(s.seen_factors for s in self.hypothesis_manager.source_states if s is not None))
+        # which references belong to a loaded map, and whether this session is still unjoined to it
+        source_context['ref_loaded'] = [k.id in self.loaded_node_ids for k in keyframes]
+        source_context['session_unanchored'] = bool(self.hypothesis_manager.reference_support.unanchored)
         valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
             ref_rgbs,
             ref_depths,
