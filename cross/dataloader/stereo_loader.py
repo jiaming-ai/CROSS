@@ -254,7 +254,8 @@ class StereoSequenceLoader(Dataloader):
             right_dir = self.root / dirs[key]
             baseline = self.requested_baseline
         self.right_paths = sorted(right_dir.glob("*.png"))
-        self.depth_paths = sorted((self.root / "depth").glob("*.npy")) if (self.root / "depth").is_dir() else []
+        d = self.root / "depth"             # SimChange: depth/*.png (uint16 mm; current renders) or depth/*.npy (m, v1)
+        self.depth_paths = (sorted(d.glob("*.png")) or sorted(d.glob("*.npy"))) if d.is_dir() else []
         assert len(self.left_paths) == len(self.right_paths) > 0
         self.left_c2w = np.loadtxt(self.root / "poses_left.txt").reshape(-1, 4, 4)
         assert len(self.left_c2w) == len(self.left_paths)

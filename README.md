@@ -219,7 +219,7 @@ camera the scale comes from the odometry (previous observed frame) and from pair
 
 ```bash
 python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/outdoor.yaml
-python run.py data/sim/lonemonk/map_loop --mode stereo --baseline 0.3
+python run.py data/sim/lonemonk/map --mode stereo --baseline 0.3
 ```
 
 Programmatic use differs from the RGB-D mode only by the stereo calibration and the right image:
@@ -240,24 +240,21 @@ bash scripts/run_experiments.sh all && python scripts/summarize.py && python scr
 ```
 
 Design notes: [`design/loop_closure_verified.md`](design/loop_closure_verified.md) (verified loop closure, calibration,
-runtime), [`design/simchange_rearrange.md`](design/simchange_rearrange.md) (HSSD rearrangement benchmark).
+runtime).
 
 ### SimChange benchmark and baselines
 
-Multi-traversal simulator benchmark (Blender 5 `bpy`, `scripts/sim/`): controlled lighting (different light sources),
-object rearrangement, background, viewpoint and traversal changes, stereo baselines 0.1 / 0.3 / 0.5 m rendered in one pass;
-drivers for ORB-SLAM3 (stereo), RTAB-Map (RGB-D / stereo) and MASt3R-SLAM with the same trial protocol (`scripts/baselines/`).
+The multi-traversal simulator benchmark (controlled lighting, object rearrangement, background, viewpoint and traversal
+changes; HSSD house and restaurant, Lone Monk, classroom) lives in its own repository, **SimChange** (scene assets,
+routes, robot-motion model, Blender renderer, rearrangement quantification).  Link its renders as `data/sim`
+(`ln -s $SIMCHANGE_DATA/renders data/sim`).  Drivers for ORB-SLAM3 (stereo), RTAB-Map (RGB-D / stereo) and
+MASt3R-SLAM with the same trial protocol are in `scripts/baselines/`.
 
 ```bash
-blender -b -P scripts/sim/gen_simchange.py -- --scene classroom --out data/sim/classroom --baselines 0.1 0.3 0.5
-bash scripts/run_sim_experiments.sh classroom ff:0.1 ff:0.3 ff:0.5 pnp pnpsgbm:0.3 mast3r
-bash scripts/run_sim_experiments.sh classroom orbslam3:0.1 orbslam3:0.3 orbslam3:0.5 rtabmap
+bash scripts/run_sim_experiments.sh classroom ff:0.3 pnp pnpsgbm:0.3 mast3r
+bash scripts/run_sim_experiments.sh classroom orbslam3:0.3 rtabmap
 python scripts/make_sim_figures.py && python scripts/make_public_tables.py
 ```
-
-The HSSD rearrangement scenes (a 41 x 24 m house and a 49 x 44 m restaurant, hundreds of rearranged objects) are built
-with `scripts/sim/hssd_*.py`, `occupancy.py`, `gen_simchange.py` and quantified with `quantify_rearrangement.py`
-(pipeline in `design/simchange_rearrange.md`).
 
 ### Map-construction replay
 
@@ -266,7 +263,7 @@ edges, loop closures) for either mode; `record_baseline_trace.py` does the same 
 renders an interactive page and `render_trace_video.py` MP4s.
 
 ```bash
-python scripts/viz/record_trace.py --scene lonemonk --map map_loop --variants light_night reverse \
+python scripts/viz/record_trace.py --scene lonemonk --map map --variants light_night reverse \
     --out outputs/viz/lonemonk/trace_cross_stereo --baseline 0.3 --snr 10 --no-frames
 python scripts/viz/build_trace_page.py --viz-root outputs/viz --scenes lonemonk --out outputs/viz/page --standalone
 ```

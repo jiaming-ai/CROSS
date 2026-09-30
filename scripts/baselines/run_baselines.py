@@ -41,7 +41,10 @@ def prepare_sequence(seq: Path, snr, seed=0):
     K = np.asarray(calib["K"])
     (seq / "calib_pinhole.txt").write_text(f"{K[0,0]} {K[1,1]} {K[0,2]} {K[1,2]} {calib['width']} {calib['height']}\n")
     dmm = seq / "depth_mm"
-    if not dmm.is_dir() or len(list(dmm.glob("*.png"))) != len(list((seq / "left").glob("*.png"))):
+    if next((seq / "depth").glob("*.png"), None) is not None:
+        if not dmm.exists():                # current SimChange renders already store depth as uint16 millimetre PNG
+            dmm.symlink_to("depth")
+    elif not dmm.is_dir() or len(list(dmm.glob("*.png"))) != len(list((seq / "left").glob("*.png"))):
         dmm.mkdir(exist_ok=True)
         for f in sorted((seq / "depth").glob("*.npy")):
             d = np.load(f).astype(np.float32)
