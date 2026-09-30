@@ -161,6 +161,7 @@ function renderTrack(v, track) {
   t.append(tb);
   v.append($("div", {class: "card scroll"}, t));
   const d = $("div", {id: "detail"}); v.append(d);
+  if (state.sel && !((m.rows[state.sel.r] || {}).cells || [])[state.sel.c]?.runs?.length) state.sel = null;
   if (state.sel) { const r = m.rows[state.sel.r], c = r.cells[state.sel.c];
     d.append($("h3", {}, `${r.label} — ${m.cols[state.sel.c]}`)); d.append(detail(track, c.runs.map(id => B.runs[id]))); }
   else d.append($("p", {class: "note"}, "Select a cell to see its runs: trajectories (T1), localization error over the query session (T2), trial outcomes (T3)."));
