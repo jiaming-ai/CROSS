@@ -6,8 +6,8 @@ openloris:
   environment: indoor
   r_d: 2.0
   lr_thresholds: [0.5, 1.0]
-  trial_len: 200
-  trial_stride: 200
+  trial_len: 100
+  trial_stride: 50
   odometry: wheel
   setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
   scenes:
@@ -40,8 +40,8 @@ rover:
   environment: outdoor
   r_d: 5.0
   lr_thresholds: [1.0, 5.0]
-  trial_len: 200
-  trial_stride: 200
+  trial_len: 100
+  trial_stride: 50
   odometry: simulated     # no wheel odometry on the platform: ground truth + SNR 10 noise (seeded)
   snr: 10
   setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}

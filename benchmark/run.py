@@ -45,12 +45,15 @@ def load_cfg():
 
 def env_info():
     info = {"host": socket.gethostname(), "time": time.strftime("%Y-%m-%d %H:%M:%S")}
-    try:
+    if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+        info["gpu"] = "cpu"
+    else:
+      try:
         gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader", "-i",
                               os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0]],
                              capture_output=True, text=True, timeout=20).stdout.strip()
         info["gpu"] = gpu
-    except Exception:
+      except Exception:
         info["gpu"] = None
     commit = ROOT / "COMMIT"
     info["commit"] = commit.read_text().strip() if commit.is_file() else None
@@ -336,11 +339,23 @@ class Job:
                 shutil.rmtree(lock, ignore_errors=True)
         return d
 
+    def ready(self, names) -> bool:
+        return all((self.seq(n) / "calib.json").is_file() for n in names)
+
     def run(self):
         a = self.a
         do_map, t1_result, do_query = self.runner()
+        need = [self.scene["map"]] + ([a.seq] if a.task == "t1" else []) + ([a.query] if a.task == "query" else [])
+        if not self.ready(need):
+            print(f"data not ready: {[str(self.seq(n)) for n in need]}", file=sys.stderr)
+            sys.exit(3)                        # the worker releases the job for a later pass
         if a.task == "map":
-            self.ensure_map(self.scene["map"])
+            md = self.ensure_map(self.scene["map"])
+            if not self.scene.get("queries") and not a.keep_maps:     # single-session scene: the map is not reused
+                for f in ("map.pkl", "atlas.osa", "map.db"):
+                    if (md / f).exists():
+                        (md / f).unlink()
+                shutil.rmtree(md / "views_map", ignore_errors=True)
         elif a.task == "t1":
             seq = a.seq
             if seq == self.scene.get("map"):

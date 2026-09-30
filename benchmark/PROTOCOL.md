@@ -9,7 +9,7 @@ paper.
 |---|---|---|---|
 | **T1 Mapping accuracy** | How accurate is the map built in one session? | ATE RMSE of the final trajectory (+ completeness) | KITTI (outdoor), OpenLORIS-Scene (indoor), ROVER (outdoor) |
 | **T2 Multi-session localization** | Given a map from an earlier session, how accurately is a new session localized in it? | localization recall and ATE of the new session, in the map frame | OpenLORIS-Scene, ROVER |
-| **T3 Relocalization success** | Starting with no pose, how often does the system relocalize in a map from another session under change? | relocalization success RS (CROSS paper) | SimChange (synthetic), OpenLORIS-Scene, ROVER |
+| **T3 Relocalization success** | Starting with no pose, how often does the system relocalize in a map from another session under change? | relocalization success RS (CROSS paper, 10 s trials) | SimChange (synthetic), OpenLORIS-Scene, ROVER |
 
 Monocular CROSS is still in development; its columns are in the tables but stay empty until it is released.
 
@@ -96,8 +96,10 @@ is penalized.
 The query session is split into independent trials. Each trial loads the stored map, starts without knowing its pose, and runs
 for a fixed number of frames. **A trial succeeds when its final pose estimate is within r_D of the ground truth**: r_D = 2 m
 indoors, 5 m outdoors, position only. RS is the fraction of successful trials.
-- Trial length: **200 frames, non-overlapping**, as in the CROSS paper (OpenLORIS, ROVER). SimChange traversals are shorter and
-  use 100-frame trials with a stride of 50.
+- Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset. The CROSS paper used
+  200-frame trials at the native 30 Hz, about 7 s. At the benchmark's 10 Hz, 200 frames would be 20 s, which makes
+  relocalization easier. The same trials are used for the SimChange v2 runs. Trials overlap by half, so the Wilson intervals
+  are approximate.
 - The error is measured against the pose the map implies for the query frame (`scripts/reloc_metrics.py`). The pose of the
   nearest map keyframe in the map is composed with its ground-truth offset to the query frame, so map drift does not count as a
   relocalization error. The absolute variant (map-session alignment, as in T2) is stored as well.

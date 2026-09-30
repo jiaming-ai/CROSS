@@ -37,6 +37,7 @@ orbslam3:
   uses_odometry: false
   map_reuse: atlas load + merge
   sim3_setups: [mono]
+  skip: [kitti/rgbd]          # RGB-D* (stereo-matched depth) is a CROSS setup; baselines run KITTI in stereo
 
 rtabmap:
   label: RTAB-Map
@@ -44,6 +45,7 @@ rtabmap:
   setups: [rgbd, stereo]
   uses_odometry: true
   map_reuse: database, localization mode
+  skip: [kitti/rgbd]
 
 mast3r_slam:
   label: MASt3R-SLAM
