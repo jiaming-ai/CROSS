@@ -311,7 +311,10 @@ class System:
     def shutdown(self):
         """Clean up the system."""
         logger.info("Shutting down the system...")
-        time.sleep(1) # grace period for the visualizer to finish
+        # the exit hook would otherwise keep every shut-down system (and its GPU map) alive until process exit
+        atexit.unregister(self.shutdown)
+        if self.visualize:
+            time.sleep(1)  # grace period for the visualizer to finish
         # Stop LC engine first
         if hasattr(self, "_lc_engine") and self._lc_engine is not None:
             try:
