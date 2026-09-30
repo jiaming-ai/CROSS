@@ -29,6 +29,8 @@ def rows_for(ds_cfg, sy, dataset):
     """(system, setup) rows available for a dataset, in systems.yaml order."""
     out = []
     for system, sc in sy.items():
+        if sc.get("hidden"):
+            continue
         for setup in sc["setups"]:
             if setup in ds_cfg[dataset].get("setups", {"rgbd": 1, "stereo": 1, "mono": 1}) and \
                     f"{dataset}/{setup}" not in sc.get("skip", []):
@@ -67,6 +69,7 @@ def wilson(k, n, z=1.96):
 def t2_pool(rs, thr):
     """T2 over several query sessions, pooled over their frames: LR = localized frames / all frames; MS-ATE = RMSE over
     all frames that have an estimate (i.e. every session weighted by its length, as T3 pools trials)."""
+    rs = [r for r in rs if r.get(f"lr@{thr[0]:g}") is not None and r.get(f"lr@{thr[1]:g}") is not None]
     n = [max(r.get("n_frames") or 0, 0) for r in rs]
     if sum(n) == 0:
         return None, None, None
@@ -123,35 +126,23 @@ def dataset_section(ds_cfg):
     return "\n".join(out + details)
 
 
-def scene_rd(ds_cfg, dataset, scene):
-    d = ds_cfg.get(dataset, {})
-    return float(d.get("scenes", {}).get(scene, {}).get("r_d", d.get("r_d", 2.0)))
-
-
-def apply_scene_rd(results, ds_cfg):
-    """Re-score T3 trials with the scene's scale-aware radius (PROTOCOL.md, T3) from their stored final errors: success =
-    final error < r_D; strict = the stored 1 m / 5 deg success and final error < min(1 m, r_D).  The values of the run
-    (paper radius) are kept as rs_fixed / n_success_fixed / r_d_fixed."""
+def rescore_t3(results, ds_cfg):
+    """T3 success at the dataset's two fixed position thresholds (1 m / 2 m indoors, 3 m / 5 m outdoors), from the stored
+    final error of every trial: n_s1 / n_s2 successes, rs1 / rs2 rates."""
     out = []
     for r in results:
-        if r.get("track") != "t3" or r.get("status") != "ok" or not r.get("trials") or "rs_fixed" in r:
-            out.append(r)
+        if r.get("track") != "t3" or r.get("status") != "ok" or not r.get("trials") or "rs1" in r:
+            out.append(r)          # (already re-scored: keep the same object)
             continue
-        rd = scene_rd(ds_cfg, r["dataset"], r["scene"])
+        t1, t2 = ds_cfg[r["dataset"]]["thresholds"]
+        e = [t.get("final_err") for t in r["trials"]]
+        n = len(e)
         r = dict(r)
-        trials = []
-        for t in r["trials"]:
-            e = t.get("final_err")
-            ok = e is not None and e < rd
-            strict = bool(t.get("success_strict")) and e is not None and e < min(1.0, rd)
-            trials.append({**t, "success": ok, "success_strict": strict})
-        n = len(trials)
-        k = sum(t["success"] for t in trials)
-        r.update({"rs_fixed": r.get("rs"), "n_success_fixed": r.get("n_success"), "r_d_fixed": r.get("r_d"), "r_d": rd,
-                  "trials": trials, "n_trials": n, "n_success": k, "rs": k / n if n else None,
-                  "rs_strict": sum(t["success_strict"] for t in trials) / n if n else None, "rs_ci95": wilson(k, n)})
-        fails = sorted(t["final_err"] for t in trials if not t["success"] and t.get("final_err") is not None)
-        r["fail_err_median"] = fails[len(fails) // 2] if fails else None
+        r["n_s1"] = sum(1 for x in e if x is not None and x < t1)
+        r["n_s2"] = sum(1 for x in e if x is not None and x < t2)
+        r["rs1"], r["rs2"] = (r["n_s1"] / n, r["n_s2"] / n) if n else (None, None)
+        r["thresholds"] = [t1, t2]
+        r["n_trials"] = n
         out.append(r)
     return out
 
@@ -160,7 +151,7 @@ class Tables:
     def __init__(self, results, seed):
         self.ds, self.sy = load()
         self.idx = defaultdict(list)
-        for r in apply_scene_rd(results, self.ds):
+        for r in rescore_t3(results, self.ds):
             if r.get("seed", 0) != seed:
                 continue
             self.idx[(r["track"], r["dataset"], r["system"], r["setup"])].append(r)
@@ -236,7 +227,7 @@ class Tables:
     # ---------------------------------------------------------------- T2
     def t2_table(self, dataset):
         cfg = self.ds[dataset]
-        thr = cfg.get("lr_thresholds", [0.5, 1.0])
+        thr = cfg["thresholds"]
         scenes = [s for s in cfg["scenes"] if cfg["scenes"][s].get("queries")]
         head = ["system · setup"] + [f"{s}" for s in scenes] + ["all queries"]
         lines = [f"Cells: LR@{thr[0]:g} m / LR@{thr[1]:g} m and MS-ATE (m), pooled over all frames of the scene's query sessions. "
@@ -266,8 +257,10 @@ class Tables:
         if not ok:
             return FAIL
         a, b, ms = t2_pool(ok, thr)
+        if a is None:
+            return PENDING
         s = f"{a:.2f} / {b:.2f}, {fmt(ms, 2)} m"
-        miss = n - len(ok)
+        miss = n - len([r for r in ok if r.get(f"lr@{thr[1]:g}") is not None])
         return s + (f" ({miss} pending/failed)" if miss else "")
 
     # ---------------------------------------------------------------- T3
@@ -275,14 +268,14 @@ class Tables:
         cfg = self.ds[dataset]
         scenes = [s for s in cfg["scenes"] if cfg["scenes"][s].get("queries")] or \
             sorted({r["scene"] for k, v in self.idx.items() if k[0] == "t3" and k[1] == dataset for r in v})
-        head = ["system · setup"] + [f"{s} (r_D {scene_rd(self.ds, dataset, s):g} m)" for s in scenes] + ["all queries [trials, 95% CI]"]
+        t1, t2 = cfg["thresholds"]
+        head = ["system · setup"] + scenes + [f"all queries [trials, 95 % CI of RS@{t2:g} m]"]
         cal = sorted({self.sy[k[2]]["label"] for k, v in self.idx.items() if k[0] == "t3" and k[1] == dataset
                       for r in v if r.get("calibrated")})
         note = (f" Rows marked *calibrated* ({', '.join(cal)}) use the noise model calibrated without ground truth on the "
                 "first 600 frames of the map traversal." if cal else "")
-        lines = [f"Cells: RS at the scene's r_D (strict: within min(1 m, r_D) and 5°), pooled over the scene's trials. "
-                 f"r_D = 10 % of the extent of the map session's trajectory, between 0.5 m and {cfg['r_d']:g} m (the CROSS "
-                 f"paper's radius).{note}", "",
+        lines = [f"Cells: RS@{t1:g} m / RS@{t2:g} m, the fraction of trials whose final pose lies within {t1:g} m / {t2:g} m of the "
+                 f"pose the map implies, pooled over the scene's trials.{note}", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
             rs_all = self.idx[("t3", dataset, system, setup)]
@@ -303,21 +296,23 @@ class Tables:
         if not ok:
             return FAIL
         n = sum(r["n_trials"] for r in ok)
-        k = sum(r["n_success"] for r in ok)
-        ks = sum(round(r["rs_strict"] * r["n_trials"]) for r in ok)
-        s = f"{k / n:.2f} ({ks / n:.2f})"
+        k1 = sum(r["n_s1"] for r in ok)
+        k2 = sum(r["n_s2"] for r in ok)
+        s = f"{k1 / n:.2f} / {k2 / n:.2f}"
         if ci:
-            lo, hi = wilson(k, n)
+            lo, hi = wilson(k2, n)
             s += f" [{n}, {lo:.2f}–{hi:.2f}]"
         return s
 
     # ---------------------------------------------------------------- summary
     def summary(self):
         cols = [("KITTI ATE (m)", "t1", "kitti"), ("OpenLORIS ATE (m)", "t1", "openloris"), ("ROVER ATE (m)", "t1", "rover"),
-                ("OpenLORIS LR@1 m", "t2", "openloris"), ("ROVER LR@5 m", "t2", "rover"),
-                ("OpenLORIS RS", "t3", "openloris"), ("ROVER RS", "t3", "rover"), ("SimChange RS", "t3", "simchange")]
+                ("OpenLORIS LR@1/2 m", "t2", "openloris"), ("ROVER LR@3/5 m", "t2", "rover"), ("SimChange LR@1/2 m", "t2", "simchange"),
+                ("OpenLORIS RS@1/2 m", "t3", "openloris"), ("ROVER RS@3/5 m", "t3", "rover"), ("SimChange RS@1/2 m", "t3", "simchange")]
         systems = []
         for system, sc in self.sy.items():
+            if sc.get("hidden"):
+                continue
             for setup in sc["setups"]:
                 systems.append((system, setup))
         head = ["system · setup"] + [c[0] for c in cols]
@@ -337,15 +332,14 @@ class Tables:
                     v, f, m = self.t1_agg(cells, seqs)
                     row.append(self.t1_agg_str(v, f, m, len(seqs)) if rs else PENDING)
                 elif track == "t2":
-                    thr = cfg.get("lr_thresholds", [0.5, 1.0])[1]
                     ok = [r for r in rs if r.get("status") == "ok"]
-                    lr = t2_pool(ok, cfg.get("lr_thresholds", [0.5, 1.0]))[1] if ok else None
-                    row.append(f"{lr:.2f}" if lr is not None else PENDING)
+                    a_, b_, _ = t2_pool(ok, cfg["thresholds"]) if ok else (None, None, None)
+                    row.append(f"{a_:.2f} / {b_:.2f}" if a_ is not None else PENDING)
                 else:
                     ok = [r for r in rs if r.get("status") == "ok" and r.get("n_trials")]
                     if ok:
                         n = sum(r["n_trials"] for r in ok)
-                        row.append(f"{sum(r['n_success'] for r in ok) / n:.2f}")
+                        row.append(f"{sum(r['n_s1'] for r in ok) / n:.2f} / {sum(r['n_s2'] for r in ok) / n:.2f}")
                     else:
                         row.append(PENDING)
             if self.sy[system]["runner"] == "pending" and all(c in (PENDING, NA) for c in row[1:]):
@@ -393,8 +387,7 @@ def main():
         parts += ["", f"### {title}", "", T.t2_table(d)]
     parts += ["", "## T3 — relocalization success", "",
               "Independent 10 s trials (100 frames at 10 Hz, stride 50) that start without a pose; success when the final "
-              "estimate is within the scene's r_D of the pose the map implies; r_D scales with the scene (10 % of the map "
-              "trajectory's extent, clipped to [0.5 m, 2 m] indoors and [0.5 m, 5 m] outdoors)."]
+              "estimate is within 1 m / 2 m (indoors) or 3 m / 5 m (outdoors) of the pose the map implies."]
     for d, title in (("openloris", "OpenLORIS-Scene"), ("rover", "ROVER campus_large"), ("simchange", "SimChange v2")):
         parts += ["", f"### {title}", "", T.t3_table(d)]
     if legacy.is_file():

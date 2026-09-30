@@ -95,7 +95,9 @@ def prism_poses(t_gt, p_gt, yaw_gt, t):
 
 
 def read_gt(z, top):
-    rows = [l.split() for l in z.read(f"{top}/groundtruth.txt").decode().splitlines() if l.strip() and not l.startswith("#")]
+    names = set(z.namelist())
+    member = f"{top}/groundtruth.txt" if f"{top}/groundtruth.txt" in names else f"{top}/groundtruth"   # night-light: no suffix
+    rows = [l.split() for l in z.read(member).decode().splitlines() if l.strip() and not l.startswith("#")]
     g = np.asarray([[float(v) for v in r[:4]] for r in rows])
     g = g[np.argsort(g[:, 0])]
     return g[:, 0], g[:, 1:4]

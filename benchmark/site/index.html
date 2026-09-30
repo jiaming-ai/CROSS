@@ -143,8 +143,8 @@ function renderTrack(v, track) {
     ...avail.map(d => { const o = $("option", {value: d}, DS[d] || d); if (d === state.ds[track]) o.selected = true; return o; }));
   v.append($("div", {class: "bar"}, $("span", {}, "Dataset"), sel,
     $("span", {class: "note"}, track === "t1" ? "ATE RMSE (m) of the final trajectory; scene cells average the scene's sequences." :
-      track === "t2" ? "LR@small / LR@large radius, MS-ATE (m). Query sessions run once against the stored map." :
-      "RS at r_D (strict RS at 1 m / 5°), pooled over the scene's trials.")));
+      track === "t2" ? "LR@1 m / LR@2 m indoors (LR@3 m / LR@5 m outdoors), MS-ATE (m). Query sessions run once against the stored map." :
+      "RS@1 m / RS@2 m indoors (RS@3 m / RS@5 m outdoors), pooled over the scene's trials.")));
   const m = B.tables[track][state.ds[track]];
   if (!m) { v.append($("div", {class: "empty"}, "No results.")); return; }
   const t = $("table");
@@ -179,7 +179,7 @@ const legendT1 = () => $("div", {class: "legend"}, $("span", {}, $("span", {clas
   $("span", {}, $("span", {class: "key", style: "background:var(--est)"}), "estimate (aligned)"));
 const legendT2 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "key", style: "background:var(--est)"}), "position error in the map frame"),
   $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "no estimate"));
-const legendT3 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "sq", style: "background:var(--good)"}), "✓ relocalized within r_D"),
+const legendT3 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "sq", style: "background:var(--good)"}), "✓ final pose within the larger threshold (2 m indoors, 5 m outdoors)"),
   $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "✗ failed"));
 
 function box(title, sub, svg, extra) { const p = $("div", {class: "plot"}, $("h4", {}, title), $("div", {class: "sub"}, sub)); if (svg) p.append(svg); if (extra) p.append(extra); return p; }
@@ -238,7 +238,7 @@ function errPlot(r) {
 function trialPlot(r) {
   const title = `${r.map} → ${r.query}`;
   const sub = r.status !== "ok" ? `failed (rc ${r.rc ?? "?"})` :
-    `RS ${fmt(r.rs, 2)} (strict ${fmt(r.rs_strict, 2)}) · ${r.n_success}/${r.n_trials} trials${r.concat ? " · map + trial in one stream" : ""}${r.fail_err_median != null ? " · failed trials end " + fmt(r.fail_err_median, 1) + " m off (median)" : ""}`;
+    `RS@${r.thresholds[0]} m ${fmt(r.rs1, 2)} · RS@${r.thresholds[1]} m ${fmt(r.rs2, 2)} · ${r.n_trials} trials${r.concat ? " · map + trial in one stream" : ""}`;
   if (!r.trials) return box(title, sub, null, $("div", {class: "empty"}, "no trials"));
   const n = r.trials.length, per = Math.min(n, 40), rows = Math.ceil(n / per), cw = 300 / per;
   const svg = s$("svg", {viewBox: `0 0 300 ${rows * cw + 4}`, role: "img", "aria-label": `trial outcomes of ${title}`});
@@ -285,22 +285,21 @@ function renderMetrics(v) {
          "ATE RMSE: position error of the system's final trajectory (after all loop closures) against ground truth, after the best SE(3) alignment (Sim(3) for monocular systems without metric input). Evaluated at the frames the final trajectory contains (CROSS: its map keyframes).",
          "Completeness: fraction of the session's frames within 1 s of an evaluated pose; below 80 % the run counts as a tracking failure (✗).",
          "Scene cell = mean ATE of the scene's sessions; mean column = mean over all sessions of the dataset.")),
+    sec("Thresholds", "Both localization metrics use two fixed position thresholds: 1 m and 2 m indoors (OpenLORIS, SimChange), 3 m and 5 m outdoors (ROVER). The larger ones are the CROSS paper's radii. Rotation is not thresholded (ROVER has no rotation ground truth)."),
     sec("T2 · multi-session localization (LR, MS-ATE): one run per query session",
       ul("Each query session is run once, from its first frame to its last, against the stored map of the scene's map session, starting without a pose.",
          "Per frame i: the estimate is the system's latest pose at frame i, if it is at most 1 s (10 frames) old; it is expressed in the ground-truth frame with the alignment computed on the map session (the query session is never re-aligned). e_i = distance between that position and the ground-truth position. A frame without such a pose has e_i = ∞.",
-         "LR@x of a session = (number of frames with e_i < x) / (number of frames of the session). Thresholds: 0.5 m and 1 m indoors, 1 m and 5 m outdoors.",
-         "MS-ATE of a session = RMSE of e_i over the frames that have a pose; shown with the fraction of such frames.",
-         "Scene and dataset cells pool all frames of the query sessions (localized frames / all frames), so longer sessions weigh more. The summary column uses the larger threshold.")),
+         "LR@x of a session = (number of frames with e_i < x) / (number of frames of the session), for x = 1 m and 2 m indoors, 3 m and 5 m outdoors.",
+         "MS-ATE of a session = RMSE of e_i over the frames that have a pose.",
+         "Scene and dataset cells pool all frames of the query sessions (localized frames / all frames), so longer sessions weigh more.")),
     sec("T3 · relocalization success (RS): many short trials per query session",
       ul("Each query session is cut into trials of 100 frames (10 s); a new trial starts every 50 frames (trials overlap by half; a last trial of at least 50 frames is kept). The Datasets tab lists the number of trials per session.",
          "Every trial is an independent run: a fresh system loads the map and processes only the trial's frames, starting without a pose.",
-         "The trial succeeds when the system's final pose (its latest pose at the trial's last frame, at most 1 s old) is within r_D of the pose the map implies for that frame. The map-implied pose is the nearest map keyframe's estimated pose composed with its ground-truth offset to the query frame, so map drift is not counted as a relocalization error.",
-         "r_D scales with the scene: 10 % of the extent (bounding-box diagonal) of the map session's trajectory, rounded to 0.1 m and clipped to [0.5 m, 2 m] indoors and [0.5 m, 5 m] outdoors; the upper bounds are the CROSS paper's radii. Examples: OpenLORIS office (4 m extent) 0.5 m, SimChange classroom 0.6 m, OpenLORIS home and cafe 1.1 m, ROVER 3.6 m, larger indoor scenes 2 m. The Datasets tab lists every scene's r_D.",
-         "Strict RS additionally requires the final pose within min(1 m, r_D) and 5°.",
-         "RS = successful trials / all trials, pooled over the scene's query sessions; 95 % Wilson interval in the last column.")),
+         "The trial's final error is the distance between the system's final pose (its latest pose at the trial's last frame, at most 1 s old) and the pose the map implies for that frame: the nearest map keyframe's estimated pose composed with its ground-truth offset to the query frame, so map drift is not counted as a relocalization error.",
+         "RS@x = trials with final error below x / all trials, pooled over the scene's query sessions (x = 1 m and 2 m indoors, 3 m and 5 m outdoors); 95 % Wilson interval of the larger threshold in the last column.")),
     sec("How T2 and T3 differ",
       "T3 asks how often a system relocalizes within 10 s from a cold start, and judges only the end of each trial. T2 asks how much of a whole session the system spends correctly localized in the map, including the time before it first relocalizes and any later losses. A system that relocalizes slowly but then holds on can have T2 above T3; one that relocalizes quickly but loses the map again can have T3 above T2."),
-    sec("Why a scene-dependent radius", "A fixed 2 m radius covers half of a 4 m room (OpenLORIS office) but only 6 % of a 35 m restaurant, so success in a small room would mean little. Scaling r_D with the scene keeps the test comparably hard; the run's result at the paper's fixed radius is stored with every T3 cell (rs_fixed)."));
+    sec("Small scenes", "In small rooms (OpenLORIS office spans about 4 m, SimChange classroom about 6 m) even the 1 m threshold is a large fraction of the room; read those cells with the scene size in mind (Datasets tab)."));
 }
 
 // ---------------------------------------------------------------- dataset details
@@ -310,7 +309,7 @@ function renderData(v) {
   for (const d of ["kitti", "openloris", "rover", "simchange"]) {
     if (!SP[d]) continue;
     const card = $("div", {class: "card"}, $("h3", {}, DS[d] || d));
-    const t = $("table"); t.append($("thead", {}, $("tr", {}, ...["scene", "sessions", "map session", "query sessions", "query frames", "T3 trials", "r_D"].map(h => $("th", {}, h)))));
+    const t = $("table"); t.append($("thead", {}, $("tr", {}, ...["scene", "sessions", "map session", "query sessions", "query frames", "T3 trials", "thresholds"].map(h => $("th", {}, h)))));
     const tb = $("tbody");
     for (const [sc, sp] of SP[d]) {
       const rows = (S[d] || {})[sc] || {};
@@ -324,7 +323,7 @@ function renderData(v) {
         $("td", {class: m ? "" : "dim"}, m ? `${sp.map}: ${fr(m)} frames, ${(fr(m) / 10).toFixed(0)} s, ${path(m).toFixed(0)} m` : "not prepared yet"),
         $("td", {}, sp.queries.length ? `${qs.length}/${sp.queries.length} prepared` : "–"),
         $("td", {}, qf.length ? `${Math.min(...qf)}–${Math.max(...qf)} each, ${qf.reduce((a, b) => a + b, 0)} total` : "–"),
-        $("td", {}, sp.queries.length ? String(trials) : "–"), $("td", {}, sp.queries.length ? `${sp.r_d} m` : "–")));
+        $("td", {}, sp.queries.length ? String(trials) : "–"), $("td", {}, `${sp.thresholds[0]} / ${sp.thresholds[1]} m`)));
       if (sp.queries.length) {
         const det = $("details", {}, $("summary", {class: "note"}, `${sc}: every session`));
         const dt = $("table"); dt.append($("thead", {}, $("tr", {}, ...["session", "role", "frames", "duration", "path", "T3 trials"].map(h => $("th", {}, h)))));

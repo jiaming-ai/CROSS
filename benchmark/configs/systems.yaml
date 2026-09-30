@@ -12,38 +12,15 @@
 # uses_odometry: the system consumes the odometry stream of the dataset.
 
 cross_rgbd:
-  label: CROSS (RGB-D, PnP)
+  label: CROSS (PnP, external odometry)
   runner: cross_rgbd
   setups: [rgbd]
   uses_odometry: true
   map_reuse: save/load
-  outdoor_config: [configs/outdoor.yaml]
-
-cross_stereo:
-  label: CROSS (stereo, VGGT-Omega)
-  runner: cross_ff
-  setups: [stereo]
-  uses_odometry: true
-  map_reuse: save/load
-  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3"]
-  outdoor_config: [configs/outdoor.yaml]
-
-cross_rgbd_monoreloc:
-  label: CROSS (RGB-D, PnP, relocalization options from CROSS-mono)
-  runner: cross_rgbd
-  setups: [rgbd]
-  uses_odometry: true
-  map_reuse: save/load
-  # A/B of the monocular mode's relocalization design in the RGB-D mode: coordinate charts with session recovery
-  # (a query session keeps its own frame until joined to the map), reserved retrieval slots for the loaded map, and
-  # the two evidence fixes (reset on slot reuse, loop-closure recheck after realization)
-  args: [--set, mapping.hypothesis.session_recovery=true, mapping.hypothesis.chart_aware=true,
-         retrieval.historical_slots=3, retrieval.historical_min_score=0.0,
-         mapping.hypothesis.reset_evidence_on_slot_reuse=true, mapping.hypothesis.lc_recheck_after_realization=true]
   outdoor_config: [configs/outdoor.yaml]
 
 cross_rgbd_vo:
-  label: CROSS (RGB-D, PnP, visual odometry)
+  label: CROSS (PnP, visual odometry)
   runner: cross_rgbd
   setups: [rgbd]
   uses_odometry: false
@@ -51,8 +28,17 @@ cross_rgbd_vo:
   args: [--odometry, visual]
   outdoor_config: [configs/outdoor.yaml]
 
+cross_stereo:
+  label: CROSS (VGGT-Omega, external odometry)
+  runner: cross_ff
+  setups: [stereo]
+  uses_odometry: true
+  map_reuse: save/load
+  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3"]
+  outdoor_config: [configs/outdoor.yaml]
+
 cross_stereo_vo:
-  label: CROSS (stereo, VGGT-Omega, visual odometry)
+  label: CROSS (VGGT-Omega, visual odometry)
   runner: cross_ff
   setups: [stereo]
   uses_odometry: false
@@ -61,8 +47,17 @@ cross_stereo_vo:
          --odometry, visual]
   outdoor_config: [configs/outdoor.yaml]
 
+cross_mono_odom:
+  label: CROSS (DA3, external odometry)
+  runner: cross_mono
+  setups: [mono]
+  uses_odometry: true
+  map_reuse: save/load
+  args: [--mode, mono, --odometry, external]
+  outdoor_config: [configs/outdoor.yaml]
+
 cross_mono:
-  label: CROSS (mono, DPVO + DA3)
+  label: CROSS (DA3, visual odometry)
   runner: cross_mono
   setups: [mono]
   uses_odometry: false
@@ -73,13 +68,19 @@ cross_mono:
   # driving speed (KITTI 07, 300 frames: map ATE 11.3 m; 1.4 m with the default chain model below)
   outdoor_args: [--mono-args, "--cross-config mapping.loop_closure.noise.odom_k_t=0.06 --cross-config mapping.loop_closure.noise.odom_k_r=0.07 --cross-config mapping.loop_closure.noise.odom_floor_t=0.002 --cross-config mapping.loop_closure.noise.odom_floor_r=0.001"]
 
-cross_mono_odom:
-  label: CROSS (mono + odometry, DA3)
-  runner: cross_mono
-  setups: [mono]
+cross_rgbd_monoreloc:
+  label: CROSS (RGB-D, PnP, relocalization options from CROSS-mono)
+  runner: cross_rgbd
+  hidden: true              # finished A/B (no effect), not in the tables
+  setups: [rgbd]
   uses_odometry: true
   map_reuse: save/load
-  args: [--mode, mono, --odometry, external]
+  # A/B of the monocular mode's relocalization design in the RGB-D mode: coordinate charts with session recovery
+  # (a query session keeps its own frame until joined to the map), reserved retrieval slots for the loaded map, and
+  # the two evidence fixes (reset on slot reuse, loop-closure recheck after realization)
+  args: [--set, mapping.hypothesis.session_recovery=true, mapping.hypothesis.chart_aware=true,
+         retrieval.historical_slots=3, retrieval.historical_min_score=0.0,
+         mapping.hypothesis.reset_evidence_on_slot_reuse=true, mapping.hypothesis.lc_recheck_after_realization=true]
   outdoor_config: [configs/outdoor.yaml]
 
 orbslam3:

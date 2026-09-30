@@ -183,8 +183,12 @@ class Job:
         for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
                                 ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
                                             "--r-d", self.scene.get("r_d", self.dcfg["r_d"])])):
-            if (d / "result.json").is_file() and not a.force:
+            if a.only and track not in a.only:
                 continue
+            if (d / "result.json").is_file() and not a.force and track not in a.redo and not self.stale(d, track):
+                continue
+            if track in a.redo or self.stale(d, track):
+                shutil.rmtree(d, ignore_errors=True)
             d.mkdir(parents=True, exist_ok=True)
             for f in ("map.pkl", "map_meta.json"):
                 if not (d / f).exists():
@@ -198,7 +202,7 @@ class Job:
             rows = json.loads((d / "reloc_rows.json").read_text())
             summ = json.loads((d / "reloc_summary.json").read_text())
             if track == "t2":
-                res = self.t2_from_rows(rows, q, "c0_t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ)
+                res = self.t2_from_rows(rows, q, "c0_t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ, d)
             else:
                 res = self.t3_from_summary(summ, q)
             res.update({"wall_s": dt, "status": "ok", **env_info()})
@@ -209,13 +213,24 @@ class Job:
             out[track] = res
         return out
 
+    def stale(self, d: Path, track: str) -> bool:
+        """A stored T2 result made before recall was kept at the whole threshold grid (it has to be re-run)."""
+        if track != "t2" or not (d / "result.json").is_file():
+            return False
+        r = json.loads((d / "result.json").read_text())
+        return r.get("status") == "ok" and any(f"lr@{x:g}" not in r for x in self.dcfg["thresholds"])
+
     # ------------------------------------------------------------------ results shared by all systems
-    def t2_from_rows(self, rows, q, key, rel_errors, summ):
-        thr = self.dcfg.get("lr_thresholds", [0.5, 1.0])
+    LR_GRID = (0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0)      # T2 recall is stored at every threshold of this grid
+
+    def t2_from_rows(self, rows, q, key, rel_errors, summ, out_dir=None):
+        thr = self.dcfg["thresholds"]
         e = np.array([r.get(key, np.inf) if r.get(key) is not None else np.inf for r in rows], dtype=float)
-        m = multisession(e, thresholds=thr, loc_threshold=self.dcfg["r_d"] if self.outdoor else 1.0)
+        m = multisession(e, thresholds=self.LR_GRID, loc_threshold=thr[0])
         rel = np.array([np.inf if v is None else v for v in rel_errors], dtype=float)
-        m_rel = multisession(rel, thresholds=thr)
+        m_rel = multisession(rel, thresholds=self.LR_GRID)
+        if out_dir is not None:          # per-frame errors: later threshold changes need no rerun
+            np.savez_compressed(Path(out_dir) / "errors.npz", err=e.astype(np.float32), err_map_relative=rel.astype(np.float32))
         return {**self.base, "track": "t2", "map": self.scene["map"], "query": q, **m,
                 "map_relative": {k: v for k, v in m_rel.items() if k.startswith("lr@") or k == "ms_ate"},
                 "err_curve": downsample(np.where(np.isfinite(e), e, -1.0)).round(3),
@@ -229,7 +244,7 @@ class Job:
                    "final_err": t["final_t_err"]} for t in tr["trials"]]
         fails = [t["final_err"] for t in trials if not t["success"] and t["final_err"] is not None and np.isfinite(t["final_err"])]
         return {**self.base, "track": "t3", "map": self.scene["map"], "query": q, "n_trials": n, "n_success": k,
-                "rs": tr["RS"], "rs_strict": tr["RS_1m_5deg"], "rs_ci95": wilson(k, n),
+                "rs": tr["RS"], "rs_ci95": wilson(k, n),
                 "fail_err_median": float(np.median(fails)) if fails else None, "trials": trials, "r_d": self.scene.get("r_d", self.dcfg["r_d"]),
                 "trial_len": self.dcfg["trial_len"]}
 
@@ -309,13 +324,15 @@ class Job:
                 if (d / "reloc_summary.json").is_file() and rc == 0:
                     rows = json.loads((d / "reloc_rows.json").read_text())
                     summ = json.loads((d / "reloc_summary.json").read_text())
-                    res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ) if track == "t2" \
+                    res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ, d) if track == "t2" \
                         else self.t3_from_summary(summ, q)
                     keep = {k: old[k] for k in ("wall_s", "host", "gpu", "commit", "time", "rc") if k in old}
                     res.update({"status": "ok", **keep, "rescored": time.strftime("%Y-%m-%d %H:%M:%S")})
                     write_result(d / "result.json", res)
                 continue
-            if (d / "result.json").is_file() and not a.force:
+            if a.only and track not in a.only:
+                continue
+            if (d / "result.json").is_file() and not a.force and track not in a.redo:
                 continue
             d.mkdir(parents=True, exist_ok=True)
             if (map_dir / "atlas.osa").exists() and not (d / "atlas.osa").exists():
@@ -335,7 +352,7 @@ class Job:
             rows = json.loads((d / "reloc_rows.json").read_text())
             summ = json.loads((d / "reloc_summary.json").read_text())
             if track == "t2":
-                res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ)
+                res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ, d)
             else:
                 res = self.t3_from_summary(summ, q)
             res.update({"wall_s": dt, "status": "ok", "rc": rc, **env_info()})
@@ -363,7 +380,20 @@ class Job:
         for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
                                 ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
                                             "--r-d", self.scene.get("r_d", self.dcfg["r_d"]), "--max-trials", a.concat_max_trials])):
-            if (d / "result.json").is_file() and not a.force:
+            if a.reeval:              # re-score from the stored per-frame rows (no system run)
+                if (d / "reloc_rows.json").is_file() and (d / "reloc_summary.json").is_file() and (d / "result.json").is_file():
+                    old = json.loads((d / "result.json").read_text())
+                    rows = json.loads((d / "reloc_rows.json").read_text())
+                    summ = json.loads((d / "reloc_summary.json").read_text())
+                    res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ, d) \
+                        if track == "t2" else self.t3_from_summary(summ, q)
+                    keep = {k: old[k] for k in ("wall_s", "host", "gpu", "commit", "time", "rc") if k in old}
+                    res.update({"status": "ok", "concat": True, **keep, "rescored": time.strftime("%Y-%m-%d %H:%M:%S")})
+                    write_result(d / "result.json", res)
+                continue
+            if a.only and track not in a.only:
+                continue
+            if (d / "result.json").is_file() and not a.force and track not in a.redo:
                 continue
             d.mkdir(parents=True, exist_ok=True)
             rc, dt = sh(self.concat_cmd(self.scene["map"], q, d, [str(e) for e in extra] + ["--timeout", a.concat_timeout]),
@@ -374,7 +404,7 @@ class Job:
                 continue
             rows = json.loads((d / "reloc_rows.json").read_text())
             summ = json.loads((d / "reloc_summary.json").read_text())
-            res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ) if track == "t2" \
+            res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ, d) if track == "t2" \
                 else self.t3_from_summary(summ, q)
             res.update({"wall_s": dt, "status": "ok", "rc": rc, "concat": True, **env_info()})
             write_result(d / "result.json", res)
@@ -498,6 +528,8 @@ def main():
                     help="T3 trials per query for systems without map persistence (evenly spaced)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--reeval", action="store_true", help="baselines: re-score existing query runs from their pose files")
+    ap.add_argument("--redo", nargs="*", default=[], choices=["t2", "t3"], help="query task: re-run these tracks although results exist")
+    ap.add_argument("--only", nargs="*", default=[], choices=["t2", "t3"], help="query task: run only these tracks")
     ap.add_argument("--keep-maps", action="store_true")
     ap.add_argument("--keep-rows", action="store_true", help="keep the per-frame rows of the query runs")
     a = ap.parse_args()

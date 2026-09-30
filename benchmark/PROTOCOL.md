@@ -9,9 +9,10 @@ paper.
 |---|---|---|---|
 | **T1 Mapping accuracy** | How accurate is the map built in one session? | ATE RMSE of the final trajectory (+ completeness) | KITTI (outdoor), OpenLORIS-Scene (indoor), ROVER (outdoor) |
 | **T2 Multi-session localization** | Given a map from an earlier session, how accurately is a new session localized in it? | localization recall and ATE of the new session, in the map frame | OpenLORIS-Scene, ROVER |
-| **T3 Relocalization success** | Starting with no pose, how often does the system relocalize in a map from another session under change? | relocalization success RS (CROSS paper, 10 s trials, radius scaled to the scene) | SimChange (synthetic), OpenLORIS-Scene, ROVER |
+| **T3 Relocalization success** | Starting with no pose, how often does the system relocalize in a map from another session under change? | relocalization success RS@x (CROSS paper, 10 s trials; x = 1 / 2 m indoors, 3 / 5 m outdoors) | SimChange (synthetic), OpenLORIS-Scene, ROVER |
 
-Monocular CROSS is still in development; its columns are in the tables but stay empty until it is released.
+CROSS runs in all six combinations of observation mode (RGB-D with PnP, stereo with VGGT-Omega, monocular with Depth
+Anything 3) and motion source (the dataset's external odometry, or DPVO visual odometry from the images).
 
 ## 1. Datasets and splits
 
@@ -40,8 +41,7 @@ Notes.
   - roll and pitch are zero;
   - the camera sits at the calibrated offset from the prism (about 0.5 m).
 
-  A 2° heading error moves the camera by about 2 cm. On ROVER, therefore, only position errors are reported: there is no
-  strict 1 m / 5° RS. The total station was set up anew for every recording, so the recordings do not share a frame.
+  A 2° heading error moves the camera by about 2 cm. All localization thresholds are on position only. The total station was set up anew for every recording, so the recordings do not share a frame.
   Each recording's prism track is registered to the map recording's track by 2-D ICP (x, y, heading) plus a height offset.
   This works because the robot drives the same lawn-edge route. The residuals are stored in each sequence's `calib.json`.
   On autumn → summer, for example, the registered tracks lie 0.13 m apart at the median and 0.42 m at the 90th percentile.
@@ -100,7 +100,7 @@ session's* alignment (T1). The query session is **not** re-aligned: a system tha
 is penalized.
 - **Localization recall LR@x**: the fraction of *all* query frames whose position error is below x. Each frame is scored with
   the system's latest pose, if that pose is at most 1 s old; this is the pose a robot would get by asking the system at that frame,
-  and it matters for systems that report poses only at keyframes. Frames with no pose that recent count as failures. Thresholds: x = 0.5 m and 1 m indoors, 1 m and 5 m outdoors. This is the headline T2 number because it
+  and it matters for systems that report poses only at keyframes. Frames with no pose that recent count as failures. Thresholds: x = 1 m and 2 m indoors, 3 m and 5 m outdoors, the same as T3. This is the headline T2 number because it
   compares systems that report no pose until they relocalize with systems that always report one.
 - **MS-ATE** (m): the RMSE over the frames that have an estimate, reported with their fraction.
 - **Aggregation**: LR and MS-ATE are computed per query session. Scene and dataset cells pool the frames of all query
@@ -109,22 +109,9 @@ is penalized.
 
 ### T3 — relocalization success (CROSS paper, §5.1)
 The query session is split into independent trials. Each trial loads the stored map, starts without knowing its pose, and runs
-for a fixed number of frames. **A trial succeeds when its final pose estimate is within r_D of the ground truth**, position
-only. **r_D scales with the scene**: 10 % of the extent (bounding-box diagonal) of the map session's trajectory, rounded to
-0.1 m and clipped to [0.5 m, 2 m] indoors and [0.5 m, 5 m] outdoors. The upper bounds are the CROSS paper's radii. A fixed
-2 m would cover half of a 4 m room (OpenLORIS office) but only 6 % of a 35 m restaurant. The per-scene values are in
-`configs/datasets.yaml`:
-
-| scene | r_D |
-|---|---|
-| OpenLORIS office | 0.5 m |
-| OpenLORIS home, cafe | 1.1 m |
-| OpenLORIS corridor, market | 2 m |
-| SimChange classroom | 0.6 m |
-| SimChange HSSD house, restaurant, Lone Monk | 2 m |
-| ROVER campus_large | 3.6 m |
-
-The result at the paper's fixed radius is stored with every cell (`rs_fixed`). RS is the fraction of successful trials. The final estimate is the system's
+for a fixed number of frames. **RS@x is the fraction of trials whose final pose estimate lies within x of the ground truth**, position only. There are two
+fixed thresholds per environment: **x = 1 m and 2 m indoors, 3 m and 5 m outdoors**. The larger ones are the CROSS paper's
+radii. RS is the fraction of successful trials. The final estimate is the system's
 latest pose in the trial. It must be at most 1 s older than the trial's last frame, because some systems (MASt3R-SLAM, VGGT-SLAM) report poses only at
 keyframes. Monocular systems are aligned with Sim(3) on the map session, so their errors are in metres too.
 - Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset. The CROSS paper used
@@ -134,7 +121,7 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 - The error is measured against the pose the map implies for the query frame (`scripts/reloc_metrics.py`). The pose of the
   nearest map keyframe in the map is composed with its ground-truth offset to the query frame, so map drift does not count as a
   relocalization error. The absolute variant (map-session alignment, as in T2) is stored as well.
-- Also reported: strict RS (within min(1 m, r_D) and 5°), the median final error of the failed trials, and 95 % Wilson intervals.
+- Also reported: the median final error of the failed trials, and 95 % Wilson intervals.
 - Systems without map persistence (MASt3R-SLAM, VGGT-SLAM, DROID-SLAM) run the map session followed by the trial in one
   stream. Only the trial frames are scored. Every trial re-runs the whole map session, so these systems are scored on at most
   20 evenly spaced trials per query session. This is marked in the tables because the system keeps the map session's live
@@ -144,9 +131,12 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 
 | system | setups | odometry / IMU | map reuse (T2, T3) | source |
 |---|---|---|---|---|
-| CROSS (RGB-D, PnP) | RGB-D, RGB-D\* | odometry | save / load map | this repository |
-| CROSS (stereo, VGGT-Omega) | stereo | odometry | save / load map | this repository |
-| CROSS (mono) | mono | odometry | save / load map | in development |
+| CROSS (PnP) | RGB-D, RGB-D\* | external odometry | save / load map | this repository (`--mode rgbd`) |
+| CROSS (PnP) | RGB-D, RGB-D\* | visual odometry (DPVO, metric scale from the depth) | save / load map | `--mode rgbd --odometry visual` |
+| CROSS (VGGT-Omega) | stereo | external odometry | save / load map | `--mode stereo` |
+| CROSS (VGGT-Omega) | stereo | visual odometry (DPVO, scale from stereo depth) | save / load map | `--mode stereo --odometry visual` |
+| CROSS (Depth Anything 3) | mono | external odometry | save / load map | `--mode mono --odometry external` |
+| CROSS (Depth Anything 3) | mono | visual odometry (DPVO + learned metric scale) | save / load map | `--mode mono --odometry visual` |
 | ORB-SLAM3 | mono, stereo, RGB-D | none (visual) | atlas save / load, multi-map merge | [UZ-SLAMLab/ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) + `scripts/baselines/orbslam3_reloc.cc` |
 | RTAB-Map | RGB-D, stereo | same odometry as CROSS | database, localization mode | [introlab/rtabmap](https://github.com/introlab/rtabmap) + `scripts/baselines/rtabmap_reloc.cc`; every frame processed, `Mem/STMSize 30` (RTAB-Map's KITTI setting) |
 | MASt3R-SLAM | mono | none | concatenated stream | [rmurai0610/MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) |

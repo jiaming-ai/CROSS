@@ -41,7 +41,9 @@ def plane(traj_gt, traj_est):
 
 
 def slim_run(r, rid):
-    keep = {k: v for k, v in r.items() if k not in ("traj_est", "traj_gt", "err_curve", "trials")}
+    thr = r.get("thresholds", [1.0, 2.0])
+    keep = {k: v for k, v in r.items() if k not in ("traj_est", "traj_gt", "err_curve", "trials")
+            and not (k.startswith("lr@") and float(k[3:]) not in thr)}
     keep["id"] = rid
     if r.get("traj_gt") is not None:
         ax = plane(r["traj_gt"], r.get("traj_est"))
@@ -54,8 +56,8 @@ def slim_run(r, rid):
         c = np.asarray(r["err_curve"], float)
         keep["err"] = np.round(c[:: max(1, len(c) // 400)], 2).tolist()
     if r.get("trials") is not None:
-        keep["trials"] = [[t.get("start"), int(bool(t.get("success"))), None if t.get("final_err") is None else round(t["final_err"], 2)]
-                          for t in r["trials"]]
+        keep["trials"] = [[t.get("start"), int(t.get("final_err") is not None and t["final_err"] < thr[1]),
+                           None if t.get("final_err") is None else round(t["final_err"], 2)] for t in r["trials"]]
     return keep
 
 
@@ -96,14 +98,13 @@ def table_models(T: mt.Tables, runs_by_key):
                     sub = [r for r in rs if r["scene"] == s]
                     if track == "t2":
                         n = len(cfg["scenes"].get(s, {}).get("queries", [])) or len(sub)
-                        text = T.t2_str(sub, n, cfg.get("lr_thresholds", [0.5, 1.0]))
+                        text = T.t2_str(sub, n, cfg["thresholds"])
                     else:
                         text = T.t3_str(sub)
                     cells.append({"text": text, "runs": [runs_by_key[id(r)] for r in sub]})
                 rows.append({"label": mt.row_label(sy, system, setup, dataset), "system": system, "setup": setup,
                              "pending": sy[system]["runner"] == "pending" and not rs, "cells": cells})
-            cols = [f"{s} (r_D {mt.scene_rd(ds, dataset, s):g} m)" for s in scenes] if track == "t3" else scenes
-            out[track][dataset] = {"cols": cols, "rows": rows}
+            out[track][dataset] = {"cols": scenes, "rows": rows, "thresholds": cfg["thresholds"]}
     return out
 
 
@@ -120,11 +121,10 @@ def failures(results, runs_by_key, per_system=4):
         elif r["track"] == "t1" and r.get("ate_rmse") is not None:
             out[k]["t1"].append((-1.0 + min(r["ate_rmse"] / 10.0, 0.99), rid))   # worst successful maps after the failures
         elif r["track"] == "t2" and r.get("status") == "ok":
-            thr = [key for key in r if key.startswith("lr@")]
-            lr = max((r[t] for t in thr), default=0.0) if thr else 0.0
+            lr = r.get(f"lr@{r.get('thresholds', [1, 2])[1]:g}") or 0.0
             out[k]["t2"].append((1.0 - lr, rid))
         elif r["track"] == "t3" and r.get("status") == "ok":
-            nf = r.get("n_trials", 0) - r.get("n_success", 0)
+            nf = r.get("n_trials", 0) - r.get("n_s2", r.get("n_success", 0))
             if nf > 0:
                 out[k]["t3"].append((nf / max(r["n_trials"], 1), rid))
     for k, v in out.items():
@@ -139,7 +139,10 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     results = json.loads(Path(a.results).read_text())["results"] if Path(a.results).is_file() else []
-    results = mt.apply_scene_rd([r for r in results if r.get("seed", 0) == a.seed], mt.load()[0])
+    ds_cfg = mt.load()[0]
+    results = mt.rescore_t3([r for r in results if r.get("seed", 0) == a.seed], ds_cfg)
+    for r in results:                      # the dataset's two thresholds travel with every run (page labels)
+        r["thresholds"] = ds_cfg[r["dataset"]]["thresholds"]
     runs, runs_by_key = {}, {}
     for r in results:
         rid = run_id(r)
@@ -161,7 +164,7 @@ def main():
         "failures": failures(results, runs_by_key), "assets": assets,
         "legacy": json.loads(legacy.read_text()) if legacy.is_file() else None,
         "datastats": json.loads(dstats.read_text()) if dstats.is_file() else {},
-        "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", []), "r_d": mt.scene_rd(T.ds, d, sc)}]
+        "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", []), "thresholds": c["thresholds"]}]
                        for sc, v in c["scenes"].items()]
                    for d, c in T.ds.items()},
     }
