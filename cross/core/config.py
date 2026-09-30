@@ -192,7 +192,7 @@ class LoopClosureConfig:
     adaptive_scale: bool = True
     adaptive_window: int = 150
     # minimum odometry-chain length (m) of a span used for the online metric-scale ratio (measured / odometry
-    # translation over chains of <= 5 edges); 1 m for driving / indoor scenes, ~0.3 m for slow underwater motion
+    # translation over chains of <= 5 edges); 1 m for driving / indoor scenes, less for slow platforms
     scale_min_span_m: float = 1.0
     # Intra-hypothesis loop closure.  The multi-hypothesis detector (HypothesisConfig.detect_*) only fires when a
     # *second* realized hypothesis out-scores hypothesis 0, i.e. when the revisit is inconsistent with the tracked
@@ -211,7 +211,7 @@ class LoopClosureConfig:
     # temporal corroboration of intra-session loop candidates: a loop edge constrains the graph (and may trigger an
     # optimisation) only when another loop edge within corroborate_window observations implies the same correction of
     # the current pose (tolerances below); 0 disables.  Once odometry drift is large the prior gate is wide and single
-    # aliased revisits pass it (SEALOC: map error 12-16 m against 2.5 m for odometry alone)
+    # aliased revisits pass it (seen on 1 km surveys: map error 12-16 m against 2.5 m for odometry alone)
     corroborate_window: int = 0
     corroborate_tol_t: float = 0.5
     corroborate_tol_r_deg: float = 5.0
@@ -233,7 +233,7 @@ class LoopClosureConfig:
     anchor_contradict_min: int = 0
     anchor_contradict_window: int = 20
     # the map measurements that corroborate an anchor or contradict it must come from session keyframes at least this far
-    # apart (m): consecutive frames see the same aliased place and agree with each other by construction (r7jjskxq: a
+    # apart (m): consecutive frames see the same aliased place and agree with each other by construction (seen: a
     # correct anchor was dropped on two measurements one step apart).  0: any other observation counts.
     anchor_min_separation: float = 0.0
     # a rejected measurement can contradict the anchor only when the pose it implies for the current keyframe is at least

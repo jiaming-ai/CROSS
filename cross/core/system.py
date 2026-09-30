@@ -1225,7 +1225,7 @@ class System:
         t_pgo = time.perf_counter()
         # test-before-apply: the candidate solution is only written back when its new edges pass the posterior test;
         # otherwise the outliers are quarantined and the graph is re-solved from the *unmodified* poses (re-solving from
-        # a solution already distorted by a wrong loop edge left the map in a bad minimum: SEALOC jumps of 5-11 m)
+        # a solution already distorted by a wrong loop edge left the map in a bad minimum: jumps of 5-11 m on long surveys)
         defer = bool(self.config.mapping.loop_closure.test_before_apply) and self.config.mapping.loop_closure.use_posterior \
             and getattr(self.config.mapping.loop_closure, "posterior_action", "remove") == "remove"
         pgo_info = hm.handle_loop_closure(0, apply=not defer)
@@ -1803,7 +1803,7 @@ class System:
             # keyframes of previous sessions are fixed and independent of this session's odometry drift: a measurement
             # to them is informative about hypothesis 0 even when the verifier's session anchor predicts it (the anchor is
             # itself only the previous map measurement plus odometry); without this, a relocalized session drifted away
-            # from the map with its odometry (FLSea canyon2: 0.06 m after relocalization -> 0.7 m)
+            # from the map with its odometry (0.06 m after relocalization -> 0.7 m in a real-data session)
             mri = self.config.mapping.hypothesis.map_refs_informative
             if not informative and mri and mri != "off":
                 srcs = [int(x) for x in cluster_sources[:, 0].tolist()]
