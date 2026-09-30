@@ -246,9 +246,10 @@ def mono_config_from_profile(profile, dpvo_checkpoint=None, extra_args=()):
 def visual_odometry_config(dpvo_checkpoint, seed=0, mask_people=False):
     """MonoConfig of the DPVO visual odometry of the rgbd / stereo modes: metric scale from the input depth."""
     from cross.mono.config import MonoConfig, ScaleConfig
-    # input depth is a measurement, not a learned prior: frequent scale observations and a tight floor (the learned
-    # prior's floors, 0.12 / 0.08 in log scale, absorb its domain bias)
-    scale = ScaleConfig(interval=5, observation_std_floor=0.03, posterior_std_floor=0.01)
+    # input depth is a measurement, not a learned prior: a scale observation every frame, a tight floor (the learned
+    # prior's floors, 0.12 / 0.08 in log scale, absorb its domain bias) and a faster-moving scale state (DPVO's unit
+    # scale drifts by ~20 % over a minute; frontend-only on KITTI 07, 300 frames: ATE 0.63 m vs 1.02 m every 5 frames)
+    scale = ScaleConfig(interval=1, observation_std_floor=0.03, posterior_std_floor=0.01, process_std_per_frame=0.02)
     return MonoConfig(frontend="dpvo", dpvo_checkpoint=str(dpvo_checkpoint), depth_input=True, mapping_interval=1,
                       seed=seed, mask_people=mask_people, mask_interval=3, scale=scale)
 
@@ -322,37 +323,31 @@ def add_session_args(ap):
     ap.add_argument("--dpvo-checkpoint", default=os.environ.get("CROSS_DPVO_CHECKPOINT", "models/dpvo.pth"))
     ap.add_argument("--mono-profile", default="configs/mono_benchmark_10hz.json",
                     help="mono mode: cross.mono.run arguments (JSON with an 'arguments' list)")
-    ap.add_argument("--mono-args", nargs="*", default=[], help="mono mode: extra cross.mono.run arguments")
+    ap.add_argument("--mono-args", default="",
+                    help="mono mode: extra cross.mono.run arguments after the profile's (one quoted string), e.g. "
+                         "'--cross-config mapping.loop_closure.noise.odom_k_t=0.06'")
     ap.add_argument("--vo-mask-people", action="store_true", help="visual odometry: exclude detected people from DPVO patches")
 
 
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):
     """A callable building fresh sessions for the runner's --mode / --odometry (one per map run or query trial)."""
-    import yaml
-    from pathlib import Path
     mode, odometry = args.mode, args.odometry
     cfg = copy.deepcopy(system_config)
     mono_config = vo_config = None
     if mode == "mono":
-        extra = list(args.mono_args) + ["--seed", str(seed)]
+        import shlex
+        extra = shlex.split(args.mono_args or "") + ["--seed", str(seed)]
         mono_config = mono_config_from_profile(args.mono_profile, args.dpvo_checkpoint if odometry == "visual" else None,
                                                extra)
     elif odometry == "visual":
+        # The back end keeps the odometry noise model of the mode (the depth-scaled DPVO drifts about as much as wheel
+        # odometry, ~0.5 % on KITTI 07); the monocular DPVO noise constants (mapping.loop_closure.noise.odom_k_t = 1.0,
+        # fitted for learned scale at 20 Hz indoors) made the verified loop closure ignore the chain at KITTI's
+        # 0.6 m per frame (map ATE 9.3 m vs 1.0 m for the odometry alone on 300 frames).
         vo_config = visual_odometry_config(args.dpvo_checkpoint, seed=seed, mask_people=args.vo_mask_people)
-        # the back end's odometry noise for a DPVO chain (tracking std and the verified loop closure's chain model)
-        visual = Path(__file__).resolve().parents[1] / "configs" / "odometry" / "visual.yaml"
-        _apply_nested(cfg, yaml.safe_load(visual.read_text()) or {})
 
     def make():
         return build_session(mode, odometry, camera, cfg, T_right_in_left=T_right_in_left, mono_config=mono_config,
                              vo_config=vo_config, visualize=visualize)
     return make
 
-
-def _apply_nested(obj, values: dict):
-    for key, value in values.items():
-        current = getattr(obj, key)
-        if isinstance(value, dict):
-            _apply_nested(current, value)
-        else:
-            setattr(obj, key, type(current)(value) if hasattr(current, "value") else value)

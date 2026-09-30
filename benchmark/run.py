@@ -150,6 +150,8 @@ class Job:
                 cmd += ["--baseline", self.dcfg["baseline"]]
             if self.snr:
                 cmd += ["--snr", self.snr]
+        if self.outdoor:
+            cmd += [str(v) for v in sysc.get("outdoor_args", [])]
         cmd += ["--map", self.seq(map_seq), "--query", self.seq(query_seq), "--out", out]
         if cfgs:
             cmd += ["--config"] + [str(ROOT / c) for c in cfgs]

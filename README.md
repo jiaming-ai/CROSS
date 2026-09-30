@@ -274,8 +274,9 @@ python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed
 ```
 
 The DPVO weights are read from `models/dpvo.pth` (or `--dpvo-checkpoint`, `CROSS_DPVO_CHECKPOINT`); DPVO itself must be
-importable (`install.sh --mono` builds it under `thirdparty/DPVO`).  The visual-odometry noise model of the back end is
-in `configs/odometry/visual.yaml`.  `python -m cross.mono.run` is the real-time monocular runner (paced input, a
+importable (`install.sh --mono` builds it under `thirdparty/DPVO`).  With sensor or stereo depth the DPVO scale is
+observed every frame and the back end keeps the mode's odometry noise model; the mono mode uses the DPVO noise model of
+its profile.  `python -m cross.mono.run` is the real-time monocular runner (paced input, a
 separate mapping process, streaming metric depth); its recommended profile is
 `configs/mono_streaming_dpvo_v2_20hz.json`, and `configs/mono_benchmark_10hz.json` is the same profile for offline
 runs at 10 Hz.
