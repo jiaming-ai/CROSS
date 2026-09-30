@@ -294,11 +294,13 @@ function renderMetrics(v) {
     sec("T3 · relocalization success (RS): many short trials per query session",
       ul("Each query session is cut into trials of 100 frames (10 s); a new trial starts every 50 frames (trials overlap by half; a last trial of at least 50 frames is kept). The Datasets tab lists the number of trials per session.",
          "Every trial is an independent run: a fresh system loads the map and processes only the trial's frames, starting without a pose.",
-         "The trial succeeds when the system's final pose (its latest pose at the trial's last frame, at most 1 s old) is within r_D of the pose the map implies for that frame: 2 m indoors, 5 m outdoors (CROSS paper). The map-implied pose is the nearest map keyframe's estimated pose composed with its ground-truth offset to the query frame, so map drift is not counted as a relocalization error. Strict RS additionally requires 1 m and 5°.",
+         "The trial succeeds when the system's final pose (its latest pose at the trial's last frame, at most 1 s old) is within r_D of the pose the map implies for that frame. The map-implied pose is the nearest map keyframe's estimated pose composed with its ground-truth offset to the query frame, so map drift is not counted as a relocalization error.",
+         "r_D scales with the scene: 10 % of the extent (bounding-box diagonal) of the map session's trajectory, rounded to 0.1 m and clipped to [0.5 m, 2 m] indoors and [0.5 m, 5 m] outdoors; the upper bounds are the CROSS paper's radii. Examples: OpenLORIS office (4 m extent) 0.5 m, SimChange classroom 0.6 m, OpenLORIS home and cafe 1.1 m, ROVER 3.6 m, larger indoor scenes 2 m. The Datasets tab lists every scene's r_D.",
+         "Strict RS additionally requires the final pose within min(1 m, r_D) and 5°.",
          "RS = successful trials / all trials, pooled over the scene's query sessions; 95 % Wilson interval in the last column.")),
     sec("How T2 and T3 differ",
       "T3 asks how often a system relocalizes within 10 s from a cold start, and judges only the end of each trial. T2 asks how much of a whole session the system spends correctly localized in the map, including the time before it first relocalizes and any later losses. A system that relocalizes slowly but then holds on can have T2 above T3; one that relocalizes quickly but loses the map again can have T3 above T2."),
-    sec("Small scenes", "r_D = 2 m is lenient in small rooms (OpenLORIS office spans about 5 m): check strict RS (1 m / 5°) and LR@0.5 m there."));
+    sec("Why a scene-dependent radius", "A fixed 2 m radius covers half of a 4 m room (OpenLORIS office) but only 6 % of a 35 m restaurant, so success in a small room would mean little. Scaling r_D with the scene keeps the test comparably hard; the run's result at the paper's fixed radius is stored with every T3 cell (rs_fixed)."));
 }
 
 // ---------------------------------------------------------------- dataset details
@@ -308,7 +310,7 @@ function renderData(v) {
   for (const d of ["kitti", "openloris", "rover", "simchange"]) {
     if (!SP[d]) continue;
     const card = $("div", {class: "card"}, $("h3", {}, DS[d] || d));
-    const t = $("table"); t.append($("thead", {}, $("tr", {}, ...["scene", "sessions", "map session", "query sessions", "query frames", "T3 trials"].map(h => $("th", {}, h)))));
+    const t = $("table"); t.append($("thead", {}, $("tr", {}, ...["scene", "sessions", "map session", "query sessions", "query frames", "T3 trials", "r_D"].map(h => $("th", {}, h)))));
     const tb = $("tbody");
     for (const [sc, sp] of SP[d]) {
       const rows = (S[d] || {})[sc] || {};
@@ -322,7 +324,7 @@ function renderData(v) {
         $("td", {class: m ? "" : "dim"}, m ? `${sp.map}: ${fr(m)} frames, ${(fr(m) / 10).toFixed(0)} s, ${path(m).toFixed(0)} m` : "not prepared yet"),
         $("td", {}, sp.queries.length ? `${qs.length}/${sp.queries.length} prepared` : "–"),
         $("td", {}, qf.length ? `${Math.min(...qf)}–${Math.max(...qf)} each, ${qf.reduce((a, b) => a + b, 0)} total` : "–"),
-        $("td", {}, sp.queries.length ? String(trials) : "–")));
+        $("td", {}, sp.queries.length ? String(trials) : "–"), $("td", {}, sp.queries.length ? `${sp.r_d} m` : "–")));
       if (sp.queries.length) {
         const det = $("details", {}, $("summary", {class: "note"}, `${sc}: every session`));
         const dt = $("table"); dt.append($("thead", {}, $("tr", {}, ...["session", "role", "frames", "duration", "path", "T3 trials"].map(h => $("th", {}, h)))));
@@ -331,7 +333,7 @@ function renderData(v) {
           dtb.append($("tr", {}, $("td", {}, q), $("td", {}, q === sp.map ? "map" : "query"), $("td", {}, r ? String(fr(r)) : "not prepared"),
             $("td", {}, r ? `${(fr(r) / 10).toFixed(0)} s` : ""), $("td", {}, r ? `${path(r).toFixed(0)} m` : ""), $("td", {}, r && r.trials != null ? String(r.trials) : q === sp.map ? "–" : ""))); }
         dt.append(dtb); det.append($("div", {class: "scroll"}, dt));
-        tb.append($("tr", {}, $("td", {colspan: 6}, det)));
+        tb.append($("tr", {}, $("td", {colspan: 7}, det)));
       }
     }
     t.append(tb); card.append($("div", {class: "scroll"}, t)); v.append(card);

@@ -130,7 +130,7 @@ A *session* is one recorded traversal. In each scene, the map session builds the
 | system · setup | KITTI ATE (m) | OpenLORIS ATE (m) | ROVER ATE (m) | OpenLORIS LR@1 m | ROVER LR@5 m | OpenLORIS RS | ROVER RS | SimChange RS |
 |---|---|---|---|---|---|---|---|---|
 | CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | 1.348 (8 pending) | 0.443 (8 pending) | · | 0.73 | · | 0.61 | · | 0.74 |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | 3.520 (8 pending) | 0.110 (8 pending) | · | 0.91 | · | 0.91 | · | 0.91 |
+| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | 3.520 (8 pending) | 0.110 (8 pending) | · | 0.91 | · | 0.89 | · | 0.91 |
 | CROSS (mono) · mono ⁽ᵒ⁾ | in development | in development | in development | in development | in development | in development | in development | in development |
 | ORB-SLAM3 · RGB-D |  | 0.165 (3✗, 8 pending) | 0.488 (7 pending) | 0.40 | · | 0.18 | · | 0.63 |
 | ORB-SLAM3 · stereo | 4.604 (5 pending) | 0.109 (4✗, 8 pending) | 0.983 (7 pending) | 0.39 | · | 0.19 | · | 0.50 |
@@ -227,16 +227,16 @@ Cells: LR@1 m / LR@5 m and MS-ATE (m), pooled over all frames of the scene's que
 
 ## T3 — relocalization success
 
-Independent 10 s trials (100 frames at 10 Hz, stride 50) that start without a pose; success when the final estimate is within r_D of the pose the map implies.
+Independent 10 s trials (100 frames at 10 Hz, stride 50) that start without a pose; success when the final estimate is within the scene's r_D of the pose the map implies; r_D scales with the scene (10 % of the map trajectory's extent, clipped to [0.5 m, 2 m] indoors and [0.5 m, 5 m] outdoors).
 
 ### OpenLORIS-Scene
 
-Cells: RS at r_D = 2 m (strict RS at 1 m / 5°), pooled over the scene's trials.
+Cells: RS at the scene's r_D (strict: within min(1 m, r_D) and 5°), pooled over the scene's trials. r_D = 10 % of the extent of the map session's trajectory, between 0.5 m and 2 m (the CROSS paper's radius).
 
-| system · setup | office | corridor | home | cafe | market | all queries [trials, 95% CI] |
+| system · setup | office (r_D 0.5 m) | corridor (r_D 2 m) | home (r_D 1.1 m) | cafe (r_D 1.1 m) | market (r_D 2 m) | all queries [trials, 95% CI] |
 |---|---|---|---|---|---|---|
 | CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | 0.36 (0.36) | · | 0.76 (0.67) | 0.65 (0.65) | · | 0.61 (0.56) [108, 0.52–0.70] |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | 0.81 (0.75) | · | 0.96 (0.95) | 0.94 (0.88) | · | 0.91 (0.87) [108, 0.84–0.95] |
+| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | 0.78 (0.75) | · | 0.96 (0.95) | 0.88 (0.88) | · | 0.89 (0.87) [108, 0.82–0.94] |
 | CROSS (mono) · mono ⁽ᵒ⁾ | in development |  |  |  |  |  |
 | ORB-SLAM3 · RGB-D | 0.17 (0.17) | · | 0.13 (0.13) | 0.35 (0.35) | · | 0.18 (0.18) [108, 0.12–0.26] |
 | ORB-SLAM3 · stereo | 0.08 (0.08) | · | 0.18 (0.18) | 0.41 (0.41) | · | 0.19 (0.19) [108, 0.12–0.27] |
@@ -248,9 +248,9 @@ Cells: RS at r_D = 2 m (strict RS at 1 m / 5°), pooled over the scene's trials.
 
 ### ROVER campus_large
 
-Cells: RS at r_D = 5 m (strict RS at 1 m / 5°), pooled over the scene's trials.
+Cells: RS at the scene's r_D (strict: within min(1 m, r_D) and 5°), pooled over the scene's trials. r_D = 10 % of the extent of the map session's trajectory, between 0.5 m and 5 m (the CROSS paper's radius).
 
-| system · setup | campus_large | all queries [trials, 95% CI] |
+| system · setup | campus_large (r_D 3.6 m) | all queries [trials, 95% CI] |
 |---|---|---|
 | CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | · | · |
 | CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | · | · |
@@ -265,9 +265,9 @@ Cells: RS at r_D = 5 m (strict RS at 1 m / 5°), pooled over the scene's trials.
 
 ### SimChange v2
 
-Cells: RS at r_D = 2 m (strict RS at 1 m / 5°), pooled over the scene's trials. Rows marked *calibrated* (CROSS (RGB-D, PnP), CROSS (stereo, VGGT-Omega)) use the noise model calibrated without ground truth on the first 600 frames of the map traversal.
+Cells: RS at the scene's r_D (strict: within min(1 m, r_D) and 5°), pooled over the scene's trials. r_D = 10 % of the extent of the map session's trajectory, between 0.5 m and 2 m (the CROSS paper's radius). Rows marked *calibrated* (CROSS (RGB-D, PnP), CROSS (stereo, VGGT-Omega)) use the noise model calibrated without ground truth on the first 600 frames of the map traversal.
 
-| system · setup | hssd_house | hssd_restaurant | classroom | lonemonk | all queries [trials, 95% CI] |
+| system · setup | hssd_house (r_D 2 m) | hssd_restaurant (r_D 2 m) | classroom (r_D 0.6 m) | lonemonk (r_D 2 m) | all queries [trials, 95% CI] |
 |---|---|---|---|---|---|
 | CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ *calibrated* | · | 0.54 (0.46) | · | 0.78 (0.63) | 0.74 (0.60) [138, 0.66–0.81] |
 | CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ *calibrated* | · | 0.46 (0.33) | · | 1.00 (0.99) | 0.91 (0.88) [138, 0.85–0.94] |

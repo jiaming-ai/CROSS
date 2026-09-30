@@ -102,7 +102,8 @@ def table_models(T: mt.Tables, runs_by_key):
                     cells.append({"text": text, "runs": [runs_by_key[id(r)] for r in sub]})
                 rows.append({"label": mt.row_label(sy, system, setup, dataset), "system": system, "setup": setup,
                              "pending": sy[system]["runner"] == "pending" and not rs, "cells": cells})
-            out[track][dataset] = {"cols": scenes, "rows": rows}
+            cols = [f"{s} (r_D {mt.scene_rd(ds, dataset, s):g} m)" for s in scenes] if track == "t3" else scenes
+            out[track][dataset] = {"cols": cols, "rows": rows}
     return out
 
 
@@ -138,7 +139,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     results = json.loads(Path(a.results).read_text())["results"] if Path(a.results).is_file() else []
-    results = [r for r in results if r.get("seed", 0) == a.seed]
+    results = mt.apply_scene_rd([r for r in results if r.get("seed", 0) == a.seed], mt.load()[0])
     runs, runs_by_key = {}, {}
     for r in results:
         rid = run_id(r)
@@ -160,7 +161,8 @@ def main():
         "failures": failures(results, runs_by_key), "assets": assets,
         "legacy": json.loads(legacy.read_text()) if legacy.is_file() else None,
         "datastats": json.loads(dstats.read_text()) if dstats.is_file() else {},
-        "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", [])}] for sc, v in c["scenes"].items()]
+        "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", []), "r_d": mt.scene_rd(T.ds, d, sc)}]
+                       for sc, v in c["scenes"].items()]
                    for d, c in T.ds.items()},
     }
     SITE.mkdir(parents=True, exist_ok=True)

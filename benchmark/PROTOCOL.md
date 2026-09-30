@@ -9,7 +9,7 @@ paper.
 |---|---|---|---|
 | **T1 Mapping accuracy** | How accurate is the map built in one session? | ATE RMSE of the final trajectory (+ completeness) | KITTI (outdoor), OpenLORIS-Scene (indoor), ROVER (outdoor) |
 | **T2 Multi-session localization** | Given a map from an earlier session, how accurately is a new session localized in it? | localization recall and ATE of the new session, in the map frame | OpenLORIS-Scene, ROVER |
-| **T3 Relocalization success** | Starting with no pose, how often does the system relocalize in a map from another session under change? | relocalization success RS (CROSS paper, 10 s trials) | SimChange (synthetic), OpenLORIS-Scene, ROVER |
+| **T3 Relocalization success** | Starting with no pose, how often does the system relocalize in a map from another session under change? | relocalization success RS (CROSS paper, 10 s trials, radius scaled to the scene) | SimChange (synthetic), OpenLORIS-Scene, ROVER |
 
 Monocular CROSS is still in development; its columns are in the tables but stay empty until it is released.
 
@@ -109,8 +109,22 @@ is penalized.
 
 ### T3 — relocalization success (CROSS paper, §5.1)
 The query session is split into independent trials. Each trial loads the stored map, starts without knowing its pose, and runs
-for a fixed number of frames. **A trial succeeds when its final pose estimate is within r_D of the ground truth**: r_D = 2 m
-indoors, 5 m outdoors, position only. RS is the fraction of successful trials. The final estimate is the system's
+for a fixed number of frames. **A trial succeeds when its final pose estimate is within r_D of the ground truth**, position
+only. **r_D scales with the scene**: 10 % of the extent (bounding-box diagonal) of the map session's trajectory, rounded to
+0.1 m and clipped to [0.5 m, 2 m] indoors and [0.5 m, 5 m] outdoors. The upper bounds are the CROSS paper's radii. A fixed
+2 m would cover half of a 4 m room (OpenLORIS office) but only 6 % of a 35 m restaurant. The per-scene values are in
+`configs/datasets.yaml`:
+
+| scene | r_D |
+|---|---|
+| OpenLORIS office | 0.5 m |
+| OpenLORIS home, cafe | 1.1 m |
+| OpenLORIS corridor, market | 2 m |
+| SimChange classroom | 0.6 m |
+| SimChange HSSD house, restaurant, Lone Monk | 2 m |
+| ROVER campus_large | 3.6 m |
+
+The result at the paper's fixed radius is stored with every cell (`rs_fixed`). RS is the fraction of successful trials. The final estimate is the system's
 latest pose in the trial. It must be at most 1 s older than the trial's last frame, because some systems (MASt3R-SLAM, VGGT-SLAM) report poses only at
 keyframes. Monocular systems are aligned with Sim(3) on the map session, so their errors are in metres too.
 - Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset. The CROSS paper used
@@ -120,7 +134,7 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 - The error is measured against the pose the map implies for the query frame (`scripts/reloc_metrics.py`). The pose of the
   nearest map keyframe in the map is composed with its ground-truth offset to the query frame, so map drift does not count as a
   relocalization error. The absolute variant (map-session alignment, as in T2) is stored as well.
-- Also reported: strict RS at 1 m / 5°, the median final error of the failed trials, and 95 % Wilson intervals.
+- Also reported: strict RS (within min(1 m, r_D) and 5°), the median final error of the failed trials, and 95 % Wilson intervals.
 - Systems without map persistence (MASt3R-SLAM, VGGT-SLAM, DROID-SLAM) run the map session followed by the trial in one
   stream. Only the trial frames are scored. Every trial re-runs the whole map session, so these systems are scored on at most
   20 evenly spaced trials per query session. This is marked in the tables because the system keeps the map session's live
