@@ -57,6 +57,7 @@ from cross.core.config import SystemConfig, load_config  # noqa: E402
 from cross.core.system import System  # noqa: E402
 from cross.core.types import Camera  # noqa: E402
 from cross.dataloader.posed_rgbd import PosedRGBDLoader  # noqa: E402
+from cross.pipeline import add_session_args, session_factory  # noqa: E402
 from reloc_metrics import build_trials, map_relative_errors, summarize_errors, summarize_trials  # noqa: E402
 
 
@@ -120,25 +121,15 @@ def make_loader(path, args, seed):
                            odom_yaw_drift_deg_per_m=args.odom_yaw_drift)
 
 
-def new_system(args, ds) -> System:
+def new_system(args, ds, seed=None):
+    """A CROSS session (cross/pipeline.py) for --mode / --odometry; with external odometry in the RGB-D mode it passes
+    every frame to System.step unchanged."""
     camera = Camera(K=ds.rgb_K.copy(), frame_width=ds.rgb_width, frame_height=ds.rgb_height)
-    return System(visualize=False, debug=False, camera=camera, config=make_config(args))
+    return session_factory(args, camera, make_config(args), seed=args.seed if seed is None else seed)()
 
 
 def release(system) -> None:
-    system.shutdown()
-    try:                     # System registers its shutdown with atexit, which would keep every system alive
-        atexit.unregister(system.shutdown)
-    except Exception:
-        pass
-    for name in ("pose_est", "hypothesis_manager"):
-        if hasattr(system, name):
-            setattr(system, name, None)
-    if getattr(system, "db", None) is not None:
-        system.db.vpr_model = None
-        system.db = None
-    gc.collect()
-    torch.cuda.empty_cache()
+    system.release()        # shutdown, atexit unregistration (it would keep every system alive), GPU models
 
 
 def _timing_summary():
@@ -159,7 +150,7 @@ def run_mapping(args, out: Path) -> dict:
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
-        system.step(obs=d, data=d)
+        system.step(d)
         n += 1
         if system.last_added_kf_id is not None and system.last_added_kf_id != last_kf:
             last_kf = system.last_added_kf_id
@@ -169,7 +160,7 @@ def run_mapping(args, out: Path) -> dict:
     n_perm = len([k for k in nodes.values() if not k.temporary])
     logger.info(f"Mapping done: {n} frames in {elapsed:.1f}s ({n / elapsed:.2f} FPS), {len(nodes)} keyframes ({n_perm} permanent)")
     map_file = out / "map.pkl"
-    system.save_map(str(map_file))
+    system.save_map(map_file)
     ids, src, dst, kf_est = [], [], [], {}
     for kid, kf in nodes.items():
         if kf.temporary or kid not in kf_gt:
@@ -187,7 +178,7 @@ def run_mapping(args, out: Path) -> dict:
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
     if args.dump_graph:          # pose graph with ground truth, input of scripts/lc/calibrate_noise.py (which ignores the gt)
         from graph_io import dump_graph
-        dump_graph(system, out / "graph_s0.json", kf_gt, session_id=0, meta={"map": str(args.map), "seed": args.seed})
+        dump_graph(system.mapper, out / "graph_s0.json", kf_gt, session_id=0, meta={"map": str(args.map), "seed": args.seed})
     logger.info(f"Map ATE vs GT (permanent kfs): {ate:.3f} m, map file {meta['map_file_bytes'] / 2**20:.1f} MB")
     release(system)
     return meta
@@ -203,21 +194,19 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
     t_steps = 0.0
     for ti, (ts_, te_) in enumerate(trials):
         system = new_system(args, ds)          # every trial is an independent relocalization session
-        system.load_map(str(out / "map.pkl"))
+        system.load_map(out / "map.pkl")
         for idx, d in enumerate(ds.replay_data(start_idx=q_start + ts_, end_idx=q_start + te_, stride=args.stride)):
             if idx == 0:
                 d["delta_pose"] = None
             ts = time.perf_counter()
-            system.step(obs=d, data=d)
+            system.step(d)
             dt = time.perf_counter() - ts
             t_steps += dt
-            mu, sigma, w = system.hypothesis_manager.dist
-            w = w.detach().cpu().numpy()
+            T_c0, T_best, w = system.belief(pose_to_mat)
             gt = np.asarray(d["world_pose"])
             row = {"frame": int(d["frame_idx"]), "step": idx, "trial": ti, "dt": dt, "w0": float(w[0]),
                    "gt_pose": gt.reshape(-1).tolist()}
-            for name, k in (("c0", 0), ("best", int(np.argmax(w)))):
-                T_map = pose_to_mat(mu[k])
+            for name, k, T_map in (("c0", 0, T_c0), ("best", int(np.argmax(w)), T_best)):
                 row[f"{name}_pose"] = T_map.reshape(-1).tolist()
                 err = invert(gt) @ (T_gt_from_map @ T_map)
                 row[f"{name}_t_err"] = float(np.linalg.norm(err[:3, 3]))
@@ -273,9 +262,13 @@ def main():
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
     ap.add_argument("--skip-reloc", action="store_true")
     ap.add_argument("--dump-graph", action="store_true", help="write the mapping pose graph (graph_s0.json) for the noise calibration")
+    add_session_args(ap)
     args = ap.parse_args()
     if args.snr is not None and args.snr <= 0:
         args.snr = None
+    args.mode = args.mode or "rgbd"
+    if args.mode == "stereo":
+        ap.error("posed RGB-D folders support --mode rgbd | mono (stereo sequences: scripts/map_and_reloc.py)")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "args.json").write_text(json.dumps(vars(args), indent=1))

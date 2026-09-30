@@ -1,0 +1,24 @@
+{
+  "description": "Mono mode for offline benchmark runs at 10 Hz (scripts/map_and_reloc*.py --mode mono): the recommended v2 profile (configs/mono_streaming_dpvo_v2_20hz.json) with the synchronous DPVO frontend and the same timing (metric depth every 1 s, observations every 0.5 s). Visual odometry by default; --odometry external replaces DPVO by the dataset odometry. The historical retrieval slots only act after a map is loaded (query sessions).",
+  "requires_dpvo_checkpoint": true,
+  "arguments": [
+    "--frontend", "dpvo",
+    "--mask-people", "--mask-interval", "3",
+    "--metric-interval", "10",
+    "--mapping-interval", "5",
+    "--chart-aware", "--session-recovery",
+    "--historical-retrieval-slots", "3", "--historical-min-score", "0.0",
+    "--retrieval-pose", "ff", "--ff-backend", "da3", "--ff-checkpoint", "depth-anything/DA3-LARGE-1.1",
+    "--ff-resolution", "336", "--ff-fallback-only", "--ff-scope", "relocalization",
+    "--cross-config", "mapping.loop_closure.noise.odom_k_t=1.0",
+    "--cross-config", "mapping.loop_closure.noise.odom_floor_t=0.005",
+    "--cross-config", "mapping.loop_closure.noise.odom_k_r=0.2",
+    "--cross-config", "mapping.loop_closure.noise.odom_floor_r=0.004",
+    "--cross-config", "mapping.loop_closure.noise.visual_t_a=0.05",
+    "--cross-config", "mapping.loop_closure.noise.visual_t_b=0.05",
+    "--cross-config", "mapping.loop_closure.noise.visual_r_a=0.02",
+    "--cross-config", "mapping.loop_closure.noise.visual_r_b=0.01",
+    "--cross-config", "mapping.loop_closure.noise.map_t_a=0.1",
+    "--cross-config", "mapping.loop_closure.noise.map_r_a=0.03"
+  ]
+}

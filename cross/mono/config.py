@@ -24,6 +24,10 @@ class ScaleConfig:
 class MonoConfig:
     frontend: str = "da3"
     dpvo_checkpoint: str | None = None
+    # dpvo frontend: take metric depth from the input frames (sensor depth of an RGB-D camera, or stereo depth) for the
+    # scale observations and the mapping depth, instead of a learned metric depth model (--odometry visual in the
+    # RGB-D and stereo modes)
+    depth_input: bool = False
     dpvo_metric_bootstrap: bool = False
     rotation_tracker: str = "none"  # optional streaming rotation; metric translation remains PnP
     mask_people: bool = False
@@ -101,6 +105,8 @@ class MonoConfig:
             raise ValueError('Unknown shared map geometry basis')
         if self.map_geometry_basis == 'factor' and not self.schmidt_map_geometry:
             raise ValueError('Persistent factor geometry requires Schmidt map geometry')
+        if self.depth_input and (self.frontend != "dpvo" or self.scale.mode == "relative"):
+            raise ValueError("Input depth is supported by the synchronous dpvo frontend with a metric scale mode")
         if self.rotation_tracker not in {"none", "dpvo"}:
             raise ValueError('Unknown streaming rotation tracker')
         if self.rotation_tracker != "none" and self.frontend != "streaming_pnp":

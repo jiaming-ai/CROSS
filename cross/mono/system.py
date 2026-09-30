@@ -5,9 +5,10 @@ from time import perf_counter
 import cv2
 import numpy as np
 
+from cross.pipeline import Pipeline
+
 from .config import MonoConfig
 from .frontend import MonoFrontend
-from .geometry import inverse
 
 
 def apply_overrides(cfg, overrides):
@@ -38,8 +39,17 @@ def attach_pair_motion(frontend, pose_estimator, config, K):
         feed_forward, previous, current, frontend.metric.predict_metric(previous, K, previous.shape[:2]))
 
 
-class MonocularSystem:
-    def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None):
+class MonocularSystem(Pipeline):
+    """The mono mode: a monocular frontend (DPVO or another motion source) and the CROSS back end with learned metric
+    depth and an injected monocular relative-pose estimator.
+
+    pose_estimator: reuse the estimator of an earlier session (its models); mono_defaults: apply the monocular back-end
+    defaults (filter mode, visual-odometry motion noise, top_k 3) on top of system_config (default: only when no
+    system_config is given); external_odometry: the frontend passes on dataset odometry, keep the back end's default
+    odometry noise model."""
+
+    def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None,
+                 pose_estimator=None, mono_defaults=None, external_odometry=False):
         if frontend is None and getattr(config, "frontend", None) in {"streaming_pnp", "streaming_dpvo"}:
             raise ValueError("Use StreamingMonocularSystem for a streaming frontend")
         from cross.core.config import FilterMode, PoseEstType, SystemConfig
@@ -82,14 +92,25 @@ class MonocularSystem:
         cfg.mapping.hypothesis.map_geometry_basis = self.config.map_geometry_basis
         if self.config.conditional_sources and (cfg.mapping.loop_closure.async_ or cfg.mapping.hypothesis.no_pgo_for_lc):
             raise ValueError('Conditional sources require synchronous graph optimization in the mapping worker')
-        if system_config is None:
+        if mono_defaults is None:
+            mono_defaults = system_config is None
+        if mono_defaults:
             cfg.tracking.filter_mode = FilterMode(self.config.filter_mode)
             cfg.tracking.odom_min_std_translation = 0.005
             cfg.tracking.odom_min_std_rotation = 0.01
             cfg.tracking.odom_std_per_meter = 0.1
             cfg.tracking.odom_std_per_radian = 0.1
             cfg.retrieval.top_k = 3
-        apply_overrides(cfg, self.config.cross_overrides)
+        overrides = self.config.cross_overrides
+        if external_odometry:
+            # dataset odometry: the back end's default odometry noise (as in the rgbd / stereo modes), not the DPVO one
+            defaults = SystemConfig()
+            cfg.tracking.odom_std_per_meter = defaults.tracking.odom_std_per_meter
+            cfg.tracking.odom_std_per_radian = defaults.tracking.odom_std_per_radian
+            cfg.tracking.odom_min_std_translation = defaults.tracking.odom_min_std_translation
+            cfg.tracking.odom_min_std_rotation = defaults.tracking.odom_min_std_rotation
+            overrides = tuple(o for o in overrides if not o.startswith(("mapping.loop_closure.noise.odom", "tracking.")))
+        apply_overrides(cfg, overrides)
         cfg.retrieval.historical_slots = self.config.historical_retrieval_slots
         cfg.retrieval.historical_min_score = self.config.historical_min_score
         if cfg.retrieval.historical_slots > cfg.retrieval.top_k:
@@ -97,7 +118,9 @@ class MonocularSystem:
         camera = Camera(np.array(K).copy(), *image_size)
         # System rescales camera.K in place to its stored-image resolution.
         metric_adapter = MetricTwoViewRelativePose if self.config.retrieval_pose == "metric_two_view" else MetricRelativePose
-        if self.config.retrieval_pose == "ff":
+        if pose_estimator is not None:
+            pass
+        elif self.config.retrieval_pose == "ff":
             from .ff_retrieval import FallbackFeedForwardRelativePose, FeedForwardRelativePose
             pose_estimator = FeedForwardRelativePose(self.config.ff_backend, self.config.ff_checkpoint, device,
                                                      self.config.ff_resolution, self.config.ff_min_covisibility)
@@ -112,36 +135,16 @@ class MonocularSystem:
                                             self.config.conditional_sources, self.config.source_log_std,
                                             **(dict(rotation_geometry=self.frontend.geometry)
                                                if self.config.two_view_rotation_check else {}))
-        self.mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
+        mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         attach_pair_motion(self.frontend, pose_estimator, self.config, K)
-        self.map_alignment = np.eye(4)
-        self.initialized = False
-        self.last_estimate = None
+        super().__init__(mapper, self.frontend, self.config.mapping_interval, mode="mono",
+                         odometry="external" if external_odometry else "visual",
+                         depth_model=getattr(self.frontend, "metric", None), K=np.array(K, dtype=np.float64))
 
     def step(self, rgb, timestamp):
-        estimate = self.frontend.step(rgb, timestamp)
-        start = perf_counter()
-        valid = estimate.diagnostics["valid"]
-        map_now = valid and (not self.initialized or (self.frontend.index - 1) % self.config.mapping_interval == 0)
-        # Every input increment is accumulated; image retrieval/filtering runs
-        # less often. No skipped-frame odometry and no future images are used.
-        self.mapper.step({
-            "rgb": rgb if map_now else None,
-            "depth": cv2.resize(estimate.depth, (rgb.shape[1], rgb.shape[0])) if map_now else None,
-            "conf": None,
-            "delta_pose": estimate.delta_pose,
-            "motion_covariance": estimate.motion_covariance,
-            "timestamp": timestamp,
-            "initial_chart_pose": estimate.pose.copy() if map_now and not self.initialized else None,
-        })
-        if map_now:
-            mapped = self.mapper.get_current_pose().matrix().detach().cpu().numpy()
-            self.map_alignment = mapped @ inverse(estimate.pose)
-            self.initialized = True
-        estimate.diagnostics["frontend_pose"] = estimate.pose.tolist()
-        estimate.pose = self.map_alignment @ estimate.pose
+        estimate, map_now = self.advance({"rgb": rgb, "timestamp": timestamp})
         estimate.diagnostics.update(
-            mapping_seconds=perf_counter() - start,
+            mapping_seconds=self.last_mapping_seconds,
             mapping_update=map_now,
             permanent_keyframes=self.mapper.db.get_size(),
             graph_nodes=len(self.mapper.hypothesis_manager.nodes),

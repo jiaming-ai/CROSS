@@ -40,6 +40,7 @@ from cross.core.system import System
 from cross.core.types import Camera
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
+from cross.pipeline import add_session_args, session_factory
 
 
 def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
@@ -110,12 +111,30 @@ def pose_to_mat(p) -> np.ndarray:
     return normalize_SE3(p).matrix().detach().cpu().numpy().astype(np.float64)
 
 
-def run_mapping(args, out: Path):
-    ds = StereoSequenceLoader(args.map, depth_source=args.pnp_depth if args.estimator == "pnp" else args.depth_source,
-                              snr=args.snr, baseline=args.baseline, seed=args.seed, **odom_kwargs(args))
+def depth_source(args) -> str:
+    """Depth the loader computes: PnP depth (RGB-D*), none for the stereo / mono modes, stereo depth (SGBM) as the
+    metric scale of visual odometry in the stereo mode."""
+    if args.mode == "mono":
+        return "none"
+    if args.estimator == "pnp":
+        return args.pnp_depth
+    if args.odometry == "visual" and args.depth_source == "none":
+        return "sgbm"
+    return args.depth_source
+
+
+def new_session(args, ds, seed):
+    """A CROSS session (cross/pipeline.py) for --mode / --odometry; with external odometry in the stereo / RGB-D*
+    modes it passes every frame to System.step unchanged."""
     camera = Camera(K=ds.rgb_K.copy(), frame_width=ds.rgb_width, frame_height=ds.rgb_height)
-    system = System(visualize=False, debug=False, camera=camera, config=make_config(args),
-                    T_right_in_left=ds.T_right_in_left)
+    return session_factory(args, camera, make_config(args), T_right_in_left=ds.T_right_in_left,
+                           seed=0 if seed is None else seed)()
+
+
+def run_mapping(args, out: Path):
+    ds = StereoSequenceLoader(args.map, depth_source=depth_source(args),
+                              snr=args.snr, baseline=args.baseline, seed=args.seed, **odom_kwargs(args))
+    system = new_session(args, ds, args.seed)
     kf_gt = {}
     t0 = time.time()
     n = 0
@@ -123,7 +142,7 @@ def run_mapping(args, out: Path):
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
-        system.step(obs=d, data=d)
+        system.step(d)
         n += 1
         if system.last_added_kf_id != last_kf and system.last_added_kf_id is not None:
             last_kf = system.last_added_kf_id
@@ -133,7 +152,7 @@ def run_mapping(args, out: Path):
     logger.info(f"Mapping done: {n} frames in {elapsed:.1f}s ({n / elapsed:.2f} FPS), "
                 f"{len(system.hypothesis_manager.nodes)} keyframes ({n_perm} permanent)")
     map_file = out / "map.pkl"
-    system.save_map(str(map_file))
+    system.save_map(map_file)
     # map -> GT alignment from permanent keyframes (component 0 mean)
     ids, src, dst = [], [], []
     kf_est = {}
@@ -156,12 +175,7 @@ def run_mapping(args, out: Path):
     }
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
     logger.info(f"Map ATE vs GT (permanent kfs): {map_ate:.3f} m")
-    system.shutdown()
-    # `atexit` keeps a reference to the system: release the GPU models explicitly
-    system.pose_est = None
-    system.db.vpr_model = None
-    system.db = None
-    system.hypothesis_manager = None
+    system.release()          # shuts down and releases the GPU models (`atexit` keeps a reference to the system)
     del system
     gc.collect()
     torch.cuda.empty_cache()
@@ -180,13 +194,11 @@ def _timing_summary():
 
 
 def run_reloc(args, out: Path, meta: dict):
-    ds = StereoSequenceLoader(args.query, depth_source=args.pnp_depth if args.estimator == "pnp" else args.depth_source,
+    ds = StereoSequenceLoader(args.query, depth_source=depth_source(args),
                               snr=args.snr, baseline=args.baseline, seed=None if args.seed is None else args.seed + 1,
                               **odom_kwargs(args))
-    camera = Camera(K=ds.rgb_K.copy(), frame_width=ds.rgb_width, frame_height=ds.rgb_height)
-    system = System(visualize=False, debug=False, camera=camera, config=make_config(args),
-                    T_right_in_left=ds.T_right_in_left)
-    system.load_map(str(out / "map.pkl"))
+    system = new_session(args, ds, args.seed)
+    system.load_map(out / "map.pkl")
     n_map_kfs = len(system.hypothesis_manager.nodes)
     if "kf_est" not in meta:   # maps saved before the map-relative metric: recover keyframe estimates from the loaded map
         meta["kf_est"] = {str(kid): pose_to_mat(kf.pose_mu[0]).reshape(-1).tolist()
@@ -202,22 +214,20 @@ def run_reloc(args, out: Path, meta: dict):
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
     for ti, (ts_, te_) in enumerate(trials):
         if ti > 0:
-            system.load_map(str(out / "map.pkl"))          # every trial is an independent relocalization session
+            system.load_map(out / "map.pkl")          # every trial is an independent relocalization session
         for idx, d in enumerate(ds.replay_data(start_idx=q_start + ts_, end_idx=q_start + te_, stride=args.stride)):
             if idx == 0:
                 d["delta_pose"] = None
             ts = time.perf_counter()
-            system.step(obs=d, data=d)
+            system.step(d)
             dt = time.perf_counter() - ts
-            mu, sigma, w = system.hypothesis_manager.dist
-            w = w.detach().cpu().numpy()
+            T_c0, T_best, w = system.belief(pose_to_mat)
             gt = np.asarray(d["world_pose"])
             row = {"frame": int(d["frame_idx"]), "step": idx, "trial": ti, "dt": dt, "w0": float(w[0]),
-                   "observed": not getattr(system, "_steps_since_obs", 0)}
+                   "observed": system.mapped_now and not getattr(system.mapper, "_steps_since_obs", 0)}
             n_obs += int(row["observed"])
             row["gt_pose"] = gt.reshape(-1).tolist()
-            for name, k in (("c0", 0), ("best", int(np.argmax(w)))):
-                T_map = pose_to_mat(mu[k])
+            for name, k, T_map in (("c0", 0, T_c0), ("best", int(np.argmax(w)), T_best)):
                 row[f"{name}_pose"] = T_map.reshape(-1).tolist()
                 T = T_gt_from_map @ T_map
                 err = invert_poses(gt) @ T
@@ -232,7 +242,7 @@ def run_reloc(args, out: Path, meta: dict):
                             f"best(k={row['best_k']}) {row['best_t_err']:.2f} m, w0={row['w0']:.2f}")
     elapsed = time.time() - t0
     n_new = len(system.hypothesis_manager.nodes) - n_map_kfs
-    system.shutdown()
+    system.release()
 
     from reloc_metrics import map_relative_errors, summarize_errors, summarize_trials
     rel = map_relative_errors(rows, meta)          # errors w.r.t. the map (primary metric)
@@ -319,6 +329,7 @@ def main():
     ap.add_argument("--skip-reloc", action="store_true")
     ap.add_argument("--no-intra-lc", action="store_true", help="ablation: disable the intra-hypothesis loop closure (PGO of hypothesis 0)")
     ap.add_argument("--seed", type=int, default=None, help="seed of the odometry noise (reproducible runs)")
+    add_session_args(ap)
     ap.add_argument("--lc-mode", choices=["verified", "heuristic"], default=None, help="loop-closure mode (default: config, 'verified')")
     ap.add_argument("--lc-confidence", type=float, default=None, help="chi-square confidence of the verified loop closure (default 0.999)")
     ap.add_argument("--noise-config", default=None, help="YAML from scripts/lc/calibrate_noise.py (calibrated noise model)")
@@ -329,6 +340,10 @@ def main():
     args = ap.parse_args()
     if args.snr is not None and args.snr <= 0:
         args.snr = None        # perfect odometry
+    if args.mode is None:
+        args.mode = "stereo" if args.estimator == "ff" else "rgbd"      # rgbd: RGB-D* (PnP on stereo depth)
+    elif args.mode == "stereo" and args.estimator != "ff" or args.mode == "rgbd" and args.estimator != "pnp":
+        ap.error("--mode stereo goes with --estimator ff, --mode rgbd with --estimator pnp")
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

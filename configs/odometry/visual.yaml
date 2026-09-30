@@ -1,0 +1,16 @@
+# --odometry visual (rgbd / stereo modes): the motion between frames comes from DPVO visual odometry, not from the
+# dataset.  Back-end noise of that motion, as in the mono mode (configs/mono_benchmark_10hz.json): per-step std of the
+# tracking belief, and the odometry-chain model of the verified loop closure (sigma = k * length / sqrt(n) + floor per
+# reading), both calibrated for DPVO in CROSS-mono.
+tracking:
+  odom_std_per_meter: 0.1
+  odom_std_per_radian: 0.1
+  odom_min_std_translation: 0.005
+  odom_min_std_rotation: 0.01
+mapping:
+  loop_closure:
+    noise:
+      odom_k_t: 1.0
+      odom_floor_t: 0.005
+      odom_k_r: 0.2
+      odom_floor_r: 0.004

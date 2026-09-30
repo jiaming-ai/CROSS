@@ -23,7 +23,7 @@ from .scaled_motion import ScaledTranslation
 
 
 class DPVOFrontend:
-    def __init__(self, K, config=None, device="cuda", geometry_model=None, external_masks=False):
+    def __init__(self, K, config=None, device="cuda", geometry_model=None, external_masks=False, metric_model=None):
         self.config = config or MonoConfig(frontend="dpvo")
         if not self.config.dpvo_checkpoint or not Path(self.config.dpvo_checkpoint).is_file():
             raise FileNotFoundError("Supply --dpvo-checkpoint pointing to released dpvo.pth")
@@ -31,9 +31,10 @@ class DPVOFrontend:
             raise ValueError("DPVO uses cuda:0; choose physical GPU with CUDA_VISIBLE_DEVICES")
         self.device = device
         self.K = np.asarray(K).copy()
-        self.geometry = geometry_model or DA3Geometry(self.config.pose_model, device, self.config.resolution)
-        self.metric = None if self.config.scale.mode == "relative" else DA3MetricDepth(
-            self.config.metric_model, device, self.config.metric_resolution)
+        self._geometry = geometry_model      # DA3 geometry, loaded on first use (not needed with input depth)
+        self.metric = None if self.config.scale.mode == "relative" or self.config.depth_input else (
+            metric_model or DA3MetricDepth(self.config.metric_model, device, self.config.metric_resolution))
+        self.depth_memory = {}               # input depth of the frames still eligible for scale observations
         self.scale_filter = LogScaleFilter(self.config.scale)
         self.tracker = None
         self.index = 0
@@ -61,6 +62,21 @@ class DPVOFrontend:
         self.vo_cpu_rng = torch.Generator().manual_seed(self.config.seed).get_state()
         self.vo_cuda_rng = torch.Generator(device="cuda").manual_seed(self.config.seed).get_state()
 
+    @property
+    def geometry(self):
+        if self._geometry is None:
+            self._geometry = DA3Geometry(self.config.pose_model, self.device, self.config.resolution)
+        return self._geometry
+
+    @geometry.setter
+    def geometry(self, model):
+        self._geometry = model
+
+    def track(self, frame):
+        """Pipeline interface: one input frame (dict with rgb, timestamp and, with depth_input, depth)."""
+        return self.step(frame["rgb"], frame["timestamp"],
+                         depth=frame.get("depth") if self.config.depth_input else None)
+
     def input_index(self, tracker_stamp):
         """Input frame index of a tracker frame counter (the counter restarts with the tracker)."""
         return int(tracker_stamp) + self.frame_offset
@@ -73,6 +89,7 @@ class DPVOFrontend:
         self.scaled_translation = ScaledTranslation()
         self.scale_filter = LogScaleFilter(self.config.scale)
         self.rgb_memory = {}
+        self.depth_memory = {}
         self.restarts += 1
 
     @staticmethod
@@ -136,36 +153,45 @@ class DPVOFrontend:
             self.tracker.network.patchify = self.background_patchifier
 
     @torch.inference_mode()
-    def step(self, rgb, timestamp, exclusion_boxes=None):
+    def step(self, rgb, timestamp, exclusion_boxes=None, depth=None):
         # The pinned upstream extensions launch kernels on CUDA's default
         # stream. Keep their PyTorch allocations and consumers on that same
         # stream; CROSS may call us from its high-priority tracking stream.
         caller = torch.cuda.current_stream(self.device)
         native = torch.cuda.default_stream(self.device)
         if caller == native:
-            return self._step(rgb, timestamp, exclusion_boxes)
+            return self._step(rgb, timestamp, exclusion_boxes, depth)
         native.wait_stream(caller)
         with torch.cuda.stream(native):
-            result = self._step(rgb, timestamp, exclusion_boxes)
+            result = self._step(rgb, timestamp, exclusion_boxes, depth)
         caller.wait_stream(native)
         return result
 
-    def _step(self, rgb, timestamp, exclusion_boxes=None):
+    def _step(self, rgb, timestamp, exclusion_boxes=None, depth=None):
         if rgb.dtype != np.uint8 or rgb.ndim != 3 or rgb.shape[2] != 3:
             raise ValueError("Expected uint8 RGB")
         if not np.isfinite(timestamp) or (self.last_timestamp is not None and timestamp <= self.last_timestamp):
             raise ValueError("Frame timestamps must increase")
         start = perf_counter()
         h, w = rgb.shape[:2]
-        if h % 16 or w % 16:
-            raise ValueError("DPVO input dimensions must be multiples of 16")
+        # DPVO needs sides that are multiples of 16: it tracks the top-left crop (same intrinsics, same pixel
+        # coordinates), everything else (scale lookups, mapping depth) uses the full image
+        th, tw = h - h % 16, w - w % 16
+        if min(th, tw) < 16:
+            raise ValueError("Image too small for DPVO")
+        if self.config.depth_input:
+            if depth is None or depth.shape[:2] != (h, w):
+                raise ValueError("depth_input needs a depth map of the image size with every frame")
+        track = rgb[:th, :tw]
         bridge = self._check_discontinuity(rgb)
-        self.initialize_tracker(h, w)
+        if self.config.depth_input:          # after a possible restart (which clears the memory)
+            self.depth_memory[self.index] = np.asarray(depth, dtype=np.float32)
+        self.initialize_tracker(th, tw)
         tracker = self.tracker
         if self.background_patchifier is not None:
-            self.background_patchifier.observe(rgb, exclusion_boxes)
+            self.background_patchifier.observe(np.ascontiguousarray(track), exclusion_boxes)
         self.rgb_memory[self.index] = rgb.copy()
-        image = torch.as_tensor(rgb[..., ::-1].copy(), device="cuda").permute(2, 0, 1)  # DPVO expects BGR
+        image = torch.as_tensor(track[..., ::-1].copy(), device="cuda").permute(2, 0, 1)  # DPVO expects BGR
         intrinsics = torch.tensor([self.K[0, 0], self.K[1, 1], self.K[0, 2], self.K[1, 2]], device="cuda")
         # The geometry/metric models and BoQ can consume random numbers even
         # in eval mode (e.g. pixel subsampling). Keep VO patch choices identical
@@ -224,12 +250,13 @@ class DPVOFrontend:
         if self.config.scale.mode == "initial" and self.scale_filter.initialized:
             due = False
         metric_seconds = 0.0
-        if initialized and due and self.metric is not None:
+        if initialized and due and (self.metric is not None or self.config.depth_input):
             slot = max(0, tracker.n - 4)
             input_id = self.input_index(tracker.pg.tstamps_[slot])
             if input_id in self.rgb_memory:
                 metric_start = perf_counter()
-                metric_depth = self.metric.predict_metric(self.rgb_memory[input_id], self.K, (h, w))
+                metric_depth = (self.depth_memory[input_id] if self.config.depth_input else
+                                self.metric.predict_metric(self.rgb_memory[input_id], self.K, (h, w)))
                 patches = tracker.pg.patches_[slot, :, :, 1, 1].float().cpu().numpy()
                 uv = patches[:, :2] * tracker.RES
                 lookup = np.round(uv).astype(int)
@@ -290,14 +317,16 @@ class DPVOFrontend:
             diagnostics.update(valid=False, discontinuity=True, bridge_covisibility=covis, bridged=T is not None)
         # Dense depth is needed only on mapping updates. It is predicted from
         # current RGB; it is never sensor depth. It is not used as VO input.
-        depth = np.ones((h, w), dtype=np.float32)
-        if self.provide_mapping_depth and initialized and (self.index % self.config.mapping_interval == 0 or not getattr(self, "had_depth", False)):
+        mapping_depth = None      # no depth predicted for this frame (the pipeline predicts one if it maps it)
+        if self.config.depth_input:
+            mapping_depth = np.asarray(depth, dtype=np.float32)
+        elif self.provide_mapping_depth and initialized and (self.index % self.config.mapping_interval == 0 or not getattr(self, "had_depth", False)):
             depth_start = perf_counter()
             if self.metric is not None:
-                depth = self.metric.predict_metric(rgb, self.K, (h, w))
+                mapping_depth = self.metric.predict_metric(rgb, self.K, (h, w))
             else:
                 prediction = self.geometry.predict([self.geometry.prepare(rgb)])
-                depth = cv2.resize(prediction.depth[0], (w, h))
+                mapping_depth = cv2.resize(prediction.depth[0], (w, h))
             self.had_depth = True
             diagnostics["mapping_depth_seconds"] = perf_counter() - depth_start
         # Keep only frames still eligible for scale observations (plus a small
@@ -305,6 +334,7 @@ class DPVOFrontend:
         active_ids = set() if tracker is None else set(
             self.input_index(x) for x in tracker.pg.tstamps_[max(0, tracker.n - 12):tracker.n])
         self.rgb_memory = {k: v for k, v in self.rgb_memory.items() if k in active_ids}
+        self.depth_memory = {k: v for k, v in self.depth_memory.items() if k in active_ids}
         self.scale_history.append(self.scale_filter.scale)
         diagnostics.update(scale=self.scale_filter.scale, log_scale_std=float(np.sqrt(self.scale_filter.uncertainty_variance)),
                            metric_initialized=self.scale_filter.initialized, metric_seconds=metric_seconds,
@@ -316,7 +346,7 @@ class DPVOFrontend:
                            total_seconds=perf_counter() - start)
         self.last_timestamp = timestamp
         self.index += 1
-        return MonoEstimate(timestamp, self.metric_pose.copy(), delta, covariance, depth, diagnostics)
+        return MonoEstimate(timestamp, self.metric_pose.copy(), delta, covariance, mapping_depth, diagnostics)
 
     def finalized_trajectory(self):
         """Return offline-refined unit poses; never overwrite causal outputs."""
