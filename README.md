@@ -73,6 +73,7 @@ and `huggingface-cli login` first) and optionally `--da3` for the Depth Anything
 ```bash
 bash install.sh --stereo          # RGB-D + stereo mode
 bash install.sh --stereo --da3    # + Depth Anything 3 backend
+bash install.sh --mono            # + mono mode and visual odometry (builds DPVO; needs nvcc matching PyTorch's CUDA)
 ```
 
 <details>
@@ -172,6 +173,11 @@ pose the map implies, 2 m indoors), plus the keyframe ATE of the map:
 - `scripts/map_and_reloc.py`: stereo sequences (SimChange, KITTI raw, TartanAir V2, Virtual KITTI 2) or posed RGB-D
   folders, with `--estimator ff` (stereo mode) or `--estimator pnp --pnp-depth gt|sgbm`.
 
+Both take `--mode mono` (colour / left image only) and `--odometry visual` (no odometry input, see
+[Mono mode and visual odometry](#mono-mode-and-visual-odometry)).  The full benchmark protocol (T1 mapping ATE, T2
+multi-session localization, T3 relocalization success; KITTI, OpenLORIS-Scene, ROVER, SimChange; baselines) is in
+[`benchmark/`](benchmark/README.md).
+
 ```bash
 # OpenLORIS-Scene (package format) -> posed RGB-D folders; the robot's wheel odometry is kept and used as odometry
 python scripts/datasets/convert_openloris.py data/openloris/home1-1 data/posed/home1-1
@@ -242,6 +248,47 @@ bash scripts/run_experiments.sh all && python scripts/summarize.py && python scr
 Design notes: [`design/loop_closure_verified.md`](design/loop_closure_verified.md) (verified loop closure, calibration,
 runtime).
 
+## Mono mode and visual odometry
+
+A run is defined by two independent choices (`cross/pipeline.py`):
+
+| | `--odometry external` (default) | `--odometry visual` |
+|---|---|---|
+| `--mode rgbd` | dataset odometry; PnP on sensor depth | DPVO visual odometry, metric scale from the sensor depth |
+| `--mode stereo` | dataset odometry; feed-forward estimator with stereo scale | DPVO on the left image, metric scale from stereo (SGBM) depth |
+| `--mode mono` | dataset odometry; learned metric depth (Depth Anything 3) for keyframes | DPVO with a learned metric-scale prior (DA3-Metric) |
+
+Every motion source feeds the same channel of the back end, the per-frame relative pose (and its covariance) that
+becomes the odometry chain of the pose graph; with external odometry in the RGB-D and stereo modes the frames reach
+`System.step` unchanged.  The mono mode observes only colour images: relocalization geometry comes from metric two-view
+matching (XFeat / LighterGlue PnP on the stored keyframe depth, SuperPoint / LightGlue two-view geometry) with a
+feed-forward fallback (DA3) for saved-map references, coordinate charts keep an unanchored session separate from a
+loaded map until it is joined, and the global observation runs every few frames (the frontend pose, carried into the
+map frame by the last observation, is reported in between).
+
+```bash
+python run.py data/posed/home1-1 --loader posed --odometry visual            # RGB-D, no odometry input
+python run.py data/posed/home1-1 --loader posed --mode mono --odometry visual # RGB only
+python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_mono \
+    --mode mono --odometry visual                                             # mono profile: configs/mono_benchmark_10hz.json
+```
+
+The DPVO weights are read from `models/dpvo.pth` (or `--dpvo-checkpoint`, `CROSS_DPVO_CHECKPOINT`); DPVO itself must be
+importable (`install.sh --mono` builds it under `thirdparty/DPVO`).  The visual-odometry noise model of the back end is
+in `configs/odometry/visual.yaml`.  `python -m cross.mono.run` is the real-time monocular runner (paced input, a
+separate mapping process, streaming metric depth); its recommended profile is
+`configs/mono_streaming_dpvo_v2_20hz.json`, and `configs/mono_benchmark_10hz.json` is the same profile for offline
+runs at 10 Hz.
+
+```python
+from cross.pipeline import build_session, mono_config_from_profile
+session = build_session("mono", "visual", camera, SystemConfig(),
+                        mono_config=mono_config_from_profile("configs/mono_benchmark_10hz.json", "models/dpvo.pth"))
+for frame in dataset.replay_data():          # dict: rgb (uint8), timestamp[, depth, rgb_right, delta_pose]
+    session.process(frame)
+    T_c0, T_best, weights = session.belief(to_matrix)
+```
+
 ### SimChange benchmark and baselines
 
 The multi-traversal simulator benchmark (controlled lighting, object rearrangement, background, viewpoint and traversal
@@ -308,6 +355,8 @@ Place processed ROS bag directories in `data/rosbag/`.
 | `cross.cv.stereo_scale` | Robust metric scale from calibrated anchors (stereo mode) |
 | `cross.core.lc_verify` | Verified loop closure: consistency tests, calibrated noise model, odometry-chain predictor |
 | `cross.dataloader.stereo_loader` | Stereo sequences (KITTI raw, TartanAir V2, Virtual KITTI 2, SimChange) and posed RGB-D folders |
+| `cross.pipeline` | Sensor mode x odometry source: sessions of the back end fed by external odometry or DPVO visual odometry |
+| `cross.mono` | Mono mode: DPVO frontend with learned metric scale, DA3 models, monocular two-view / feed-forward relocalization geometry, real-time runner (`python -m cross.mono.run`) |
 | `cross.visualization.viz_rr` | Rerun-based 3D visualization |
 
 ## Citation

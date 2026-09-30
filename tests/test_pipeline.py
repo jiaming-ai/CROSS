@@ -78,7 +78,7 @@ def test_external_odometry_passes_frames_unchanged():
     mapper = FakeMapper()
     session = Pipeline(mapper, None, mode="rgbd", odometry="external")
     f = frame(0)
-    session.step(f)
+    session.process(f)
     assert mapper.calls == [f] and session.mapped_now
 
 
@@ -86,7 +86,7 @@ def test_observation_cadence_and_map_frame_poses_between_observations():
     mapper = FakeMapper(offset=10.0)
     session = Pipeline(mapper, FakeFrontend(valid_from=2), mapping_interval=3, mode="stereo", odometry="visual")
     for i in range(9):
-        session.step(frame(i))
+        session.process(frame(i))
         c0, best, _ = session.belief(to_mat)
         if session.initialized:
             # map frame = frontend pose + the mapper's fixed offset, observed or not
@@ -111,14 +111,14 @@ def test_mono_mode_predicts_depth_for_observations():
     session = Pipeline(mapper, FakeFrontend(), mapping_interval=2, mode="mono", odometry="visual",
                        depth_model=Depth(), K=np.eye(3))
     for i in range(4):
-        session.step(frame(i))
+        session.process(frame(i))
     assert len(calls) == 2 and all(np.allclose(c["depth"], 2.0) for c in mapper.calls if c["rgb"] is not None)
 
 
 def test_load_map_starts_a_fresh_frontend():
     mapper = FakeMapper()
     session = Pipeline(mapper, FakeFrontend(), 1, "rgbd", "visual", frontend_factory=FakeFrontend)
-    session.step(frame(0))
+    session.process(frame(0))
     first = session.frontend
     session.load_map("map.pkl")
     assert session.frontend is not first and session.frontend.index == 0 and not session.initialized

@@ -94,6 +94,7 @@ class Pipeline:
         self.mapped_now = False
         self.last_estimate = None
         self.last_mapping_seconds = 0.0
+        self._frames = 0
 
     # ------------------------------------------------------------------ back-end passthroughs
     @property
@@ -118,13 +119,18 @@ class Pipeline:
         self.mapper.load_map(str(path))
 
     # ------------------------------------------------------------------ one frame
-    def step(self, frame: dict):
-        """Process one frame (loader dict: rgb, timestamp, and depth / rgb_right / delta_pose as the mode allows)."""
+    def process(self, frame: dict):
+        """Process one frame (loader dict: rgb, timestamp, and depth / rgb_right / delta_pose as the mode allows).
+        (MonocularSystem.step(rgb, timestamp) is the monocular CLI's per-image entry point.)"""
         if self.frontend is None:
             self.mapper.step(obs=frame, data=frame)
             self.mapped_now = True
             return None
-        estimate, _ = self.advance(restrict_inputs(frame, self.mode, self.odometry))
+        frame = restrict_inputs(frame, self.mode, self.odometry)
+        if frame.get("timestamp") is None:            # loaders without timestamps: frame count (DPVO needs them)
+            frame["timestamp"] = float(self._frames)
+        self._frames += 1
+        estimate, _ = self.advance(frame)
         return estimate
 
     def advance(self, frame: dict):
@@ -320,7 +326,7 @@ def add_session_args(ap):
     ap.add_argument("--vo-mask-people", action="store_true", help="visual odometry: exclude detected people from DPVO patches")
 
 
-def session_factory(args, camera, system_config, T_right_in_left=None, seed=0):
+def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):
     """A callable building fresh sessions for the runner's --mode / --odometry (one per map run or query trial)."""
     import yaml
     from pathlib import Path
@@ -339,7 +345,7 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0):
 
     def make():
         return build_session(mode, odometry, camera, cfg, T_right_in_left=T_right_in_left, mono_config=mono_config,
-                             vo_config=vo_config)
+                             vo_config=vo_config, visualize=visualize)
     return make
 
 

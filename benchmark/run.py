@@ -68,7 +68,10 @@ def sh(cmd, log: Path, timeout=None, alloc_conf=False):
         f.flush()
         try:
             # PYTHONPATH: a shared venv may hold an editable install of another CROSS checkout
-            env = dict(os.environ, PYTHONPATH=str(ROOT), MPLBACKEND="Agg")
+            # CROSS_EXTRA_PYTHONPATH: packages outside the venv (DPVO, Depth Anything 3, LightGlue for the mono mode and
+            # visual odometry)
+            extra = os.environ.get("CROSS_EXTRA_PYTHONPATH")
+            env = dict(os.environ, PYTHONPATH=str(ROOT) + (os.pathsep + extra if extra else ""), MPLBACKEND="Agg")
             if alloc_conf:     # CROSS only: expandable segments break CUDA IPC between processes (MASt3R-SLAM back end)
                 env["PYTORCH_CUDA_ALLOC_CONF"] = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
             rc = subprocess.run([str(c) for c in cmd], stdout=f, stderr=subprocess.STDOUT, cwd=str(ROOT),
@@ -133,8 +136,9 @@ class Job:
         sysc = self.scfg
         cfgs = list(sysc.get("outdoor_config", [])) if self.outdoor else []
         stereo_folder = (self.seq(map_seq) / "left").is_dir()
-        if sysc["runner"] == "cross_rgbd" and not stereo_folder:
+        if sysc["runner"] in ("cross_rgbd", "cross_mono") and not stereo_folder:
             cmd = [PY, "scripts/map_and_reloc_rgbd.py", "--seed", a.seed]
+            cmd += [str(v) for v in sysc.get("args", [])]
             if self.snr:
                 cmd += ["--snr", self.snr]
         else:
@@ -378,7 +382,7 @@ class Job:
     # ------------------------------------------------------------------ tasks
     def runner(self):
         r = self.scfg["runner"]
-        if r in ("cross_rgbd", "cross_ff"):
+        if r in ("cross_rgbd", "cross_ff", "cross_mono"):
             return self.cross_map, self.cross_t1_result, self.cross_query
         if r == "baseline":
             return self.baseline_map, self.baseline_t1_result, self.baseline_query

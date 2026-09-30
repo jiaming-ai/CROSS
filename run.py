@@ -5,6 +5,10 @@ CROSS — Run topological mapping on an RGB-D dataset.
 Usage:
     python run.py <dataset_path> [options]                  # RGB-D mode (PnP on depth)
     python run.py <stereo_sequence> --mode stereo [options] # stereo mode (feed-forward estimator, stereo scale)
+    python run.py <dataset_path> --mode mono [options]      # mono mode (RGB only: DPVO, learned metric depth)
+
+Every mode runs with the dataset's odometry (--odometry external, default) or without it (--odometry visual: DPVO
+visual odometry, metric scale from the mode's depth; needs install.sh --mono).
 
 Examples:
     python run.py data/r3d/lab2.r3d
@@ -12,6 +16,8 @@ Examples:
     python run.py data/rosbag/topomap_ssi_1 --loader rosbag
     python run.py data/posed/home1-1 --loader posed                       # posed RGB-D folder (e.g. OpenLORIS)
     python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/outdoor.yaml
+    python run.py data/posed/home1-1 --loader posed --odometry visual --no-viz            # RGB-D, visual odometry
+    python run.py data/posed/home1-1 --loader posed --mode mono --odometry visual         # RGB only
 """
 
 import argparse
@@ -22,8 +28,8 @@ import numpy as np
 from loguru import logger
 
 from cross.core.config import SystemConfig, load_config
-from cross.core.system import System
 from cross.core.types import Camera
+from cross.pipeline import add_session_args, session_factory
 from cross.utils.profile import print_timing_registry
 
 np.set_printoptions(formatter={"float": lambda x: f"{x:0.2f}"})
@@ -70,9 +76,6 @@ def load_dataset(path: str, loader: str = "auto", **kwargs):
 def main():
     parser = argparse.ArgumentParser(description="CROSS: Pose-aware topological mapping")
     parser.add_argument("dataset", help="Path to dataset (e.g., data/r3d/lab2.r3d)")
-    parser.add_argument("--mode", default="rgbd", choices=["rgbd", "stereo"],
-                        help="rgbd: PnP relative poses from RGB-D (default); stereo: feed-forward estimator with stereo "
-                             "scale anchors (needs install.sh --stereo; layers configs/stereo.yaml)")
     parser.add_argument("--loader", default="auto", choices=["auto", "r3d", "rosbag", "loris", "tum", "posed", "stereo"],
                         help="Dataset loader type (default: auto-detect; stereo mode always uses the stereo loader)")
     parser.add_argument("--baseline", type=float, default=None,
@@ -83,7 +86,9 @@ def main():
     parser.add_argument("--snr", type=float, default=None, help="Signal-to-noise ratio for R3D datasets")
     parser.add_argument("--async", dest="async_update", action="store_true", help="Enable async step pipeline")
     parser.add_argument("--config", nargs="*", default=[], help="YAML config file(s), merged left to right")
+    add_session_args(parser)   # --mode rgbd | stereo | mono, --odometry external | visual, --dpvo-checkpoint, ...
     args = parser.parse_args()
+    args.mode = args.mode or "rgbd"
 
     # Load dataset
     loader_kwargs = {}
@@ -92,6 +97,8 @@ def main():
 
     if args.mode == "stereo":
         loader_kwargs["baseline"] = args.baseline
+        if args.odometry == "visual":
+            loader_kwargs["depth_source"] = "sgbm"      # metric scale of the visual odometry
         dataset = load_dataset(args.dataset, loader="stereo", **loader_kwargs)
     else:
         dataset = load_dataset(args.dataset, loader=args.loader, **loader_kwargs)
@@ -111,13 +118,10 @@ def main():
     if args.async_update:
         config.async_update = True
 
-    system = System(
-        visualize=not args.no_viz,
-        debug=True,
-        camera=camera,
-        config=config,
-        T_right_in_left=getattr(dataset, "T_right_in_left", None),
-    )
+    # the loaders' timestamps are used by DPVO (visual odometry, mono mode); stereo mode, mono mode and visual
+    # odometry are described in cross/pipeline.py
+    system = session_factory(args, camera, config, T_right_in_left=getattr(dataset, "T_right_in_left", None),
+                             visualize=not args.no_viz and args.mode != "mono")()
 
     end_idx = min(args.start + args.frames, len(dataset)) if args.frames else len(dataset)
     reply = dataset.replay_data(start_idx=args.start, end_idx=end_idx)
@@ -127,7 +131,7 @@ def main():
         if idx == 0:
             d["delta_pose"] = None  # first frame initialization
 
-        system.step(obs=d, data=d)
+        system.process(d)
 
         if idx % 100 == 0:
             logger.info(f"Step {idx}/{end_idx - args.start}")
@@ -137,7 +141,7 @@ def main():
     logger.info(f"Done: {idx + 1} frames in {elapsed:.1f}s ({(idx + 1) / elapsed:.1f} FPS), {n_kfs} keyframes")
     print_timing_registry()
 
-    system.shutdown()
+    system.release()
 
 
 if __name__ == "__main__":

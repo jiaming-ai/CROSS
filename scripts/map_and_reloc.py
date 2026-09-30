@@ -142,7 +142,7 @@ def run_mapping(args, out: Path):
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
-        system.step(d)
+        system.process(d)
         n += 1
         if system.last_added_kf_id != last_kf and system.last_added_kf_id is not None:
             last_kf = system.last_added_kf_id
@@ -219,7 +219,7 @@ def run_reloc(args, out: Path, meta: dict):
             if idx == 0:
                 d["delta_pose"] = None
             ts = time.perf_counter()
-            system.step(d)
+            system.process(d)
             dt = time.perf_counter() - ts
             T_c0, T_best, w = system.belief(pose_to_mat)
             gt = np.asarray(d["world_pose"])
