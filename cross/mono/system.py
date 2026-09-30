@@ -26,6 +26,18 @@ def apply_overrides(cfg, overrides):
         setattr(target, name, yaml.safe_load(text))
 
 
+def attach_pair_motion(frontend, pose_estimator, config, K):
+    """Give a DPVO frontend the feed-forward overlap check it uses across view discontinuities."""
+    if config.discontinuity_ncc <= 0 or not hasattr(frontend, "pair_motion"):
+        return
+    feed_forward = getattr(pose_estimator, "feed_forward", pose_estimator)
+    if not hasattr(feed_forward, "model") or getattr(frontend, "metric", None) is None:
+        raise ValueError("Discontinuity bridging needs --retrieval-pose ff and a metric depth model")
+    from .ff_retrieval import pair_motion
+    frontend.pair_motion = lambda previous, current: pair_motion(
+        feed_forward, previous, current, frontend.metric.predict_metric(previous, K, previous.shape[:2]))
+
+
 class MonocularSystem:
     def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None):
         if frontend is None and getattr(config, "frontend", None) in {"streaming_pnp", "streaming_dpvo"}:
@@ -95,6 +107,7 @@ class MonocularSystem:
                                             **(dict(rotation_geometry=self.frontend.geometry)
                                                if self.config.two_view_rotation_check else {}))
         self.mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
+        attach_pair_motion(self.frontend, pose_estimator, self.config, K)
         self.map_alignment = np.eye(4)
         self.initialized = False
         self.last_estimate = None

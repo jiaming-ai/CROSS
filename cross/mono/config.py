@@ -75,7 +75,10 @@ class MonoConfig:
     # streaming_dpvo only: frames with fewer FAST corners (320x240, threshold 20) are degenerate views (e.g. a blank
     # wall at close range); their DPVO motion is discarded as unknown (0 disables)
     min_texture_corners: int = 0
-    degenerate_mode: str = "hold"  # hold: discard the motion; inflate: keep DPVO motion but report it as invalid
+    degenerate_mode: str = "hold"
+    # dpvo frontend: thumbnail correlation below this between consecutive frames triggers a feed-forward overlap check;
+    # the jump is bridged by the learned relative pose (or marked unknown motion) and DPVO restarts (0 disables)
+    discontinuity_ncc: float = 0.0  # hold: discard the motion; inflate: keep DPVO motion but report it as invalid
     rotation_std_per_radian: float = 0.0
     max_relative_rotation: float = 1.2
     scale: ScaleConfig = field(default_factory=ScaleConfig)

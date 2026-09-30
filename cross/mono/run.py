@@ -29,7 +29,7 @@ def motion_std_kwargs(values):
     return dict(zip(keys, values))
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sequence", type=Path)
     parser.add_argument("--output", type=Path, required=True)
@@ -127,45 +127,18 @@ def main():
                         help="streaming_dpvo: treat frames with fewer FAST corners as degenerate views (motion unknown)")
     parser.add_argument("--degenerate-mode", choices=["hold", "inflate"], default="hold",
                         help="hold: discard DPVO motion on degenerate views; inflate: keep it but report it invalid")
+    parser.add_argument("--discontinuity-ncc", type=float, default=0.0,
+                        help="dpvo frontend: bridge or restart across view jumps below this thumbnail correlation "
+                             "(needs --retrieval-pose ff for the overlap check)")
     parser.add_argument("--cross-config", action="append", default=[], metavar="KEY=VALUE",
                         help="Override a CROSS SystemConfig entry, e.g. mapping.hypothesis.h0_informative_only=true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--threads", type=int, default=4)
-    args = parser.parse_args()
-    if args.input_fps is not None and (not np.isfinite(args.input_fps) or args.input_fps <= 0):
-        parser.error("--input-fps must be positive")
-    if args.sample_fps is not None and (not np.isfinite(args.sample_fps) or args.sample_fps <= 0):
-        parser.error("--sample-fps must be finite and positive")
-    if args.paced_input_worker and args.input_fps is None:
-        parser.error("--paced-input-worker requires --input-fps")
-    if args.replay_timestamps and not args.paced_input_worker:
-        parser.error("--replay-timestamps requires --paced-input-worker")
-    if args.input_process and not args.paced_input_worker:
-        parser.error("--input-process requires --paced-input-worker")
-    if args.input_buffer < 1:
-        parser.error("--input-buffer must be positive")
-    if args.teacher_lag_frames < 0 or (args.teacher_lag_frames and args.frontend != "streaming_pnp"):
-        parser.error("--teacher-lag-frames must be nonnegative and requires streaming_pnp")
-    if args.adaptive_anchor and args.frontend != "streaming_pnp":
-        parser.error("--adaptive-anchor requires streaming_pnp")
-    if args.stable_teacher_cadence and args.frontend != "streaming_pnp":
-        parser.error("--stable-teacher-cadence requires streaming_pnp")
-    if args.mapping_process and args.frontend not in {"streaming_pnp", "streaming_dpvo"}:
-        parser.error("--mapping-process requires a streaming frontend")
-    if args.delayed_recovery and args.frontend != "streaming_pnp":
-        parser.error("--delayed-recovery requires streaming_pnp")
-    import torch
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    cv2.setRNGSeed(args.seed)
-    torch.set_num_threads(args.threads)
-    cv2.setNumThreads(1)
-    if os.environ.get("CROSS_TORCH_HUB"):
-        torch.hub.set_dir(os.environ["CROSS_TORCH_HUB"])
-    if args.output.exists() and any(args.output.iterdir()):
-        raise FileExistsError(f"Refusing to overwrite previous results: {args.output}")
-    args.output.mkdir(parents=True, exist_ok=True)
-    config = MonoConfig(frontend=args.frontend,
+    return parser
+
+
+def config_from_args(args):
+    return MonoConfig(frontend=args.frontend,
                         seed=args.seed,
                         dpvo_metric_bootstrap=args.dpvo_metric_bootstrap,
                         rotation_tracker=args.rotation_tracker,
@@ -201,10 +174,49 @@ def main():
                         pose_refinement=args.pose_refinement,
                         refinement_anchor_only=args.refinement_anchor_only, metric_shape=args.metric_shape,
                         cross_overrides=tuple(args.cross_config), min_texture_corners=args.min_texture_corners,
-                        degenerate_mode=args.degenerate_mode,
+                        degenerate_mode=args.degenerate_mode, discontinuity_ncc=args.discontinuity_ncc,
                         **motion_std_kwargs(args.motion_std),
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,
                                           recovery_observations=args.scale_recovery_observations))
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.input_fps is not None and (not np.isfinite(args.input_fps) or args.input_fps <= 0):
+        parser.error("--input-fps must be positive")
+    if args.sample_fps is not None and (not np.isfinite(args.sample_fps) or args.sample_fps <= 0):
+        parser.error("--sample-fps must be finite and positive")
+    if args.paced_input_worker and args.input_fps is None:
+        parser.error("--paced-input-worker requires --input-fps")
+    if args.replay_timestamps and not args.paced_input_worker:
+        parser.error("--replay-timestamps requires --paced-input-worker")
+    if args.input_process and not args.paced_input_worker:
+        parser.error("--input-process requires --paced-input-worker")
+    if args.input_buffer < 1:
+        parser.error("--input-buffer must be positive")
+    if args.teacher_lag_frames < 0 or (args.teacher_lag_frames and args.frontend != "streaming_pnp"):
+        parser.error("--teacher-lag-frames must be nonnegative and requires streaming_pnp")
+    if args.adaptive_anchor and args.frontend != "streaming_pnp":
+        parser.error("--adaptive-anchor requires streaming_pnp")
+    if args.stable_teacher_cadence and args.frontend != "streaming_pnp":
+        parser.error("--stable-teacher-cadence requires streaming_pnp")
+    if args.mapping_process and args.frontend not in {"streaming_pnp", "streaming_dpvo"}:
+        parser.error("--mapping-process requires a streaming frontend")
+    if args.delayed_recovery and args.frontend != "streaming_pnp":
+        parser.error("--delayed-recovery requires streaming_pnp")
+    import torch
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    cv2.setRNGSeed(args.seed)
+    torch.set_num_threads(args.threads)
+    cv2.setNumThreads(1)
+    if os.environ.get("CROSS_TORCH_HUB"):
+        torch.hub.set_dir(os.environ["CROSS_TORCH_HUB"])
+    if args.output.exists() and any(args.output.iterdir()):
+        raise FileExistsError(f"Refusing to overwrite previous results: {args.output}")
+    args.output.mkdir(parents=True, exist_ok=True)
+    config = config_from_args(args)
     sequence = RGBSequence(args.sequence, args.stride, args.start, args.frames, args.intrinsics,
                            not args.no_undistort, args.sample_fps, args.image_size)
     if not len(sequence):

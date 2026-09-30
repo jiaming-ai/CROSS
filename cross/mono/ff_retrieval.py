@@ -267,3 +267,20 @@ class FallbackFeedForwardRelativePose:
         self.last_stds = torch.stack([torch.as_tensor(by_index[i][2]).float().cpu() for i in order])
         stacked = torch.stack([by_index[i][0].tensor().to(device) for i in order])
         return pp.SE3(stacked), valid, torch.stack([torch.as_tensor(by_index[i][1]).float().cpu() for i in order])
+
+
+def pair_motion(estimator, previous_rgb, current_rgb, previous_metric_depth, min_covisibility=0.3):
+    """Relative motion T_previous_current across a visual discontinuity, or None when the views do not overlap.
+
+    One feed-forward two-view pass; the previous frame's learned metric depth sets the translation scale.
+    Returns (T or None, covisibility).
+    """
+    (c2w, K, depth, conf), = estimator.model([(previous_rgb, current_rgb)], estimator.resolution)
+    covis = min(covisibility(c2w, K, depth, conf, 0, 1), covisibility(c2w, K, depth, conf, 1, 0))
+    if covis < min_covisibility:
+        return None, covis
+    T = _inverse(c2w[0]) @ c2w[1]
+    log_scale, mad = depth_scale(previous_metric_depth, depth[0].cpu().numpy(),
+                                 None if conf is None else conf[0].cpu().numpy())
+    T[:3, 3] *= np.exp(log_scale) if log_scale is not None else 0.
+    return T, covis

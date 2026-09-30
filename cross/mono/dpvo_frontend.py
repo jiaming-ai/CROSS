@@ -54,6 +54,10 @@ class DPVOFrontend:
         self.frame_offset = 0
         self.gauge_origin = np.eye(4)
         self.restarts = 0
+        # optional callable (previous_rgb, current_rgb) -> (T_previous_current or None, covisibility)
+        self.pair_motion = None
+        self.previous_rgb = self.previous_thumb = None
+        self.bridges = 0
         self.vo_cpu_rng = torch.Generator().manual_seed(self.config.seed).get_state()
         self.vo_cuda_rng = torch.Generator(device="cuda").manual_seed(self.config.seed).get_state()
 
@@ -61,15 +65,38 @@ class DPVOFrontend:
         """Input frame index of a tracker frame counter (the counter restarts with the tracker)."""
         return int(tracker_stamp) + self.frame_offset
 
-    def _restart_tracker(self):
+    def _restart_tracker(self, next_frame=None):
         self.tracker = None
         self.background_patchifier = None
-        self.frame_offset = self.index + 1
+        self.frame_offset = self.index + 1 if next_frame is None else next_frame
         self.gauge_origin = self.metric_pose.copy()
         self.scaled_translation = ScaledTranslation()
         self.scale_filter = LogScaleFilter(self.config.scale)
         self.rgb_memory = {}
         self.restarts += 1
+
+    @staticmethod
+    def _thumb(rgb):
+        small = cv2.resize(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY), (32, 24), interpolation=cv2.INTER_AREA).astype(np.float32)
+        return (small - small.mean()) / (small.std() + 1e-6)
+
+    def _check_discontinuity(self, rgb):
+        """Detect a jump with little shared content; restart DPVO from this frame and return the bridge."""
+        if self.config.discontinuity_ncc <= 0:
+            return None
+        thumb, previous, previous_thumb = self._thumb(rgb), self.previous_rgb, self.previous_thumb
+        self.previous_rgb, self.previous_thumb = rgb, thumb
+        if previous_thumb is None or float((thumb * previous_thumb).mean()) >= self.config.discontinuity_ncc:
+            return None
+        if self.tracker is None or not self.tracker.is_initialized:
+            return None
+        T, covis = self.pair_motion(previous, rgb) if self.pair_motion is not None else (None, 0.)
+        if T is None:
+            pass
+        elif covis >= 0.3:
+            self.bridges += 1
+        self._restart_tracker(next_frame=self.index)
+        return T, covis
 
     def _pose_at(self, index):
         """Resolve an input frame through DPVO's keyframe-removal chain."""
@@ -132,6 +159,7 @@ class DPVOFrontend:
         h, w = rgb.shape[:2]
         if h % 16 or w % 16:
             raise ValueError("DPVO input dimensions must be multiples of 16")
+        bridge = self._check_discontinuity(rgb)
         self.initialize_tracker(h, w)
         tracker = self.tracker
         if self.background_patchifier is not None:
@@ -248,6 +276,18 @@ class DPVOFrontend:
             covariance += np.eye(6)
         elif not diagnostics["valid"]:
             covariance += np.eye(6)
+        if bridge is not None:
+            # the jump itself: learned relative pose (inflated uncertainty), or unknown motion
+            T, covis = bridge
+            if T is not None:
+                delta = T
+                self.metric_pose = self.metric_pose @ T
+                covariance = np.diag([0.1**2 + (0.2 * np.linalg.norm(T[:3, 3]))**2] * 3 + [0.05**2] * 3)
+            else:
+                delta = np.eye(4)
+                covariance = np.eye(6)
+            self.gauge_origin = self.metric_pose.copy()
+            diagnostics.update(valid=False, discontinuity=True, bridge_covisibility=covis, bridged=T is not None)
         # Dense depth is needed only on mapping updates. It is predicted from
         # current RGB; it is never sensor depth. It is not used as VO input.
         depth = np.ones((h, w), dtype=np.float32)
