@@ -64,6 +64,65 @@ def wilson(k, n, z=1.96):
     return max(0.0, c - h), min(1.0, c + h)
 
 
+def t2_pool(rs, thr):
+    """T2 over several query sessions, pooled over their frames: LR = localized frames / all frames; MS-ATE = RMSE over
+    all frames that have an estimate (i.e. every session weighted by its length, as T3 pools trials)."""
+    n = [max(r.get("n_frames") or 0, 0) for r in rs]
+    if sum(n) == 0:
+        return None, None, None
+    a = sum((r.get(f"lr@{thr[0]:g}") or 0) * k for r, k in zip(rs, n)) / sum(n)
+    b = sum((r.get(f"lr@{thr[1]:g}") or 0) * k for r, k in zip(rs, n)) / sum(n)
+    ne = [(r.get("est_frac") or 0) * k for r, k in zip(rs, n)]
+    num = sum((r.get("ms_ate") or 0) ** 2 * e for r, e in zip(rs, ne) if r.get("ms_ate") is not None)
+    ms = (num / sum(ne)) ** 0.5 if sum(ne) > 0 else None
+    return a, b, ms
+
+
+def dataset_section(ds_cfg):
+    """Markdown overview of the prepared sequences (benchmark/results/datasets.json, written by dataset_stats.py)."""
+    f = ROOT / "benchmark/results/datasets.json"
+    if not f.is_file():
+        return ""
+    st = json.loads(f.read_text())
+    names = {"kitti": "KITTI odometry", "openloris": "OpenLORIS-Scene", "rover": "ROVER campus_large", "simchange": "SimChange v2"}
+    out = ["## Datasets", "",
+           "A *session* is one recorded traversal. In each scene, the map session builds the map; every other session is a query "
+           "session, run against that map once as a whole (T2) and as independent 10 s trials (T3). All sessions run at 10 Hz. "
+           "Frame counts are those of the prepared sequences; the setups of one session differ by a few frames at most.", "",
+           "| dataset | scene | sessions (map + queries) | map session | query sessions | T3 trials |",
+           "|---|---|---|---|---|---|"]
+    details = []
+    for d in ("kitti", "openloris", "rover", "simchange"):
+        for scene in ds_cfg.get(d, {}).get("scenes", {}):
+            rows = st.get(d, {}).get(scene)
+            sc = ds_cfg[d]["scenes"][scene]
+            nq = len(sc.get("queries", []))
+            if not rows:
+                out.append(f"| {names[d]} | {scene} | 1 + {nq} | not prepared yet | | |")
+                continue
+            def fr(r):
+                v = min(x["frames"] for x in r["setups"].values())
+                p = max(x["path_m"] for x in r["setups"].values())
+                return v, p
+            m = rows.get(sc["map"])
+            mtxt = (lambda v, p: f"{v} frames, {v / 600:.1f} min, {p:.0f} m")(*fr(m)) if m else "not prepared yet"
+            qs = [rows[q] for q in sc.get("queries", []) if q in rows]
+            if qs:
+                fq = [fr(r)[0] for r in qs]
+                qtxt = f"{len(qs)}/{nq} ready: {min(fq)}–{max(fq)} frames ({sum(fq) / 600:.1f} min in total)"
+            else:
+                qtxt = "–" if nq == 0 else f"0/{nq} ready"
+            trials = sum(r.get("trials", 0) for r in qs)
+            out.append(f"| {names[d]} | {scene} | 1 + {nq} | {mtxt} | {qtxt} | {trials if nq else '–'} |")
+            if nq == 0:
+                continue
+            det = [f"| {n} | {r['role']} | {fr(r)[0]} | {fr(r)[0] / 10:.0f} s | {fr(r)[1]:.0f} m | {r.get('trials', '–')} |"
+                   for n, r in rows.items()]
+            details += ["", f"<details><summary>{names[d]} · {scene}: sessions</summary>", "",
+                        "| session | role | frames | duration | path | T3 trials |", "|---|---|---|---|---|---|"] + det + ["", "</details>"]
+    return "\n".join(out + details)
+
+
 class Tables:
     def __init__(self, results, seed):
         self.ds, self.sy = load()
@@ -147,8 +206,9 @@ class Tables:
         thr = cfg.get("lr_thresholds", [0.5, 1.0])
         scenes = [s for s in cfg["scenes"] if cfg["scenes"][s].get("queries")]
         head = ["system · setup"] + [f"{s}" for s in scenes] + ["all queries"]
-        lines = [f"Cells: LR@{thr[0]:g} m / LR@{thr[1]:g} m (fraction of all query frames localized within the radius), "
-                 "MS-ATE in m over the frames with an estimate.", "",
+        lines = [f"Cells: LR@{thr[0]:g} m / LR@{thr[1]:g} m and MS-ATE (m), pooled over all frames of the scene's query sessions. "
+                 "LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of "
+                 "the ground truth; frames without such a pose count as failures. MS-ATE = RMSE over the frames that have a pose.", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
             cells = {(r["map"], r["query"]): r for r in self.idx[("t2", dataset, system, setup)]}
@@ -172,9 +232,7 @@ class Tables:
         ok = [r for r in rs if r.get("status") == "ok"]
         if not ok:
             return FAIL
-        a = mean([r.get(f"lr@{thr[0]:g}") for r in ok])
-        b = mean([r.get(f"lr@{thr[1]:g}") for r in ok])
-        ms = mean([r.get("ms_ate") for r in ok])
+        a, b, ms = t2_pool(ok, thr)
         s = f"{a:.2f} / {b:.2f}, {fmt(ms, 2)} m"
         miss = n - len(ok)
         return s + (f" ({miss} pending/failed)" if miss else "")
@@ -246,7 +304,8 @@ class Tables:
                 elif track == "t2":
                     thr = cfg.get("lr_thresholds", [0.5, 1.0])[1]
                     ok = [r for r in rs if r.get("status") == "ok"]
-                    row.append(f"{mean([r.get(f'lr@{thr:g}') for r in ok]):.2f}" if ok else PENDING)
+                    lr = t2_pool(ok, cfg.get("lr_thresholds", [0.5, 1.0]))[1] if ok else None
+                    row.append(f"{lr:.2f}" if lr is not None else PENDING)
                 else:
                     ok = [r for r in rs if r.get("status") == "ok" and r.get("n_trials")]
                     if ok:
@@ -279,6 +338,8 @@ def main():
         f"Legend: `{PENDING}` not run yet, `{FAIL}` failed (crash, timeout or tracking completeness < 80 %), (xx%) completeness, "
         "⁽ᵒ⁾ the system uses the dataset's odometry (wheel odometry on OpenLORIS, OXTS dead reckoning on KITTI, "
         "simulated on ROVER and SimChange), RGB-D* = left image + stereo-matched depth (KITTI).",
+        "",
+        dataset_section(T.ds),
         "",
         "## Summary",
         "",

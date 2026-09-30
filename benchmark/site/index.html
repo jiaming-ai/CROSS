@@ -100,8 +100,8 @@ const fmt = (x, n = 3) => x == null ? "–" : Number(x).toFixed(n);
 document.getElementById("meta").append($("br"), $("span", {class: "note"},
   `Generated ${B.generated || "–"} from commit ${B.commit || "–"}, seed ${B.seed ?? 0}; ${Object.keys(B.runs).length} runs.`));
 
-const TABS = [["summary", "Summary"], ["t1", "T1 Mapping"], ["t2", "T2 Multi-session"], ["t3", "T3 Relocalization"],
-              ["fail", "Failure cases"], ["legacy", "Earlier results"]];
+const TABS = [["summary", "Summary"], ["metrics", "Metrics"], ["data", "Datasets"], ["t1", "T1 Mapping"], ["t2", "T2 Multi-session"],
+              ["t3", "T3 Relocalization"], ["fail", "Failure cases"], ["legacy", "Earlier results"]];
 const tabs = document.getElementById("tabs");
 for (const [k, lab] of TABS) tabs.append($("button", {role: "tab", "aria-selected": String(state.tab === k), onclick: () => { state.tab = k; state.sel = null; render(); }}, lab));
 
@@ -110,6 +110,8 @@ let render = function () {
   const v = document.getElementById("view"); v.replaceChildren();
   if (state.tab === "summary") return renderSummary(v);
   if (state.tab === "fail") return renderFailures(v);
+  if (state.tab === "metrics") return renderMetrics(v);
+  if (state.tab === "data") return renderData(v);
   if (state.tab === "legacy") return renderLegacy(v);
   renderTrack(v, state.tab);
 };
@@ -268,6 +270,72 @@ function renderFailures(v) {
       return p; });
     if (card.children.length === 1) card.append($("div", {class: "empty"}, "No failures recorded."));
     v.append(card); }
+}
+
+// ---------------------------------------------------------------- metric definitions
+function renderMetrics(v) {
+  const sec = (title, ...paras) => $("div", {class: "card"}, $("h3", {}, title), ...paras.map(p => typeof p === "string" ? $("p", {}, p) : p));
+  const ul = (...items) => $("ul", {}, ...items.map(i => $("li", {}, i)));
+  v.append(
+    sec("Sessions, maps and queries",
+      "A session is one recorded traversal of a scene. In every scene one session is the map session; all other sessions of the scene are query sessions (see Datasets for the list). All sessions are processed at 10 Hz, every frame in order, without lookahead.",
+      "Systems that store maps (CROSS, ORB-SLAM3, RTAB-Map) map the map session once and save the map; every query run loads it. Systems without map persistence (MASt3R-SLAM, VGGT-SLAM) run the map session followed by the query frames in one stream."),
+    sec("T1 · mapping accuracy (one session at a time)",
+      ul("Each session (map and query sessions alike on OpenLORIS and ROVER; each KITTI sequence) is mapped from scratch.",
+         "ATE RMSE: position error of the system's final trajectory (after all loop closures) against ground truth, after the best SE(3) alignment (Sim(3) for monocular systems without metric input). Evaluated at the frames the final trajectory contains (CROSS: its map keyframes).",
+         "Completeness: fraction of the session's frames within 1 s of an evaluated pose; below 80 % the run counts as a tracking failure (✗).",
+         "Scene cell = mean ATE of the scene's sessions; mean column = mean over all sessions of the dataset.")),
+    sec("T2 · multi-session localization (LR, MS-ATE): one run per query session",
+      ul("Each query session is run once, from its first frame to its last, against the stored map of the scene's map session, starting without a pose.",
+         "Per frame i: the estimate is the system's latest pose at frame i, if it is at most 1 s (10 frames) old; it is expressed in the ground-truth frame with the alignment computed on the map session (the query session is never re-aligned). e_i = distance between that position and the ground-truth position. A frame without such a pose has e_i = ∞.",
+         "LR@x of a session = (number of frames with e_i < x) / (number of frames of the session). Thresholds: 0.5 m and 1 m indoors, 1 m and 5 m outdoors.",
+         "MS-ATE of a session = RMSE of e_i over the frames that have a pose; shown with the fraction of such frames.",
+         "Scene and dataset cells pool all frames of the query sessions (localized frames / all frames), so longer sessions weigh more. The summary column uses the larger threshold.")),
+    sec("T3 · relocalization success (RS): many short trials per query session",
+      ul("Each query session is cut into trials of 100 frames (10 s); a new trial starts every 50 frames (trials overlap by half; a last trial of at least 50 frames is kept). The Datasets tab lists the number of trials per session.",
+         "Every trial is an independent run: a fresh system loads the map and processes only the trial's frames, starting without a pose.",
+         "The trial succeeds when the system's final pose (its latest pose at the trial's last frame, at most 1 s old) is within r_D of the pose the map implies for that frame: 2 m indoors, 5 m outdoors (CROSS paper). The map-implied pose is the nearest map keyframe's estimated pose composed with its ground-truth offset to the query frame, so map drift is not counted as a relocalization error. Strict RS additionally requires 1 m and 5°.",
+         "RS = successful trials / all trials, pooled over the scene's query sessions; 95 % Wilson interval in the last column.")),
+    sec("How T2 and T3 differ",
+      "T3 asks how often a system relocalizes within 10 s from a cold start, and judges only the end of each trial. T2 asks how much of a whole session the system spends correctly localized in the map, including the time before it first relocalizes and any later losses. A system that relocalizes slowly but then holds on can have T2 above T3; one that relocalizes quickly but loses the map again can have T3 above T2."),
+    sec("Small scenes", "r_D = 2 m is lenient in small rooms (OpenLORIS office spans about 5 m): check strict RS (1 m / 5°) and LR@0.5 m there."));
+}
+
+// ---------------------------------------------------------------- dataset details
+function renderData(v) {
+  const S = B.datastats || {}, SP = B.splits || {};
+  v.append($("p", {class: "note"}, "Sessions per scene, as prepared (10 Hz). Frames and path length of each session; T3 trials = number of 100-frame trials (stride 50) of a query session. Rows marked 'not prepared yet' are still downloading or converting."));
+  for (const d of ["kitti", "openloris", "rover", "simchange"]) {
+    if (!SP[d]) continue;
+    const card = $("div", {class: "card"}, $("h3", {}, DS[d] || d));
+    const t = $("table"); t.append($("thead", {}, $("tr", {}, ...["scene", "sessions", "map session", "query sessions", "query frames", "T3 trials"].map(h => $("th", {}, h)))));
+    const tb = $("tbody");
+    for (const [sc, sp] of SP[d]) {
+      const rows = (S[d] || {})[sc] || {};
+      const fr = r => r ? Math.min(...Object.values(r.setups).map(x => x.frames)) : null;
+      const path = r => r ? Math.max(...Object.values(r.setups).map(x => x.path_m)) : null;
+      const m = rows[sp.map];
+      const qs = sp.queries.filter(q => rows[q]);
+      const qf = qs.map(q => fr(rows[q]));
+      const trials = qs.reduce((a, q) => a + (rows[q].trials || 0), 0);
+      tb.append($("tr", {}, $("td", {class: "lab"}, sc), $("td", {}, `1 + ${sp.queries.length}`),
+        $("td", {class: m ? "" : "dim"}, m ? `${sp.map}: ${fr(m)} frames, ${(fr(m) / 10).toFixed(0)} s, ${path(m).toFixed(0)} m` : "not prepared yet"),
+        $("td", {}, sp.queries.length ? `${qs.length}/${sp.queries.length} prepared` : "–"),
+        $("td", {}, qf.length ? `${Math.min(...qf)}–${Math.max(...qf)} each, ${qf.reduce((a, b) => a + b, 0)} total` : "–"),
+        $("td", {}, sp.queries.length ? String(trials) : "–")));
+      if (sp.queries.length) {
+        const det = $("details", {}, $("summary", {class: "note"}, `${sc}: every session`));
+        const dt = $("table"); dt.append($("thead", {}, $("tr", {}, ...["session", "role", "frames", "duration", "path", "T3 trials"].map(h => $("th", {}, h)))));
+        const dtb = $("tbody");
+        for (const q of [sp.map].concat(sp.queries)) { const r = rows[q];
+          dtb.append($("tr", {}, $("td", {}, q), $("td", {}, q === sp.map ? "map" : "query"), $("td", {}, r ? String(fr(r)) : "not prepared"),
+            $("td", {}, r ? `${(fr(r) / 10).toFixed(0)} s` : ""), $("td", {}, r ? `${path(r).toFixed(0)} m` : ""), $("td", {}, r && r.trials != null ? String(r.trials) : q === sp.map ? "–" : ""))); }
+        dt.append(dtb); det.append($("div", {class: "scroll"}, dt));
+        tb.append($("tr", {}, $("td", {colspan: 6}, det)));
+      }
+    }
+    t.append(tb); card.append($("div", {class: "scroll"}, t)); v.append(card);
+  }
 }
 
 // ---------------------------------------------------------------- earlier results (different protocol)

@@ -151,6 +151,7 @@ def main():
         commit = None
     assets = sorted(str(p.relative_to(SITE)) for p in (SITE / "assets").rglob("*.jpg")) if (SITE / "assets").is_dir() else []
     legacy = ROOT / "benchmark/results/legacy.json"
+    dstats = ROOT / "benchmark/results/datasets.json"
     data = {
         "generated": time.strftime("%Y-%m-%d %H:%M"), "commit": commit, "seed": a.seed,
         "systems": T.sy, "datasets": {k: {kk: vv for kk, vv in v.items() if kk != "scenes"} | {"scenes": list(v["scenes"])}
@@ -158,6 +159,9 @@ def main():
         "summary": T.summary(), "tables": table_models(T, runs_by_key), "runs": runs,
         "failures": failures(results, runs_by_key), "assets": assets,
         "legacy": json.loads(legacy.read_text()) if legacy.is_file() else None,
+        "datastats": json.loads(dstats.read_text()) if dstats.is_file() else {},
+        "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", [])}] for sc, v in c["scenes"].items()]
+                   for d, c in T.ds.items()},
     }
     SITE.mkdir(parents=True, exist_ok=True)
     (SITE / "data.js").write_text("window.BENCH = " + json.dumps(data, separators=(",", ":")) + ";\n")

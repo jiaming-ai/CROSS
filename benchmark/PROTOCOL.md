@@ -103,6 +103,8 @@ is penalized.
   and it matters for systems that report poses only at keyframes. Frames with no pose that recent count as failures. Thresholds: x = 0.5 m and 1 m indoors, 1 m and 5 m outdoors. This is the headline T2 number because it
   compares systems that report no pose until they relocalize with systems that always report one.
 - **MS-ATE** (m): the RMSE over the frames that have an estimate, reported with their fraction.
+- **Aggregation**: LR and MS-ATE are computed per query session. Scene and dataset cells pool the frames of all query
+  sessions (localized frames / all frames), so each session counts in proportion to its length, as T3 pools trials.
 - **Time to localize**: the first frame after which the error stays below 1 m (indoor) or 5 m (outdoor) for 5 consecutive frames.
 
 ### T3 — relocalization success (CROSS paper, §5.1)

@@ -1,0 +1,647 @@
+{
+ "openloris": {
+  "office": {
+   "office1-1": {
+    "role": "map",
+    "setups": {
+     "rgbd": {
+      "frames": 269,
+      "duration_s": 26.9,
+      "path_m": 5.481264957953456,
+      "extent_m": 4.014993413926258
+     },
+     "stereo": {
+      "frames": 269,
+      "duration_s": 26.9,
+      "path_m": 5.456370766008032,
+      "extent_m": 3.999690242553593
+     }
+    }
+   },
+   "office1-2": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 299,
+      "duration_s": 29.9,
+      "path_m": 5.878077813315281,
+      "extent_m": 4.249368945907247
+     },
+     "stereo": {
+      "frames": 299,
+      "duration_s": 29.9,
+      "path_m": 5.932270018877915,
+      "extent_m": 4.287036576644889
+     }
+    },
+    "trials": 5
+   },
+   "office1-3": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 119,
+      "duration_s": 11.9,
+      "path_m": 0.9045521783331663,
+      "extent_m": 0.7164766541737955
+     },
+     "stereo": {
+      "frames": 119,
+      "duration_s": 11.9,
+      "path_m": 0.9214535934363086,
+      "extent_m": 0.7277571329133292
+     }
+    },
+    "trials": 2
+   },
+   "office1-4": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 289,
+      "duration_s": 28.9,
+      "path_m": 6.4644858643123655,
+      "extent_m": 4.215634226468612
+     },
+     "stereo": {
+      "frames": 289,
+      "duration_s": 28.9,
+      "path_m": 6.534432397419482,
+      "extent_m": 4.247958424552034
+     }
+    },
+    "trials": 5
+   },
+   "office1-5": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 530,
+      "duration_s": 53.0,
+      "path_m": 11.24898034280914,
+      "extent_m": 4.461717716621883
+     },
+     "stereo": {
+      "frames": 529,
+      "duration_s": 52.9,
+      "path_m": 11.256704776724677,
+      "extent_m": 4.46790216275917
+     }
+    },
+    "trials": 10
+   },
+   "office1-6": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 359,
+      "duration_s": 35.9,
+      "path_m": 5.568887691065277,
+      "extent_m": 3.999523556978966
+     },
+     "stereo": {
+      "frames": 359,
+      "duration_s": 35.9,
+      "path_m": 5.544671572002936,
+      "extent_m": 3.972637219547872
+     }
+    },
+    "trials": 7
+   },
+   "office1-7": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 380,
+      "duration_s": 38.0,
+      "path_m": 5.875283444451769,
+      "extent_m": 4.366117385397805
+     },
+     "stereo": {
+      "frames": 380,
+      "duration_s": 38.0,
+      "path_m": 5.920024731322535,
+      "extent_m": 4.399738344495399
+     }
+    },
+    "trials": 7
+   }
+  },
+  "home": {
+   "home1-1": {
+    "role": "map",
+    "setups": {
+     "rgbd": {
+      "frames": 1521,
+      "duration_s": 152.1,
+      "path_m": 39.610033936716036,
+      "extent_m": 10.812887778283384
+     },
+     "stereo": {
+      "frames": 1522,
+      "duration_s": 152.2,
+      "path_m": 39.75307666521148,
+      "extent_m": 10.828905430921932
+     }
+    }
+   },
+   "home1-2": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 992,
+      "duration_s": 99.2,
+      "path_m": 31.035286314450047,
+      "extent_m": 9.871169127682144
+     },
+     "stereo": {
+      "frames": 993,
+      "duration_s": 99.3,
+      "path_m": 31.116535219291606,
+      "extent_m": 9.874717478822653
+     }
+    },
+    "trials": 19
+   },
+   "home1-3": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 878,
+      "duration_s": 87.8,
+      "path_m": 23.130380806543062,
+      "extent_m": 7.896045638384673
+     },
+     "stereo": {
+      "frames": 879,
+      "duration_s": 87.9,
+      "path_m": 23.23188627004795,
+      "extent_m": 7.9080999843866016
+     }
+    },
+    "trials": 17
+   },
+   "home1-4": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 709,
+      "duration_s": 70.9,
+      "path_m": 20.63940063830927,
+      "extent_m": 8.292631819229728
+     },
+     "stereo": {
+      "frames": 709,
+      "duration_s": 70.9,
+      "path_m": 20.72566254753036,
+      "extent_m": 8.298141645860326
+     }
+    },
+    "trials": 14
+   },
+   "home1-5": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 259,
+      "duration_s": 25.9,
+      "path_m": 5.682493194580618,
+      "extent_m": 3.008141470573268
+     },
+     "stereo": {
+      "frames": 259,
+      "duration_s": 25.9,
+      "path_m": 5.677835382540361,
+      "extent_m": 3.0120347197115054
+     }
+    },
+    "trials": 5
+   }
+  },
+  "cafe": {
+   "cafe1-1": {
+    "role": "map",
+    "setups": {
+     "rgbd": {
+      "frames": 569,
+      "duration_s": 56.9,
+      "path_m": 28.065412343809143,
+      "extent_m": 11.502512063833379
+     },
+     "stereo": {
+      "frames": 570,
+      "duration_s": 57.0,
+      "path_m": 28.13665798683179,
+      "extent_m": 11.525331632177224
+     }
+    }
+   },
+   "cafe1-2": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 898,
+      "duration_s": 89.8,
+      "path_m": 37.62253847970237,
+      "extent_m": 14.731674258077836
+     },
+     "stereo": {
+      "frames": 900,
+      "duration_s": 90.0,
+      "path_m": 37.869334317461366,
+      "extent_m": 14.76244220943845
+     }
+    },
+    "trials": 17
+   }
+  }
+ },
+ "kitti": {
+  "00": {
+   "00": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 4541,
+      "duration_s": 454.1,
+      "path_m": 3723.7959780634837,
+      "extent_m": 751.1863302338131
+     }
+    }
+   }
+  },
+  "01": {
+   "01": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 1101,
+      "duration_s": 110.1,
+      "path_m": 2453.6124694725413,
+      "extent_m": 2164.7423264963745
+     }
+    }
+   }
+  },
+  "05": {
+   "05": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 2761,
+      "duration_s": 276.1,
+      "path_m": 2205.5703489854227,
+      "extent_m": 641.492842499758
+     }
+    }
+   }
+  },
+  "06": {
+   "06": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 1101,
+      "duration_s": 110.1,
+      "path_m": 1232.4916812050722,
+      "extent_m": 457.5650018013882
+     }
+    }
+   }
+  },
+  "07": {
+   "07": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 1101,
+      "duration_s": 110.1,
+      "path_m": 694.2990443729823,
+      "extent_m": 283.5585377116402
+     }
+    }
+   }
+  }
+ },
+ "simchange": {
+  "hssd_house": {
+   "hssd_house/map": {
+    "role": "map",
+    "setups": {
+     ".": {
+      "frames": 1080,
+      "duration_s": 108.0,
+      "path_m": 105.52716254549605,
+      "extent_m": 29.666856280944945
+     }
+    }
+   }
+  },
+  "hssd_restaurant": {
+   "hssd_restaurant/map": {
+    "role": "map",
+    "setups": {
+     ".": {
+      "frames": 1314,
+      "duration_s": 131.4,
+      "path_m": 145.8115887597658,
+      "extent_m": 34.486259523225606
+     }
+    }
+   },
+   "hssd_restaurant/rearr_100+light_evening+reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1204,
+      "duration_s": 120.4,
+      "path_m": 134.0191136726617,
+      "extent_m": 34.48469300812412
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_50+offset_1.0+light_overcast": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1406,
+      "duration_s": 140.6,
+      "path_m": 139.41457904791343,
+      "extent_m": 34.04146307353214
+     }
+    },
+    "trials": 28
+   }
+  },
+  "classroom": {
+   "classroom/map": {
+    "role": "map",
+    "setups": {
+     ".": {
+      "frames": 159,
+      "duration_s": 15.9,
+      "path_m": 17.270036435257605,
+      "extent_m": 6.189742797430518
+     }
+    }
+   }
+  },
+  "lonemonk": {
+   "lonemonk/map": {
+    "role": "map",
+    "setups": {
+     ".": {
+      "frames": 713,
+      "duration_s": 71.3,
+      "path_m": 95.56700826536569,
+      "extent_m": 25.228371504464093
+     }
+    }
+   },
+   "lonemonk/light_morning": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 682,
+      "duration_s": 68.2,
+      "path_m": 91.91262269170583,
+      "extent_m": 25.228371504464093
+     }
+    },
+    "trials": 13
+   },
+   "lonemonk/light_evening": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 682,
+      "duration_s": 68.2,
+      "path_m": 91.91262269170583,
+      "extent_m": 25.228371504464093
+     }
+    },
+    "trials": 13
+   },
+   "lonemonk/light_night": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 682,
+      "duration_s": 68.2,
+      "path_m": 91.91262269170583,
+      "extent_m": 25.228371504464093
+     }
+    },
+    "trials": 13
+   },
+   "lonemonk/light_overcast": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 682,
+      "duration_s": 68.2,
+      "path_m": 91.91262269170583,
+      "extent_m": 25.228371504464093
+     }
+    },
+    "trials": 13
+   },
+   "lonemonk/move_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 682,
+      "duration_s": 68.2,
+      "path_m": 91.91262269170583,
+      "extent_m": 25.228371504464093
+     }
+    },
+    "trials": 13
+   },
+   "lonemonk/background": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 682,
+      "duration_s": 68.2,
+      "path_m": 91.91262269170583,
+      "extent_m": 25.228371504464093
+     }
+    },
+    "trials": 13
+   },
+   "lonemonk/offset_1.0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 806,
+      "duration_s": 80.6,
+      "path_m": 95.70354415460324,
+      "extent_m": 26.355978245666044
+     }
+    },
+    "trials": 16
+   },
+   "lonemonk/offset_2.0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1057,
+      "duration_s": 105.7,
+      "path_m": 101.75770020842654,
+      "extent_m": 26.409509338326355
+     }
+    },
+    "trials": 21
+   },
+   "lonemonk/yaw_45": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 682,
+      "duration_s": 68.2,
+      "path_m": 91.91262269170583,
+      "extent_m": 25.228371504464093
+     }
+    },
+    "trials": 13
+   },
+   "lonemonk/reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 684,
+      "duration_s": 68.4,
+      "path_m": 91.91288586049076,
+      "extent_m": 25.228539162963244
+     }
+    },
+    "trials": 13
+   },
+   "lonemonk/half": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 352,
+      "duration_s": 35.2,
+      "path_m": 45.937440537052424,
+      "extent_m": 23.85517605236774
+     }
+    },
+    "trials": 7
+   },
+   "lonemonk/reverse+offset_1.0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 983,
+      "duration_s": 98.3,
+      "path_m": 93.50471247664137,
+      "extent_m": 25.971987904828797
+     }
+    },
+    "trials": 19
+   },
+   "lonemonk/light_night+reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 684,
+      "duration_s": 68.4,
+      "path_m": 91.91288586049076,
+      "extent_m": 25.228539162963244
+     }
+    },
+    "trials": 13
+   },
+   "lonemonk/light_evening+move_50+reverse+offset_1.0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 983,
+      "duration_s": 98.3,
+      "path_m": 93.50471247664137,
+      "extent_m": 25.971987904828797
+     }
+    },
+    "trials": 19
+   }
+  }
+ },
+ "rover": {
+  "campus_large": {
+   "campus_large_day_2024-09-25": {
+    "role": "map",
+    "setups": {
+     "rgbd": {
+      "frames": 7087,
+      "duration_s": 708.7,
+      "path_m": 276.478694960402,
+      "extent_m": 35.25401559534483
+     },
+     "stereo": {
+      "frames": 7088,
+      "duration_s": 708.8,
+      "path_m": 280.20871134923556,
+      "extent_m": 35.89615937913949
+     }
+    }
+   },
+   "campus_large_summer_2023-07-20": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 10320,
+      "duration_s": 1032.0,
+      "path_m": 396.9676004996917,
+      "extent_m": 50.896883865319985
+     },
+     "stereo": {
+      "frames": 9206,
+      "duration_s": 920.6,
+      "path_m": 397.3851904175257,
+      "extent_m": 50.913909231466576
+     }
+    },
+    "trials": 184
+   },
+   "campus_large_autumn_2023-11-07": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 9660,
+      "duration_s": 966.0,
+      "path_m": 385.60272151035946,
+      "extent_m": 53.73484462447783
+     },
+     "stereo": {
+      "frames": 9930,
+      "duration_s": 993.0,
+      "path_m": 387.999866977408,
+      "extent_m": 54.24290206988853
+     }
+    },
+    "trials": 193
+   },
+   "campus_large_dusk_2024-09-24_2": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 7093,
+      "duration_s": 709.3,
+      "path_m": 277.9240849428129,
+      "extent_m": 34.58775596849535
+     },
+     "stereo": {
+      "frames": 7094,
+      "duration_s": 709.4,
+      "path_m": 281.3614678222451,
+      "extent_m": 35.18537569243702
+     }
+    },
+    "trials": 141
+   }
+  }
+ }
+}
