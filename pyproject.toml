@@ -59,6 +59,27 @@ dev = [
     "pytest",
     "ruff",
 ]
+# stereo mode: feed-forward estimator (VGGT-Omega, vendored in third_party/vggt-omega, installed by install.sh --stereo)
+stereo = [
+    "einops",
+    "safetensors",
+    "huggingface_hub",
+    "numpy<2",
+]
+# optional Depth Anything 3 backend of the stereo mode (third_party/depth-anything-3, install.sh --da3)
+da3 = [
+    "omegaconf",
+    "addict",
+    "imageio",
+    "trimesh",
+    "plyfile",
+    "evo",
+    "e3nn",
+    "pillow_heif",
+    "typer",
+    "pycolmap",
+    "moviepy==1.0.3",
+]
 all = [
     "cross[detection,recording,dev]",
 ]

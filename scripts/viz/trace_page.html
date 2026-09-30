@@ -1,0 +1,698 @@
+<meta charset="utf-8">
+<title>SimChange Map Replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #eceef1; --panel: #f9fafb; --panel-2: #f1f3f6; --line: #d3d8e0; --line-2: #e2e6ec;
+  --ink: #161b22; --ink-2: #4f5866; --ink-3: #8a93a1;
+  --accent: #c8451f; --focus: #2a78d6;
+  --gt: #5c6675; --odom: #9aa3b2; --visual: #7f9cc2; --lc: #d33b3b; --temp: #b8bfc9;
+  --s0:#2a78d6; --s1:#eb6834; --s2:#1baf7a; --s3:#eda100; --s4:#e87ba4; --s5:#008300; --s6:#4a3aa7; --s7:#e34948;
+  --shadow: 0 1px 2px rgba(20,27,34,.08), 0 6px 20px rgba(20,27,34,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121417; --panel: #1b1e23; --panel-2: #22262c; --line: #343a43; --line-2: #2a2f37;
+    --ink: #eef0f3; --ink-2: #b3bac5; --ink-3: #757e8b;
+    --accent: #f0714a; --focus: #3987e5;
+    --gt: #9aa4b3; --odom: #5d6673; --visual: #6f8cb4; --lc: #ef5c5c; --temp: #4b535e;
+    --s0:#3987e5; --s1:#d95926; --s2:#199e70; --s3:#c98500; --s4:#d55181; --s5:#3aa33a; --s6:#9085e9; --s7:#e66767;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121417; --panel: #1b1e23; --panel-2: #22262c; --line: #343a43; --line-2: #2a2f37;
+  --ink: #eef0f3; --ink-2: #b3bac5; --ink-3: #757e8b;
+  --accent: #f0714a; --focus: #3987e5;
+  --gt: #9aa4b3; --odom: #5d6673; --visual: #6f8cb4; --lc: #ef5c5c; --temp: #4b535e;
+  --s0:#3987e5; --s1:#d95926; --s2:#199e70; --s3:#c98500; --s4:#d55181; --s5:#3aa33a; --s6:#9085e9; --s7:#e66767;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 20px rgba(0,0,0,.35);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 13px/1.4 "IBM Plex Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  display: grid; grid-template-rows: auto 1fr auto; height: 100vh; overflow: hidden;
+}
+.mono { font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+h1, h2 { margin: 0; font-weight: 600; text-wrap: balance; }
+h1 { font-size: 15px; letter-spacing: -0.01em; }
+h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); }
+button, select { font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; cursor: pointer; }
+button:hover { border-color: var(--ink-3); }
+button:focus-visible, select:focus-visible, .chip:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); min-width: 64px; }
+
+/* ---------- header */
+header { display: grid; grid-template-columns: 1fr auto; gap: 8px 18px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); align-items: center; }
+.sessions { grid-column: 1 / -1; }
+.brand .sub { color: var(--ink-2); font-size: 12px; }
+.pickers { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 12px; color: var(--ink-2); }
+.pickers select { padding: 2px 6px; font-size: 12px; max-width: 250px; }
+.sessions { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 7px; padding: 3px 9px 3px 6px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); cursor: pointer; user-select: none; font-size: 12px; }
+.chip .sw { width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--panel-2); }
+.chip.pinned { background: color-mix(in srgb, var(--c) 14%, var(--panel-2)); }
+.chip.pinned .sw { box-shadow: 0 0 0 2px var(--c); }
+.chip.current { border-color: var(--c); box-shadow: inset 0 0 0 1px var(--c); font-weight: 500; }
+.chip .n { color: var(--ink-3); font-size: 11px; }
+.transport { display: flex; align-items: center; gap: 6px; }
+.transport .readout { min-width: 150px; text-align: right; color: var(--ink-2); font-size: 12px; }
+
+/* ---------- main */
+main { display: grid; grid-template-columns: 336px 1fr; min-height: 0; }
+aside { display: flex; flex-direction: column; gap: 10px; padding: 10px; border-right: 1px solid var(--line); background: var(--panel); overflow-y: auto; min-height: 0; }
+aside section { display: flex; flex-direction: column; gap: 6px; }
+.obs img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; background: var(--panel-2); border-radius: 3px; }
+.obs .cap { display: flex; justify-content: space-between; color: var(--ink-2); font-size: 12px; }
+.obs .cap .state { font-weight: 500; }
+.obs .cap .state.on { color: var(--ink); }
+.obs .cap .state.lost { color: var(--lc); }
+.retstrip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.ret { position: relative; border-radius: 3px; overflow: hidden; background: var(--panel-2); }
+.ret img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
+.ret .lab { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 5px; font-size: 10.5px; display: flex; justify-content: space-between; background: rgba(10,12,16,.62); color: #fff; }
+.ret.rej img { filter: grayscale(1) contrast(.75); opacity: .55; }
+.ret.rej .lab { text-decoration: line-through; }
+.ret .ph { width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center; color: var(--ink-3); font-size: 11px; }
+.empty { color: var(--ink-3); font-size: 12px; padding: 8px 0; }
+table.hyp, table.cmp { border-collapse: collapse; width: 100%; font-size: 12px; }
+table.hyp th, table.cmp th { text-align: left; font-weight: 500; color: var(--ink-3); padding: 2px 4px; border-bottom: 1px solid var(--line-2); }
+table.hyp td, table.cmp td { padding: 3px 4px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
+table.hyp .bar { height: 8px; background: var(--line-2); border-radius: 2px; overflow: hidden; }
+table.hyp .bar i { display: block; height: 100%; background: var(--ink-3); }
+table.hyp tr.c0 .bar i { background: var(--hc); }
+table.hyp tr.dead { color: var(--ink-3); }
+td.num, th.num { text-align: right; }
+table.cmp tr.cur td { font-weight: 600; }
+table.cmp td.name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; font-size: 11.5px; color: var(--ink-2); align-items: center; }
+.legend svg { width: 26px; height: 12px; display: block; }
+.stage { position: relative; min-height: 0; }
+canvas#map { width: 100%; height: 100%; display: block; cursor: grab; }
+canvas#map.drag { cursor: grabbing; }
+.overlay { position: absolute; background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; box-shadow: var(--shadow); }
+.overlay.status { right: 12px; top: 12px; display: grid; grid-template-columns: auto auto; gap: 2px 12px; font-size: 12px; min-width: 210px; }
+.overlay.status .k { color: var(--ink-3); }
+.overlay.status .v { text-align: right; }
+.overlay.tools { left: 12px; top: 12px; display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
+.overlay.tools label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.overlay.tools input[type=checkbox] { margin: 0; accent-color: var(--ink); }
+.overlay.tools .row { display: flex; gap: 6px; align-items: center; }
+.overlay.tools select { padding: 2px 4px; font-size: 12px; }
+.evt { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); padding: 5px 12px; border-radius: 999px; background: var(--lc); color: #fff; font-weight: 500; font-size: 12px; opacity: 0; transition: opacity .25s; pointer-events: none; }
+.evt.show { opacity: 1; }
+.loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-2); background: color-mix(in srgb, var(--bg) 70%, transparent); font-size: 13px; }
+
+/* ---------- timeline */
+footer { border-top: 1px solid var(--line); background: var(--panel); padding: 6px 12px 8px; display: grid; grid-template-rows: auto auto; gap: 4px; }
+footer .tlhead { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; color: var(--ink-2); gap: 12px; }
+footer .tlhead label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+canvas#tl { width: 100%; height: 112px; display: block; cursor: crosshair; }
+.tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); padding: 5px 8px; border-radius: 4px; font-size: 11.5px; z-index: 5; display: none; white-space: nowrap; box-shadow: var(--shadow); }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } aside { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); } aside section { min-width: 260px; } header { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .evt { transition: none; } }
+</style>
+
+<header>
+  <div class="brand">
+    <h1 id="title">SimChange map replay</h1>
+    <div class="sub" id="subtitle"></div>
+    <div class="pickers">
+      <span>Scene</span><select id="scene"></select>
+      <span>Method</span><select id="method"></select>
+    </div>
+  </div>
+  <div class="sessions" id="sessions" role="group" aria-label="Sessions"></div>
+  <div class="transport">
+    <button id="btn-first" title="Session start (Home)">⏮</button>
+    <button id="btn-prev" title="Step back (←)">◀</button>
+    <button id="btn-play" class="primary" title="Play / pause (space)">Play</button>
+    <button id="btn-next" title="Step forward (→)">▶</button>
+    <button id="btn-last" title="Session end (End)">⏭</button>
+    <select id="speed" title="Playback speed (sequences are 10 frames per second)">
+      <option value="5">0.5×</option><option value="10" selected>1×</option><option value="20">2×</option><option value="40">4×</option><option value="80">8×</option><option value="160">16×</option>
+    </select>
+    <div class="readout mono" id="stepread"></div>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <section class="obs">
+      <h2>Observation (left camera)</h2>
+      <img id="obsimg" alt="Current camera image">
+      <div class="cap"><span id="obscap" class="mono"></span><span id="obsstate" class="state"></span></div>
+    </section>
+    <section id="sec-ret">
+      <h2>Retrieved keyframes</h2>
+      <div class="retstrip" id="retstrip"></div>
+    </section>
+    <section id="sec-hyp">
+      <h2>Pose hypotheses</h2>
+      <table class="hyp" id="hyptab"></table>
+    </section>
+    <section>
+      <h2>Methods on this session</h2>
+      <table class="cmp" id="cmptab"></table>
+      <div class="empty" style="padding:2px 0 0" id="cmpnote"></div>
+    </section>
+    <section>
+      <h2>Legend</h2>
+      <div class="legend" id="legend"></div>
+    </section>
+  </aside>
+  <div class="stage">
+    <canvas id="map"></canvas>
+    <div class="overlay tools">
+      <label><input type="checkbox" id="o-gt" checked> Ground-truth trajectory</label>
+      <label><input type="checkbox" id="o-est" checked> Estimated trajectory (belief)</label>
+      <label><input type="checkbox" id="o-kf" checked> Keyframes</label>
+      <label><input type="checkbox" id="o-temp" checked> Temporary keyframes</label>
+      <label><input type="checkbox" id="o-odom" checked> Odometry edges</label>
+      <label><input type="checkbox" id="o-vis" checked> Visual edges (belief graph)</label>
+      <label><input type="checkbox" id="o-hedge"> Visual edges of other hypotheses</label>
+      <label><input type="checkbox" id="o-hyp" checked> Hypotheses</label>
+      <label><input type="checkbox" id="o-ret" checked> Retrieval links</label>
+      <label><input type="checkbox" id="o-mis"> Misplaced keyframes (&gt; 3 m off)</label>
+      <div class="row"><span>Align map to GT by</span>
+        <select id="align"><option value="0">first keyframe</option><option value="1">Umeyama (final map)</option></select></div>
+      <div class="row"><span>Error metric</span>
+        <select id="metric"><option value="2">map-relative (CROSS protocol)</option><option value="0">vs GT, first-keyframe alignment</option><option value="1">vs GT, Umeyama alignment</option></select></div>
+      <div class="row"><button id="btn-fit">Fit view</button><button id="btn-follow">Follow camera</button></div>
+    </div>
+    <div class="overlay status mono" id="status"></div>
+    <div class="evt" id="evt"></div>
+    <div class="loading" id="loading" hidden>Loading trace…</div>
+  </div>
+</main>
+
+<footer>
+  <div class="tlhead"><span id="tltitle">Position error of the belief (component 0), metres · ticks: permanent keyframes · diamonds: loop closure + pose-graph optimisation</span>
+    <span><label><input type="checkbox" id="o-cmp"> overlay other methods</label> <span id="tlmax" class="mono"></span></span></div>
+  <canvas id="tl"></canvas>
+</footer>
+<div class="tip mono" id="tip"></div>
+
+<!--DATA-->
+<script>
+(function () {
+  const MF = window.MANIFEST;
+  if (!MF) { document.body.textContent = 'manifest.js not found next to this page.'; return; }
+  const STANDALONE = !!MF.standalone;
+  const SCENE_NAMES = { lonemonk: 'Lone Monk (SimChange-Long, 126 m loop)', classroom: 'Classroom (SimChange)', archiviz: 'Archiviz apartment (SimChange)',
+                        hssd_house: 'HSSD house (SimChange-Rearrange, 41\u00d724 m, 22 rooms, 195 m loop)', hssd_restaurant: 'HSSD restaurant (SimChange-Rearrange, 49\u00d744 m open plan, 200 m loop)' };
+
+  // ---------- helpers
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const sesColor = (s) => css('--s' + (s % 8));
+  function alpha(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; }
+  function quatR(q) { const [x, y, z, w] = q; return [
+    1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+    2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+    2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]; }
+  function xf(p, T) {   // 4x4 T applied to pose7 -> {x,y,z,fx,fy}: forward = camera +z on the ground plane
+    const R = quatR(p.slice(3, 7));
+    const px = p[0], py = p[1], pz = p[2];
+    const x = T[0][0] * px + T[0][1] * py + T[0][2] * pz + T[0][3];
+    const y = T[1][0] * px + T[1][1] * py + T[1][2] * pz + T[1][3];
+    const z = T[2][0] * px + T[2][1] * py + T[2][2] * pz + T[2][3];
+    const fz = [R[2], R[5], R[8]];
+    return { x, y, z, fx: T[0][0] * fz[0] + T[0][1] * fz[1] + T[0][2] * fz[2], fy: T[1][0] * fz[0] + T[1][1] * fz[1] + T[1][2] * fz[2] };
+  }
+  const I4 = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+  const fmt = (v, d = 2) => (v == null || !isFinite(v)) ? '–' : v.toFixed(d);
+  const kfId = (id) => id >= 100000 ? id % 100000 : id;
+
+  // ---------- state
+  let scene = Object.keys(MF.scenes)[0], method = null;
+  let D = null, S = [], SES = [], N = {}, E = [], K = 1, NT = 0, nodeIds = [], gtP = [], estCache = [null, null], ALIGN = [I4, I4];
+  let t = 0, playing = false, follow = false, alignIdx = 0, metricIdx = 2;
+  let pinned = new Set();
+  const METRIC = ['vs GT, first-keyframe alignment', 'vs GT, Umeyama alignment', 'map-relative (CROSS protocol); mapping session: drift vs GT'];
+  const opt = {};
+  for (const id of ['gt', 'est', 'kf', 'temp', 'odom', 'vis', 'hedge', 'hyp', 'ret', 'mis', 'cmp']) {
+    const el = document.getElementById('o-' + id); opt[id] = el.checked;
+    el.addEventListener('change', () => { opt[id] = el.checked; if (id === 'cmp' && el.checked) loadAllMethods(); draw(); drawTimeline(); });
+  }
+  document.getElementById('align').addEventListener('change', (e) => { alignIdx = +e.target.value; draw(); drawTimeline(); });
+  document.getElementById('metric').addEventListener('change', (e) => { metricIdx = +e.target.value; draw(); drawTimeline(); });
+
+  // ---------- data loading
+  const loadedScripts = new Set();
+  function loadScript(file) {
+    return new Promise((res, rej) => {
+      if (loadedScripts.has(file)) return res();
+      const s = document.createElement('script'); s.src = file; s.onload = () => { loadedScripts.add(file); res(); }; s.onerror = rej; document.head.appendChild(s);
+    });
+  }
+  async function ensureTrace(sc, m) {
+    const key = sc + '__' + m;
+    if (window.TRACES && window.TRACES[key]) return window.TRACES[key];
+    const f = MF.scenes[sc].methods[m].file;
+    if (!f) return null;
+    await loadScript(f);
+    return window.TRACES[key];
+  }
+  async function loadAllMethods() {
+    for (const m of Object.keys(MF.scenes[scene].methods)) await ensureTrace(scene, m);
+    drawTimeline();
+  }
+  async function select(sc, m, keepT) {
+    const load = document.getElementById('loading'); load.hidden = false;
+    let data = null;
+    try { data = await ensureTrace(sc, m); } catch (e) { data = null; }
+    load.hidden = true;
+    if (!data) return;
+    scene = sc; method = m; setData(data, keepT);
+  }
+  function setData(data, keepT) {
+    stop();
+    D = data; S = D.steps; SES = D.sessions; N = D.nodes; E = D.edges; K = D.n_components; NT = S.length;
+    nodeIds = Object.keys(N).map(Number);
+    ALIGN = [D.T_first, D.T_umeyama];
+    gtP = S.map(st => xf(st.gt, I4));
+    estCache = [null, null];
+    imgIndex = {};
+    t = keepT ? Math.min(t, NT - 1) : 0;
+    pinned = new Set();
+    buildHeader(); buildChips();
+    document.getElementById('sec-ret').hidden = !!D.external;
+    document.getElementById('sec-hyp').hidden = !!D.external;
+    resize(); fit(); drawTimeline();
+  }
+  const T = () => ALIGN[alignIdx];
+  function estP(a) { if (!estCache[a]) estCache[a] = S.map(st => xf(st.mu[0], ALIGN[a])); return estCache[a]; }
+  function nodeEntry(nd, t) { const h = nd.hist; let e = h[0]; for (let i = 0; i < h.length; i++) { if (h[i][0] <= t) e = h[i]; else break; } return e; }
+  const nodeAlive = (nd, t) => nd.step <= t && t < nd.end;
+  const sesOf = (t) => { for (const s of SES) if (t >= s.start_step && t < s.end_step) return s; return SES[SES.length - 1]; };
+  function edgeVisible(e, t) { if (e.lc != null && e.lc <= t) return true; return e.st <= t && t < e.en; }
+
+  // images: local build = one JPEG per frame; standalone = subsampled data URIs (nearest earlier frame)
+  let imgIndex = {};
+  function imgFor(variant, f) {
+    if (!STANDALONE) return `frames/${scene}/${variant}/${String(f).padStart(6, '0')}.jpg`;
+    const d = (window.IMGS || {})[variant]; if (!d) return null;
+    if (!imgIndex[variant]) imgIndex[variant] = Object.keys(d).map(Number).sort((a, b) => a - b);
+    let best = null;
+    for (const k of imgIndex[variant]) { if (k <= f) best = k; else break; }
+    return best == null ? null : d[best];
+  }
+  const imgAt = (t) => imgFor(sesOf(t).variant, S[t].f);
+
+  // ---------- header
+  function buildHeader() {
+    const sc = document.getElementById('scene'), me = document.getElementById('method');
+    sc.innerHTML = ''; me.innerHTML = '';
+    for (const s of Object.keys(MF.scenes)) { const o = document.createElement('option'); o.value = s; o.textContent = SCENE_NAMES[s] || s; o.selected = s === scene; sc.appendChild(o); }
+    for (const [m, info] of Object.entries(MF.scenes[scene].methods)) { const o = document.createElement('option'); o.value = m; o.textContent = info.label; o.selected = m === method; me.appendChild(o); }
+    document.getElementById('title').textContent = `${MF.labels[method] || method} · ${SCENE_NAMES[scene] || scene}`;
+    const cad = D.obs_cadence ? ` · observation every ${D.obs_cadence.min_translation} m / ${D.obs_cadence.min_rotation} rad, at most ${D.obs_cadence.max_interval} frames apart` : '';
+    document.getElementById('subtitle').textContent =
+      `map sequence ${D.map_variant}${D.baseline ? ` · stereo baseline ${D.baseline.toFixed(2)} m` : ''}${D.snr ? ` · odometry SNR ${D.snr}` : ''}${cad} · ${SES.length} sessions, ${NT} frames · map ATE ${fmt(D.map_ate_rmse)} m`;
+  }
+  document.getElementById('scene').addEventListener('change', (e) => { const sc = e.target.value; const ms = Object.keys(MF.scenes[sc].methods); select(sc, ms.includes(method) ? method : ms[0], false); });
+  document.getElementById('method').addEventListener('change', (e) => select(scene, e.target.value, true));
+
+  let chips = [];
+  function buildChips() {
+    const box = document.getElementById('sessions'); box.innerHTML = '';
+    chips = SES.map((s, i) => {
+      const c = document.createElement('div');
+      c.className = 'chip'; c.tabIndex = 0; c.style.setProperty('--c', sesColor(i));
+      c.innerHTML = `<span class="sw"></span><span class="nm"></span><span class="n mono"></span>`;
+      c.querySelector('.nm').textContent = (s.kind === 'map' ? 'map · ' : '') + s.variant;
+      c.querySelector('.n').textContent = s.n_steps + ' fr';
+      c.title = `${s.name}\nclick: jump to the session · shift+click: pin its trajectories on the map`;
+      const act = (ev) => {
+        if (ev.shiftKey) { if (pinned.has(i)) pinned.delete(i); else pinned.add(i); c.classList.toggle('pinned', pinned.has(i)); draw(); }
+        else setT(s.start_step);
+      };
+      c.addEventListener('click', act);
+      c.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); act(ev); } });
+      box.appendChild(c);
+      return c;
+    });
+  }
+
+  // ---------- legend
+  (function legend() {
+    const L = document.getElementById('legend');
+    const items = [
+      [`<svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="25" y2="6" stroke="${css('--gt')}" stroke-width="2" stroke-dasharray="4 3"/></svg>`, 'Ground truth (dashed, session colour)'],
+      [`<svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="25" y2="6" stroke="${css('--s0')}" stroke-width="2.5"/></svg>`, 'Belief, component 0 (solid, session colour; the part before the first merge is dropped once merged)'],
+      [`<svg viewBox="0 0 26 12"><circle cx="13" cy="6" r="4" fill="${css('--ink')}"/></svg>`, 'Permanent keyframe (map: black, session: session colour)'],
+      [`<svg viewBox="0 0 26 12"><circle cx="13" cy="6" r="3" fill="none" stroke="${css('--temp')}" stroke-width="1.5"/></svg>`, 'Temporary keyframe'],
+      [`<svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="25" y2="6" stroke="${css('--odom')}" stroke-width="1.5"/></svg>`, 'Odometry edge'],
+      [`<svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="25" y2="6" stroke="${css('--visual')}" stroke-width="1"/></svg>`, 'Visual edge (relative pose measurement)'],
+      [`<svg viewBox="0 0 26 12"><line x1="1" y1="6" x2="25" y2="6" stroke="${css('--lc')}" stroke-width="2"/></svg>`, 'Loop-closure edge (merged by PGO)'],
+      [`<svg viewBox="0 0 26 12"><circle cx="13" cy="6" r="5" fill="none" stroke="${css('--ink-2')}" stroke-width="1.5"/></svg>`, 'Other hypothesis (size ∝ weight)'],
+      [`<svg viewBox="0 0 26 12"><path d="M13 1 L18 11 L13 8 L8 11 Z" fill="${css('--accent')}"/></svg>`, 'Ground-truth camera now'],
+    ];
+    L.innerHTML = items.map(() => `<span class="ic"></span><span></span>`).join('');
+    const sp = L.querySelectorAll('span'); items.forEach(([svg, txt], i) => { sp[2 * i].innerHTML = svg; sp[2 * i + 1].textContent = txt; });
+  })();
+
+  // ---------- map canvas
+  const cv = document.getElementById('map'), ctx = cv.getContext('2d');
+  let W = 0, H = 0, dpr = 1;
+  const view = { cx: 0, cy: 0, scale: 20 };
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const r = cv.getBoundingClientRect(); W = r.width; H = r.height;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    draw();
+  }
+  new ResizeObserver(resize).observe(cv);
+  const sx = (x) => W / 2 + (x - view.cx) * view.scale;
+  const sy = (y) => H / 2 - (y - view.cy) * view.scale;
+  function fit() {
+    if (!gtP.length) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of gtP) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+    view.cx = (x0 + x1) / 2; view.cy = (y0 + y1) / 2;
+    view.scale = 0.9 * Math.min(W / Math.max(1e-3, x1 - x0 + 4), H / Math.max(1e-3, y1 - y0 + 4));
+    draw();
+  }
+  document.getElementById('btn-fit').addEventListener('click', () => { follow = false; document.getElementById('btn-follow').classList.remove('primary'); fit(); });
+  document.getElementById('btn-follow').addEventListener('click', (e) => { follow = !follow; e.target.classList.toggle('primary', follow); draw(); });
+  let dragging = null;
+  cv.addEventListener('pointerdown', (e) => { dragging = { x: e.clientX, y: e.clientY, cx: view.cx, cy: view.cy }; cv.classList.add('drag'); cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', (e) => {
+    if (dragging) { follow = false; document.getElementById('btn-follow').classList.remove('primary');
+      view.cx = dragging.cx - (e.clientX - dragging.x) / view.scale; view.cy = dragging.cy + (e.clientY - dragging.y) / view.scale; draw(); }
+    else hoverMap(e);
+  });
+  cv.addEventListener('pointerup', () => { dragging = null; cv.classList.remove('drag'); });
+  cv.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const f = Math.exp(-e.deltaY * 0.0015);
+    const r = cv.getBoundingClientRect(); const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const wx = view.cx + (mx - W / 2) / view.scale, wy = view.cy - (my - H / 2) / view.scale;
+    view.scale *= f;
+    view.cx = wx - (mx - W / 2) / view.scale; view.cy = wy + (my - H / 2) / view.scale;
+    draw();
+  }, { passive: false });
+
+  // polyline broken where the belief jumps (PGO re-alignment) or the frame is not localized
+  function drawPath(pts, from, to, color, width, dash, breakJump) {
+    if (to <= from) return;
+    ctx.beginPath(); ctx.lineWidth = width; ctx.strokeStyle = color; ctx.setLineDash(dash || []);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    let pen = false;
+    for (let i = from; i <= to; i++) {
+      if (S[i].lost && pts !== gtP) { pen = false; continue; }
+      const p = pts[i];
+      if (pen && breakJump && i > from) { const q = pts[i - 1]; if (Math.hypot(p.x - q.x, p.y - q.y) > breakJump) pen = false; }
+      if (!pen) { ctx.moveTo(sx(p.x), sy(p.y)); pen = true; } else ctx.lineTo(sx(p.x), sy(p.y));
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  function cameraGlyph(x, y, fx, fy, size, color) {
+    const a = Math.atan2(fy, fx);
+    ctx.save(); ctx.translate(sx(x), sy(y)); ctx.rotate(-a);
+    ctx.beginPath(); ctx.moveTo(size, 0); ctx.lineTo(-size * .8, size * .65); ctx.lineTo(-size * .35, 0); ctx.lineTo(-size * .8, -size * .65); ctx.closePath();
+    ctx.fillStyle = color; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = css('--panel'); ctx.stroke();
+    ctx.restore();
+  }
+  // belief trail of a session: once merged into the map, the part before the merge (arbitrary initial pose) is dropped
+  function trailStart(s, t) { return (s.merge_step != null && t >= s.merge_step) ? s.merge_step : s.start_step; }
+
+  let lastEvtStep = -1;
+  function draw() {
+    if (!W || !D) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = css('--bg'); ctx.fillRect(0, 0, W, H);
+    const st = S[t], ses = sesOf(t), Tm = T(), est = estP(alignIdx);
+    if (follow) { const p = gtP[t]; view.cx = p.x; view.cy = p.y; }
+    const major = 5, minor = view.scale > 12 ? 1 : (view.scale > 4 ? 5 : 10);
+    const x0 = view.cx - W / 2 / view.scale, x1 = view.cx + W / 2 / view.scale, y0 = view.cy - H / 2 / view.scale, y1 = view.cy + H / 2 / view.scale;
+    ctx.lineWidth = 1;
+    for (let gx = Math.floor(x0 / minor) * minor; gx <= x1; gx += minor) { ctx.strokeStyle = (gx % major === 0) ? css('--line') : css('--line-2'); ctx.beginPath(); ctx.moveTo(sx(gx), 0); ctx.lineTo(sx(gx), H); ctx.stroke(); }
+    for (let gy = Math.floor(y0 / minor) * minor; gy <= y1; gy += minor) { ctx.strokeStyle = (gy % major === 0) ? css('--line') : css('--line-2'); ctx.beginPath(); ctx.moveTo(0, sy(gy)); ctx.lineTo(W, sy(gy)); ctx.stroke(); }
+    ctx.fillStyle = css('--ink-2'); ctx.font = '11px "IBM Plex Mono", monospace';
+    ctx.fillRect(W - 24 - major * view.scale, H - 22, major * view.scale, 2); ctx.fillText(major + ' m', W - 24 - major * view.scale, H - 27);
+
+    // trajectories: the current session, plus pinned sessions
+    for (const s of SES) {
+      const cur = s.id === ses.id;
+      if ((!cur && !pinned.has(s.id)) || s.start_step > t) continue;
+      const to = Math.min(t, s.end_step - 1), col = sesColor(s.id);
+      if (opt.gt) drawPath(gtP, s.start_step, to, alpha(col, cur ? .85 : .5), 2, [5, 4], 0);
+      if (opt.est) {
+        const from = trailStart(s, to);
+        drawPath(est, from, to, alpha(col, cur ? .4 : .35), 2, null, 2.0);
+        if (cur) drawPath(est, Math.max(from, to - 150), to, alpha(col, .95), 2.5, null, 2.0);
+      }
+    }
+    // keyframes alive now (misplaced relocalization keyframes hidden unless requested)
+    const pos = new Map(); let nMis = 0;
+    for (const id of nodeIds) {
+      const nd = N[id]; if (!nodeAlive(nd, t) || !(opt.temp || nd.perm)) continue;
+      const en = nodeEntry(nd, t);
+      if (en[2] && !opt.mis) { nMis++; continue; }
+      pos.set(id, xf(en[1], Tm));
+    }
+    const lcEdges = [];
+    ctx.lineWidth = 1;
+    for (const e of E) {
+      if (!edgeVisible(e, t)) continue;
+      const a = pos.get(e.a), b = pos.get(e.b); if (!a || !b) continue;
+      if (e.lc != null && e.lc <= t) { lcEdges.push([a, b]); continue; }
+      if (e.t === 'odom') { if (!opt.odom) continue; ctx.strokeStyle = alpha(css('--odom'), .8); ctx.lineWidth = 1.4; }
+      else if (e.c === 0) { if (!opt.vis) continue; ctx.strokeStyle = alpha(css('--visual'), .3); ctx.lineWidth = 1; }
+      else { if (!opt.hedge) continue; ctx.strokeStyle = alpha(css('--visual'), .35); ctx.lineWidth = 0.8; ctx.setLineDash([3, 3]); }
+      ctx.beginPath(); ctx.moveTo(sx(a.x), sy(a.y)); ctx.lineTo(sx(b.x), sy(b.y)); ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.strokeStyle = css('--lc'); ctx.lineWidth = 2;
+    for (const [a, b] of lcEdges) { ctx.beginPath(); ctx.moveTo(sx(a.x), sy(a.y)); ctx.lineTo(sx(b.x), sy(b.y)); ctx.stroke(); }
+    if (opt.ret && st.vk && st.vk.length && !st.lost) {
+      const p0 = est[t]; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+      for (const [id, conf] of st.vk) { const q = pos.get(id); if (!q) continue; ctx.strokeStyle = alpha(sesColor(ses.id), .35 + .5 * Math.min(1, conf > 1 ? conf / 100 : conf)); ctx.beginPath(); ctx.moveTo(sx(p0.x), sy(p0.y)); ctx.lineTo(sx(q.x), sy(q.y)); ctx.stroke(); }
+      ctx.setLineDash([]);
+    }
+    if (opt.kf) {
+      const r = Math.max(2, Math.min(4.5, view.scale * 0.18));
+      for (const [id, p] of pos) {
+        const nd = N[id];
+        ctx.beginPath(); ctx.arc(sx(p.x), sy(p.y), nd.perm ? r : r * .7, 0, Math.PI * 2);
+        if (nd.perm) { ctx.fillStyle = nd.s === 0 ? css('--ink') : sesColor(nd.s); ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = css('--bg'); ctx.stroke(); }
+        else { ctx.lineWidth = 1.2; ctx.strokeStyle = css('--temp'); ctx.stroke(); }
+      }
+      if (st.vk) for (const [id] of st.vk) { const q = pos.get(id); if (!q) continue; ctx.beginPath(); ctx.arc(sx(q.x), sy(q.y), r + 3.5, 0, Math.PI * 2); ctx.lineWidth = 1.5; ctx.strokeStyle = sesColor(ses.id); ctx.stroke(); }
+      if (st.nk != null && pos.has(st.nk)) { const q = pos.get(st.nk); ctx.beginPath(); ctx.arc(sx(q.x), sy(q.y), r + 6, 0, Math.PI * 2); ctx.lineWidth = 2; ctx.strokeStyle = css('--ink'); ctx.stroke(); }
+    }
+    if (opt.hyp && !st.lost) {
+      for (let k = K - 1; k >= 0; k--) {
+        const w = st.w[k]; if (w < 1e-3 || !st.mu[k]) continue;
+        const p = xf(st.mu[k], Tm), rr = 4 + 10 * Math.sqrt(w);
+        if (k === 0) cameraGlyph(p.x, p.y, p.fx, p.fy, 6 + 6 * Math.sqrt(w), sesColor(ses.id));
+        else { ctx.beginPath(); ctx.arc(sx(p.x), sy(p.y), rr, 0, Math.PI * 2); ctx.fillStyle = alpha(css('--ink-2'), .15); ctx.fill(); ctx.lineWidth = st.rl[k] ? 2 : 1.2; ctx.strokeStyle = css('--ink-2'); if (!st.rl[k]) ctx.setLineDash([3, 2]); ctx.stroke(); ctx.setLineDash([]);
+          ctx.fillStyle = css('--ink-2'); ctx.font = '10px "IBM Plex Mono", monospace'; ctx.fillText('h' + k, sx(p.x) + rr + 2, sy(p.y) + 3); }
+      }
+    }
+    { const p = gtP[t]; cameraGlyph(p.x, p.y, p.fx, p.fy, 9, css('--accent')); }
+
+    let nPerm = 0, nTemp = 0, nEdge = 0;
+    for (const [id] of pos) { if (N[id].perm) nPerm++; else nTemp++; }
+    for (const e of E) if (edgeVisible(e, t) && pos.has(e.a) && pos.has(e.b)) nEdge++;
+    let nLC = 0; for (let i = ses.start_step; i <= t; i++) if (S[i].pgo) nLC++;
+    const er = st.err, o = metricIdx * 4;
+    const rows = [
+      ['session', ses.kind === 'map' ? 'mapping' : 'relocalization'], ['variant', ses.variant], ['frame', `${st.f} / ${ses.n_frames}`],
+      ['step', st.lost ? 'lost / not in map' : (st.obs ? 'observation' : 'odometry only')],
+      ['keyframes', D.external ? `${nPerm} (map samples)` : `${nPerm} + ${nTemp} temp`], ['edges', `${nEdge}`]];
+    if (!D.external) { rows.push(['loop closures', `${nLC}`]); rows.push(['misplaced hidden', `${nMis}`]); }
+    rows.push(['c0 error' + (metricIdx === 2 ? (ses.kind === 'map' && !D.external ? ' (vs GT)' : ' (map-rel.)') : ''), st.lost ? '–' : `${fmt(er[o])} m · ${fmt(er[o + 1], 1)}°`]);
+    if (!D.external) { rows.push(['best (h' + st.kb + ')', `${fmt(er[o + 2])} m · ${fmt(er[o + 3], 1)}°`]); rows.push(['weight w0', fmt(st.w[0])]); rows.push(['step time', `${(st.dt * 1000).toFixed(0)} ms`]); }
+    setStatus(rows);
+    const ev = document.getElementById('evt');
+    if (st.pgo && lastEvtStep !== t) { ev.textContent = `Loop closure: hypothesis ${st.pgo.hypo} merged, ${st.pgo.n_opt} keyframes optimised`; ev.classList.add('show'); lastEvtStep = t; clearTimeout(ev._h); ev._h = setTimeout(() => ev.classList.remove('show'), 1800); }
+    else if (st.lc != null && !st.pgo && lastEvtStep !== t) { ev.textContent = `Loop closure detected (hypothesis ${st.lc})`; ev.classList.add('show'); lastEvtStep = t; clearTimeout(ev._h); ev._h = setTimeout(() => ev.classList.remove('show'), 1200); }
+    chips.forEach((c, i) => c.classList.toggle('current', i === ses.id));
+    document.getElementById('stepread').textContent = `step ${t + 1} / ${NT}`;
+    updateSide(st, ses);
+  }
+  function setStatus(rows) {
+    const el = document.getElementById('status');
+    el.innerHTML = rows.map(() => '<span class="k"></span><span class="v"></span>').join('');
+    const sp = el.querySelectorAll('span'); rows.forEach((r, i) => { sp[2 * i].textContent = r[0]; sp[2 * i + 1].textContent = r[1]; });
+  }
+  const tip = document.getElementById('tip');
+  function hoverMap(e) {
+    if (!D) return;
+    const r = cv.getBoundingClientRect(); const mx = e.clientX - r.left, my = e.clientY - r.top;
+    let best = null, bid = null, bd = 12 * 12;
+    for (const id of nodeIds) { const nd = N[id]; if (!nodeAlive(nd, t)) continue; const en = nodeEntry(nd, t); if (en[2] && !opt.mis) continue; const p = xf(en[1], T()); const dx = sx(p.x) - mx, dy = sy(p.y) - my, d = dx * dx + dy * dy; if (d < bd) { bd = d; best = nd; bid = id; } }
+    if (!best) { tip.style.display = 'none'; return; }
+    tip.textContent = `KF ${kfId(bid)} · ${best.perm ? 'permanent' : 'temporary'} · session ${best.s} · frame ${best.f}`;
+    tip.style.display = 'block'; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY + 12) + 'px';
+  }
+
+  // ---------- side rail
+  const obsimg = document.getElementById('obsimg');
+  function updateSide(st, ses) {
+    const im = imgAt(t); if (im && obsimg.getAttribute('src') !== im) obsimg.src = im;
+    document.getElementById('obscap').textContent = `${ses.variant} · frame ${st.f}`;
+    const os = document.getElementById('obsstate');
+    os.textContent = st.lost ? 'not localized' : (st.obs ? 'observed' : 'odometry only');
+    os.classList.toggle('on', !!st.obs && !st.lost); os.classList.toggle('lost', !!st.lost);
+    if (!D.external) {
+      const strip = document.getElementById('retstrip'); strip.innerHTML = '';
+      const ret = (st.ret || (st.vk || []).map(v => [v[0], v[2] != null ? v[2] : 0])).slice().sort((a, b) => b[1] - a[1]).slice(0, 6);
+      const used = new Map((st.vk || []).map(v => [v[0], v[1]]));
+      if (!ret.length) { const d = document.createElement('div'); d.className = 'empty'; d.style.gridColumn = '1 / -1'; d.textContent = st.obs ? 'No keyframe retrieved.' : 'No observation at this step (odometry propagates the belief).'; strip.appendChild(d); }
+      for (const [id, score] of ret) {
+        const nd = N[id]; const d = document.createElement('div'); d.className = 'ret' + (used.has(id) ? '' : ' rej');
+        const src = nd ? imgFor(SES[nd.s].variant, nd.f) : null;
+        if (src) { const img = document.createElement('img'); img.src = src; img.alt = 'keyframe ' + kfId(id); d.appendChild(img); }
+        else { const ph = document.createElement('div'); ph.className = 'ph'; ph.textContent = 'KF ' + kfId(id); d.appendChild(ph); }
+        const lab = document.createElement('div'); lab.className = 'lab mono';
+        const l = document.createElement('span'); l.textContent = 'KF ' + kfId(id);
+        const c = used.get(id);
+        const r = document.createElement('span'); r.textContent = used.has(id) ? `${score.toFixed(2)} · ${c >= 10 ? 'inl ' + c.toFixed(0) : 'cov ' + c.toFixed(2)}` : `${score.toFixed(2)}`;
+        lab.appendChild(l); lab.appendChild(r); d.appendChild(lab);
+        d.title = used.has(id) ? `retrieval score ${score.toFixed(3)}, confidence ${c.toFixed(3)} — used as reference` : `retrieval score ${score.toFixed(3)} — rejected by the pose estimator`;
+        strip.appendChild(d);
+      }
+      const tab = document.getElementById('hyptab');
+      const G = gtP[t]; const Tm = T();
+      let html = '<tr><th>#</th><th>weight</th><th class="num">w</th><th class="num">vs GT (m)</th><th>state</th></tr>';
+      for (let k = 0; k < K; k++) {
+        const w = st.w[k], dead = w < 1e-3 || !st.mu[k];
+        const p = dead ? null : xf(st.mu[k], Tm), err = dead ? 0 : Math.hypot(p.x - G.x, p.y - G.y, p.z - G.z);
+        html += `<tr class="${k === 0 ? 'c0' : ''} ${dead ? 'dead' : ''}" style="--hc:${sesColor(ses.id)}"><td class="mono">h${k}</td><td><div class="bar"><i style="width:${Math.round(100 * w)}%"></i></div></td><td class="num mono">${w.toFixed(2)}</td><td class="num mono">${dead ? '–' : err.toFixed(2)}</td><td>${dead ? 'free' : (st.rl[k] ? 'realized' : 'tracking')}</td></tr>`;
+      }
+      tab.innerHTML = html;
+    }
+    // method comparison on the current session (manifest summaries)
+    const cmp = document.getElementById('cmptab');
+    const isMap = ses.kind === 'map';
+    let html = `<tr><th>method</th><th class="num">${isMap ? '≤ 2 m drift' : '≤ 2 m'}</th><th class="num">median</th><th class="num">first ok</th></tr>`;
+    for (const [m, info] of Object.entries(MF.scenes[scene].methods)) {
+      const ss = info.sessions.find(x => x.variant === ses.variant && x.kind === ses.kind);
+      if (!ss) continue;
+      html += `<tr class="${m === method ? 'cur' : ''}"><td class="name" title="${info.label}">${info.label}</td><td class="num mono">${ss.frac_2m == null ? '–' : Math.round(100 * ss.frac_2m) + '%'}</td><td class="num mono">${fmt(ss.median_err)} m</td><td class="num mono">${ss.first_correct == null ? '–' : ss.first_correct}</td></tr>`;
+    }
+    cmp.innerHTML = html;
+    document.getElementById('cmpnote').textContent = isMap ? 'Mapping session: share of frames whose belief is within 2 m of ground truth (first-keyframe alignment; external systems: map-relative), median error.'
+      : 'Share of frames localized within 2 m (map-relative), median error, first frame with 5 consecutive frames within 2 m.';
+  }
+
+  // ---------- timeline
+  const tl = document.getElementById('tl'), tctx = tl.getContext('2d');
+  let TW = 0, TH = 0;
+  const ERRMAX = 8, PAD_L = 34, PAD_R = 8;
+  function drawTimeline() {
+    if (!D) return;
+    dpr = window.devicePixelRatio || 1;
+    const r = tl.getBoundingClientRect(); TW = r.width; TH = r.height;
+    tl.width = Math.round(TW * dpr); tl.height = Math.round(TH * dpr);
+    tctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    tctx.clearRect(0, 0, TW, TH);
+    const top = 10, bot = 16, ph = TH - top - bot;
+    const X = (i) => PAD_L + (i / (NT - 1)) * (TW - PAD_L - PAD_R);
+    const Y = (v) => top + ph * (1 - Math.min(v, ERRMAX) / ERRMAX);
+    document.getElementById('tlmax').textContent = `axis clipped at ${ERRMAX} m · ${METRIC[metricIdx]}`;
+    for (const s of SES) { tctx.fillStyle = alpha(sesColor(s.id), .10); tctx.fillRect(X(s.start_step), top, X(s.end_step - 1) - X(s.start_step), ph);
+      tctx.fillStyle = css('--ink-3'); tctx.font = '10.5px "IBM Plex Sans", sans-serif'; tctx.fillText(s.variant, X(s.start_step) + 3, TH - 4); }
+    tctx.strokeStyle = css('--line'); tctx.lineWidth = 1; tctx.fillStyle = css('--ink-3'); tctx.font = '10px "IBM Plex Mono", monospace';
+    for (const v of [0, 2, 4, 6, 8]) { tctx.beginPath(); tctx.moveTo(PAD_L, Y(v)); tctx.lineTo(TW - PAD_R, Y(v)); tctx.stroke(); tctx.fillText(v + ' m', 2, Y(v) + 3); }
+    tctx.strokeStyle = alpha(css('--ink-3'), .7);
+    if (!D.external) for (const id of nodeIds) { const nd = N[id]; if (!nd.perm) continue; const x = X(nd.step); tctx.beginPath(); tctx.moveTo(x, top + ph - 5); tctx.lineTo(x, top + ph); tctx.stroke(); }
+    const o = metricIdx * 4;
+    const curve = (steps, sessions, color, width) => {   // sessions of other methods are matched by variant
+      for (const s of sessions) {
+        const s0 = SES.find(x => x.variant === s.variant && x.kind === s.kind); if (!s0) continue;
+        tctx.beginPath(); tctx.strokeStyle = color; tctx.lineWidth = width; tctx.lineJoin = 'round';
+        let pen = false;
+        for (let i = 0; i < s.n_steps && i < s0.n_steps; i++) {
+          const v = steps[s.start_step + i].err[o]; if (v == null) { pen = false; continue; }
+          const x = X(s0.start_step + i), y = Y(v);
+          if (!pen) { tctx.moveTo(x, y); pen = true; } else tctx.lineTo(x, y);
+        }
+        tctx.stroke();
+      }
+    };
+    if (opt.cmp && window.TRACES) {
+      for (const m of Object.keys(MF.scenes[scene].methods)) {
+        const tr = window.TRACES[scene + '__' + m]; if (!tr || m === method) continue;
+        curve(tr.steps, tr.sessions, alpha(css('--ink-3'), .55), 1);
+      }
+    }
+    for (const s of SES) curve(S, [s], sesColor(s.id), 1.6);
+    for (let i = 0; i < NT; i++) if (S[i].pgo) { const x = X(i); tctx.fillStyle = css('--lc'); tctx.beginPath(); tctx.moveTo(x, top - 6); tctx.lineTo(x + 4, top); tctx.lineTo(x, top + 6); tctx.lineTo(x - 4, top); tctx.closePath(); tctx.fill(); }
+    tctx.strokeStyle = css('--ink'); tctx.lineWidth = 1.5; tctx.beginPath(); tctx.moveTo(X(t), top - 6); tctx.lineTo(X(t), top + ph); tctx.stroke();
+  }
+  function tlStep(e) { const r = tl.getBoundingClientRect(); const x = e.clientX - r.left; return Math.max(0, Math.min(NT - 1, Math.round((x - PAD_L) / (TW - PAD_L - PAD_R) * (NT - 1)))); }
+  let tlDrag = false;
+  tl.addEventListener('pointerdown', (e) => { tlDrag = true; tl.setPointerCapture(e.pointerId); setT(tlStep(e)); });
+  tl.addEventListener('pointermove', (e) => {
+    if (!D) return;
+    const i = tlStep(e); if (tlDrag) setT(i);
+    const st = S[i], s = sesOf(i), o = metricIdx * 4;
+    let txt = `${s.variant} · frame ${st.f} · ${MF.labels[method] || method}: ${st.lost ? 'not localized' : fmt(st.err[o]) + ' m / ' + fmt(st.err[o + 1], 1) + '°'}`;
+    if (opt.cmp && window.TRACES) for (const m of Object.keys(MF.scenes[scene].methods)) {
+      const tr = window.TRACES[scene + '__' + m]; if (!tr || m === method) continue;
+      const s2 = tr.sessions.find(x => x.variant === s.variant && x.kind === s.kind); if (!s2) continue;
+      const j = i - s.start_step; if (j >= s2.n_steps) continue;
+      const v = tr.steps[s2.start_step + j].err[o]; txt += ` · ${MF.labels[m] || m}: ${v == null ? 'lost' : fmt(v) + ' m'}`;
+    }
+    if (st.pgo) txt += ' · loop closure';
+    tip.textContent = txt;
+    tip.style.display = 'block'; tip.style.left = Math.max(8, Math.min(e.clientX + 12, window.innerWidth - Math.min(900, txt.length * 7))) + 'px'; tip.style.top = (e.clientY - 34) + 'px';
+  });
+  tl.addEventListener('pointerup', () => { tlDrag = false; });
+  tl.addEventListener('pointerleave', () => { tlDrag = false; tip.style.display = 'none'; });
+  new ResizeObserver(drawTimeline).observe(tl);
+
+  // ---------- transport
+  function setT(v) { t = Math.max(0, Math.min(NT - 1, v)); draw(); drawTimeline(); }
+  let acc = 0, lastTs = 0;
+  function tick(ts) {
+    if (!playing) return;
+    const sps = +document.getElementById('speed').value;
+    if (lastTs) acc += (ts - lastTs) / 1000 * sps;
+    lastTs = ts;
+    const n = Math.floor(acc);
+    if (n > 0) { acc -= n; if (t + n >= NT - 1) { setT(NT - 1); stop(); return; } setT(t + n); }
+    requestAnimationFrame(tick);
+  }
+  const playBtn = document.getElementById('btn-play');
+  function play() { playing = true; playBtn.textContent = 'Pause'; lastTs = 0; acc = 0; requestAnimationFrame(tick); }
+  function stop() { playing = false; playBtn.textContent = 'Play'; }
+  playBtn.addEventListener('click', () => playing ? stop() : play());
+  document.getElementById('btn-prev').addEventListener('click', () => setT(t - 1));
+  document.getElementById('btn-next').addEventListener('click', () => setT(t + 1));
+  document.getElementById('btn-first').addEventListener('click', () => { const s = sesOf(t); setT(s.start_step === t && s.id > 0 ? SES[s.id - 1].start_step : s.start_step); });
+  document.getElementById('btn-last').addEventListener('click', () => setT(sesOf(t).end_step - 1));
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || !D) return;
+    const big = e.shiftKey ? 10 : 1;
+    if (e.key === ' ') { e.preventDefault(); playing ? stop() : play(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); setT(t + big); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); setT(t - big); }
+    else if (e.key === 'Home') setT(sesOf(t).start_step);
+    else if (e.key === 'End') setT(sesOf(t).end_step - 1);
+    else if (e.key === 'f') fit();
+    else if (/^[1-9]$/.test(e.key) && SES[+e.key - 1]) setT(SES[+e.key - 1].start_step);
+  });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { draw(); drawTimeline(); });
+  new MutationObserver(() => { draw(); drawTimeline(); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  // ---------- start: #scene=…&method=…&t=…
+  const h = Object.fromEntries(location.hash.slice(1).split('&').filter(Boolean).map(kv => kv.split('=')));
+  if (h.scene && MF.scenes[h.scene]) scene = h.scene;
+  const ms = Object.keys(MF.scenes[scene].methods);
+  method = (h.method && ms.includes(h.method)) ? h.method : (ms.includes('cross_stereo') ? 'cross_stereo' : ms[0]);
+  if (h.t) t = +h.t;
+  select(scene, method, !!h.t);
+})();
+</script>

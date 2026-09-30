@@ -42,3 +42,28 @@ CLAUDE.md
 wandb/
 
 doc/
+# Stereo mode / benchmarks: model checkpoints, outputs, scratch, baseline builds, LaTeX byproducts
+/models/
+/outputs/
+/temp/
+/report/
+.pytest_cache/
+.ruff_cache/
+.venv-blender/
+.venv-mast3r/
+third_party/ORB_SLAM3/
+third_party/Pangolin/
+third_party/rtabmap/
+third_party/g2o_src/
+third_party/MASt3R-SLAM/
+third_party/install/
+scripts/baselines/build/
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+
+# Private project notes (never pushed)
+/docs/

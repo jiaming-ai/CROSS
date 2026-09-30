@@ -3,15 +3,19 @@
 CROSS — Run topological mapping on an RGB-D dataset.
 
 Usage:
-    python run.py <dataset_path> [options]
+    python run.py <dataset_path> [options]                  # RGB-D mode (PnP on depth)
+    python run.py <stereo_sequence> --mode stereo [options] # stereo mode (feed-forward estimator, stereo scale)
 
 Examples:
     python run.py data/r3d/lab2.r3d
     python run.py data/r3d/lab2.r3d --no-viz --frames 500
     python run.py data/rosbag/topomap_ssi_1 --loader rosbag
+    python run.py data/posed/home1-1 --loader posed                       # posed RGB-D folder (e.g. OpenLORIS)
+    python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/outdoor.yaml
 """
 
 import argparse
+import os
 import time
 
 import numpy as np
@@ -36,6 +40,8 @@ def load_dataset(path: str, loader: str = "auto", **kwargs):
             loader = "loris"
         elif "tum" in path:
             loader = "tum"
+        elif os.path.isfile(os.path.join(path, "calib.json")) and os.path.isdir(os.path.join(path, "rgb")):
+            loader = "posed"
         else:
             loader = "r3d"
 
@@ -51,6 +57,12 @@ def load_dataset(path: str, loader: str = "auto", **kwargs):
     elif loader == "tum":
         from cross.dataloader.tum import TUMDataset
         return TUMDataset(path, **kwargs)
+    elif loader == "posed":
+        from cross.dataloader.posed_rgbd import PosedRGBDLoader
+        return PosedRGBDLoader(path, **kwargs)
+    elif loader == "stereo":
+        from cross.dataloader.stereo_loader import StereoSequenceLoader
+        return StereoSequenceLoader(path, **kwargs)
     else:
         raise ValueError(f"Unknown loader: {loader}")
 
@@ -58,8 +70,13 @@ def load_dataset(path: str, loader: str = "auto", **kwargs):
 def main():
     parser = argparse.ArgumentParser(description="CROSS: Pose-aware topological mapping")
     parser.add_argument("dataset", help="Path to dataset (e.g., data/r3d/lab2.r3d)")
-    parser.add_argument("--loader", default="auto", choices=["auto", "r3d", "rosbag", "loris", "tum"],
-                        help="Dataset loader type (default: auto-detect)")
+    parser.add_argument("--mode", default="rgbd", choices=["rgbd", "stereo"],
+                        help="rgbd: PnP relative poses from RGB-D (default); stereo: feed-forward estimator with stereo "
+                             "scale anchors (needs install.sh --stereo; layers configs/stereo.yaml)")
+    parser.add_argument("--loader", default="auto", choices=["auto", "r3d", "rosbag", "loris", "tum", "posed", "stereo"],
+                        help="Dataset loader type (default: auto-detect; stereo mode always uses the stereo loader)")
+    parser.add_argument("--baseline", type=float, default=None,
+                        help="stereo mode: rendered baseline to use for SimChange sequences with several right cameras")
     parser.add_argument("--no-viz", action="store_true", help="Disable visualization")
     parser.add_argument("--frames", type=int, default=None, help="Max frames to process")
     parser.add_argument("--start", type=int, default=0, help="Start frame index")
@@ -73,7 +90,11 @@ def main():
     if args.snr is not None:
         loader_kwargs["snr"] = args.snr
 
-    dataset = load_dataset(args.dataset, loader=args.loader, **loader_kwargs)
+    if args.mode == "stereo":
+        loader_kwargs["baseline"] = args.baseline
+        dataset = load_dataset(args.dataset, loader="stereo", **loader_kwargs)
+    else:
+        dataset = load_dataset(args.dataset, loader=args.loader, **loader_kwargs)
     logger.info(f"Dataset: {args.dataset}, {len(dataset)} frames")
 
     camera = Camera(
@@ -83,7 +104,10 @@ def main():
     )
 
     # Build config: layer YAML files, then apply CLI overrides
-    config = load_config(*args.config) if args.config else SystemConfig()
+    configs = list(args.config)
+    if args.mode == "stereo":
+        configs = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "stereo.yaml")] + configs
+    config = load_config(*configs) if configs else SystemConfig()
     if args.async_update:
         config.async_update = True
 
@@ -92,6 +116,7 @@ def main():
         debug=True,
         camera=camera,
         config=config,
+        T_right_in_left=getattr(dataset, "T_right_in_left", None),
     )
 
     end_idx = min(args.start + args.frames, len(dataset)) if args.frames else len(dataset)

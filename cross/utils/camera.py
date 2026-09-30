@@ -108,3 +108,59 @@ def get_transforms_target_max(
     
     
 
+
+def get_transforms_ff(
+    camera: Camera,
+    image_resolution: int = 512,
+    patch_size: int = 16,
+    min_aspect: float = 0.5,
+    max_aspect: float = 2.0,
+):
+    """Transforms for feed-forward geometry models (VGGT-Omega / DA3).
+
+    Mirrors `vggt_omega.utils.load_fn.load_and_preprocess_images(mode="max_size")`:
+    center-crop extreme aspect ratios into [min_aspect, max_aspect], then resize the
+    longest side to `image_resolution` with both sides rounded to a multiple of
+    `patch_size`.  The camera intrinsics are updated in place.
+    """
+    width, height = camera.frame_width, camera.frame_height
+    aspect = height / max(width, 1)
+    crop_w, crop_h = width, height
+    if aspect < min_aspect:
+        crop_w = min(width, max(1, int(round(height / min_aspect))))
+    elif aspect > max_aspect:
+        crop_h = min(height, max(1, int(round(width * max_aspect))))
+    aspect = crop_h / crop_w
+
+    def round_patch(v):
+        return max(patch_size, int(round(float(v) / patch_size)) * patch_size)
+
+    if aspect >= 1.0:
+        new_h, new_w = image_resolution, round_patch(image_resolution / aspect)
+    else:
+        new_w, new_h = image_resolution, round_patch(image_resolution * aspect)
+
+    transform_list = []
+    if (crop_w, crop_h) != (width, height):
+        transform_list.append(transforms.CenterCrop((crop_h, crop_w)))
+    transform_list.append(transforms.Resize((new_h, new_w), interpolation=transforms.InterpolationMode.BICUBIC, antialias=True))
+    rgb_transform = transforms.Compose([transforms.ToTensor()] + transform_list)
+    depth_transform = transforms.Compose(
+        ([transforms.CenterCrop((crop_h, crop_w))] if (crop_w, crop_h) != (width, height) else [])
+        + [transforms.Resize((new_h, new_w), interpolation=transforms.InterpolationMode.NEAREST)]
+    )
+
+    # intrinsics: crop shifts the principal point, resize scales
+    crop_left = (width - crop_w) / 2.0
+    crop_top = (height - crop_h) / 2.0
+    scale_w = new_w / crop_w
+    scale_h = new_h / crop_h
+    camera.fx *= scale_w
+    camera.fy *= scale_h
+    camera.px = (camera.px - crop_left) * scale_w
+    camera.py = (camera.py - crop_top) * scale_h
+    camera.K = camera.K.astype(np.float64).copy()
+    camera.K[0, 0], camera.K[1, 1] = camera.fx, camera.fy
+    camera.K[0, 2], camera.K[1, 2] = camera.px, camera.py
+    camera.frame_width, camera.frame_height = int(new_w), int(new_h)
+    return rgb_transform, depth_transform

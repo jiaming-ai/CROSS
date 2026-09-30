@@ -4,16 +4,23 @@ set -euo pipefail
 # CROSS — One-script installation
 #
 # Usage:
-#   bash install.sh              # Full install (CUDA 12.4)
+#   bash install.sh              # Full install (CUDA 12.4), RGB-D mode
+#   bash install.sh --stereo     # + stereo mode (VGGT-Omega feed-forward estimator; weights need a Hugging Face login
+#                                #   with access to facebook/VGGT-Omega)
+#   bash install.sh --stereo --da3   # + the optional Depth Anything 3 backend of the stereo mode
 #   bash install.sh --cpu        # CPU-only (no CUDA)
 #   CUDA_VERSION=cu121 bash install.sh  # Specify CUDA version
 
 CUDA_VERSION="${CUDA_VERSION:-cu124}"
 CPU_ONLY=false
+STEREO=false
+DA3=false
 
 for arg in "$@"; do
     case "$arg" in
         --cpu) CPU_ONLY=true ;;
+        --stereo) STEREO=true ;;
+        --da3) DA3=true; STEREO=true ;;
     esac
 done
 
@@ -82,6 +89,26 @@ cd python
 uv pip install .
 cd ../../../..
 
+# ── Stereo mode (optional) ────────────────────────────────────
+if [ "$STEREO" = true ]; then
+    echo "==> Installing the stereo mode (feed-forward estimator, vendored under third_party/)..."
+    uv pip install -e ".[stereo]"
+    uv pip install --no-deps -e third_party/vggt-omega
+    mkdir -p models/VGGT-Omega
+    if [ ! -f models/VGGT-Omega/vggt_omega_1b_512.pt ]; then
+        echo "    Downloading VGGT-Omega-1B-512 (gated: request access at https://huggingface.co/facebook/VGGT-Omega)..."
+        .venv/bin/python -c "from huggingface_hub import hf_hub_download; hf_hub_download('facebook/VGGT-Omega', 'vggt_omega_1b_512.pt', local_dir='models/VGGT-Omega')" \
+            || echo "    !! download failed: log in (huggingface-cli login) after access is granted, or place the file at models/VGGT-Omega/vggt_omega_1b_512.pt"
+    fi
+    if [ "$DA3" = true ]; then
+        echo "==> Installing the Depth Anything 3 backend..."
+        uv pip install -e ".[da3]"
+        uv pip install --no-deps -e third_party/depth-anything-3
+        [ -d models/DA3-LARGE-1.1 ] || .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('depth-anything/DA3-LARGE-1.1', local_dir='models/DA3-LARGE-1.1')" \
+            || echo "    !! DA3 download failed: place the checkpoint under models/DA3-LARGE-1.1/"
+    fi
+fi
+
 echo ""
 echo "==> Installation complete!"
 echo ""
@@ -91,6 +118,9 @@ echo ""
 echo "    Or activate the environment first:"
 echo "      source .venv/bin/activate"
 echo "      python run.py data/r3d/lab2.r3d"
+echo ""
+echo "    Stereo mode (after install.sh --stereo):"
+echo "      uv run python run.py <stereo sequence> --mode stereo"
 echo ""
 echo "    Examples:"
 echo "      uv run python examples/demo.py"

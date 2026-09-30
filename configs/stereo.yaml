@@ -1,0 +1,13 @@
+# Stereo mode (python run.py <sequence> --mode stereo, or --config configs/stereo.yaml): relative poses from a
+# feed-forward multi-view model (VGGT-Omega by default, DA3 optional) with metric scale from the stereo pair(s).
+# Needs the optional stereo dependencies and weights: bash install.sh --stereo.  Layer on top of the defaults.
+pose_est:
+  type: ff
+  # the feed-forward observation (retrieval + one multi-view forward pass) costs ~0.3 s: observe after 0.3 m or
+  # 0.15 rad of motion, at least every third frame (all stereo-mode results were obtained with these values)
+  obs_min_translation: 0.3
+  obs_min_rotation: 0.15
+  obs_max_interval_steps: 3
+  ff:
+    backend: vggt_omega
+    checkpoint: models/VGGT-Omega/vggt_omega_1b_512.pt

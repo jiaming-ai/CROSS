@@ -59,6 +59,7 @@ class System:
         camera: Camera = None,
         visualizer: 'RRViz' = None,
         config: Union[SystemConfig, str, Path, None] = None,
+        T_right_in_left: np.ndarray = None,
         **kwargs,
     ):
         """
@@ -66,6 +67,8 @@ class System:
             camera: the camera model
             device: the device to use for the map
             visualizer: optional RRViz instance to reuse across sessions. If None, creates a new one.
+            T_right_in_left: optional 4x4 stereo rig calibration (right camera pose in the left camera
+                    frame, OpenCV convention). Required for the feed-forward estimator's stereo anchors.
             config: SystemConfig instance, path to a YAML file, or None for defaults.
                     Additional **kwargs with matching section names (e.g. ``tracking={...}``)
                     are deep-merged on top for backward compatibility.
@@ -113,6 +116,8 @@ class System:
         self.use_odometry = self.config.tracking.use_odometry
         self.new_kf_after_n_unsuccessful_steps = self.config.tracking.new_kf_after_n_unsuccessful_steps
         self.base_measurement_std_diag = torch.tensor([0.2, 0.2, 0.3, 0.2, 0.2, 0.2])
+        if self.config.pose_est.type == PoseEstType.FF and self.config.pose_est.ff.base_measurement_std:
+            self.base_measurement_std_diag = torch.tensor([float(v) for v in self.config.pose_est.ff.base_measurement_std])
 
         # Odometry uncertainty parameters (distance-based, not step-based)
         # For 1m translation -> 0.1m std, for 1 rad rotation -> 0.1 rad std
@@ -136,6 +141,9 @@ class System:
             self.odom_accumulator.register_item("since_last_obs")
 
         self.use_VO = self.config.tracking.use_VO
+        # right images are only stored when stored keyframe pairs are used as scale anchors (storage option)
+        self._store_right_images = self.config.pose_est.type == PoseEstType.FF and (
+            self.config.pose_est.ff.n_ref_anchors > 0 or self.config.pose_est.ff.store_right_images)
         # Retrieval filtering mode configuration
         self.filter_mode = self.config.tracking.filter_mode
         self.adaptive_filter_cfg = self.config.tracking.adaptive_filter
@@ -149,10 +157,13 @@ class System:
         self._anchor_pending = deque()   # candidate session anchors (anchor_corroborate_window)
         self._contra_pending = deque()   # rejected map measurements that may contradict the anchor (anchor_contradict_min)
         self._session_start_frame = 0
-        self._steps_since_obs = 0      # observation cadence (pose_est.obs_*)
+        # observation cadence bookkeeping (feed-forward estimator)
+        self._steps_since_obs = 0
+        self._last_obs_rgb = None
         # intra-hypothesis loop closure bookkeeping: (step, n_long_range_edges) of recent keyframes
         self._intra_lc_events: deque = deque()
         self._last_intra_pgo_step = -10**9
+        self.T_right_in_left = T_right_in_left
         
         # pose estimation model
         self.pose_est_type = self.config.pose_est.type
@@ -162,6 +173,9 @@ class System:
         elif self.pose_est_type == PoseEstType.VGGT:
             from cross.cv.pose_est_vggt import PoseEstVGGT
             self.pose_est = PoseEstVGGT(self.device)
+        elif self.pose_est_type == PoseEstType.FF:
+            from cross.cv.pose_est_ff import PoseEstFeedForward
+            self.pose_est = PoseEstFeedForward(self.device, self.config.pose_est.ff, T_right_in_left)
 
         ########### mapping ###########
         # kf parameters
@@ -208,6 +222,10 @@ class System:
                 logger.info(f"Loop closure noise model loaded from {lc_cfg.noise_file}")
             from cross.core.lc_verify import LoopClosureVerifier
             self._lc_verifier = LoopClosureVerifier(self, lc_cfg)
+            # calibrated metric scale of the feed-forward estimator (measured / true translation, from the odometry)
+            if float(getattr(lc_cfg.noise, "visual_scale", 1.0) or 1.0) != 1.0 and hasattr(self, "pose_est"):
+                self.pose_est.metric_scale_correction = float(lc_cfg.noise.visual_scale)
+                logger.info(f"Feed-forward metric scale correction: translations divided by {lc_cfg.noise.visual_scale:.3f}")
             if self.config.tracking.odom_std_from_noise_model and self.use_odometry:
                 nz = lc_cfg.noise
                 acc = self.odom_accumulator
@@ -241,6 +259,10 @@ class System:
         if self.pose_est_type == PoseEstType.VGGT:
             from cross.utils.camera import get_transforms_vggt
             self.rgb_transform, self.depth_transform = get_transforms_vggt(camera)
+        elif self.pose_est_type == PoseEstType.FF:
+            from cross.utils.camera import get_transforms_ff
+            self.rgb_transform, self.depth_transform = get_transforms_ff(
+                camera, image_resolution=self.config.pose_est.ff.image_resolution)
         else:
             from cross.utils.camera import get_transforms_target_max
             self.rgb_transform, self.depth_transform = get_transforms_target_max(camera)
@@ -324,6 +346,7 @@ class System:
         rgb_image: torch.Tensor,
         depth_image: torch.Tensor,
         timestamp: float = None,
+        rgb_right: torch.Tensor = None,
     ):
         """Initialize the system."""
         
@@ -365,13 +388,15 @@ class System:
             atlas=new_atlas,
             timestamp=timestamp,
             temporary=False,
+            raw_rgb_right=rgb_right.to(self.storage_device) if (rgb_right is not None and self._store_right_images) else None,
         )
         kf.step_created = int(self._processed_frame_num)
         self.hypothesis_manager.add_node(kf)
         self.last_added_kf_id = kf.id
         self.odom_accumulator.reset_odom()
-        self._session_start_frame = self._processed_frame_num
         self._steps_since_obs = 0
+        self._last_obs_rgb = rgb_image
+        self._session_start_frame = self._processed_frame_num
         if self._lc_verifier is not None:
             self._lc_verifier.reset_session()
         return kf
@@ -726,6 +751,7 @@ class System:
         Args:
             obs: the observation dict containing:
                 - rgb: the rgb image, np.ndarray
+                - rgb_right: optional right stereo image, np.ndarray (feed-forward estimator anchor)
                 - depth: the depth image, np.ndarray
                 - conf: the confidence map of the depth image, np.ndarray
                 - delta_pose: the delta pose between current and last step, np.ndarray
@@ -795,6 +821,7 @@ class System:
         rgb_image = last_obs["rgb"]
         depth_image = last_obs.get("depth", None)
         confidence_map = last_obs.get("conf", None)
+        rgb_right = last_obs.get("rgb_right", None)
         timestamp = last_obs.get("timestamp", None)
 
         if timestamp is None:
@@ -811,13 +838,15 @@ class System:
                 kwargs['data']['depth'] = depth_image
         
         rgb_image = self.rgb_transform(rgb_image) # (3, H, W)
+        if rgb_right is not None:
+            rgb_right = self.rgb_transform(rgb_right)
         if depth_image is not None:
             depth_image = torch.from_numpy(depth_image).float().unsqueeze(0) # (1, H, W)
             depth_image = self.depth_transform(depth_image) 
 
         ############ initialize the system ############
         if self._processed_frame_num == 1:
-            kf = self._init_system(rgb_image, depth_image, timestamp=timestamp)
+            kf = self._init_system(rgb_image, depth_image, timestamp=timestamp, rgb_right=rgb_right)
 
             if self.visualize:
                 self.visualizer.visualize_tracking_step(
@@ -879,7 +908,7 @@ class System:
                 self.visualizer.reset(new_session=False)
 
             # Re-initialize system (GMM dist, new keyframe)
-            kf = self._init_system(rgb_image, depth_image, timestamp=timestamp)
+            kf = self._init_system(rgb_image, depth_image, timestamp=timestamp, rgb_right=rgb_right)
             if self.visualize:
                 self.visualizer.visualize_tracking_step(
                     kf = kf,
@@ -890,8 +919,10 @@ class System:
             return
 
         ################################
-        # observation cadence gating (pose_est.obs_*): skip retrieval + relative pose estimation until the robot moved
-        # enough, and let the motion model carry the belief in between
+        # observation cadence gating: with a feed-forward estimator the observation
+        # (retrieval + multi-view forward pass) is expensive, while odometry is cheap.
+        # Skip the observation until the robot moved enough (or N steps elapsed) and
+        # let the motion model carry the belief in between.
         ################################
         if self._should_skip_observation():
             current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
@@ -906,14 +937,20 @@ class System:
                     kf=None, state_info=ret, gt_info=kwargs.get("data"), step_idx=self._processed_frame_num,
                 )
             return
+
+        # temporal anchor for the feed-forward estimator: previous observed frame + odometry
+        odom_anchor = None
         if self.use_odometry:
-            self.odom_accumulator.get_since_last_reading("since_last_obs", reset=True, return_std=False)
+            T_prev_curr, _ = self.odom_accumulator.get_since_last_reading("since_last_obs", reset=True, return_std=False)
+            if self._last_obs_rgb is not None and T_prev_curr is not None:
+                odom_anchor = {"image": self._last_obs_rgb, "T_prev_curr": T_prev_curr.matrix().cpu().numpy()}
         self._steps_since_obs = 0
+        self._last_obs_rgb = rgb_image
 
         ################################
         # update the observation likelihood
         ################################
-        ret.update(self._construct_observation_dist(rgb_image, depth_image))
+        ret.update(self._construct_observation_dist(rgb_image, depth_image, rgb_right=rgb_right, odom_anchor=odom_anchor))
         # if no proposal, continue with motion-only update
         if len(ret["valid_keyframes"]) == 0:
             logger.info(f"No valid keyframes found. Continuing with motion-only update")
@@ -930,7 +967,7 @@ class System:
             new_kf = None
             if self._unsuccessful_retrieval_steps > self.new_kf_after_n_unsuccessful_steps:
                 new_kf = self._add_new_kf(rgb_image, depth_image, force_permanent=True, force_add=True,
-                                          timestamp=timestamp)
+                                          timestamp=timestamp, rgb_right=rgb_right)
                 self._unsuccessful_retrieval_steps = 0
                 logger.info(f"Added new keyframe at step {self._processed_frame_num} due to unsuccessful retrieval")
 
@@ -1005,6 +1042,7 @@ class System:
             timestamp=timestamp,
             force_permanent=False,
             force_add=lc_result["loop_closure"],
+            rgb_right=rgb_right,
         )
 
         if lc_result["loop_closure"]:
@@ -1064,7 +1102,12 @@ class System:
                                               self.last_added_kf_id, T_since, n_since)
                 ret["h0_chi2"] = h0_chi2
                 ret["h0_loop"] = list(getattr(v, "last_loop_flags", []))
-                # (the verifier's online metric-scale ratio is a diagnostic here: PnP translations come from metric depth)
+                # online metric-scale correction of the estimator for the following measurements (only the feed-forward
+                # estimator applies it; PnP translations come from metric depth, and updating the correction the verifier
+                # assumes applied without applying it would compound the ratio at every observation)
+                if self.pose_est_type == PoseEstType.FF and abs(v.scale_ratio - v.metric_correction) > 1e-6:
+                    v.metric_correction = v.scale_ratio
+                    self.pose_est.metric_scale_correction = v.scale_ratio
                 if lc_cfg.anchor_contradict_min > 0 and v.anchor is not None and self._session_start_kf_id > 0 \
                         and any(o is False for o in h0_ok):
                     self._contradict_anchor(valid_keyframes, valid_poses, h0_ok, T_since, n_since)
@@ -1502,6 +1545,7 @@ class System:
         timestamp: float = None,
         force_permanent: bool = False,
         force_add: bool = False,
+        rgb_right: torch.Tensor = None,
     ):
         """Add a new keyframe to the database.
         We constantly add kfs as robot moves.
@@ -1523,7 +1567,8 @@ class System:
 
             # if current obs is not similar to other kfs, add a permanent kf
             if ret_weights.max() < self.kf_retrieval_threshold_new_kf or \
-                (self.pose_est_type == PoseEstType.PNP and confidence.max() < self.kf_match_threshold_new_kf):
+                (self.pose_est_type == PoseEstType.PNP and confidence.max() < self.kf_match_threshold_new_kf) or \
+                (self.pose_est_type == PoseEstType.FF and confidence.max() < self.config.pose_est.ff.kf_conf_threshold_new_kf):
                 is_temp_kf = False
 
         mu, sigma, weights = self.hypothesis_manager.get_active_dist()
@@ -1542,6 +1587,7 @@ class System:
                 atlas=self.current_atlas,
                 timestamp=timestamp,
                 temporary=is_temp_kf,
+                raw_rgb_right=rgb_right.to(self.storage_device) if (rgb_right is not None and self._store_right_images) else None,
             )
             logger.debug(f"Add permanent keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         else:
@@ -1936,8 +1982,8 @@ class System:
         Args:
             confidences: (B,)
             retrieval_scores: (B,)
-            poses: (B, 7) relative poses (distance-dependent calibrated noise, pose_est.meas_std_from_noise_model)
-            keyframes: the reference keyframes (online noise scale of their type: session or stored map)
+            poses: (B, 7) relative poses (used to inflate the translation std with the
+                   relative scale uncertainty of the feed-forward estimator)
         Returns:
             std_diag: (B, 6)
         """
@@ -1952,21 +1998,50 @@ class System:
                 sg = v.noise.visual(float(d[i]), scale=sc)        # gtsam order: r r r t t t
                 rows.append([sg[3], sg[4], sg[5], sg[0], sg[1], sg[2]])
             return pp.se3(torch.tensor(rows, dtype=torch.float32))
-
+        
         if self.pose_est_type == PoseEstType.PNP:
             # conf is num of inliers
             conf = confidences / self.config.pose_est.kp_detector.n_keypoints
+        elif self.pose_est_type == PoseEstType.FF:
+            # conf is a covisibility ratio in [0, 1]
+            conf = confidences.clamp(min=1e-2)
         else:
             conf = confidences
         # the median of both confidences and retrieval scores is 0.5
         # so we multiply 4 to make the std roughtly same scale as base_std_diag
         std_diag = self.base_measurement_std_diag.unsqueeze(0) / (4 * conf.unsqueeze(1) * retrieval_scores.unsqueeze(1))
+        if self.pose_est_type == PoseEstType.FF and self.config.pose_est.ff.scale_std_inflation and poses is not None:
+            rel = self.pose_est.scale_rel_std
+            t_norm = torch.norm(poses.tensor()[:, :3].to(std_diag.device), dim=1, keepdim=True)
+            std_diag = std_diag.clone()
+            std_diag[:, :3] = torch.sqrt(std_diag[:, :3] ** 2 + (rel * t_norm) ** 2)
         return pp.se3(std_diag)
     
+    @timeit
+    def _map_anchor_pairs(self, keyframes):
+        """Pairs of references with their metric relative pose from the map (component-0 means), used as
+        long-baseline scale anchors by the feed-forward estimator.  Pairs are chosen by decreasing distance
+        within [map_anchor_min_dist, map_anchor_max_dist]."""
+        ffc = self.config.pose_est.ff
+        if not ffc.use_map_anchors or len(keyframes) < 2:
+            return None
+        mats = [np.asarray(pp.SE3(kf.pose_mu[0]).matrix().detach().cpu().numpy(), dtype=np.float64) for kf in keyframes]
+        pairs = []
+        for i in range(len(mats)):
+            for j in range(i + 1, len(mats)):
+                T_ij = np.linalg.inv(mats[i]) @ mats[j]
+                d = float(np.linalg.norm(T_ij[:3, 3]))
+                if ffc.map_anchor_min_dist <= d <= ffc.map_anchor_max_dist:
+                    pairs.append((d, i, j, T_ij))
+        pairs.sort(key=lambda x: -x[0])
+        return [(i, j, T) for _, i, j, T in pairs[:ffc.map_anchor_max_pairs]] or None
+
     def _construct_observation_dist(
         self,
         rgb_image: torch.Tensor,
         depth_image: torch.Tensor = None,
+        rgb_right: torch.Tensor = None,
+        odom_anchor: dict = None,
     ):
         """Construct the proposal distribution
         The proposal distribution is defined as a GMM, where
@@ -1992,6 +2067,11 @@ class System:
 
         retrieval_scores = results["scores"]
         keyframes = results["keyframes"]
+        if self.pose_est_type == PoseEstType.FF:
+            # bound the context size of the multi-view forward pass
+            max_refs = self.config.pose_est.ff.max_refs
+            retrieval_scores = retrieval_scores[:max_refs]
+            keyframes = keyframes[:max_refs]
         from cross.db.db import as_float_image
         ref_rgbs = [as_float_image(p.raw_rgb_image) for p in keyframes]
         ref_depths = [as_float_image(p.depth_image) for p in keyframes] if depth_image is not None else None
@@ -2005,12 +2085,21 @@ class System:
         ref_depths = torch.cat(ref_depths, dim=0) if ref_depths is not None else None
 
         # then estimate the relative pose
-        valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
-            ref_rgbs,
-            ref_depths,
-            rgb_image,
-            depth_image,
-        )
+        if self.pose_est_type == PoseEstType.FF:
+            valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
+                ref_rgbs, None, rgb_image, None,
+                curr_image_right=rgb_right,
+                ref_images_right=[as_float_image(p.raw_rgb_right) for p in keyframes],
+                odom_anchor=odom_anchor,
+                ref_rel_poses=self._map_anchor_pairs(keyframes),
+            )
+        else:
+            valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
+                ref_rgbs,
+                ref_depths,
+                rgb_image,
+                depth_image,
+            )
         # no valid pose
         if valid_masks.sum() == 0:
             logger.debug(f"No valid pose found.")
@@ -2025,7 +2114,7 @@ class System:
         # consistency of the references of this forward pass (test 1, prior verdicts as tie-break); references dropped
         # by test 1 never become proposals or edges, the verdicts of test 2 steer the proposal alignment
         h0_ok = None
-        # (the in-pass test needs the pass-internal relative poses of a multi-view estimator; PnP gets the prior test)
+        # (the in-pass test needs the pass-internal relative poses of a multi-view estimator; others get the prior test)
         if self._lc_verifier is not None:
             keep, h0_ok = self._verify_references(valid_keyframes, valid_poses, keyframes, np.asarray(valid_masks, dtype=bool), ret)
             if keep is not None and int(keep.sum()) < len(valid_keyframes):

@@ -1,0 +1,6 @@
+# Driving-scale scenes (1 m per frame): proposals may drift further from the tracked belief between
+# observations, so cluster/alignment radii are relaxed (indoor default 1.0 m).
+mapping:
+  cluster_eps: 3.0
+  hypothesis:
+    alignment_threshold: 3.0

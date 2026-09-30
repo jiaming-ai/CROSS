@@ -1,0 +1,263 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 016e743..fbe8fc6 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -14,12 +14,12 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=native")
+ 
+ # Check C++11 or C++0x support
+ include(CheckCXXCompilerFlag)
+-CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
++CHECK_CXX_COMPILER_FLAG("-std=c++14" COMPILER_SUPPORTS_CXX11)
+ CHECK_CXX_COMPILER_FLAG("-std=c++0x" COMPILER_SUPPORTS_CXX0X)
+ if(COMPILER_SUPPORTS_CXX11)
+-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
++   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
+    add_definitions(-DCOMPILEDWITHC11)
+-   message(STATUS "Using flag -std=c++11.")
++   message(STATUS "Using flag -std=c++14.")
+ elseif(COMPILER_SUPPORTS_CXX0X)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
+    add_definitions(-DCOMPILEDWITHC0X)
+diff --git a/Thirdparty/Sophus/CMakeLists.txt b/Thirdparty/Sophus/CMakeLists.txt
+index 933445b..2802283 100644
+--- a/Thirdparty/Sophus/CMakeLists.txt
++++ b/Thirdparty/Sophus/CMakeLists.txt
+@@ -20,7 +20,7 @@ IF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+ ELSEIF("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+    SET(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g")
+    SET(CMAKE_CXX_FLAGS_RELEASE "-O3")
+-   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -Wextra -std=c++11 -Wno-deprecated-declarations -ftemplate-backtrace-limit=0")
++   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -Wextra -std=c++14 -Wno-deprecated-declarations -ftemplate-backtrace-limit=0")
+    SET(CMAKE_CXX_FLAGS_COVERAGE "${CMAKE_CXX_FLAGS_DEBUG} --coverage -fno-inline -fno-inline-small-functions -fno-default-inline")
+    SET(CMAKE_EXE_LINKER_FLAGS_COVERAGE "${CMAKE_EXE_LINKER_FLAGS_DEBUG} --coverage")
+    SET(CMAKE_SHARED_LINKER_FLAGS_COVERAGE "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} --coverage")
+diff --git a/include/MapPoint.h b/include/MapPoint.h
+index 29cb420..ed792cb 100644
+--- a/include/MapPoint.h
++++ b/include/MapPoint.h
+@@ -118,6 +118,7 @@ public:
+     void SetNormalVector(const Eigen::Vector3f& normal);
+ 
+     KeyFrame* GetReferenceKeyFrame();
++    void SetReferenceKeyFrame(KeyFrame* pKF);
+ 
+     std::map<KeyFrame*,std::tuple<int,int>> GetObservations();
+     int Observations();
+diff --git a/include/System.h b/include/System.h
+index 872c86e..fc99143 100644
+--- a/include/System.h
++++ b/include/System.h
+@@ -180,6 +180,11 @@ public:
+     // For debugging
+     double GetTimeFromIMUInit();
+     bool isLost();
++    // number of maps in the atlas (a merged multi-session atlas has one map again)
++    int GetNumberOfMaps();
++    // CROSS-stereo: every non-lost frame with the id of the map its reference keyframe lives in (col 9) and the
++    // id of the largest map (col 10); poses are expressed in the frame of the first keyframe of the largest map.
++    void SaveTrajectoryWithMapId(const string &filename);
+     bool isFinished();
+ 
+     void ChangeDataset();
+diff --git a/src/KeyFrame.cc b/src/KeyFrame.cc
+index 293ab48..d6bf0be 100644
+--- a/src/KeyFrame.cc
++++ b/src/KeyFrame.cc
+@@ -933,7 +933,7 @@ void KeyFrame::PostLoad(map<long unsigned int, KeyFrame*>& mpKFid, map<long unsi
+     mvpMapPoints.resize(N);
+     for(int i=0; i<N; ++i)
+     {
+-        if(mvBackupMapPointsId[i] != -1)
++        if(mvBackupMapPointsId[i] != -1 && mpMPid.find(mvBackupMapPointsId[i]) != mpMPid.end())
+             mvpMapPoints[i] = mpMPid[mvBackupMapPointsId[i]];
+         else
+             mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
+@@ -944,33 +944,35 @@ void KeyFrame::PostLoad(map<long unsigned int, KeyFrame*>& mpKFid, map<long unsi
+     for(map<long unsigned int, int>::const_iterator it = mBackupConnectedKeyFrameIdWeights.begin(), end = mBackupConnectedKeyFrameIdWeights.end();
+         it != end; ++it)
+     {
+-        KeyFrame* pKFi = mpKFid[it->first];
+-        mConnectedKeyFrameWeights[pKFi] = it->second;
++        map<long unsigned int, KeyFrame*>::iterator itKF = mpKFid.find(it->first);   // culled keyframes are not saved
++        if(itKF == mpKFid.end() || !itKF->second)
++            continue;
++        mConnectedKeyFrameWeights[itKF->second] = it->second;
+     }
+ 
+     // Restore parent KeyFrame
+-    if(mBackupParentId>=0)
++    if(mBackupParentId>=0 && mpKFid.find(mBackupParentId) != mpKFid.end())
+         mpParent = mpKFid[mBackupParentId];
+ 
+     // KeyFrame childrens
+     mspChildrens.clear();
+     for(vector<long unsigned int>::const_iterator it = mvBackupChildrensId.begin(), end = mvBackupChildrensId.end(); it!=end; ++it)
+     {
+-        mspChildrens.insert(mpKFid[*it]);
++        if(mpKFid.find(*it) != mpKFid.end() && mpKFid[*it]) mspChildrens.insert(mpKFid[*it]);
+     }
+ 
+     // Loop edge KeyFrame
+     mspLoopEdges.clear();
+     for(vector<long unsigned int>::const_iterator it = mvBackupLoopEdgesId.begin(), end = mvBackupLoopEdgesId.end(); it != end; ++it)
+     {
+-        mspLoopEdges.insert(mpKFid[*it]);
++        if(mpKFid.find(*it) != mpKFid.end() && mpKFid[*it]) mspLoopEdges.insert(mpKFid[*it]);
+     }
+ 
+     // Merge edge KeyFrame
+     mspMergeEdges.clear();
+     for(vector<long unsigned int>::const_iterator it = mvBackupMergeEdgesId.begin(), end = mvBackupMergeEdgesId.end(); it != end; ++it)
+     {
+-        mspMergeEdges.insert(mpKFid[*it]);
++        if(mpKFid.find(*it) != mpKFid.end() && mpKFid[*it]) mspMergeEdges.insert(mpKFid[*it]);
+     }
+ 
+     //Camera data
+diff --git a/src/LoopClosing.cc b/src/LoopClosing.cc
+index 319afb5..27e7bbf 100644
+--- a/src/LoopClosing.cc
++++ b/src/LoopClosing.cc
+@@ -353,7 +353,7 @@ bool LoopClosing::NewDetectCommonRegions()
+         return false;
+     }
+ 
+-    if(mpLastMap->GetAllKeyFrames().size() < 12)
++    if(mpLastMap->GetAllKeyFrames().size() < 3)
+     {
+         // cout << "LoopClousure: Stereo KF inserted without check, map is small: " << mpCurrentKF->mnId << endl;
+         mpKeyFrameDB->add(mpCurrentKF);
+diff --git a/src/Map.cc b/src/Map.cc
+index f1f8cd0..607a11f 100644
+--- a/src/Map.cc
++++ b/src/Map.cc
+@@ -395,8 +395,12 @@ void Map::PreSave(std::set<GeometricCamera*> &spCams)
+         if(!pMPi || pMPi->isBad())
+             continue;
+ 
+-        mvpBackupMapPoints.push_back(pMPi);
+         pMPi->PreSave(mspKeyFrames,mspMapPoints);
++        // points that lost every keyframe (reference culled, no surviving observation) cannot be restored: drop them
++        KeyFrame* pRef = pMPi->GetReferenceKeyFrame();
++        if(!pRef || pRef->isBad() || mspKeyFrames.find(pRef) == mspKeyFrames.end() || pMPi->GetObservations().empty())
++            continue;
++        mvpBackupMapPoints.push_back(pMPi);
+     }
+ 
+     // Backup of KeyFrames
+@@ -460,6 +464,22 @@ void Map::PostLoad(KeyFrameDatabase* pKFDB, ORBVocabulary* pORBVoc/*, map<long u
+         pMPi->PostLoad(mpKeyFrameId, mpMapPointId);
+     }
+ 
++    // atlases written before the pre-save fix: re-anchor points without a reference keyframe on one of their
++    // observations, and discard points that have none (they would be dereferenced later and crash)
++    {
++        vector<MapPoint*> vpMPs(mspMapPoints.begin(), mspMapPoints.end());
++        for(MapPoint* pMPi : vpMPs)
++        {
++            if(!pMPi || pMPi->isBad() || pMPi->GetReferenceKeyFrame())
++                continue;
++            map<KeyFrame*, tuple<int,int>> obs = pMPi->GetObservations();
++            if(!obs.empty())
++                pMPi->SetReferenceKeyFrame(obs.begin()->first);
++            else
++                pMPi->SetBadFlag();
++        }
++    }
++
+     for(KeyFrame* pKFi : mspKeyFrames)
+     {
+         if(!pKFi || pKFi->isBad())
+diff --git a/src/MapPoint.cc b/src/MapPoint.cc
+index 1cf802c..c940c11 100644
+--- a/src/MapPoint.cc
++++ b/src/MapPoint.cc
+@@ -138,6 +138,12 @@ KeyFrame* MapPoint::GetReferenceKeyFrame()
+     return mpRefKF;
+ }
+ 
++void MapPoint::SetReferenceKeyFrame(KeyFrame* pKF)
++{
++    unique_lock<mutex> lock(mMutexFeatures);
++    mpRefKF = pKF;
++}
++
+ void MapPoint::AddObservation(KeyFrame* pKF, int idx)
+ {
+     unique_lock<mutex> lock(mMutexFeatures);
+@@ -592,11 +598,25 @@ void MapPoint::PreSave(set<KeyFrame*>& spKF,set<MapPoint*>& spMP)
+         }
+     }
+ 
+-    // Save the id of the reference KF
+-    if(spKF.find(mpRefKF) != spKF.end())
++    // Save the id of the reference KF; if it was culled, re-anchor the point on a surviving observation
++    // (otherwise the stale id leaves the point without a reference keyframe after loading -> crash)
++    if(mpRefKF && spKF.find(mpRefKF) != spKF.end() && !mpRefKF->isBad())
+     {
+         mBackupRefKFId = mpRefKF->mnId;
+     }
++    else
++    {
++        mBackupRefKFId = -1;
++        for(std::map<KeyFrame*,std::tuple<int,int> >::const_iterator it = mObservations.begin(), end = mObservations.end(); it != end; ++it)
++        {
++            if(spKF.find(it->first) != spKF.end() && !it->first->isBad())
++            {
++                mpRefKF = it->first;
++                mBackupRefKFId = mpRefKF->mnId;
++                break;
++            }
++        }
++    }
+ }
+ 
+ void MapPoint::PostLoad(map<long unsigned int, KeyFrame*>& mpKFid, map<long unsigned int, MapPoint*>& mpMPid)
+diff --git a/src/System.cc b/src/System.cc
+index 60d9c51..f9a6037 100644
+--- a/src/System.cc
++++ b/src/System.cc
+@@ -1547,3 +1547,43 @@ string System::CalculateCheckSum(string filename, int type)
+ 
+ } //namespace ORB_SLAM
+ 
++
++int ORB_SLAM3::System::GetNumberOfMaps()
++{
++    return mpAtlas ? mpAtlas->CountMaps() : 0;
++}
++
++namespace ORB_SLAM3 {
++void System::SaveTrajectoryWithMapId(const string &filename)
++{
++    if(mSensor==MONOCULAR) return;
++    vector<Map*> vpMaps = mpAtlas->GetAllMaps();
++    Map* pBigger = nullptr; size_t nBest = 0;
++    for(Map* pMap : vpMaps) { if(pMap->GetAllKeyFrames().size() > nBest) { nBest = pMap->GetAllKeyFrames().size(); pBigger = pMap; } }
++    if(!pBigger) return;
++    vector<KeyFrame*> vpKFs = pBigger->GetAllKeyFrames();
++    sort(vpKFs.begin(),vpKFs.end(),KeyFrame::lId);
++    Sophus::SE3f Two = vpKFs[0]->GetPoseInverse();
++    ofstream f; f.open(filename.c_str()); f << fixed;
++    list<ORB_SLAM3::KeyFrame*>::iterator lRit = mpTracker->mlpReferences.begin();
++    list<double>::iterator lT = mpTracker->mlFrameTimes.begin();
++    list<bool>::iterator lbL = mpTracker->mlbLost.begin();
++    for(list<Sophus::SE3f>::iterator lit=mpTracker->mlRelativeFramePoses.begin(), lend=mpTracker->mlRelativeFramePoses.end(); lit!=lend; lit++, lRit++, lT++, lbL++)
++    {
++        if(*lbL) continue;
++        KeyFrame* pKF = *lRit;
++        if(!pKF) continue;
++        Sophus::SE3f Trw;
++        while(pKF->isBad()) { Trw = Trw * pKF->mTcp; pKF = pKF->GetParent(); if(!pKF) break; }
++        if(!pKF) continue;
++        Trw = Trw * pKF->GetPose() * Two;
++        Sophus::SE3f Twc = ((*lit) * Trw).inverse();
++        Eigen::Vector3f twc = Twc.translation();
++        Eigen::Quaternionf q = Twc.unit_quaternion();
++        long mapId = pKF->GetMap() ? (long)pKF->GetMap()->GetId() : -1;
++        f << setprecision(6) << *lT << " " << setprecision(9) << twc(0) << " " << twc(1) << " " << twc(2) << " " << q.x() << " " << q.y() << " " << q.z() << " " << q.w()
++          << " " << mapId << " " << (long)pBigger->GetId() << endl;
++    }
++    f.close();
++}
++} // namespace ORB_SLAM3 (CROSS-stereo)

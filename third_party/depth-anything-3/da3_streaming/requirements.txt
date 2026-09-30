@@ -1,0 +1,7 @@
+faiss-gpu
+pandas
+prettytable
+einops
+safetensors
+numba
+pypose

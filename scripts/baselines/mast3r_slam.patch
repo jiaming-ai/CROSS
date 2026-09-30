@@ -1,0 +1,60 @@
+diff --git a/main.py b/main.py
+index 20cfbbc..6496973 100644
+--- a/main.py
++++ b/main.py
+@@ -21,7 +21,20 @@ from mast3r_slam.mast3r_utils import (
+ )
+ from mast3r_slam.multiprocess_utils import new_queue, try_get_msg
+ from mast3r_slam.tracker import FrameTracker
+-from mast3r_slam.visualization import WindowMsg, run_visualization
++try:
++    from mast3r_slam.visualization import WindowMsg, run_visualization
++except ModuleNotFoundError:  # headless (--no-viz) use without the in3d/imgui viewer
++    import dataclasses
++
++    @dataclasses.dataclass
++    class WindowMsg:
++        is_terminated: bool = False
++        is_paused: bool = False
++        next: bool = False
++        C_conf_threshold: float = 1.5
++
++    def run_visualization(*args, **kwargs):
++        raise RuntimeError("visualization dependencies (in3d/imgui) are not installed; run with --no-viz")
+ import torch.multiprocessing as mp
+ 
+ 
+@@ -227,6 +240,7 @@ if __name__ == "__main__":
+ 
+     i = 0
+     fps_timer = time.time()
++    frame_rel = []
+ 
+     frames = []
+ 
+@@ -303,6 +317,12 @@ if __name__ == "__main__":
+                     if len(states.global_optimizer_tasks) == 0:
+                         break
+                 time.sleep(0.01)
++        # per-frame pose relative to the keyframe it was tracked against (composed with the final keyframe
++        # poses when saving, so that every frame gets a pose that reflects the global optimization)
++        with keyframes.lock:
++            kf_idx = len(keyframes) - 1
++            T_kf = lietorch.Sim3(keyframes.T_WC[kf_idx].clone())
++        frame_rel.append((i, kf_idx, (T_kf.inv() * frame.T_WC).data.cpu().clone(), int(mode == Mode.TRACKING or add_new_kf)))
+         # log time
+         if i % 30 == 0:
+             FPS = i / (time.time() - fps_timer)
+@@ -312,6 +332,12 @@ if __name__ == "__main__":
+     if dataset.save_results:
+         save_dir, seq_name = eval.prepare_savedir(args, dataset)
+         eval.save_traj(save_dir, f"{seq_name}.txt", dataset.timestamps, keyframes)
++        with open(pathlib.Path(save_dir) / f"{seq_name}_all.txt", "w") as f:
++            for fi, kf_idx, rel, tracked in frame_rel:
++                T_kf = lietorch.Sim3(keyframes.T_WC[kf_idx].clone().cpu())
++                T_WC = eval.as_SE3(T_kf * lietorch.Sim3(rel))
++                x, y, z, qx, qy, qz, qw = T_WC.data.numpy().reshape(-1)
++                f.write(f"{dataset.timestamps[fi]} {x} {y} {z} {qx} {qy} {qz} {qw} {tracked}\n")
+         eval.save_reconstruction(
+             save_dir,
+             f"{seq_name}.ply",

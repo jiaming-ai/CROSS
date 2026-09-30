@@ -44,6 +44,12 @@ class FilterMode(str, Enum):
 class PoseEstType(str, Enum):
     PNP = "pnp"
     VGGT = "vggt"
+    FF = "ff"  # stereo mode: feed-forward multi-view model with stereo scale anchors (cross/cv/pose_est_ff.py)
+
+
+class FFBackend(str, Enum):
+    VGGT_OMEGA = "vggt_omega"
+    DA3 = "da3"
 
 
 
@@ -453,6 +459,47 @@ class KPMatcherConfig:
 
 
 @dataclass
+class FeedForwardConfig:
+    """Stereo mode: feed-forward (learned multi-view) relative pose estimation with stereo scale anchors
+    (pose_est.type = ff; needs the optional stereo dependencies, see install.sh --stereo).  Observation gating and
+    the calibrated measurement noise are estimator-generic options of PoseEstConfig."""
+    backend: FFBackend = FFBackend.VGGT_OMEGA
+    checkpoint: str = "models/VGGT-Omega/vggt_omega_1b_512.pt"
+    image_resolution: int = 512          # longest side fed to the model (multiple of patch size)
+    da3_process_res: int = 504
+    half_precision_weights: bool = True  # keep the transformer weights in bf16 (halves memory, ~1cm difference)
+    max_refs: int = 6                    # at most this many retrieved references per forward pass
+    n_ref_anchors: int = 2               # stored right images of the best references used as extra anchors
+    use_curr_anchor: bool = True         # include the current right image (ablation switch)
+    store_right_images: bool = False     # keep right images of keyframes even when n_ref_anchors == 0
+    use_odom_anchor: bool = False        # previous frame + odometry as an additional metric anchor
+    odom_anchor_min_translation: float = 0.15
+    odom_anchor_weight: float = 0.5
+    scale_method: str = "adaptive"       # adaptive | huber_log | median | mean | norm_ls
+    # map-consistency anchors: pairs of retrieved keyframes whose metric relative pose is known from the map act as
+    # long-baseline scale anchors in the same forward pass (the stereo pair alone has a baseline that is tiny
+    # relative to large scenes, which biases the recovered scale by several percent)
+    use_map_anchors: bool = False
+    map_anchor_weight: float = 1.0
+    map_anchor_min_dist: float = 0.5     # metres between the two keyframes
+    map_anchor_max_dist: float = 60.0
+    map_anchor_max_pairs: int = 8
+    anchor_weight_by_baseline: bool = True   # weight anchors by predicted baseline length (precision of the ratio)
+    anchor_max_rot_err_deg: float = 20.0
+    anchor_min_dir_cos: float = 0.5
+    covis_grid: int = 48
+    covis_depth_tol: float = 0.15
+    covis_symmetric: bool = False
+    min_covis: float = 0.15              # validity threshold on the covisibility confidence
+    max_rel_distance: float = 40.0       # reject relative poses further than this (m)
+    kf_conf_threshold_new_kf: float = 0.35  # covis below this -> current view is novel -> permanent keyframe
+    scale_std_inflation: bool = True     # inflate translation std by |t| * relative scale std
+    # base measurement std [tx, ty, tz, rx, ry, rz] of the feed-forward estimator (None: the PnP default
+    # [0.2, 0.2, 0.3, 0.2, 0.2, 0.2]); it is divided by 4 * covisibility * retrieval score per reference
+    base_measurement_std: Optional[List[float]] = None
+
+
+@dataclass
 class PoseEstConfig:
     type: PoseEstType = PoseEstType.PNP
     kp_detector: KPDetectorConfig = field(default_factory=KPDetectorConfig)
@@ -462,7 +509,7 @@ class PoseEstConfig:
     max_depth: float = 30.0
     # measurement std of the observation update from the calibrated noise model of the verified loop closure
     # (sigma = visual_*_a + visual_*_b |t|, times the online noise scale of the reference type; see
-    # scripts/eval/calibrate_noise.py) instead of the heuristic 0.2 / (4 inlier ratio retrieval score).  Needs
+    # scripts/lc/calibrate_noise.py) instead of the heuristic 0.2 / (4 inlier ratio retrieval score).  Needs
     # mapping.loop_closure.mode = verified.
     meas_std_from_noise_model: bool = False
     # observation cadence: retrieval + relative pose estimation are skipped until the robot moved at least
@@ -476,6 +523,7 @@ class PoseEstConfig:
     obs_min_rotation: float = 0.0
     obs_max_interval_steps: int = 1
     obs_warmup_steps: int = 10
+    ff: FeedForwardConfig = field(default_factory=FeedForwardConfig)
 
 
 @dataclass
