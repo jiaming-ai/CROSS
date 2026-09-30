@@ -60,7 +60,7 @@ def env_info():
     return info
 
 
-def sh(cmd, log: Path, timeout=None):
+def sh(cmd, log: Path, timeout=None, alloc_conf=False):
     log.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     with open(log, "a") as f:
@@ -68,8 +68,9 @@ def sh(cmd, log: Path, timeout=None):
         f.flush()
         try:
             # PYTHONPATH: a shared venv may hold an editable install of another CROSS checkout
-            env = dict(os.environ, PYTHONPATH=str(ROOT), MPLBACKEND="Agg",
-                       PYTORCH_CUDA_ALLOC_CONF=os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"))
+            env = dict(os.environ, PYTHONPATH=str(ROOT), MPLBACKEND="Agg")
+            if alloc_conf:     # CROSS only: expandable segments break CUDA IPC between processes (MASt3R-SLAM back end)
+                env["PYTORCH_CUDA_ALLOC_CONF"] = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
             rc = subprocess.run([str(c) for c in cmd], stdout=f, stderr=subprocess.STDOUT, cwd=str(ROOT),
                                 timeout=timeout, env=env).returncode
         except subprocess.TimeoutExpired:
@@ -151,7 +152,7 @@ class Job:
         return cmd + extra
 
     def cross_map(self, map_seq, out: Path):
-        rc, dt = sh(self.cross_cmd(map_seq, map_seq, out, ["--skip-reloc"]), out / "bench.log", self.a.timeout)
+        rc, dt = sh(self.cross_cmd(map_seq, map_seq, out, ["--skip-reloc"]), out / "bench.log", self.a.timeout, alloc_conf=True)
         return rc, dt
 
     def cross_t1_result(self, seq_name, out: Path, dt):
@@ -182,7 +183,8 @@ class Job:
             for f in ("map.pkl", "map_meta.json"):
                 if not (d / f).exists():
                     os.symlink((map_dir / f).resolve(), d / f)
-            rc, dt = sh(self.cross_cmd(self.scene["map"], q, d, ["--skip-map"] + [str(e) for e in extra]), d / "bench.log", a.timeout)
+            rc, dt = sh(self.cross_cmd(self.scene["map"], q, d, ["--skip-map"] + [str(e) for e in extra]), d / "bench.log", a.timeout,
+                        alloc_conf=True)
             if rc != 0 or not (d / "reloc_summary.json").is_file():
                 write_result(d / "result.json", {**self.base, "track": track, "map": self.scene["map"], "query": q,
                                                  "status": "failed", "rc": rc, "wall_s": dt, **env_info()})
@@ -329,8 +331,8 @@ class Job:
         return [PY, script, "--map", self.seq(map_seq), "--query", self.seq(query_seq), "--out", out] + flags + extra
 
     def concat_map(self, map_seq, out: Path):
-        return sh(self.concat_cmd(map_seq, map_seq, out, ["--map-only", "--timeout", self.a.timeout]), out / "bench.log",
-                  self.a.timeout + 600)
+        return sh(self.concat_cmd(map_seq, map_seq, out, ["--map-only", "--timeout", self.a.concat_timeout]), out / "bench.log",
+                  self.a.concat_timeout + 600)
 
     def concat_query(self, map_dir: Path, q: str, t2: Path, t3: Path):
         """Map + query (T2) or map + trial (T3) in one stream; T3 is capped at --concat-max-trials evenly spaced trials
@@ -343,8 +345,8 @@ class Job:
             if (d / "result.json").is_file() and not a.force:
                 continue
             d.mkdir(parents=True, exist_ok=True)
-            rc, dt = sh(self.concat_cmd(self.scene["map"], q, d, [str(e) for e in extra] + ["--timeout", a.timeout]),
-                        d / "bench.log", a.timeout * (a.concat_max_trials + 1))
+            rc, dt = sh(self.concat_cmd(self.scene["map"], q, d, [str(e) for e in extra] + ["--timeout", a.concat_timeout]),
+                        d / "bench.log", a.concat_timeout * (a.concat_max_trials + 1))
             if not (d / "reloc_summary.json").is_file():
                 write_result(d / "result.json", {**self.base, "track": track, "map": self.scene["map"], "query": q,
                                                  "status": "failed", "rc": rc, "wall_s": dt, **env_info()})
@@ -465,6 +467,8 @@ def main():
     ap.add_argument("--out", default=os.environ.get("BENCH_RESULTS"))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=21600.0, help="seconds per harness run (a T3 run holds all trials)")
+    ap.add_argument("--concat-timeout", type=float, default=5400.0,
+                    help="seconds per run of a system without map persistence (map + trial stream)")
     ap.add_argument("--concat-max-trials", type=int, default=20,
                     help="T3 trials per query for systems without map persistence (evenly spaced)")
     ap.add_argument("--force", action="store_true")
