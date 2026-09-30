@@ -380,10 +380,16 @@ def main():
     ap.add_argument("--map-only", action="store_true", help="map the map sequence only (single-session accuracy)")
     ap.add_argument("--keep-chunks", action="store_true", help="keep the per-trial symlink folders")
     ap.add_argument("--require-map", action="store_true", help="fail instead of mapping when --out holds no stored map")
+    ap.add_argument("--eval-only", action="store_true", help="only re-evaluate the pose files already in --out")
     args = ap.parse_args()
     out = Path(args.out).resolve()
-    if args.system in ("rtabmap", "rtabmap_stereo") and False:
-        pass
+    if args.eval_only:        # re-score the stored pose files of an earlier run (no system run)
+        n_q = n_frames(Path(args.query).resolve())
+        trials = build_trials(n_q, args.trial_len, args.trial_stride)
+        qp = [(a, b, out / f"query_poses_t{ti}.txt") for ti, (a, b) in enumerate(trials)]
+        evaluate_trials(out / "map_poses.txt", qp, args.map, args.query, out,
+                        sim3=args.system == "orbslam3" and args.orb_sensor == "mono", r_d=args.r_d)
+        return
     if args.system == "orbslam3":
         mp, qp, sim3 = run_orbslam3(args, out)
     else:

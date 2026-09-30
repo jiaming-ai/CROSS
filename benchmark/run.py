@@ -294,6 +294,21 @@ class Job:
         for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
                                 ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
                                             "--r-d", self.dcfg["r_d"]])):
+            if a.reeval:              # re-score stored pose files with the current metrics
+                if not (d / "query_poses_t0.txt").is_file():
+                    continue
+                old = json.loads((d / "result.json").read_text()) if (d / "result.json").is_file() else {}
+                rc, dt = sh(self.baseline_cmd(self.scene["map"], q, d, [str(e) for e in extra] + ["--eval-only"]),
+                            d / "bench.log", a.timeout)
+                if (d / "reloc_summary.json").is_file() and rc == 0:
+                    rows = json.loads((d / "reloc_rows.json").read_text())
+                    summ = json.loads((d / "reloc_summary.json").read_text())
+                    res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ) if track == "t2" \
+                        else self.t3_from_summary(summ, q)
+                    keep = {k: old[k] for k in ("wall_s", "host", "gpu", "commit", "time", "rc") if k in old}
+                    res.update({"status": "ok", **keep, "rescored": time.strftime("%Y-%m-%d %H:%M:%S")})
+                    write_result(d / "result.json", res)
+                continue
             if (d / "result.json").is_file() and not a.force:
                 continue
             d.mkdir(parents=True, exist_ok=True)
@@ -443,6 +458,10 @@ class Job:
                 shutil.rmtree(nat / "views_map", ignore_errors=True)
         elif a.task == "query":
             m = self.scene["map"]
+            if a.reeval:
+                tag = f"{m}__{a.query}".replace("/", "_")
+                do_query(self.run_root / "maps" / m, a.query, self.run_root / "t2" / tag, self.run_root / "t3" / tag)
+                return
             md = self.ensure_map(m)
             tag = f"{m}__{a.query}".replace("/", "_")
             if json.loads((md / "MAP_DONE").read_text()).get("rc", 0) != 0:     # no map to localize in
@@ -472,6 +491,7 @@ def main():
     ap.add_argument("--concat-max-trials", type=int, default=20,
                     help="T3 trials per query for systems without map persistence (evenly spaced)")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--reeval", action="store_true", help="baselines: re-score existing query runs from their pose files")
     ap.add_argument("--keep-maps", action="store_true")
     ap.add_argument("--keep-rows", action="store_true", help="keep the per-frame rows of the query runs")
     a = ap.parse_args()

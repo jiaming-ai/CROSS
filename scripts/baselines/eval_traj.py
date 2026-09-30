@@ -58,7 +58,25 @@ def rot_err_deg(Ra, Rb):
     return float(np.degrees(np.arccos(np.clip(c, -1, 1))))
 
 
-def evaluate(map_poses, query_poses, gt_map, gt_query, sim3=False, valid_states=(2,), frame_range=None):
+def hold_latest(poses, valid_states, frame_range, max_age=10):
+    """Causal pose per frame: a frame without its own valid pose takes the system's latest valid pose, if it is at most
+    `max_age` frames old (1 s at 10 Hz).  Systems that report poses only at keyframes (MASt3R-SLAM, VGGT-SLAM) or lose
+    tracking briefly are then scored like a robot that asks for its current pose.  Held poses are marked `held`."""
+    out, last = {}, None
+    a, b = frame_range
+    for i in range(a, b):
+        if i in poses and poses[i][0] in valid_states:
+            out[i] = poses[i]
+            last = i
+        elif last is not None and i - last <= max_age:
+            out[i] = (poses[last][0], poses[last][1])
+    return out
+
+
+def evaluate(map_poses, query_poses, gt_map, gt_query, sim3=False, valid_states=(2,), frame_range=None, max_age=10):
+    if max_age:
+        query_poses = hold_latest(query_poses, valid_states,
+                                  frame_range if frame_range is not None else (0, len(gt_query)), max_age)
     ids = [i for i, (st, _) in map_poses.items() if st in valid_states and i < len(gt_map)]
     if len(ids) < 3:
         return None, {"error": "too few tracked map frames", "n_map_tracked": len(ids)}
