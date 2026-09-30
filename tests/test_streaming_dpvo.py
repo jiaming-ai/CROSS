@@ -217,3 +217,19 @@ def test_degenerate_views_hold_the_pose_and_discard_hallucinated_motion(monkeypa
     assert poses[3].pose[0, 3] == pytest.approx(2.)      # held through the degenerate stretch
     assert poses[4].pose[0, 3] == pytest.approx(2.)      # re-attached: DPVO's jump 2 -> 10 is discarded
     assert poses[5].pose[0, 3] == pytest.approx(3.)      # later motion continues normally
+
+
+def test_synchronous_frontend_gives_depth_to_the_first_valid_frame():
+    from types import SimpleNamespace
+    from cross.mono.dpvo_frontend import DPVOFrontend
+    f = DPVOFrontend.__new__(DPVOFrontend)
+    f.provide_mapping_depth, f.config = True, SimpleNamespace(mapping_interval=2)
+    f.index, f.had_depth = 4, False
+    assert f._needs_mapping_depth(True, False)          # interval frame before the scale is accepted
+    f.had_depth = False                                  # depth of an invalid frame does not count
+    f.index = 7
+    assert not f._needs_mapping_depth(True, False)       # off-interval, still invalid
+    assert f._needs_mapping_depth(True, True)            # first valid frame off the interval: needs depth
+    f.had_depth = True
+    assert not f._needs_mapping_depth(True, True)        # later off-interval frames do not
+    assert not f._needs_mapping_depth(False, True)       # tracker not initialized
