@@ -140,6 +140,21 @@ int main(int argc, char** argv) {
         fo.flush();
     }
     std::cerr << "frames with a loop/proximity detection: " << nLoc << "/" << left.size() << "\n";
+    // final optimized graph (node id = frame index + 1): the mapping trajectory after all loop closures
+    {
+        std::map<int, Transform> poses;
+        std::multimap<int, Link> links;
+        rtabmap.getGraph(poses, links, true, true);
+        std::ofstream ff(out + ".final");
+        ff << std::setprecision(9);
+        for (const auto& kv : poses) {
+            if (kv.first <= 0 || kv.second.isNull()) continue;
+            Eigen::Matrix4f M = (kv.second * optical).toEigen4f();
+            ff << kv.first - 1 << " 2";
+            for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) ff << " " << M(r, c);
+            ff << "\n";
+        }
+    }
     rtabmap.close(true);
     return 0;
 }

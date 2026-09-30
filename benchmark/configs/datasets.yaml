@@ -1,0 +1,65 @@
+# Datasets, scenes and splits of the CROSS benchmark (see benchmark/PROTOCOL.md).
+# Sequence folders live under $BENCH_DATA/<dataset>/<sequence>/<setup_dir> (written by benchmark/datasets/prepare_*.py).
+# setups: which setup folder serves each benchmark setup ("rgbd" also serves "mono": colour only).
+
+openloris:
+  environment: indoor
+  r_d: 2.0
+  lr_thresholds: [0.5, 1.0]
+  trial_len: 200
+  trial_stride: 200
+  odometry: wheel
+  setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
+  scenes:
+    office:   {map: office1-1,   queries: [office1-2, office1-3, office1-4, office1-5, office1-6, office1-7]}
+    corridor: {map: corridor1-1, queries: [corridor1-2, corridor1-3, corridor1-4, corridor1-5]}
+    home:     {map: home1-1,     queries: [home1-2, home1-3, home1-4, home1-5]}
+    cafe:     {map: cafe1-1,     queries: [cafe1-2]}
+    market:   {map: market1-1,   queries: [market1-2, market1-3]}
+  t1: all            # every sequence of every scene
+
+kitti:
+  environment: outdoor
+  r_d: 5.0
+  odometry: oxts_dead_reckoning
+  setups: {stereo: stereo, mono: stereo, rgbd: stereo}   # rgbd = RGB-D*: left image + SGBM depth from the pair
+  scenes:
+    "00": {map: "00"}
+    "01": {map: "01"}
+    "02": {map: "02"}
+    "04": {map: "04"}
+    "05": {map: "05"}
+    "06": {map: "06"}
+    "07": {map: "07"}
+    "08": {map: "08"}
+    "09": {map: "09"}
+    "10": {map: "10"}
+  t1: all
+
+rover:
+  environment: outdoor
+  r_d: 5.0
+  lr_thresholds: [1.0, 5.0]
+  trial_len: 200
+  trial_stride: 200
+  odometry: simulated     # no wheel odometry on the platform: ground truth + SNR 10 noise (seeded)
+  snr: 10
+  setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
+  scenes:
+    campus_large:
+      map: campus_large_day_2024-09-25
+      queries: [campus_large_summer_2023-07-20, campus_large_autumn_2023-11-07, campus_large_winter_2024-01-27,
+                campus_large_spring_2024-04-14, campus_large_dusk_2024-09-24_2, campus_large_night_2024-09-24_3,
+                campus_large_night-light_2024-09-24_4]
+  t1: all
+
+simchange:
+  environment: indoor
+  r_d: 2.0
+  lr_thresholds: [0.5, 1.0]
+  trial_len: 100
+  trial_stride: 50
+  odometry: simulated
+  snr: 10
+  external: simchange_v2   # CROSS rows come from the SimChange v2 evaluation (CROSS-stereo-private/scripts/up/run_v2sim.sh)
+  scenes: {}

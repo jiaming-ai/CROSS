@@ -1,0 +1,62 @@
+# Systems of the CROSS benchmark.  runner: how benchmark/run.py executes the system.
+#   cross_rgbd   scripts/map_and_reloc_rgbd.py (posed RGB-D folders) or scripts/map_and_reloc.py --estimator pnp (stereo
+#                folders, RGB-D* with SGBM depth)
+#   cross_ff     scripts/map_and_reloc.py --estimator ff
+#   baseline     scripts/baselines/run_baselines.py
+#   concat       systems without map persistence (map + query in one stream)
+# uses_odometry: the system consumes the odometry stream of the dataset.
+
+cross_rgbd:
+  label: CROSS (RGB-D, PnP)
+  runner: cross_rgbd
+  setups: [rgbd]
+  uses_odometry: true
+  map_reuse: save/load
+  outdoor_config: [configs/outdoor.yaml]
+
+cross_stereo:
+  label: CROSS (stereo, VGGT-Omega)
+  runner: cross_ff
+  setups: [stereo]
+  uses_odometry: true
+  map_reuse: save/load
+  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3"]
+  outdoor_config: [configs/outdoor.yaml]
+
+cross_mono:
+  label: CROSS (mono)
+  runner: pending
+  setups: [mono]
+  uses_odometry: true
+  map_reuse: save/load
+
+orbslam3:
+  label: ORB-SLAM3
+  runner: baseline
+  setups: [rgbd, stereo, mono]
+  uses_odometry: false
+  map_reuse: atlas load + merge
+  sim3_setups: [mono]
+
+rtabmap:
+  label: RTAB-Map
+  runner: baseline
+  setups: [rgbd, stereo]
+  uses_odometry: true
+  map_reuse: database, localization mode
+
+mast3r_slam:
+  label: MASt3R-SLAM
+  runner: concat
+  setups: [mono]
+  uses_odometry: false
+  map_reuse: concatenated stream
+  sim3_setups: [mono]
+
+vggt_slam:
+  label: VGGT-SLAM
+  runner: concat
+  setups: [mono]
+  uses_odometry: false
+  map_reuse: concatenated stream
+  sim3_setups: [mono]

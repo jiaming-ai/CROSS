@@ -77,6 +77,7 @@ def load_kitti_calibration(date_root: Path) -> dict:
     right_in_left = cam2_from_rect0 @ _inv(cam3_from_rect0)
     return {
         "cam2_from_imu": cam2_from_rect0 @ rect0_from_imu,
+        "cam2_from_rect0": cam2_from_rect0,
         "right_in_left": right_in_left,
         "K_left": P2[:, :3],
         "K_right": P3[:, :3],

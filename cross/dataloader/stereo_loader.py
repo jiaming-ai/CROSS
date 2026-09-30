@@ -265,6 +265,11 @@ class StereoSequenceLoader(Dataloader):
         self.rgb_width, self.rgb_height = int(calib["width"]), int(calib["height"])
         self._default_fps = float(calib.get("fps", 10.0))
         self.simchange_meta = calib
+        if (self.root / "odom_left.txt").is_file():   # the platform's own odometry (benchmark stereo folders)
+            self.odom_c2w = np.loadtxt(self.root / "odom_left.txt", dtype=np.float64).reshape(-1, 4, 4)
+            assert len(self.odom_c2w) == len(self.left_paths)
+            self.snr = None
+            self.odom_scale_bias = self.odom_yaw_drift = 0.0
 
     # ---- posed RGB-D folder (monocular; OpenLORIS / TUM RGB-D converted by the CROSS scripts) ---- #
     def _load_posed_rgbd(self):

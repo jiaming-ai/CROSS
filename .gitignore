@@ -67,3 +67,8 @@ scripts/baselines/build/
 
 # Private project notes (never pushed)
 /docs/
+third_party/ORB_SLAM3
+third_party/Pangolin
+third_party/rtabmap
+third_party/install
+assets/*.pdf

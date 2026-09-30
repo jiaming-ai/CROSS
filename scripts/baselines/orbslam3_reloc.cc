@@ -1,7 +1,9 @@
-// ORB-SLAM3 stereo driver for SimChange-style sequences (left/, right/ PNG folders).
+// ORB-SLAM3 driver for image-folder sequences (SimChange / benchmark layout: left/, right/, depth/ PNG folders).
 //
 //   orbslam3_reloc <voc> <settings.yaml> <sequence_dir> <out_poses.txt> [--localization] [--fps F]
+//                  [--sensor stereo|rgbd|mono] [--left-dir left] [--right-dir right] [--depth-dir depth]
 //
+// rgbd: depth PNGs are uint16 (scale RGBD.DepthMapFactor of the settings, 1000 = millimetres).
 // The settings file controls atlas loading/saving (System.LoadAtlasFromFile / SaveAtlasToFile).
 // With --localization the tracking runs in localization-only mode against the loaded atlas.
 // Every frame writes:  idx  state  t00 t01 ... t33   (camera-to-world, OpenCV convention)
@@ -39,17 +41,23 @@ int main(int argc, char** argv) {
     std::string voc = argv[1], settings = argv[2], seq = argv[3], out = argv[4];
     bool localization = false, atlas_loaded = false;
     double fps = 10.0;
-    std::string right_dir = "right";
+    std::string right_dir = "right", left_dir = "left", depth_dir = "depth", sensor = "stereo";
     int pace_ms = 5;
     for (int i = 5; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--localization") localization = true;
         else if (a == "--fps" && i + 1 < argc) fps = atof(argv[++i]);
         else if (a == "--right-dir" && i + 1 < argc) right_dir = argv[++i];
+        else if (a == "--left-dir" && i + 1 < argc) left_dir = argv[++i];
+        else if (a == "--depth-dir" && i + 1 < argc) depth_dir = argv[++i];
+        else if (a == "--sensor" && i + 1 < argc) sensor = argv[++i];
         else if (a == "--pace-ms" && i + 1 < argc) pace_ms = atoi(argv[++i]);
     }
-    auto left = listPng(seq + "/left");
-    auto right = listPng(seq + "/" + right_dir);
+    auto left = listPng(seq + "/" + left_dir);
+    std::vector<std::string> right;
+    if (sensor == "stereo") right = listPng(seq + "/" + right_dir);
+    else if (sensor == "rgbd") right = listPng(seq + "/" + depth_dir);
+    else right = left;
     if (left.empty() || left.size() != right.size()) {
         std::cerr << "bad sequence " << seq << " (" << left.size() << "/" << right.size() << ")\n";
         return 1;
@@ -58,17 +66,21 @@ int main(int argc, char** argv) {
         cv::FileStorage fs(settings, cv::FileStorage::READ);
         atlas_loaded = !fs["System.LoadAtlasFromFile"].empty();
     }
-    ORB_SLAM3::System SLAM(voc, settings, ORB_SLAM3::System::STEREO, false);
+    const auto type = sensor == "rgbd" ? ORB_SLAM3::System::RGBD
+                    : sensor == "mono" ? ORB_SLAM3::System::MONOCULAR : ORB_SLAM3::System::STEREO;
+    ORB_SLAM3::System SLAM(voc, settings, type, false);
     if (localization) SLAM.ActivateLocalizationMode();
     std::ofstream f(out);
     f << std::setprecision(9);
     double t_total = 0;
     for (size_t i = 0; i < left.size(); ++i) {
         cv::Mat imL = cv::imread(left[i], cv::IMREAD_COLOR);   // 8-bit: SimChange-Long renders are 16-bit PNGs
-        cv::Mat imR = cv::imread(right[i], cv::IMREAD_COLOR);
         double ts = i / fps;
         auto t0 = std::chrono::steady_clock::now();
-        Sophus::SE3f Tcw = SLAM.TrackStereo(imL, imR, ts);
+        Sophus::SE3f Tcw;
+        if (sensor == "rgbd") Tcw = SLAM.TrackRGBD(imL, cv::imread(right[i], cv::IMREAD_UNCHANGED), ts);
+        else if (sensor == "mono") Tcw = SLAM.TrackMonocular(imL, ts);
+        else Tcw = SLAM.TrackStereo(imL, cv::imread(right[i], cv::IMREAD_COLOR), ts);
         t_total += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         int state = SLAM.GetTrackingState();
         // in a multi-session run the new session lives in its own map until it is merged into the loaded
