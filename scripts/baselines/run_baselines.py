@@ -276,7 +276,10 @@ def run_rtabmap(args, out: Path):
     odom_q = prepare_sequence(q, args.snr, seed=1, cache=out / "odom") if not args.map_only else None
     db = out.resolve() / "map.db"
     map_poses = out / "map_poses.txt"
-    extra = ["--Vis/MinInliers", "15", "--Rtabmap/DetectionRate", "0", "--Kp/DetectorStrategy", "6", "--Vis/FeatureType", "6"]
+    # Mem/STMSize 30 as in RTAB-Map's own KITTI tool: with the default 10 (1 s at 10 Hz) the nodes just outside the
+    # short-term memory become loop-closure candidates, and on a car (~25 m/s) they produce false loop closures
+    extra = ["--Vis/MinInliers", "15", "--Rtabmap/DetectionRate", "0", "--Kp/DetectorStrategy", "6", "--Vis/FeatureType", "6",
+             "--Mem/STMSize", "30"]
     fps = json.loads((m / "calib.json").read_text()).get("fps", 10.0)
     extra = ["--fps", str(fps)] + extra + os.environ.get("RTABMAP_PARAMS", "").split()   # later values override
     if args.system == "rtabmap_stereo":
