@@ -56,12 +56,27 @@ def n_frames(seq: Path) -> int:
     return len(list((seq / image_dir(seq)).glob("*.png")))
 
 
-def prepare_sequence(seq: Path, snr, seed=0):
-    """Write calib_pinhole.txt, depth_mm/ and odom_snr{snr}.txt next to a SimChange sequence; returns the odometry
-    file (the sequence's own odom_left.txt when it has one: real odometry, no simulated noise)."""
+def prepare_sequence(seq: Path, snr, seed=0, cache: Path = None):
+    """Returns the odometry file of a sequence: its own odom_left.txt when it has one (real odometry, no simulated
+    noise), otherwise odom_snr{snr}.txt made from the ground truth.  With `cache`, the dataset folder stays read-only:
+    the simulated odometry goes to `cache` and the per-run views (make_chunk) expose depth_mm / calib_pinhole.txt.
+    Without it (legacy SimChange runs), calib_pinhole.txt, depth_mm/ and the odometry are written next to the sequence."""
     from cross.dataloader.stereo_loader import StereoSequenceLoader
-    if (seq / "odom_left.txt").is_file() and not (seq / "left").is_dir():
-        return seq / "odom_left.txt"     # benchmark folder: read-only, the per-run views (make_chunk) expose depth_mm
+    if (seq / "odom_left.txt").is_file() and (cache is not None or not (seq / "left").is_dir()):
+        return seq / "odom_left.txt"
+    if cache is not None:
+        cache.mkdir(parents=True, exist_ok=True)
+        odom_file = cache / f"odom_snr{snr}_seed{seed}.txt"
+        if not odom_file.is_file():
+            ds = StereoSequenceLoader(str(seq), snr=snr, baseline=_any_baseline(seq))
+            np.random.seed(seed)
+            T, rows = np.eye(4), []
+            for i, d in enumerate(ds.replay_data()):
+                if i > 0:
+                    T = T @ d["delta_pose"]
+                rows.append(T.reshape(-1))
+            np.savetxt(odom_file, np.asarray(rows), fmt="%.8f")
+        return odom_file
     calib = json.loads((seq / "calib.json").read_text())
     K = np.asarray(calib["K"])
     (seq / "calib_pinhole.txt").write_text(f"{K[0,0]} {K[1,1]} {K[0,2]} {K[1,2]} {calib['width']} {calib['height']}\n")
@@ -90,6 +105,12 @@ def prepare_sequence(seq: Path, snr, seed=0):
             rows.append(T.reshape(-1))
         np.savetxt(odom_file, np.asarray(rows), fmt="%.8f")
     return odom_file
+
+
+def _any_baseline(seq: Path):
+    """A rendered stereo baseline of a SimChange sequence (the odometry does not depend on it), else None."""
+    dirs = json.loads((seq / "calib.json").read_text()).get("right_dirs", {})
+    return float(next(iter(dirs))) if dirs and not (seq / "right").exists() else None
 
 
 def orb_yaml(seq: Path, path: Path, load_atlas=None, save_atlas=None, fps=10.0, n_features=None, ini_fast=None, min_fast=None, th_depth=40.0, baseline=None):
@@ -215,12 +236,12 @@ def run_orbslam3(args, out: Path):
     if args.baseline is not None:
         rd += ["--right-dir", json.loads((m / "calib.json").read_text())["right_dirs"][f"{args.baseline:.2f}"]]
     if args.orb_sensor == "rgbd":
-        rd += ["--depth-dir", "depth_mm" if (m / "depth_mm").exists() or (m / "rgb").is_dir() else "depth"]
+        rd += ["--depth-dir", "depth_mm"]          # the views expose uint16 millimetre depth as depth_mm/
     orb = binary("orbslam3_reloc")
     if not (out / "atlas.osa").is_file() or not map_poses.is_file() or not _map_run_ok(out):
         if args.require_map:
             sys.exit(f"no stored ORB-SLAM3 atlas in {out} (--require-map)")
-        mv = full_view(m, out / "views_map")
+        mv = make_chunk(m, out / "views_map", 0, n_frames(m))
         orb_yaml(m, out / "map.yaml", save_atlas=atlas, fps=fps, baseline=args.baseline)
         rc, dt = run(orb + [voc, str(out / "map.yaml"), str(mv), str(map_poses), "--fps", str(fps)] + rd, out / "map.log", cwd=str(out))
         (out / "map_time.json").write_text(json.dumps({"rc": rc, "seconds": dt, "n_frames": n_frames(m)}))
@@ -233,7 +254,7 @@ def run_orbslam3(args, out: Path):
     trials = build_trials(n_q, args.trial_len, args.trial_stride)
     query_files = []
     for ti, (a, b) in enumerate(trials):
-        chunk = make_chunk(q, out / "trials", a, b) if len(trials) > 1 or a > 0 or b < n_q or not (q / "left").is_dir() else q
+        chunk = make_chunk(q, out / "trials", a, b)
         qp = out / f"query_poses_t{ti}.txt"
         cmd = orb + [voc, str(out / "query.yaml"), str(chunk), str(qp), "--fps", str(fps)] + rd
         rc, dt = run(cmd, out / f"query_t{ti}.log", cwd=str(out))
@@ -251,8 +272,8 @@ def run_orbslam3(args, out: Path):
 def run_rtabmap(args, out: Path):
     out.mkdir(parents=True, exist_ok=True)
     m, q = Path(args.map).resolve(), Path(args.query).resolve()
-    odom_m = prepare_sequence(m, args.snr)
-    odom_q = prepare_sequence(q, args.snr) if not args.map_only else None
+    odom_m = prepare_sequence(m, args.snr, seed=0, cache=out / "odom")
+    odom_q = prepare_sequence(q, args.snr, seed=1, cache=out / "odom") if not args.map_only else None
     db = out.resolve() / "map.db"
     map_poses = out / "map_poses.txt"
     extra = ["--Vis/MinInliers", "15", "--Rtabmap/DetectionRate", "0", "--Kp/DetectorStrategy", "6", "--Vis/FeatureType", "6"]
@@ -268,8 +289,8 @@ def run_rtabmap(args, out: Path):
     if not db.is_file() or not map_poses.is_file() or not _map_run_ok(out):
         if args.require_map:
             sys.exit(f"no stored RTAB-Map database in {out} (--require-map)")
-        mv = full_view(m, out / "views_map", odom_file=odom_m)
-        om = mv / "odom.txt" if (mv / "odom.txt").is_file() else odom_m
+        mv = make_chunk(m, out / "views_map", 0, n_frames(m), odom_file=odom_m)
+        om = mv / "odom.txt"
         rc, dt = run(rtab + [str(mv), str(om), str(db), str(map_poses)] + extra, out / "map.log", cwd=str(out))
         (out / "map_time.json").write_text(json.dumps({"rc": rc, "seconds": dt, "n_frames": n_frames(m)}))
     if args.map_only:

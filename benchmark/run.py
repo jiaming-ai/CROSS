@@ -141,6 +141,8 @@ class Job:
             if sysc["runner"] == "cross_rgbd":           # RGB-D*: PnP on stereo-matched depth
                 cmd += ["--estimator", "pnp", "--pnp-depth", "sgbm"]
             cmd += [str(v) for v in sysc.get("args", [])]
+            if self.dcfg.get("baseline"):
+                cmd += ["--baseline", self.dcfg["baseline"]]
             if self.snr:
                 cmd += ["--snr", self.snr]
         cmd += ["--map", self.seq(map_seq), "--query", self.seq(query_seq), "--out", out]
@@ -228,6 +230,8 @@ class Job:
         system = self.a.system
         cmd = [PY, "scripts/baselines/run_baselines.py", "--map", self.seq(map_seq), "--query", self.seq(query_seq),
                "--out", out, "--snr", self.snr or 10]
+        if self.a.setup == "stereo" and self.dcfg.get("baseline"):
+            cmd += ["--baseline", self.dcfg["baseline"]]
         if system == "orbslam3":
             cmd += ["--system", "orbslam3", "--orb-sensor", self.a.setup]
         elif system == "rtabmap":
@@ -369,7 +373,7 @@ class Job:
         do_map, t1_result, _ = self.runner()
         d = self.run_root / "maps" / map_seq
         done = d / "MAP_DONE"
-        lock = self.run_root / "maps" / f".{map_seq}.lock"
+        lock = self.run_root / "maps" / f".{map_seq.replace('/', '_')}.lock"
         while not done.is_file():
             d.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -438,7 +442,7 @@ class Job:
         elif a.task == "query":
             m = self.scene["map"]
             md = self.ensure_map(m)
-            tag = f"{m}__{a.query}"
+            tag = f"{m}__{a.query}".replace("/", "_")
             if json.loads((md / "MAP_DONE").read_text()).get("rc", 0) != 0:     # no map to localize in
                 for track in ("t2", "t3"):
                     write_result(self.run_root / track / tag / "result.json",

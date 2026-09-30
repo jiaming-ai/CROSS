@@ -61,5 +61,20 @@ simchange:
   trial_stride: 50
   odometry: simulated
   snr: 10
-  external: simchange_v2   # CROSS rows come from the SimChange v2 evaluation (CROSS-stereo-private/scripts/up/run_v2sim.sh)
-  scenes: {}
+  baseline: 0.3            # rendered stereo baseline used by every stereo system
+  # $BENCH_DATA/simchange = the SimChange v2 renders (<scene>/<variant>/: left/, right_0.30/, depth/, poses_left.txt).
+  # CROSS rows are imported from the SimChange v2 evaluation (benchmark/import_runs.py); baselines run through run.py.
+  setups: {rgbd: ".", stereo: ".", mono: "."}
+  scenes:
+    hssd_house:
+      map: "hssd_house/map"
+      queries: ["hssd_house/rearr_10", "hssd_house/rearr_25", "hssd_house/rearr_50", "hssd_house/rearr_75", "hssd_house/rearr_100", "hssd_house/rearr_50_s1", "hssd_house/rearr_50_s2", "hssd_house/rearr_50_remove", "hssd_house/rearr_50_relocate", "hssd_house/light_morning", "hssd_house/light_evening", "hssd_house/light_night", "hssd_house/light_overcast", "hssd_house/offset_1.0", "hssd_house/yaw_45", "hssd_house/reverse", "hssd_house/half", "hssd_house/rearr_50+light_night", "hssd_house/rearr_50+reverse", "hssd_house/rearr_100+light_evening+reverse", "hssd_house/rearr_50+offset_1.0+light_overcast"]
+    hssd_restaurant:
+      map: "hssd_restaurant/map"
+      queries: ["hssd_restaurant/rearr_10", "hssd_restaurant/rearr_25", "hssd_restaurant/rearr_50", "hssd_restaurant/rearr_75", "hssd_restaurant/rearr_100", "hssd_restaurant/rearr_50_s1", "hssd_restaurant/rearr_50_s2", "hssd_restaurant/rearr_50_remove", "hssd_restaurant/rearr_50_relocate", "hssd_restaurant/light_morning", "hssd_restaurant/light_evening", "hssd_restaurant/light_night", "hssd_restaurant/light_overcast", "hssd_restaurant/offset_1.0", "hssd_restaurant/yaw_45", "hssd_restaurant/reverse", "hssd_restaurant/half", "hssd_restaurant/rearr_50+light_night", "hssd_restaurant/rearr_50+reverse", "hssd_restaurant/rearr_100+light_evening+reverse", "hssd_restaurant/rearr_50+offset_1.0+light_overcast"]
+    classroom:
+      map: "classroom/map"
+      queries: ["classroom/light_morning", "classroom/light_noon", "classroom/light_afternoon", "classroom/light_evening", "classroom/light_night", "classroom/light_overcast", "classroom/move_25", "classroom/move_50", "classroom/move_100", "classroom/remove_50", "classroom/background", "classroom/offset_0.5", "classroom/offset_1.0", "classroom/height_0.4", "classroom/yaw_15", "classroom/yaw_30", "classroom/yaw_45", "classroom/reverse", "classroom/half", "classroom/combo"]
+    lonemonk:
+      map: "lonemonk/map"
+      queries: ["lonemonk/light_morning", "lonemonk/light_evening", "lonemonk/light_night", "lonemonk/light_overcast", "lonemonk/move_50", "lonemonk/background", "lonemonk/offset_1.0", "lonemonk/offset_2.0", "lonemonk/yaw_45", "lonemonk/reverse", "lonemonk/half", "lonemonk/reverse+offset_1.0", "lonemonk/light_night+reverse", "lonemonk/light_evening+move_50+reverse+offset_1.0"]
