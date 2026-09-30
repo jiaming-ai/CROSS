@@ -115,6 +115,8 @@ class KeyframeDatabase:
         atlas: Atlas = None,
         temporary: bool = False,
         last_pgo_step: int = -1,
+        pose_charts: torch.Tensor = None,
+        metric_source: dict = None,
         raw_rgb_right: torch.Tensor = None,
     ) -> Keyframe:
         """Insert a Keyframe into the database.
@@ -148,6 +150,8 @@ class KeyframeDatabase:
             atlas=atlas,
             temporary=temporary,
             last_pgo_step=last_pgo_step,
+            pose_charts=pose_charts,
+            metric_source=metric_source,
         )
         
         # Add to storage
@@ -239,6 +243,7 @@ class KeyframeDatabase:
         Returns:
             dict: Database state including keyframes, embeddings, and atlases
         """
+        from cross.core.conditional_pose import records
         db_keyframes = []
         for atlas in self._keyframe_by_atlas:
             for kf in self._keyframe_by_atlas[atlas]:
@@ -250,6 +255,9 @@ class KeyframeDatabase:
                     "pose_mu": kf.pose_mu.cpu() if kf.pose_mu is not None else None,
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,
+                    "pose_charts": kf.pose_charts.cpu() if kf.pose_charts is not None else None,
+                    "metric_source": kf.metric_source,
+                    "conditional_poses": records(kf.conditional_poses),
                     "atlas_id": kf.atlas.id if kf.atlas is not None else None,
                     "timestamp": kf.timestamp,
                     "temporary": kf.temporary,
@@ -276,6 +284,7 @@ class KeyframeDatabase:
         Returns:
             dict: Mapping from keyframe ID to Keyframe object
         """
+        from cross.core.conditional_pose import restore
         self._keyframe_by_atlas.clear()
         self._atlas_to_indices.clear()
         self._index_to_atlas_idx.clear()
@@ -314,6 +323,9 @@ class KeyframeDatabase:
                 timestamp=kf_data["timestamp"],
                 temporary=kf_data["temporary"],
                 last_pgo_step=kf_data["last_pgo_step"],
+                pose_charts=kf_data["pose_charts"].to(storage_device) if kf_data.get("pose_charts") is not None else None,
+                metric_source=kf_data.get("metric_source"),
+                conditional_poses=restore(kf_data.get("conditional_poses")),
             )
 
             # Manually set the ID to match the saved one
@@ -355,6 +367,9 @@ class KeyframeDatabase:
         self, 
         img: torch.Tensor,
         target_atlases: Optional[List[Atlas]] = None,
+        reserved_keyframe_ids=(),
+        reserved_count: int = 0,
+        reserved_min_score: Optional[float] = None,
         max_kf_id: Optional[int] = None,
         min_kf_id: Optional[int] = None,
         score_threshold: Optional[float] = None,
@@ -368,6 +383,11 @@ class KeyframeDatabase:
         Returns:
             List of (score, Keyframe) tuples in descending order of confidence
         """
+        if reserved_count < 0 or reserved_count > self.top_k:
+            raise ValueError("Historical retrieval slots must be between zero and top_k")
+        if reserved_min_score is not None:
+            if not 0 <= reserved_min_score <= 1 or not reserved_count:
+                raise ValueError("Historical minimum score needs reserved slots and must be within [0,1]")
         if self._current_size == 0:
             return {
                 "scores": [],
@@ -417,6 +437,28 @@ class KeyframeDatabase:
         original_indices_passing_threshold = (scores > thr_high).nonzero(as_tuple=True)[0]
         if original_indices_passing_threshold.numel() == 0:
             original_indices_passing_threshold = (scores > thr_low).nonzero(as_tuple=True)[0]
+
+        if reserved_min_score is not None:
+            # Permit at most the reserved budget of weaker historical views.
+            # Retain original scores for CROSS's measurement uncertainty; query
+            # nodes retain the original high/low thresholds. Geometry and CROSS
+            # temporal evidence decide whether any such candidate is usable.
+            historical = []
+            reserved_ids = set(reserved_keyframe_ids)
+            score_values = scores.detach().cpu().tolist()
+            for score_index in scores.argsort(descending=True).tolist():
+                if not score_values[score_index] > reserved_min_score:
+                    break
+                buffer_index = valid_indices[score_index] if target_atlases is not None else score_index
+                atlas, list_index = self._index_to_atlas_idx[buffer_index]
+                if self._keyframe_by_atlas[atlas][list_index].id in reserved_ids:
+                    historical.append(score_index)
+                    if len(historical) == reserved_count:
+                        break
+            if historical:
+                original_indices_passing_threshold = torch.unique(torch.cat([
+                    original_indices_passing_threshold,
+                    torch.tensor(historical, device=scores.device, dtype=torch.long)]), sorted=True)
         
         if original_indices_passing_threshold.numel() == 0:
             return {
@@ -434,6 +476,27 @@ class KeyframeDatabase:
         
         # Select the top_k relative indices
         top_k_relative_indices = sorted_relative_indices[:self.top_k]
+        if reserved_count:
+            # Reserve candidates within the same verification budget. Original
+            # thresholds apply unless the explicit historical floor is set.
+            reserved_ids = set(reserved_keyframe_ids)
+            ranking = sorted_relative_indices.tolist()
+            historical = []
+            for index in ranking:
+                score_index = int(original_indices_passing_threshold[index])
+                buffer_index = valid_indices[score_index] if target_atlases is not None else score_index
+                atlas, list_index = self._index_to_atlas_idx[buffer_index]
+                if self._keyframe_by_atlas[atlas][list_index].id in reserved_ids:
+                    historical.append(index)
+                    if len(historical) == reserved_count:
+                        break
+            chosen = set(historical)
+            for index in ranking:
+                if len(chosen) >= self.top_k:
+                    break
+                chosen.add(index)
+            top_k_relative_indices = torch.tensor([index for index in ranking if index in chosen],
+                                                   device=scores.device, dtype=torch.long)
         
         # Use these top_k relative indices to get the actual top_k scores
         final_top_k_scores = scores_of_candidates[top_k_relative_indices]

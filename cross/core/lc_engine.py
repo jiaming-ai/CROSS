@@ -103,7 +103,7 @@ class LoopClosureEngine:
                 if not original_kf_ids:
                     logger.warning("LC Engine: no original keyframes found in graph")
                     continue
-                fixed_node_id = min(original_kf_ids)
+                fixed_node_id = pg.preferred_fixed_node if self.hm.chart_aware else min(original_kf_ids)
                 optim_node_ids = set(original_kf_ids + temp_vertex_ids) - {fixed_node_id}
                 pg.solve(optim_node_ids=optim_node_ids, fixed_node_ids={fixed_node_id})
             except Exception as e:

@@ -72,3 +72,5 @@ third_party/Pangolin
 third_party/rtabmap
 third_party/install
 assets/*.pdf
+.archive/
+*.safetensors

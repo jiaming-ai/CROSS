@@ -45,6 +45,9 @@ class PoseEstType(str, Enum):
     PNP = "pnp"
     VGGT = "vggt"
     FF = "ff"  # stereo mode: feed-forward multi-view model with stereo scale anchors (cross/cv/pose_est_ff.py)
+    # mono mode: the relative-pose estimator is injected by the monocular pipeline (System(pose_estimator=...))
+    DA3 = "da3"
+    METRIC_PNP = "metric_pnp"
 
 
 class FFBackend(str, Enum):
@@ -138,6 +141,8 @@ class RetrievalConfig:
     vpr_score_threshold_high: float = 0.3
     vpr_score_threshold_low: float = 0.3
     initial_buffer_size: int = 1000
+    historical_slots: int = 0  # reserve within top_k after loading a map; same score thresholds
+    historical_min_score: float | None = None  # opt-in exploration floor, saved-map candidates only
 
 
 @dataclass
@@ -288,6 +293,9 @@ class ClusterStdConfig:
 class HypothesisConfig:
     """All tuning parameters for HypothesisManager."""
 
+    conditional_sources: bool = False
+    schmidt_map_geometry: bool = False  # experimental shared map uncertainty
+    map_geometry_basis: str = 'epoch'  # 'factor' retains raw factor identities across solves
     # --- Observation update ---
     # process noise (std, metres / radians per axis) added to the prior of every component before it is fused with
     # an observation.  0.05 is the original CROSS value: it keeps the Kalman gain away from zero but, with good
@@ -367,6 +375,14 @@ class HypothesisConfig:
     detect_overlap_rel_margin: float = 1.0
     detect_conf_rel_margin: float = 1.0
     detect_conf_hitrate_thresh: float = 0.5
+    session_recovery: bool = False  # experimental historical support in place of chart-distance guard
+    chart_aware: bool = False  # keep disconnected coordinate frames separate
+    # clear the evidence history (LLR, overlap, confidence, validity) of a component slot when it is freed or reused,
+    # so a new hypothesis does not inherit the evidence of the place that held the slot before (from CROSS-mono)
+    reset_evidence_on_slot_reuse: bool = False
+    # re-run loop-closure detection in the same step when adding the keyframe realized a new branch, instead of
+    # waiting for the next observation (from CROSS-mono)
+    lc_recheck_after_realization: bool = False
     # Only history entries recorded while the component was active and past its birth frame count as evidence
     # (before this fix, empty history slots of a just-realized hypothesis passed the tests above through the margins,
     # so a hypothesis was merged within one or two observations of its birth -- the mechanism behind the false loop
@@ -386,6 +402,23 @@ class HypothesisConfig:
     reloc_unique_evidence: bool = False
     reloc_unique_min_dist: float = 3.0
     reloc_min_frames: int = 0
+    # Loaded-map recovery with sparse verification (monocular): while the session is not yet joined to the map, a
+    # component in another chart than hypothesis 0 is scored by map-association evidence instead of by its Gaussian
+    # overlap relative to hypothesis 0 (whose own-session observations say nothing about map association). A frame
+    # with a verified loaded-map edge contributes reloc_consistency_nats - 0.5 * Mahalanobis(residual); a frame
+    # without one contributes log(1 - reloc_detection_prob) (a missed detection). The sequential sum over the
+    # evidence window then realizes and commits the branch; at least reloc_min_verified_frames verified frames from
+    # two distinct map keyframes are required. Requires session_recovery with chart_aware.
+    # Innovation gate for hypothesis 0: a proposal whose Mahalanobis residual against hypothesis 0 (prior covariance plus
+    # filter process noise plus proposal covariance, 6 dof) exceeds this chi-square value is not fused into hypothesis 0;
+    # it may still feed or seed another hypothesis, which delayed commitment resolves (0 disables). Applies where the
+    # verified loop closure has no odometry-chain prediction, e.g. saved-map references after the map join.
+    h0_innovation_gate: float = 0.0
+    reloc_association_evidence: bool = False
+    reloc_detection_prob: float = 0.3
+    reloc_consistency_nats: float = 3.0
+    reloc_min_verified_frames: int = 3
+    reloc_realize_nats: float = 2.0
     detect_reject_cooldown_steps: int = 30   # steps a candidate is ignored after a rejected merge
     # geometric verification of a merge: fraction of the candidate's visual edges that remain outliers
     # (Mahalanobis norm > verify_outlier_sigma) after the loop-closure optimisation

@@ -687,8 +687,10 @@ class PoseEstPnP(PoseEst):
         curr_depth: torch.Tensor,
         retrieval_scores: List[float] = None,
         keyframes: List[Keyframe] = None,
+        **context,
     ):
         """Estimate relative pose between two images using PnP
+        (context: optional keyword arguments of the retrieval step, e.g. ref_loaded / session_unanchored; unused here)
         TODO: cache the keypoints and descriptors
         Args:
             ref_image: (B, 3, H, W)

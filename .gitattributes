@@ -1,0 +1,2 @@
+# Preserve exact upstream context in third-party compatibility patches.
+patches/*.patch -whitespace

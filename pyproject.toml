@@ -80,6 +80,13 @@ da3 = [
     "pycolmap",
     "moviepy==1.0.3",
 ]
+# mono mode: DPVO visual odometry (built from source, install.sh --mono) and DA3 learned metric depth / two-view
+# retrieval geometry (third_party/depth-anything-3); the da3 extra plus DPVO's runtime needs
+mono = [
+    "cross[da3,stereo]",
+    "yacs",
+    "numba>=0.59,<0.62",
+]
 all = [
     "cross[detection,recording,dev]",
 ]

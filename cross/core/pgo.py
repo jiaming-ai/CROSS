@@ -78,6 +78,11 @@ class PoseGraph:
         self.nodes = hypothesis_manager.nodes
         self.odom_edges = hypothesis_manager.odom_edges
         self.hypothesis_manager = hypothesis_manager
+        self.chart_aware = hypothesis_manager.chart_aware
+        self.source_component_charts = hypothesis_manager.component_charts.tolist()
+        self.source_component_generations = list(hypothesis_manager.component_generations)
+        self.output_chart = None
+        self.preferred_fixed_node = None
         self.device = device
         self.depth = depth
         self.k_hop = k_hop
@@ -370,6 +375,10 @@ class PoseGraph:
             # Find keyframes that exist in both hypotheses (for LC edges)
             # These are keyframes >= start_idx that are also in visual_node_ids
             common_kf_ids = [kf_id for kf_id in sorted_kf_ids if kf_id >= start_idx]
+            if self.chart_aware:
+                common_kf_ids = [i for i in common_kf_ids
+                                if int(self.nodes[i].pose_charts[other_hypothesis_id]) == self.source_component_charts[other_hypothesis_id]
+                                and self.nodes[i].pose_weights[other_hypothesis_id] > 0]
             
             # --- Step 4.1: Create temp vertices for the other hypothesis ---
             previous_temp_id = None
@@ -460,7 +469,8 @@ class PoseGraph:
         # other hypothesis: their hypothesis-0 poses form an odometry chain hanging off the new atlas
         # centre, possibly hundreds of metres from the map, and LM does not recover from that; the
         # tracked hypothesis already encodes the loop-closure alignment (identity LC edges make this exact).
-        if other_hypothesis_id != 0 and other_hypothesis_id in hypotheses:
+        # (chart-aware graphs keep each chart's own coordinates; the join transports them after the solve)
+        if other_hypothesis_id != 0 and other_hypothesis_id in hypotheses and not self.chart_aware:
             start_idx = hypotheses[other_hypothesis_id].start_idx
             # every keyframe of the current session (including the initial one created before the
             # hypothesis was born) is re-initialised, otherwise the odometry edge from the session's
@@ -495,6 +505,36 @@ class PoseGraph:
         self.vertices = vertices
         self.edges = edges
         self.vertex_map = {v.id: v for v in vertices}
+        if self.chart_aware:
+            self._retain_connected_chart_graph(target_node_id, other_hypothesis_id)
+        if self.hypothesis_manager.source_states is not None:
+            from cross.core.conditional_pgo import prepare
+            prepare(self,other_hypothesis_id)
+
+    def _retain_connected_chart_graph(self, target_node_id, other_hypothesis_id=0):
+        """Do not optimize unrelated saved sessions merely due to adjacent IDs."""
+        neighbors = collections.defaultdict(set)
+        for a, b, factors in self.edges:
+            if factors and a in self.vertex_map and b in self.vertex_map:
+                neighbors[a].add(b)
+                neighbors[b].add(a)
+        connected, pending = set(), [target_node_id]
+        while pending:
+            node = pending.pop()
+            if node not in connected:
+                connected.add(node)
+                pending.extend(neighbors[node] - connected)
+        self.vertices = [v for v in self.vertices if v.id in connected]
+        self.edges = [(a, b, f) for a, b, f in self.edges if f and a in connected and b in connected]
+        self.vertex_map = {v.id: v for v in self.vertices}
+        originals = [v for v in self.vertices if v.original_comp_id == 0]
+        self.source_node_charts = {v.id: int(self.nodes[v.id].pose_charts[0]) for v in originals}
+        self.source_node_poses = {v.id: v.pose.clone() for v in originals}
+        reference_chart = self.source_component_charts[other_hypothesis_id]
+        anchors = [v.id for v in originals if self.source_node_charts[v.id] == reference_chart]
+        if not anchors:
+            raise ValueError("Graph does not connect to its proposed reference chart")
+        self.preferred_fixed_node = min(anchors)
 
     def construct_for_local_smoothing(
         self,
@@ -529,6 +569,11 @@ class PoseGraph:
         self.vertices = nodes
         self.edges = visual_edges + odom_edges
         self.vertex_map = {v.id: v for v in self.vertices}
+        if self.chart_aware:
+            self._retain_connected_chart_graph(target_node_id)
+        if self.hypothesis_manager.source_states is not None:
+            from cross.core.conditional_pgo import prepare
+            prepare(self,0)
 
     def validate_edge_uncertainties(
         self,
@@ -670,6 +715,11 @@ class PoseGraph:
             fixed_node_ids: Set of vertex IDs to fix
         """
         assert self.vertices and self.edges, "No graph constructed. Call construct_for_loop_closure() first."
+        if self.chart_aware:
+            charts = {self.source_node_charts[i] for i in fixed_node_ids}
+            if len(charts) != 1:
+                raise ValueError("Fixed vertices must share one coordinate chart")
+            self.output_chart = charts.pop()
         
         graph = gtsam.NonlinearFactorGraph()
         initial = gtsam.Values()
@@ -692,6 +742,7 @@ class PoseGraph:
         
         # 3. Add between factors for all edges
         has_edges = False
+        conditional_factors = []
         self.n_factors = {"used_visual": 0, "skipped_visual": 0, "odometry": 0, "loop_closure": 0}
         for (id1, id2, factors) in self.edges:
             if id1 in all_node_ids and id2 in all_node_ids:
@@ -746,7 +797,10 @@ class PoseGraph:
                     gtsam_sigmas += 1e-9  # Add epsilon for stability
 
                     noise_model = self._make_between_noise_model(factor, gtsam_sigmas)
-                    graph.add(gtsam.BetweenFactorPose3(id1, id2, measurement_gtsam, noise_model))
+                    nonlinear = gtsam.BetweenFactorPose3(id1, id2, measurement_gtsam, noise_model)
+                    graph.add(nonlinear)
+                    if hasattr(self,'conditional_belief'):
+                        conditional_factors.append((nonlinear,factor))
 
         # Log edge statistics for debugging
         if has_edges and logger.level("DEBUG").no >= 100:   # disabled: costs a device sync per factor
@@ -754,7 +808,7 @@ class PoseGraph:
             for (id1, id2, factors) in self.edges:
                 if id1 in all_node_ids and id2 in all_node_ids:
                     for factor in factors:
-                        stds = factor.std.tensor().cpu().numpy().flatten()
+                        stds = factor.std.tensor().cpu().numpy().flatten().copy()
                         # Apply scaling factor if applicable
                         if factor.type in self.uncertainty_scales:
                             stds *= self.uncertainty_scales[factor.type]
@@ -814,3 +868,9 @@ class PoseGraph:
             optimized_pose_gtsam = result.atPose3(node_id)
             optimized_pose_pypose = gtsam_to_pypose_pose3(optimized_pose_gtsam, self.device)
             self.optimized_poses[node_id] = optimized_pose_pypose
+        if hasattr(self,'conditional_belief'):
+            from cross.core.conditional_pgo import solve_responses
+            solve_responses(self,result,conditional_factors,optim_node_ids,fixed_node_ids)
+            # Fixed nodes also need their bias-centered pose/model persisted.
+            for node_id in fixed_node_ids:
+                self.optimized_poses[node_id] = gtsam_to_pypose_pose3(result.atPose3(node_id),self.device)

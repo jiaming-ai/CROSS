@@ -1,0 +1,25 @@
+{
+  "description": "Experimental source-aware CROSS at 640x480 with timestamp replay sampled at 20 Hz. DPVO supplies rotation, metric PnP supplies translation, and periodic DA3 metric predictions carry shared source uncertainty. Full retrieval and delayed commitment remain enabled. Measured on RTX 5090; 4090 timing, calibrated uncertainty, and broad robustness remain unvalidated. Supply the released DPVO checkpoint through the benchmark runner.",
+  "requires_dpvo_checkpoint": true,
+  "arguments": [
+    "--frontend", "streaming_pnp",
+    "--image-size", "640", "480",
+    "--sample-fps", "20",
+    "--input-fps", "20",
+    "--replay-timestamps", "--paced-input-worker", "--input-process",
+    "--input-buffer", "8",
+    "--warmup-models", "--freeze-gc",
+    "--mask-people", "--mask-interval", "3",
+    "--metric-interval", "20",
+    "--mapping-interval", "10",
+    "--conditional-sources", "--chart-aware", "--session-recovery",
+    "--retrieval-pose", "metric_two_view",
+    "--retrieval-matcher", "superpoint_lightglue",
+    "--two-view-rotation-check",
+    "--mapping-process",
+    "--threads", "2",
+    "--schmidt-map-geometry", "--map-geometry-basis", "factor",
+    "--rotation-tracker", "dpvo",
+    "--motion-covariance-bound", "matrix"
+  ]
+}

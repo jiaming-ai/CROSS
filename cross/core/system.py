@@ -3,7 +3,7 @@ import numpy as np
 from typing import Tuple, Union
 from collections import deque
 from cross.core.atlas import new_atlas_center
-from cross.utils.lie_tensor import project_SE3, rotation_angle_from_quat
+from cross.utils.lie_tensor import normalize_se3, project_SE3, rotation_angle_from_quat
 from cross.utils.profile import timeit
 from cross.utils.fps import fps_monitor, start_fps_monitoring, stop_fps_monitoring
 from cross.core.hypothesis import HypothesisManager
@@ -60,6 +60,7 @@ class System:
         visualizer: 'RRViz' = None,
         config: Union[SystemConfig, str, Path, None] = None,
         T_right_in_left: np.ndarray = None,
+        pose_estimator=None,
         **kwargs,
     ):
         """
@@ -96,7 +97,7 @@ class System:
         self._cur_obs_lock = threading.Lock()
 
         self.device = device
-        self.storage_device = "cuda" #"cpu"
+        self.storage_device = device
         self.visualize = visualize
         self.debug = debug
         self.use_depth_pred = self.config.depth_pred.use_depth_pred
@@ -107,6 +108,9 @@ class System:
         
         ################ counter ################
         self._processed_frame_num = 0
+        # Immutable provenance of the graph present at map load. New query
+        # nodes can share its atlas, so atlas IDs do not identify sessions.
+        self.loaded_node_ids = frozenset()
 
 
         ########### tracking ###########
@@ -134,6 +138,7 @@ class System:
                 std_per_radian=self.odom_std_per_radian,
                 min_std_translation=self.odom_min_std_translation,
                 min_std_rotation=self.odom_min_std_rotation,
+                device=self.device,
             )
             self.odom_accumulator.register_item("since_last_step")
             self.odom_accumulator.register_item("since_last_add_kf")
@@ -167,7 +172,9 @@ class System:
         
         # pose estimation model
         self.pose_est_type = self.config.pose_est.type
-        if self.pose_est_type == PoseEstType.PNP:
+        if pose_estimator is not None:
+            self.pose_est = pose_estimator
+        elif self.pose_est_type == PoseEstType.PNP:
             from cross.cv.pose_est_pnp import PoseEstPnP
             self.pose_est = PoseEstPnP(self.device, self.config.pose_est, camera)
         elif self.pose_est_type == PoseEstType.VGGT:
@@ -176,6 +183,8 @@ class System:
         elif self.pose_est_type == PoseEstType.FF:
             from cross.cv.pose_est_ff import PoseEstFeedForward
             self.pose_est = PoseEstFeedForward(self.device, self.config.pose_est.ff, T_right_in_left)
+        elif self.pose_est_type in {PoseEstType.DA3, PoseEstType.METRIC_PNP}:
+            raise ValueError("Monocular retrieval requires an injected pose_estimator; use MonocularSystem")
 
         ########### mapping ###########
         # kf parameters
@@ -324,7 +333,10 @@ class System:
     def shutdown(self):
         """Clean up the system."""
         logger.info("Shutting down the system...")
-        time.sleep(1) # grace period for the visualizer to finish
+        # the exit hook would otherwise keep every shut-down system (and its GPU map) alive until process exit
+        atexit.unregister(self.shutdown)
+        if self.visualize:
+            time.sleep(1)  # grace period for the visualizer to finish
         # Stop LC engine first
         if hasattr(self, "_lc_engine") and self._lc_engine is not None:
             try:
@@ -347,8 +359,16 @@ class System:
         depth_image: torch.Tensor,
         timestamp: float = None,
         rgb_right: torch.Tensor = None,
+        initial_chart_pose=None,
     ):
-        """Initialize the system."""
+        """Initialize tracking, optionally choosing a fresh map's coordinates.
+
+        A delayed monocular snapshot may arrive after local motion has already
+        been emitted. Its frontend pose can select the fresh map's gauge so
+        initialization does not reset those coordinates. This is a coordinate
+        choice, not another measurement or a constraint on a loaded map.
+        Existing maps retain the original independent-atlas initialization.
+        """
         
         # currently atlas not used. So we just use the last atlas.
         all_atlases = self.db.get_all_atlases()
@@ -371,11 +391,27 @@ class System:
         else:
             # init from scratch
             mu = pp.identity_SE3(self.kf_gmm_n_components, device=self.storage_device)
+            if initial_chart_pose is not None:
+                matrix = np.asarray(initial_chart_pose, dtype=np.float64)
+                if (matrix.shape != (4, 4) or not np.isfinite(matrix).all()
+                        or not np.allclose(matrix[3], [0., 0., 0., 1.], atol=1e-6, rtol=0)
+                        or not np.allclose(matrix[:3, :3].T @ matrix[:3, :3], np.eye(3), atol=1e-5, rtol=0)
+                        or not np.isclose(np.linalg.det(matrix[:3, :3]), 1., atol=1e-5, rtol=0)):
+                    raise ValueError('Initial chart pose must be a finite rigid 4x4 camera pose')
+                mu[0] = normalize_se3(pp.mat2SE3(torch.as_tensor(matrix, dtype=mu.dtype,
+                                                               device=self.storage_device)))
             sigma= pp.identity_se3(self.kf_gmm_n_components, device=self.storage_device)
             weights = torch.zeros(self.kf_gmm_n_components, device=self.storage_device)
             weights[0] = 1.0
 
-        self.hypothesis_manager.dist = (mu.to(self.device), sigma.to(self.device), weights.to(self.device))
+        # .to() aliases when storage and tracking use the same device. The
+        # first saved node must remain a snapshot when live motion mutates
+        # its prior, including its conditional source-response center.
+        self.hypothesis_manager.dist = (mu.to(self.device).clone(), sigma.to(self.device).clone(),
+                                       weights.to(self.device).clone())
+        self.hypothesis_manager.start_tracking_chart()
+        if self.config.mapping.hypothesis.conditional_sources:
+            self.hypothesis_manager.initialize_source_filter()
 
         # insert the initial keyframe
         kf = self.db.insert(
@@ -389,6 +425,8 @@ class System:
             timestamp=timestamp,
             temporary=False,
             raw_rgb_right=rgb_right.to(self.storage_device) if (rgb_right is not None and self._store_right_images) else None,
+            pose_charts=self.hypothesis_manager.get_active_charts(),
+            metric_source=getattr(self, "_current_metric_source", None),
         )
         kf.step_created = int(self._processed_frame_num)
         self.hypothesis_manager.add_node(kf)
@@ -397,7 +435,7 @@ class System:
         self._steps_since_obs = 0
         self._last_obs_rgb = rgb_image
         self._session_start_frame = self._processed_frame_num
-        if self._lc_verifier is not None:
+        if getattr(self, "_lc_verifier", None) is not None:
             self._lc_verifier.reset_session()
         return kf
         
@@ -444,6 +482,9 @@ class System:
         # TODO: we should only compute distance between current
         # and surrounding nodes, not all nodes, to make it more efficient
         all_nodes = list(self.hypothesis_manager.nodes.values())
+        if self.hypothesis_manager.chart_aware:
+            chart = int(self.hypothesis_manager.component_charts[0])
+            all_nodes = [n for n in all_nodes if int(n.pose_charts[0]) == chart]
         all_node_poses = [n.pose_mu[0] for n in all_nodes]
         all_node_poses = torch.stack(all_node_poses).to(self.device)
 
@@ -456,7 +497,7 @@ class System:
 
         # get closest permanent node
 
-        all_perm_nodes = [kf for kf in self.hypothesis_manager.nodes.values() if not kf.temporary]
+        all_perm_nodes = [kf for kf in all_nodes if not kf.temporary]
         all_perm_node_poses = [n.pose_mu[0] for n in all_perm_nodes]
         all_perm_node_poses = torch.stack(all_perm_node_poses).to(self.device)
         all_perm_distances = torch.norm(all_perm_node_poses.tensor()[:, :3] - \
@@ -628,6 +669,11 @@ class System:
 
         # --- 4. Combine All Data ---
         save_data = {
+            "coordinate_charts_version": 1 if self.hypothesis_manager.chart_aware else 0,
+            "schmidt_map_geometry_version": ((2 if self.hypothesis_manager.map_geometry_basis == 'factor' else 1)
+                                             if self.hypothesis_manager.schmidt_map_geometry else 0),
+            "conditional_sources_version": 1 if (self.hypothesis_manager.source_states is not None or
+                                                   self.hypothesis_manager.saved_source_belief is not None) else 0,
             "config": config_to_dict(self.config),
             "db_data": db_data,
             "hypo_data": hypo_data,
@@ -679,6 +725,13 @@ class System:
         # --- 1. Load Data from Disk ---
         with open(load_path, "rb") as f:
             save_data = pickle.load(f)
+        if save_data.get("coordinate_charts_version", 0) and not self.hypothesis_manager.chart_aware:
+            raise ValueError("This map contains coordinate charts; enable chart-aware mapping to load it")
+        if bool(save_data.get('conditional_sources_version',0)) != self.config.mapping.hypothesis.conditional_sources:
+            raise ValueError('Conditional source maps require the same inference mode; rebuild a legacy reference map')
+        from .map_geometry import validate_load_mode
+        validate_load_mode(save_data,self.hypothesis_manager.schmidt_map_geometry,
+                           self.hypothesis_manager.map_geometry_basis)
 
         # --- 2. Restore Class Variables ---
         Keyframe._next_id = save_data["class_vars"]["keyframe_next_id"]
@@ -700,6 +753,8 @@ class System:
 
         # Recompute next ID: object re-instantiation during load bumps the counter
         Keyframe._next_id = (max(self.hypothesis_manager.nodes.keys()) + 1) if self.hypothesis_manager.nodes else 0  
+        self.loaded_node_ids = frozenset(self.hypothesis_manager.nodes)
+        self.hypothesis_manager.reference_support.start(self.loaded_node_ids)
         self._session_start_kf_id = Keyframe._next_id
         self._anchor_pending.clear()
         self._contra_pending.clear()
@@ -756,12 +811,15 @@ class System:
                 - conf: the confidence map of the depth image, np.ndarray
                 - delta_pose: the delta pose between current and last step, np.ndarray
                 - timestamp: the timestamp of the observation
+                - initial_chart_pose: optional fresh-map gauge at this image;
+                  only used for the first image when the database is empty
         """
 
 
         # first accumulate the odometry
         if self.use_odometry:
-            self.odom_accumulator.update_odom(obs["delta_pose"])
+            self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"),
+                                              source_factor=obs.get('motion_source_factor'))
         
         if obs.get("rgb", None) is not None:
 
@@ -812,6 +870,7 @@ class System:
         """main function for step
         """
         logger.debug(f"Step work at step {self._processed_frame_num}")
+        self.last_step_diagnostics = {"loop_closure_detected": False, "loop_closure_applied": False}
         self._processed_frame_num += 1
         
         # get all synchronized observations
@@ -823,6 +882,11 @@ class System:
         confidence_map = last_obs.get("conf", None)
         rgb_right = last_obs.get("rgb_right", None)
         timestamp = last_obs.get("timestamp", None)
+        self._current_metric_source = last_obs.get("metric_source")
+        if "metric_input" in last_obs:
+            # These are frontend input derivatives, not filtered node-pose
+            # sensitivities. Retain them as diagnostics for the coupled model.
+            self.last_step_diagnostics["metric_input"] = last_obs["metric_input"]
 
         if timestamp is None:
             timestamp = self._processed_frame_num
@@ -846,7 +910,8 @@ class System:
 
         ############ initialize the system ############
         if self._processed_frame_num == 1:
-            kf = self._init_system(rgb_image, depth_image, timestamp=timestamp, rgb_right=rgb_right)
+            kf = self._init_system(rgb_image, depth_image, timestamp=timestamp, rgb_right=rgb_right,
+                                   initial_chart_pose=last_obs.get('initial_chart_pose'))
 
             if self.visualize:
                 self.visualizer.visualize_tracking_step(
@@ -891,7 +956,8 @@ class System:
         ################################
         # update the motion model gmm with odometry
         if not ret["kidnapped"]:
-            self.hypothesis_manager.motion_update(ret["delta_pose"], ret["delta_std"])
+            self.hypothesis_manager.motion_update(ret["delta_pose"], ret["delta_std"],
+                                                  source_factor=ret.get('motion_source_factor'))
             logger.debug(f"Updated the current state gmm with odometry at step {self._processed_frame_num}")
         
         else:
@@ -951,8 +1017,22 @@ class System:
         # update the observation likelihood
         ################################
         ret.update(self._construct_observation_dist(rgb_image, depth_image, rgb_right=rgb_right, odom_anchor=odom_anchor))
+        self.last_step_diagnostics["verified_keyframes"] = len(ret["valid_keyframes"])
+        self.last_step_diagnostics["retrieval_audit"] = ret["retrieval_audit"]
+        self.last_step_diagnostics["loaded_node_count"] = len(self.loaded_node_ids)
+        if ret.get("h0_ok") is not None:
+            # prior-consistency verdicts of the verified loop closure for this observation's references
+            self.last_step_diagnostics["prior_gate"] = dict(
+                keyframes=[int(k.id) for k in ret["valid_keyframes"]],
+                consistent=[None if o is None else bool(o) for o in ret["h0_ok"]],
+                chi2=[None if c is None else float(c) for c in (ret.get("h0_chi2") or [])],
+                loop_candidate=[bool(x) for x in (ret.get("h0_loop") or [])])
+        if getattr(self, "_lc_verifier", None) is not None:
+            self.last_step_diagnostics["verifier_stats"] = {k: (float(v) if isinstance(v, float) else v)
+                                                            for k, v in self._lc_verifier.stats.items()}
         # if no proposal, continue with motion-only update
         if len(ret["valid_keyframes"]) == 0:
+            self.hypothesis_manager.reference_support.observe(self._processed_frame_num, {})
             logger.info(f"No valid keyframes found. Continuing with motion-only update")
             self._unsuccessful_retrieval_steps += 1
 
@@ -994,6 +1074,10 @@ class System:
          proposal_gmm_weights, 
          proposal_gmm_confidence, 
          edge_mapping) = self._merge_and_align_components(ret)
+        self.hypothesis_manager.reference_support.observe(
+            self._processed_frame_num, edge_mapping,
+            torch.where(self.hypothesis_manager.newborn)[0].tolist())
+        self.last_step_diagnostics["proposal_audit"] = self.hypothesis_manager.last_alignment_audit
 
 
         # hypothesis 0 is not moved by measurements that the odometry chain already knows better (references just
@@ -1010,7 +1094,12 @@ class System:
             proposal_gmm_weights,
             proposal_gmm_confidence,
             pose_update_mask=pose_update_mask,
+            **(dict(source_factors={i:m.factor for i,m in self.hypothesis_manager.aligned_conditional_models.items()},
+                    source_covariances={i:m.geometry_covariance for i,m in self.hypothesis_manager.aligned_conditional_models.items()})
+               if self.hypothesis_manager.source_states is not None else {}),
         )
+        if self.hypothesis_manager.source_states is not None:
+            self.last_step_diagnostics['conditional_filter'] = self.hypothesis_manager.last_conditional_audit
         current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
 
         ret['current_mu'] = current_mu
@@ -1026,24 +1115,8 @@ class System:
         #########################
         # detect loop closure
         #########################
-        lc_result = self.hypothesis_manager.detect_loop_closure(ret)
-        
-        
-
-        #########################
-        # insert new keyframe
-        # if loop closure is detected, we will force add a kf for pgo
-        #########################
-        new_kf = self._add_new_kf(
-            rgb_image, 
-            depth_image, 
-            ret=ret,
-            edge_mapping=edge_mapping,
-            timestamp=timestamp,
-            force_permanent=False,
-            force_add=lc_result["loop_closure"],
-            rgb_right=rgb_right,
-        )
+        new_kf, lc_result = self._add_keyframe_and_detect_loop(rgb_image, depth_image, ret, edge_mapping, timestamp,
+                                                               rgb_right=rgb_right)
 
         if lc_result["loop_closure"]:
             logger.info(
@@ -1060,6 +1133,7 @@ class System:
                 )
                 if pgo_info.get("success"):
                     ret["loop_closure_pgo"] = pgo_info
+                    self.last_step_diagnostics["loop_closure_applied"] = True
                 else:
                     message = pgo_info.get("message", "Loop closure handling failed without message")
                     logger.warning(message)
@@ -1085,6 +1159,30 @@ class System:
                 step_idx = self._processed_frame_num,
             )
    
+
+    def _add_keyframe_and_detect_loop(self, rgb_image, depth_image, ret, edge_mapping, timestamp, rgb_right=None):
+        """Check newly realized branches after their current graph edges exist.
+
+        Realization happens inside add_node. A final successful observation can
+        both qualify a branch and provide its last required historical support;
+        it must not need a future successful retrieval merely to check the same
+        evidence. Detection reads history and never accumulates it a second time.
+        """
+        manager = self.hypothesis_manager
+        lc_result = manager.detect_loop_closure(ret)
+        branches_before = set(manager.hypotheses)
+        new_kf = self._add_new_kf(rgb_image, depth_image, ret=ret, edge_mapping=edge_mapping,
+                                timestamp=timestamp, force_permanent=False, force_add=lc_result["loop_closure"],
+                                rgb_right=rgb_right)
+        recheck = (self.config.mapping.hypothesis.lc_recheck_after_realization
+                   and not lc_result["loop_closure"] and new_kf is not None
+                   and bool(set(manager.hypotheses) - branches_before))
+        if recheck:
+            lc_result = manager.detect_loop_closure(ret)
+        self.last_step_diagnostics.update(loop_closure_detected=bool(lc_result["loop_closure"]),
+                                         commitment_audit=manager.last_loop_audit,
+                                         commitment_rechecked_after_realization=recheck)
+        return new_kf, lc_result
 
     def _verify_references(self, valid_keyframes, valid_poses, keyframes, valid_masks, ret):
         """Tests 2 and 1 of the verified loop closure on the references of the current forward pass.
@@ -1445,6 +1543,7 @@ class System:
         """
         ret = {"kidnapped": False}
         if self.use_odometry:
+            ret['motion_source_factor'] = self.odom_accumulator.source_since_last_reading('since_last_step')
             delta_pose, std = self.odom_accumulator.get_since_last_reading("since_last_step")
             ret["delta_pose"] = delta_pose
             ret["delta_std"] = std
@@ -1510,10 +1609,16 @@ class System:
         original_kf_ids = [v.id for v in pg.vertices if v.id in self.hypothesis_manager.nodes]
         if not original_kf_ids:
             return False
-        fixed_node_id = min(original_kf_ids)
+        fixed_node_id = pg.preferred_fixed_node if self.hypothesis_manager.chart_aware else min(original_kf_ids)
         optim_node_ids = set([v.id for v in pg.vertices]) - {fixed_node_id}
 
         pg.solve(optim_node_ids=optim_node_ids, fixed_node_ids={fixed_node_id})
+
+        if self.hypothesis_manager.source_states is not None:
+            applied = self.hypothesis_manager.apply_pgo_result(dict(pose_graph=pg,optimized_poses=pg.optimized_poses,
+                                                                   other_hypothesis_id=0))
+            self._last_smoothing_step = self._processed_frame_num
+            return applied['success']
 
         # Apply smoothing updates to hypothesis 0
         std_reduction = self.config.pgo.std_reduction_factor
@@ -1555,6 +1660,11 @@ class System:
         # force true => add permanent kf
         is_temp_kf = False if force_permanent else True
         delta_pose, std = self.odom_accumulator.get_since_last_reading("since_last_add_kf", reset=False)
+        conditional_motion = None
+        if self.hypothesis_manager.source_states is not None:
+            from cross.core.conditional_pose import ConditionalPose
+            factor = self.odom_accumulator.source_since_last_reading('since_last_add_kf')
+            conditional_motion = ConditionalPose(np.diag(std.tensor().double().cpu().numpy()**2),factor)
 
         # if the robot moves too little, skip adding a kf
         if not force_add and rotation_angle_from_quat(delta_pose.tensor()[3:]) < 0.1 and \
@@ -1572,6 +1682,7 @@ class System:
                 is_temp_kf = False
 
         mu, sigma, weights = self.hypothesis_manager.get_active_dist()
+        pose_charts = self.hypothesis_manager.get_active_charts()
 
         if not is_temp_kf:
             if weights.nonzero().numel() == 0:
@@ -1588,6 +1699,8 @@ class System:
                 timestamp=timestamp,
                 temporary=is_temp_kf,
                 raw_rgb_right=rgb_right.to(self.storage_device) if (rgb_right is not None and self._store_right_images) else None,
+                pose_charts=pose_charts,
+                metric_source=getattr(self, "_current_metric_source", None),
             )
             logger.debug(f"Add permanent keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         else:
@@ -1598,6 +1711,8 @@ class System:
                 pose_weights=weights.to(self.storage_device),
                 timestamp=timestamp,
                 temporary=is_temp_kf,
+                pose_charts=pose_charts,
+                metric_source=getattr(self, "_current_metric_source", None),
             )
             logger.debug(f"Add temporary keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         
@@ -1628,6 +1743,7 @@ class System:
                     type=EdgeType.VISUAL,
                     from_comp_id=source_comp_id,
                     to_comp_id=dest_comp_id,
+                    conditional_pose=ret.get('relative_conditional_poses',[None]*len(valid_keyframes))[i],
                     meta={"conf": float(confs[i]) if confs is not None else None,
                           "noise_scale": float(self._lc_verifier.scale_for(kf_i.id)) if self._lc_verifier is not None else 1.0,
                           # information criterion: the measurement constrains the graph only if the odometry chain
@@ -1668,6 +1784,7 @@ class System:
                 rel_pose_mean=delta_pose,
                 rel_pose_std=std,
                 type=EdgeType.ODOMETRY,
+                conditional_pose=conditional_motion,
                 meta={"n_frames": max(int(self._processed_frame_num) - int(last_step), 1) if last_step is not None else None},
             )
         self.odom_accumulator.reset_item("since_last_add_kf")
@@ -1679,7 +1796,7 @@ class System:
     def _merge_and_align_components(
         self,
         ret: dict,
-        dbscan_eps: float = 1.0,
+        dbscan_eps: float = None,
         dbscan_min_samples: int = 1, # Set to 1 to ensure every component is in a cluster
     ) -> Tuple[pp.LieTensor, pp.LieTensor, torch.Tensor]:
         """Clusters candidate absolute poses to generate distinct pose hypotheses.
@@ -1702,6 +1819,8 @@ class System:
                 - 'score' (float): A quality score for the hypothesis (e.g., inlier count).
                 - 'inlier_count' (int): The number of inliers for the best pose in the cluster.
         """
+        if dbscan_eps is None:
+            dbscan_eps = self.config.mapping.cluster_eps
 
         convolved_mus = ret["convolved_mus"].to(self.device)  # (B, K, 7)
         convolved_stds = ret["convolved_stds"].to(self.device)  # (B, K, 6)
@@ -1747,9 +1866,15 @@ class System:
 
         
         # --- 2. Run DBSCAN ---
-        db = DBSCAN(eps=self.config.mapping.cluster_eps, min_samples=dbscan_min_samples).fit(clustering_data)
-        labels = db.labels_
-        unique_labels = set(labels)
+        if self.hypothesis_manager.chart_aware:
+            from cross.core.charts import cluster_by_chart
+            charts = torch.stack([kf.pose_charts for kf in ret['valid_keyframes']]).to(self.device)
+            flat_charts = charts[valid_mask].cpu().numpy()
+            labels = cluster_by_chart(clustering_data, flat_charts, dbscan_eps, dbscan_min_samples)
+        else:
+            db = DBSCAN(eps=dbscan_eps, min_samples=dbscan_min_samples).fit(clustering_data)
+            labels = db.labels_
+        unique_labels = sorted(set(labels))
         
         hypotheses = []
         
@@ -1872,6 +1997,22 @@ class System:
                 'h0_ok': h0_flag,
                 'informative': informative,
             })
+            if self.hypothesis_manager.chart_aware:
+                hypotheses[-1]['chart_id'] = int(flat_charts[best_candidate_in_cluster_idx])
+            if self.hypothesis_manager.source_states is not None:
+                from cross.core.conditional_pose import ConditionalPose
+                b,c = [int(v[best_candidate_in_cluster_idx]) for v in valid_indices_tuple]
+                message = ret['convolved_conditional_poses'][b][c]
+                S = message.geometry_covariance.copy()
+                if len(cluster_indices) > 1:
+                    # Dispersion does not replace the selected factor's
+                    # conditional geometric uncertainty. Nearby duplicates
+                    # cannot turn a noisy node/PnP fit into exact geometry.
+                    S += np.diag(representative_std.tensor().double().cpu().numpy()**2)
+                message = ConditionalPose(S,message.factor)
+                hypotheses[-1]['conditional_pose'] = message
+                hypotheses[-1]['std'] = pp.se3(torch.as_tensor(S.diagonal().copy(),
+                                            device=self.device,dtype=representative_std.dtype).clamp_min(0).sqrt())
 
         # make sure the hypotheses are in the same order as the current state GMM
         return self.hypothesis_manager.align_proposal_prior(hypotheses)
@@ -1901,42 +2042,47 @@ class System:
                 retrieve = False
 
         if retrieve:
-            results = self.db.query(rgb_image)
-            if self._session_start_kf_id > 0:
-                # session-aware retrieval: guarantee map keyframes (previous sessions) most of the budget
-                own_slots = self.config.retrieval.own_session_slots
-                map_res = self.db.query(rgb_image, max_kf_id=self._session_start_kf_id,
-                                        score_threshold=self.config.retrieval.map_score_threshold)
-                logger.debug(f"retrieval: map kfs {[(kf.id, round(sc, 3)) for sc, kf in zip(map_res['scores'], map_res['keyframes'])][:6]}, "
-                             f"own {[(kf.id, round(sc, 3)) for sc, kf in zip(results['scores'], results['keyframes']) if kf.id >= self._session_start_kf_id][:3]}")
-                own = [(sc, kf) for sc, kf in zip(results["scores"], results["keyframes"]) if kf.id >= self._session_start_kf_id][:own_slots]
-                n_map = max(self.db.top_k - len(own), 0)
-                map_list = list(zip(map_res["scores"], map_res["keyframes"]))
-                guided = self._pose_guided_map_keyframes(rgb_image)
-                if guided:
-                    ids = {kf.id for _, kf in guided}
-                    map_list = guided + [(sc, kf) for sc, kf in map_list if kf.id not in ids]
-                merged = map_list[:n_map] + own
-                results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
-            elif self.config.retrieval.recent_window_steps > 0 and self._processed_frame_num > self.config.retrieval.recent_window_steps:
-                # mapping: recency-aware split so that revisited places (loop closures) get retrieval budget
-                cut = self.hypothesis_manager.latest_kf_id_before(self._processed_frame_num - self.config.retrieval.recent_window_steps)
-                if cut is not None:
-                    rcfg = self.config.retrieval
-                    recent_slots = max(rcfg.own_session_slots, rcfg.recent_split_recent_slots)
-                    old_res = self.db.query(rgb_image, max_kf_id=cut, score_threshold=rcfg.map_score_threshold)
-                    recent = [(sc, kf) for sc, kf in zip(results["scores"], results["keyframes"]) if kf.id > cut][:recent_slots]
-                    best = max([float(sc) for sc in results["scores"]] + [0.0])
-                    # old keyframes only when they really look like the query: rank-only admission handed the pose
-                    # estimator aliased places (repeated arcades / rooms) and spawned false hypotheses
-                    min_score = max(rcfg.recent_split_min_score, rcfg.recent_split_rel_score * best)
-                    old = [(sc, kf) for sc, kf in zip(old_res["scores"], old_res["keyframes"]) if float(sc) >= min_score]
-                    n_old = max(self.db.top_k - len(recent), 0)
-                    merged = old[:n_old] + recent
-                    if merged:
-                        results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
-                    logger.debug(f"retrieval(map): old kfs {[(kf.id, round(sc, 3)) for sc, kf in zip(old_res['scores'], old_res['keyframes'])][:6]}, "
-                                 f"recent {[(kf.id, round(sc, 3)) for sc, kf in recent]}")
+            if self.config.retrieval.historical_slots > 0:
+                results = self.db.query(rgb_image, reserved_keyframe_ids=self.loaded_node_ids,
+                                        reserved_count=self.config.retrieval.historical_slots,
+                                        reserved_min_score=self.config.retrieval.historical_min_score)
+            else:
+                results = self.db.query(rgb_image)
+                if self._session_start_kf_id > 0:
+                    # session-aware retrieval: guarantee map keyframes (previous sessions) most of the budget
+                    own_slots = self.config.retrieval.own_session_slots
+                    map_res = self.db.query(rgb_image, max_kf_id=self._session_start_kf_id,
+                                            score_threshold=self.config.retrieval.map_score_threshold)
+                    logger.debug(f"retrieval: map kfs {[(kf.id, round(sc, 3)) for sc, kf in zip(map_res['scores'], map_res['keyframes'])][:6]}, "
+                                 f"own {[(kf.id, round(sc, 3)) for sc, kf in zip(results['scores'], results['keyframes']) if kf.id >= self._session_start_kf_id][:3]}")
+                    own = [(sc, kf) for sc, kf in zip(results["scores"], results["keyframes"]) if kf.id >= self._session_start_kf_id][:own_slots]
+                    n_map = max(self.db.top_k - len(own), 0)
+                    map_list = list(zip(map_res["scores"], map_res["keyframes"]))
+                    guided = self._pose_guided_map_keyframes(rgb_image)
+                    if guided:
+                        ids = {kf.id for _, kf in guided}
+                        map_list = guided + [(sc, kf) for sc, kf in map_list if kf.id not in ids]
+                    merged = map_list[:n_map] + own
+                    results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
+                elif self.config.retrieval.recent_window_steps > 0 and self._processed_frame_num > self.config.retrieval.recent_window_steps:
+                    # mapping: recency-aware split so that revisited places (loop closures) get retrieval budget
+                    cut = self.hypothesis_manager.latest_kf_id_before(self._processed_frame_num - self.config.retrieval.recent_window_steps)
+                    if cut is not None:
+                        rcfg = self.config.retrieval
+                        recent_slots = max(rcfg.own_session_slots, rcfg.recent_split_recent_slots)
+                        old_res = self.db.query(rgb_image, max_kf_id=cut, score_threshold=rcfg.map_score_threshold)
+                        recent = [(sc, kf) for sc, kf in zip(results["scores"], results["keyframes"]) if kf.id > cut][:recent_slots]
+                        best = max([float(sc) for sc in results["scores"]] + [0.0])
+                        # old keyframes only when they really look like the query: rank-only admission handed the pose
+                        # estimator aliased places (repeated arcades / rooms) and spawned false hypotheses
+                        min_score = max(rcfg.recent_split_min_score, rcfg.recent_split_rel_score * best)
+                        old = [(sc, kf) for sc, kf in zip(old_res["scores"], old_res["keyframes"]) if float(sc) >= min_score]
+                        n_old = max(self.db.top_k - len(recent), 0)
+                        merged = old[:n_old] + recent
+                        if merged:
+                            results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
+                        logger.debug(f"retrieval(map): old kfs {[(kf.id, round(sc, 3)) for sc, kf in zip(old_res['scores'], old_res['keyframes'])][:6]}, "
+                                     f"recent {[(kf.id, round(sc, 3)) for sc, kf in recent]}")
             self._last_retrieved_results = results
             self.odom_accumulator.reset_item("since_last_retrieval")
             return results
@@ -2058,6 +2204,7 @@ class System:
             "valid_retrieval_weights": [],
             "valid_retrieval_weights_normalized": [],
             "valid_ref_mus": [],
+            "retrieval_audit": [],
         }
         # first retrieve the image
         results = self._retrieve_keyframes(rgb_image) 
@@ -2085,6 +2232,15 @@ class System:
         ref_depths = torch.cat(ref_depths, dim=0) if ref_depths is not None else None
 
         # then estimate the relative pose
+        source_context = {}
+        if getattr(self, "_current_metric_source", None) is not None:
+            source_context = dict(ref_metric_sources=[getattr(k, "metric_source", None) for k in keyframes],
+                                  curr_metric_source=self._current_metric_source)
+        if self.hypothesis_manager.source_states is not None:
+            source_context['excluded_factor_ids'] = set().union(*(s.seen_factors for s in self.hypothesis_manager.source_states if s is not None))
+        # which references belong to a loaded map, and whether this session is still unjoined to it
+        source_context['ref_loaded'] = [k.id in self.loaded_node_ids for k in keyframes]
+        source_context['session_unanchored'] = bool(self.hypothesis_manager.reference_support.unanchored)
         if self.pose_est_type == PoseEstType.FF:
             valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
                 ref_rgbs, None, rgb_image, None,
@@ -2092,6 +2248,7 @@ class System:
                 ref_images_right=[as_float_image(p.raw_rgb_right) for p in keyframes],
                 odom_anchor=odom_anchor,
                 ref_rel_poses=self._map_anchor_pairs(keyframes),
+                **source_context,
             )
         else:
             valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
@@ -2099,7 +2256,19 @@ class System:
                 ref_depths,
                 rgb_image,
                 depth_image,
+                **source_context,
             )
+        # Record even failed geometry. Previously the early return erased
+        # retrieved IDs whenever no pair survived verification.
+        pair_audits = getattr(self.pose_est, "last_pair_audit", None)
+        offset = int(self._prev_obs is not None and self.use_VO)
+        for i, (keyframe, score) in enumerate(zip(keyframes, retrieval_scores)):
+            pair_index = i + offset
+            item = dict(keyframe_id=int(keyframe.id), loaded=keyframe.id in self.loaded_node_ids,
+                        retrieval_score=float(score), verified=bool(valid_masks[pair_index]))
+            if pair_audits is not None and pair_index < len(pair_audits):
+                item["geometry"] = pair_audits[pair_index]
+            ret["retrieval_audit"].append(item)
         # no valid pose
         if valid_masks.sum() == 0:
             logger.debug(f"No valid pose found.")
@@ -2139,6 +2308,13 @@ class System:
         retrieval_weights_normalized = self._normalize_retrieval_weights(retrieval_weights)
 
         valid_stds = self._get_std_diag(confidences, retrieval_weights, poses=valid_poses, keyframes=valid_keyframes)
+        # Monocular relative-pose adapters provide calibrated metric-scale
+        # uncertainty. The legacy filter stores diagonal standard deviations.
+        supplied_stds = getattr(self.pose_est, "last_stds", None)
+        if supplied_stds is not None:
+            if supplied_stds.shape != valid_stds.shape:
+                raise ValueError("Pose estimator uncertainty does not match valid poses")
+            valid_stds = pp.se3(torch.maximum(valid_stds.tensor(), supplied_stds.to(valid_stds.device)))
 
         # extract VO pose est
         vo_delta_pose = None
@@ -2177,9 +2353,40 @@ class System:
         )
         convolved_mus = normalize_SE3(convolved_mus)
 
+        conditional_ret = {}
+        if self.hypothesis_manager.source_states is not None:
+            from cross.core.conditional_pose import ConditionalPose, compose
+            relative_models = getattr(self.pose_est, 'last_conditional_poses', None)
+            if relative_models is None or len(relative_models) != len(valid_keyframes):
+                raise ValueError('Conditional retrieval needs one model for every verified relative pose')
+            models = []
+            for i,(kf,relative) in enumerate(zip(valid_keyframes,relative_models)):
+                if kf.conditional_poses is None:
+                    raise ValueError('A retrieved node has no conditional pose model; rebuild the reference map')
+                # Retain CROSS confidence/retrieval-dependent geometry weights,
+                # without reintroducing the old teacher-scale marginal.
+                relative = ConditionalPose(np.diag(valid_stds[i].tensor().double().cpu().numpy()**2),relative.factor)
+                relative_models[i] = relative
+                row = []
+                for c,node_model in enumerate(kf.conditional_poses):
+                    if valid_ref_component_weights[i,c] <= 1e-3:
+                        row.append(None)
+                        continue
+                    if node_model is None:
+                        raise ValueError('An active retrieved component has no conditional pose model')
+                    pose,model = compose(kf.pose_mu[c].matrix().double().cpu().numpy(),node_model,
+                        valid_poses[i].matrix().double().cpu().numpy(),relative,self.hypothesis_manager.source_states[0])
+                    convolved_mus[i,c] = pp.from_matrix(torch.as_tensor(pose,device=self.device,dtype=convolved_mus.dtype),pp.SE3_type)
+                    convolved_stds[i,c] = pp.se3(torch.as_tensor(model.geometry_covariance.diagonal().copy(),
+                                                device=self.device,dtype=convolved_stds.dtype).clamp_min(0).sqrt())
+                    row.append(model)
+                models.append(row)
+            conditional_ret = dict(convolved_conditional_poses=models,relative_conditional_poses=relative_models)
 
         return {
+            **conditional_ret,
             # retrieval
+            "retrieval_audit": ret["retrieval_audit"],
             "retrieval_scores": retrieval_scores,
             "retrieved_keyframes": keyframes,
             "valid_masks": valid_masks,
@@ -2224,4 +2431,3 @@ class System:
             normalized_weights: (B,)
         """
         return weights / weights.sum()
-

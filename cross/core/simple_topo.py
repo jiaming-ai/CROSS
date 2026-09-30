@@ -90,6 +90,8 @@ class SimpleTopo:
 
         kf1 = self._hm.nodes[id1]
         kf2 = self._hm.nodes[id2]
+        if self._hm.chart_aware and int(kf1.pose_charts[0]) != int(kf2.pose_charts[0]):
+            return
         pose1 = kf1.pose_mu[0]
         pose2 = kf2.pose_mu[0]
         rel_mean = pose1.Inv() @ pose2
@@ -298,6 +300,8 @@ class SimpleTopo:
         from_kf = self._hm.nodes.get(from_kf_id)
         to_kf = self._hm.nodes.get(to_kf_id)
         if from_kf is None or to_kf is None:
+            return 0.0
+        if self._hm.chart_aware and int(from_kf.pose_charts[0]) != int(to_kf.pose_charts[0]):
             return 0.0
 
         from_pos = from_kf.pose_mu[0].translation()

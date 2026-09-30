@@ -1,0 +1,17 @@
+{
+  "description": "Experimental relative DPVO motion with asynchronous learned metric scale and the inherited CROSS mapper; conditional source inference is not supported by this frontend.",
+  "requires_dpvo_checkpoint": true,
+  "arguments": [
+    "--frontend", "streaming_dpvo",
+    "--image-size", "640", "480",
+    "--sample-fps", "20", "--input-fps", "20", "--replay-timestamps",
+    "--paced-input-worker", "--input-process", "--input-buffer", "8",
+    "--warmup-models", "--freeze-gc",
+    "--mask-people", "--mask-interval", "3",
+    "--metric-interval", "20", "--mapping-interval", "10",
+    "--chart-aware", "--session-recovery",
+    "--retrieval-pose", "metric_two_view",
+    "--retrieval-matcher", "superpoint_lightglue", "--two-view-rotation-check",
+    "--mapping-process", "--threads", "2"
+  ]
+}
