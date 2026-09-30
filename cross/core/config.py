@@ -165,6 +165,12 @@ class NoiseModelConfig:
     map_r_b: float = 0.001
     # odometry covariance inflation used by the prior gate only (uncertainty of the odometry noise model itself)
     gate_inflation: float = 2.0
+    # lost turns: an odometry edge containing a single-frame rotation above odom_lost_turn_rad (0 disables) gets
+    # sigma += odom_k_lost * motion on rotation and translation.  Visual odometry loses a turn that leaves too little
+    # overlap between consecutive frames (monocular DPVO on the SimChange renders: rotation error ~3% of the rotation up
+    # to 20 deg per frame, 84-100% above 45 deg per frame), so its heading across such a frame is unknown.
+    odom_lost_turn_rad: float = 0.0
+    odom_k_lost: float = 0.0
 
 
 @dataclass

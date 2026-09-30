@@ -39,6 +39,7 @@ class OdomAccumulator():
         self._source_factor = None
         self._source_at_reset = {}
         self._conditional_std_sums = {}
+        self._max_step_rotation = {}       # largest single-reading rotation (rad) since the item's last reset
 
         # Configurable uncertainty parameters
         self.std_per_meter = std_per_meter
@@ -65,6 +66,11 @@ class OdomAccumulator():
         self._measurement_std_sums[name] = torch.zeros(6)
         self._conditional_std_sums[name] = np.zeros(6)
         self._source_at_reset[name] = self._source_factor
+        self._max_step_rotation[name] = 0.0
+
+    def max_step_rotation(self, name: str) -> float:
+        """Largest rotation (rad) of a single odometry reading since the item's last reset."""
+        return self._max_step_rotation.get(name, 0.0)
     
     def get_since_last_reading(
         self,
@@ -153,6 +159,9 @@ class OdomAccumulator():
             if isinstance(odom_reading, np.ndarray):
                 odom_reading = pp.from_matrix(odom_reading, pp.SE3_type).float()
             odom_reading = normalize_se3(odom_reading.cpu())
+            step_rotation = float(torch.linalg.norm(odom_reading.Log().tensor()[3:]))
+            for name in self._max_step_rotation:
+                self._max_step_rotation[name] = max(self._max_step_rotation[name], step_rotation)
             if source_factor is not None:
                 from cross.core.conditional import SourceState, SourceFactor
                 from cross.core.conditional_pose import adjoint,inverse
@@ -206,6 +215,7 @@ class OdomAccumulator():
         self._measurement_std_sums[name] = torch.zeros(6)
         self._conditional_std_sums[name] = np.zeros(6)
         self._source_at_reset[name] = self._source_factor
+        self._max_step_rotation[name] = 0.0
 
     def source_since_last_reading(self,name):
         """Signed right-tangent response, read before resetting that consumer."""

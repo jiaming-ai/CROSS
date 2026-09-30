@@ -74,10 +74,11 @@ def cached(factory):
 
 
 class OdometryFrontend:
-    """Diagnostic motion source: the dataset's simulated wheel odometry, learned metric depth for mapping."""
+    """Diagnostic motion source: the dataset's simulated wheel odometry, learned (or, with gt_depth, rendered)
+    metric depth for mapping."""
 
-    def __init__(self, sequence, config, metric, start):
-        self.sequence, self.config, self.metric = sequence, config, metric
+    def __init__(self, sequence, config, metric, start, gt_depth=False):
+        self.sequence, self.config, self.metric, self.gt_depth = sequence, config, metric, gt_depth
         self.index, self.frame = 0, start
         self.pose = np.eye(4)
 
@@ -91,7 +92,11 @@ class OdometryFrontend:
         covariance = np.diag([std_t ** 2] * 3 + [std_r ** 2] * 3)
         depth = None
         if self.index % self.config.mapping_interval == 0:
-            depth = self.metric.predict_metric(rgb, self.sequence.K, rgb.shape[:2])
+            if self.gt_depth:
+                depth = np.load(self.sequence.path / "depth" / (self.sequence.images[self.frame].stem + ".npy"))
+                depth = np.where(np.isfinite(depth), depth, 0).astype(np.float32)
+            else:
+                depth = self.metric.predict_metric(rgb, self.sequence.K, rgb.shape[:2])
         self.index += 1
         self.frame += 1
         return MonoEstimate(timestamp, self.pose.copy(), delta, covariance,
@@ -100,7 +105,7 @@ class OdometryFrontend:
 
 
 class Runner:
-    def __init__(self, mono_args, dpvo_checkpoint, motion, device="cuda"):
+    def __init__(self, mono_args, dpvo_checkpoint, motion, device="cuda", gt_depth=False):
         import cross.db.db as db_module
         import cross.mono.dpvo_frontend as dpvo_module
         from cross.mono.run import build_parser, config_from_args
@@ -112,7 +117,7 @@ class Runner:
         self.config = config_from_args(args)
         if self.config.frontend != "dpvo":
             raise ValueError("The SimChange runner uses the synchronous DPVO frontend (--frontend dpvo)")
-        self.device, self.motion = device, motion
+        self.device, self.motion, self.gt_depth = device, motion, gt_depth
         self.geometry = DA3Geometry(self.config.pose_model, device, self.config.resolution)
         self.metric = dpvo_module.DA3MetricDepth(self.config.metric_model, device, self.config.metric_resolution)
         self.mono = None
@@ -125,7 +130,7 @@ class Runner:
         from cross.mono.dpvo_frontend import DPVOFrontend
         from cross.mono.system import MonocularSystem
         if self.motion == "odom":
-            frontend = OdometryFrontend(sequence, self.config, self.metric, start)
+            frontend = OdometryFrontend(sequence, self.config, self.metric, start, self.gt_depth)
             frontend.geometry = self.geometry
         else:
             frontend = DPVOFrontend(sequence.K, self.config, self.device, geometry_model=self.geometry)
@@ -205,12 +210,15 @@ def main():
     ap.add_argument("--r-d", type=float, default=2.0)
     ap.add_argument("--fps", type=float, default=5.0, help="nominal frame rate of the sparse renders")
     ap.add_argument("--motion", choices=["dpvo", "odom"], default="dpvo")
+    ap.add_argument("--gt-depth", action="store_true", help="with --motion odom: rendered depth instead of DA3 (diagnostic)")
     ap.add_argument("--dpvo-checkpoint", required=True)
     ap.add_argument("--mono-args", default="", help="cross.mono.run arguments (quoted string)")
     ap.add_argument("--skip-map", action="store_true", help="reuse OUT/map.pkl and OUT/map_meta.json")
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
-    runner = Runner(shlex.split(a.mono_args), a.dpvo_checkpoint, a.motion)
+    if a.gt_depth and a.motion != "odom":
+        ap.error("--gt-depth needs --motion odom")
+    runner = Runner(shlex.split(a.mono_args), a.dpvo_checkpoint, a.motion, gt_depth=a.gt_depth)
     map_seq = Sequence(a.scene / a.map_name, a.fps)
     if not a.skip_map:
         t0 = time.time()
@@ -220,7 +228,7 @@ def main():
         meta = dict(kf_est=kf_est, kf_gt=kf_gt, n_frames=len(map_seq), seconds=time.time() - t0,
                     keyframe_ate=ate(list(kf_est.values()), [kf_gt[k] for k in kf_est]),
                     trajectory_ate=ate([r["c0_pose"] for r in rows], [r["gt_pose"] for r in rows]),
-                    motion=a.motion, mono_args=a.mono_args, fps=a.fps)
+                    motion=a.motion, gt_depth=a.gt_depth, mono_args=a.mono_args, fps=a.fps)
         (a.out / "map_meta.json").write_text(json.dumps(meta))
         np.savetxt(a.out / "map_trajectory.txt", np.array([r["c0_pose"] for r in rows]))
         print(json.dumps(dict(map=str(a.scene), keyframe_ate=meta["keyframe_ate"],
