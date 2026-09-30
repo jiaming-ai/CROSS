@@ -218,6 +218,8 @@ def run_orbslam3(args, out: Path):
         rd += ["--depth-dir", "depth_mm" if (m / "depth_mm").exists() or (m / "rgb").is_dir() else "depth"]
     orb = binary("orbslam3_reloc")
     if not (out / "atlas.osa").is_file() or not map_poses.is_file() or not _map_run_ok(out):
+        if args.require_map:
+            sys.exit(f"no stored ORB-SLAM3 atlas in {out} (--require-map)")
         mv = full_view(m, out / "views_map")
         orb_yaml(m, out / "map.yaml", save_atlas=atlas, fps=fps, baseline=args.baseline)
         rc, dt = run(orb + [voc, str(out / "map.yaml"), str(mv), str(map_poses), "--fps", str(fps)] + rd, out / "map.log", cwd=str(out))
@@ -264,6 +266,8 @@ def run_rtabmap(args, out: Path):
         extra = ["--stereo", rd, str(b)] + extra
     rtab = binary("rtabmap_reloc")
     if not db.is_file() or not map_poses.is_file() or not _map_run_ok(out):
+        if args.require_map:
+            sys.exit(f"no stored RTAB-Map database in {out} (--require-map)")
         mv = full_view(m, out / "views_map", odom_file=odom_m)
         om = mv / "odom.txt" if (mv / "odom.txt").is_file() else odom_m
         rc, dt = run(rtab + [str(mv), str(om), str(db), str(map_poses)] + extra, out / "map.log", cwd=str(out))
@@ -351,6 +355,7 @@ def main():
     ap.add_argument("--orb-sensor", choices=["stereo", "rgbd", "mono"], default="stereo", help="ORB-SLAM3 input")
     ap.add_argument("--map-only", action="store_true", help="map the map sequence only (single-session accuracy)")
     ap.add_argument("--keep-chunks", action="store_true", help="keep the per-trial symlink folders")
+    ap.add_argument("--require-map", action="store_true", help="fail instead of mapping when --out holds no stored map")
     args = ap.parse_args()
     out = Path(args.out).resolve()
     if args.system in ("rtabmap", "rtabmap_stereo") and False:

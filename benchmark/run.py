@@ -67,8 +67,11 @@ def sh(cmd, log: Path, timeout=None):
         f.write(f"\n$ {' '.join(map(str, cmd))}\n")
         f.flush()
         try:
+            # PYTHONPATH: a shared venv may hold an editable install of another CROSS checkout
+            env = dict(os.environ, PYTHONPATH=str(ROOT), MPLBACKEND="Agg",
+                       PYTORCH_CUDA_ALLOC_CONF=os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"))
             rc = subprocess.run([str(c) for c in cmd], stdout=f, stderr=subprocess.STDOUT, cwd=str(ROOT),
-                                timeout=timeout).returncode
+                                timeout=timeout, env=env).returncode
         except subprocess.TimeoutExpired:
             f.write(f"\nTIMEOUT after {timeout} s\n")
             rc = -9
@@ -232,7 +235,18 @@ class Job:
         return cmd + extra
 
     def baseline_map(self, map_seq, out: Path):
-        return sh(self.baseline_cmd(map_seq, map_seq, out, ["--map-only"]), out / "bench.log", self.a.timeout)
+        """Map with up to two retries: ORB-SLAM3 occasionally crashes while saving its atlas at shutdown."""
+        need = {"orbslam3": ["atlas.osa", "map_poses.txt"], "rtabmap": ["map.db", "map_poses.txt"]}[self.a.system]
+        total = 0.0
+        for attempt in range(3):
+            for f in need + ["map_time.json", "map_poses.txt.final"]:
+                if (out / f).exists() and attempt > 0:
+                    (out / f).unlink()
+            rc, dt = sh(self.baseline_cmd(map_seq, map_seq, out, ["--map-only"]), out / "bench.log", self.a.timeout)
+            total += dt
+            if rc == 0 and all((out / f).is_file() and (out / f).stat().st_size > 0 for f in need):
+                return 0, total
+        return (rc if rc != 0 else 1), total
 
     def baseline_t1_result(self, seq_name, out: Path, dt):
         from eval_traj import load_poses
@@ -277,12 +291,14 @@ class Job:
             if (d / "result.json").is_file() and not a.force:
                 continue
             d.mkdir(parents=True, exist_ok=True)
-            for f in ("atlas.osa", "map_poses.txt", "map_poses.txt.final", "map_time.json"):
+            if (map_dir / "atlas.osa").exists() and not (d / "atlas.osa").exists():
+                os.symlink((map_dir / "atlas.osa").resolve(), d / "atlas.osa")     # loaded read-only
+            for f in ("map_poses.txt", "map_poses.txt.final", "map_time.json"):
                 if (map_dir / f).exists() and not (d / f).exists():
-                    os.symlink((map_dir / f).resolve(), d / f)
+                    shutil.copy(map_dir / f, d / f)
             if (map_dir / "map.db").exists() and not (d / "map.db").exists():
                 shutil.copy(map_dir / "map.db", d / "map.db")      # localization mode writes to the database
-            rc, dt = sh(self.baseline_cmd(self.scene["map"], q, d, [str(e) for e in extra]), d / "bench.log", a.timeout)
+            rc, dt = sh(self.baseline_cmd(self.scene["map"], q, d, [str(e) for e in extra] + ["--require-map"]), d / "bench.log", a.timeout)
             if (d / "map.db").exists() and not a.keep_maps:
                 (d / "map.db").unlink()
             if not (d / "reloc_summary.json").is_file():

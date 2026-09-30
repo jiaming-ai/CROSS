@@ -61,16 +61,19 @@ def table_models(T: mt.Tables, runs_by_key):
         rows = []
         for system, setup in mt.rows_for(ds, sy, dataset):
             cells_all = T.t1_cells(dataset, system, setup)
-            cells = []
+            cells, allv, allf, allm, alln, allids = [], [], 0, 0, 0, []
             for sc in scenes:
                 seqs = T.scene_seqs(dataset, sc)
                 v, f, m = T.t1_agg(cells_all, seqs)
+                allv += v; allf += f; allm += m; alln += len(seqs)
                 text = T.t1_seq_str(cells_all.get(seqs[0])) if len(seqs) == 1 else T.t1_agg_str(v, f, m, len(seqs))
                 ids = [runs_by_key[id(cells_all[q])] for q in seqs if q in cells_all]
+                allids += ids
                 cells.append({"text": text, "runs": ids})
+            cells.append({"text": T.t1_agg_str(allv, allf, allm, alln), "runs": allids})
             rows.append({"label": mt.row_label(sy, system, setup, dataset), "system": system, "setup": setup,
                          "pending": sy[system]["runner"] == "pending", "cells": cells})
-        out["t1"][dataset] = {"cols": scenes, "rows": rows}
+        out["t1"][dataset] = {"cols": scenes + ["mean"], "rows": rows}
     for track in ("t2", "t3"):
         for dataset in ("openloris", "rover", "simchange"):
             cfg = ds[dataset]

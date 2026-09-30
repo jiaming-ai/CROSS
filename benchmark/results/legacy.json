@@ -1,0 +1,20 @@
+{
+ "note": "Results obtained before this protocol existed, with other splits, trial lengths, odometry or code versions. They are listed for reference and are not comparable cell by cell with the benchmark tables.",
+ "sections": [
+  {
+   "title": "CROSS paper (NeurIPS 2026), Table 1: cross-sequence relocalization success",
+   "note": "OpenLORIS Corridor (OLS) and ROVER Campus, every map/test pair, 200-frame trials at the recorded frame rate, r_D = 2 m / 5 m. CROSS = the paper's RGB-D (PnP) system before the 2026-09 core upgrades.",
+   "table": "| system | RS OLS | RS ROVER | RS all |\n|---|---|---|---|\n| ORB-SLAM3 (RGB-D) | 0.032 | 0.005 | 0.013 |\n| RTAB-Map | 0.292 | 0.158 | 0.198 |\n| MASt3R-SLAM | 0.173 | 0.014 | 0.062 |\n| CROSS (paper) | 0.353 | 0.397 | 0.384 |"
+  },
+  {
+   "title": "SimChange v1: relocalization success (2 m), mean over each scene's change variants",
+   "note": "SimChange v1 renders (superseded by v2: v1 Lone Monk has 23\u00b0/frame turns in place), 100-frame trials (40 on archiviz / classroom), code of 2026-09-10 (before the loop-closure audit). HSSD scenes: the 30-variant rearrangement set. CROSS PnP (GT depth) corresponds to the RGB-D setup.",
+   "table": "| system | archiviz | classroom | HSSD house | HSSD restaurant | Lone Monk |\n|---|---|---|---|---|---|\n| CROSS stereo (b = 0.3 m) | 0.99 | 0.98 | 0.95 | 0.94 | 0.94 |\n| CROSS RGB-D (PnP, GT depth) | 0.88 | 0.93 | 0.84 | 0.86 | 0.73 |\n| CROSS PnP on SGBM stereo depth | 0.92 | 0.93 | 0.81 | 0.74 | 0.79 |\n| ORB-SLAM3 stereo | 0.00 | 0.45 | 0.10 | 0.04 | 0.00 |\n| RTAB-Map RGB-D (GT depth) | 0.86 | 0.94 | 0.79 | 0.79 | 0.40 |\n| RTAB-Map stereo | 0.87 | 0.91 | 0.78 | 0.79 | 0.06 |\n| MASt3R-SLAM mono | 0.47 | 0.64 | 0.07 | 0.00 | 0.21 |"
+  },
+  {
+   "title": "Real data with the earlier harness (2026-09-30, before this protocol)",
+   "note": "OpenLORIS office / home / cafe only (map = X1-1, queries = the other sessions), 100-frame trials with stride 50, wheel odometry; map ATE of the map session. The CROSS stereo mode ran monocular there (D435i colour, scale from odometry), not on the T265 stereo pair. TUM RGB-D and KITTI used simulated odometry (SNR 10). CROSS only; no baselines were run on these datasets.",
+   "table": "| system | OpenLORIS home ATE / RS | office ATE / RS | cafe ATE / RS | TUM fr1_room / fr2_desk / fr3_loh ATE | TUM fr2_desk \u2192 with_person RS | KITTI 00 / 05 / 06 / 07 ATE |\n|---|---|---|---|---|---|---|\n| CROSS RGB-D (PnP) | 0.131 m / 0.83 | 0.044 m / 0.33 | 0.217 m / 0.65 | 0.027 / 0.035 / 0.023 m | 0.96 | \u2013 |\n| CROSS stereo mode, monocular | 0.122 m / 0.85 | 0.052 m / 0.71 | 0.166 m / 0.82 | \u2013 | \u2013 | 7.66 / 6.51 / 2.33 / 0.72 m (stereo) |"
+  }
+ ]
+}
