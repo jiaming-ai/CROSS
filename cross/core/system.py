@@ -1163,7 +1163,6 @@ class System:
                 last_kf = self.hypothesis_manager.nodes.get(self.last_added_kf_id)
                 last_step = getattr(last_kf, "step_created", None) if last_kf is not None else None
                 n_since = max(int(self._processed_frame_num) - int(last_step), 1) if last_step is not None else 1
-                v.step_rot_since = self.odom_accumulator.max_step_rotation("since_last_add_kf")
                 h0_ok, h0_chi2 = v.prior_gate(valid_keyframes, [valid_poses[i] for i in range(len(valid_keyframes))],
                                               self.last_added_kf_id, T_since, n_since)
                 ret["h0_chi2"] = h0_chi2
@@ -1745,8 +1744,7 @@ class System:
                 rel_pose_std=std,
                 type=EdgeType.ODOMETRY,
                 conditional_pose=conditional_motion,
-                meta={"n_frames": max(int(self._processed_frame_num) - int(last_step), 1) if last_step is not None else None,
-                      "max_step_rot": self.odom_accumulator.max_step_rotation("since_last_add_kf")},
+                meta={"n_frames": max(int(self._processed_frame_num) - int(last_step), 1) if last_step is not None else None},
             )
         self.odom_accumulator.reset_item("since_last_add_kf")
         self.last_added_kf_id = current_kf_id

@@ -123,17 +123,10 @@ class NoiseModel:
         c = self.cfg
         return self._iso(max(c.visual_r_a + c.visual_r_b * dist, self.FLOOR_R), max(c.visual_t_a + c.visual_t_b * dist, self.FLOOR_T)) * scale
 
-    def odom(self, L: float, theta: float, n: int, max_step_rot: float = 0.0) -> np.ndarray:
+    def odom(self, L: float, theta: float, n: int) -> np.ndarray:
         c = self.cfg
         n = max(int(n or 1), 1)
-        sr = c.odom_k_r * theta / math.sqrt(n) + c.odom_floor_r
-        st = c.odom_k_t * L / math.sqrt(n) + c.odom_floor_t
-        lost = float(getattr(c, "odom_lost_turn_rad", 0.0) or 0.0)
-        if lost > 0 and max_step_rot > lost:
-            # a turn the odometry could not follow: its heading (and the translation composed with it) is unknown
-            k = float(getattr(c, "odom_k_lost", 0.0) or 0.0)
-            sr, st = sr + k * theta, st + k * L
-        return self._iso(sr, st)
+        return self._iso(c.odom_k_r * theta / math.sqrt(n) + c.odom_floor_r, c.odom_k_t * L / math.sqrt(n) + c.odom_floor_t)
 
     def pair(self, dist: float) -> np.ndarray:
         c = self.cfg
@@ -152,7 +145,7 @@ class NoiseModel:
         T = to_gtsam(f)
         L = float(np.linalg.norm(T.translation()))
         theta = float(np.linalg.norm(logmap(T)[:3]))
-        return self.odom(L, theta, int(getattr(f, "n_frames", 1) or 1), float(getattr(f, "max_step_rot", 0.0) or 0.0))
+        return self.odom(L, theta, int(getattr(f, "n_frames", 1) or 1))
 
     def factor_sigmas_pypose(self, f) -> Optional[np.ndarray]:
         """Sigmas for the pose-graph optimisation (pypose order); None keeps the factor's own std."""
@@ -326,7 +319,6 @@ class LoopClosureVerifier:
         self.thr = chi2_threshold(cfg.confidence, 3 if self.translation_only else 6)
         self.chain = ChainPredictor(system.hypothesis_manager, self.noise)
         self.anchor: Optional[dict] = None       # {"map_kf", "kf", "T" (map_kf -> kf), "sigma"} of the latest verified session->map edge
-        self.step_rot_since = 0.0      # largest single-frame rotation since the last keyframe (set by the system)
         self.stats = {"inpass_rejected": 0, "prior_rejected": 0, "prior_tested": 0, "posterior_rejected": 0, "pgo": 0, "h0_loop_edges": 0}
         self.quarantine: list = []
         # online visual-noise scales (innovation-based), one per measurement type: references of the current
@@ -510,7 +502,7 @@ class LoopClosureVerifier:
         just behind the robot (`self.last_loop_flags`)."""
         Ts = to_gtsam(T_since) if T_since is not None else gtsam.Pose3()
         L = float(np.linalg.norm(Ts.translation())); th = float(np.linalg.norm(logmap(Ts)[:3]))
-        cov_since = np.diag((self.noise.odom(L, th, max(n_since, 1), self.step_rot_since) * self.cfg.noise.gate_inflation) ** 2)
+        cov_since = np.diag((self.noise.odom(L, th, max(n_since, 1)) * self.cfg.noise.gate_inflation) ** 2)
         oks, chis, loops = [], [], []
         self._update_scale()
         for kf, Tm in zip(refs, T_meas):
@@ -568,7 +560,7 @@ class LoopClosureVerifier:
         between them.  None when no chain relates them."""
         Ts = to_gtsam(T_since) if T_since is not None else gtsam.Pose3()
         L = float(np.linalg.norm(Ts.translation())); th = float(np.linalg.norm(logmap(Ts)[:3]))
-        cov_since = np.diag((self.noise.odom(L, th, max(n_since, 1), self.step_rot_since) * self.cfg.noise.gate_inflation) ** 2)
+        cov_since = np.diag((self.noise.odom(L, th, max(n_since, 1)) * self.cfg.noise.gate_inflation) ** 2)
         saved, self.anchor = self.anchor, anchor
         try:
             T_pred, cov = self.predict_to_current(int(ref_id), last_kf_id, Ts, cov_since)

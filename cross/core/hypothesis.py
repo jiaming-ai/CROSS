@@ -646,8 +646,6 @@ class HypothesisManager:
                                                                   device=self.device,dtype=combined_std.dtype))
                         bridging_factor.conditional_pose = model
                     bridging_factor.n_frames = (getattr(pred_edge, "n_frames", None) or 1) + (getattr(succ_edge, "n_frames", None) or 1)
-                    bridging_factor.max_step_rot = max(getattr(pred_edge, "max_step_rot", 0.0) or 0.0,
-                                                       getattr(succ_edge, "max_step_rot", 0.0) or 0.0)
                     self.odom_edges[(predecessor_id, successor_id)] = bridging_factor
                     
                     # Note: No need to maintain adjacency list since odometry edges are sequential
@@ -2160,7 +2158,6 @@ class HypothesisManager:
                 "type": edge.type.name,
                 "conditional_pose": edge.conditional_pose.record() if edge.conditional_pose is not None else None,
                 "n_frames": getattr(edge, "n_frames", None),
-                "max_step_rot": getattr(edge, "max_step_rot", 0.0),
             }
 
         # --- 3. Save only hypothesis 0 (ground truth) ---
@@ -2251,7 +2248,6 @@ class HypothesisManager:
                 type=EdgeType[edge_data["type"]],
             )
             edge.n_frames = edge_data.get("n_frames")
-            edge.max_step_rot = edge_data.get("max_step_rot", 0.0) or 0.0
             self.odom_edges[edge_key] = edge
             if edge_data.get('conditional_pose') is not None:
                 edge.conditional_pose = ConditionalPose.from_record(edge_data['conditional_pose'])
