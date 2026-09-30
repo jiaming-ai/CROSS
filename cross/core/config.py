@@ -397,6 +397,11 @@ class HypothesisConfig:
     # without one contributes log(1 - reloc_detection_prob) (a missed detection). The sequential sum over the
     # evidence window then realizes and commits the branch; at least reloc_min_verified_frames verified frames from
     # two distinct map keyframes are required. Requires session_recovery with chart_aware.
+    # Innovation gate for hypothesis 0: a proposal whose Mahalanobis residual against hypothesis 0 (prior covariance plus
+    # filter process noise plus proposal covariance, 6 dof) exceeds this chi-square value is not fused into hypothesis 0;
+    # it may still feed or seed another hypothesis, which delayed commitment resolves (0 disables). Applies where the
+    # verified loop closure has no odometry-chain prediction, e.g. saved-map references after the map join.
+    h0_innovation_gate: float = 0.0
     reloc_association_evidence: bool = False
     reloc_detection_prob: float = 0.3
     reloc_consistency_nats: float = 3.0

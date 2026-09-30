@@ -246,6 +246,7 @@ class HypothesisManager:
         self.reloc_unique_evidence = cfg.reloc_unique_evidence
         self.reloc_unique_min_dist = cfg.reloc_unique_min_dist
         self.reloc_min_frames = cfg.reloc_min_frames
+        self.h0_innovation_gate = cfg.h0_innovation_gate
         self.reloc_association_evidence = cfg.reloc_association_evidence
         self.reloc_detection_prob = cfg.reloc_detection_prob
         self.reloc_consistency_nats = cfg.reloc_consistency_nats
@@ -902,6 +903,16 @@ class HypothesisManager:
         # matched to (fused into) hypothesis 0; it may still feed or spawn another hypothesis
         h0_flags = [h.get("h0_ok") for h in proposal_hypotheses]
         row0 = int((active_comp_indices == 0).nonzero()[0].item()) if (active_comp_indices == 0).any() else None
+        if self.h0_innovation_gate > 0 and row0 is not None:
+            # chi-square gate against hypothesis 0 for proposals the verified loop closure could not test
+            prior_var = current_std[0].tensor() ** 2 + float(self.filter_process_std) ** 2
+            for j, h in enumerate(proposal_hypotheses):
+                if h0_flags[j] is not None or not math.isfinite(float(dist_matrix[row0, j])):
+                    continue
+                residual = (current_mu[0].Inv() @ h['pose']).Log().tensor()
+                maha = float((residual ** 2 / (prior_var + h['std'].tensor() ** 2).clamp_min(1e-12)).sum())
+                if maha > self.h0_innovation_gate:
+                    h0_flags[j] = False
         dropped = set()
         if row0 is not None:
             for j, f in enumerate(h0_flags):

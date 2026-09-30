@@ -39,7 +39,8 @@ class Sequence:
         calib = json.loads((self.path / "calib.json").read_text())
         self.K = np.asarray(calib["K"], dtype=np.float64)
         self.size = (int(calib["width"]), int(calib["height"]))
-        self.images = sorted((self.path / "left").glob("*.png"))
+        images = self.path / "left" if (self.path / "left").is_dir() else self.path / "rgb"   # SimChange | posed TUM
+        self.images = sorted(images.glob("*.png"))
         self.gt = np.loadtxt(self.path / "poses_left.txt").reshape(-1, 4, 4)
         odom = self.path / "odom_snr10.0.txt"
         self.odom = np.loadtxt(odom).reshape(-1, 4, 4) if odom.exists() else None
