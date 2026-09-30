@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CROSS Benchmark Results</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10);
+  --est: #2a78d6; --gt: #898781; --good: #0ca30c; --bad: #d03b3b; --warn: #fab219;
+  --good-ink: #006300; --bad-ink: #b02a2a; --chip: #f0efec; --accent: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+    --est: #3987e5; --gt: #898781; --good-ink: #0ca30c; --bad-ink: #e66767; --chip: #262624; --accent: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+  --est: #3987e5; --gt: #898781; --good-ink: #0ca30c; --bad-ink: #e66767; --chip: #262624; --accent: #3987e5;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1240px; margin: 0 auto; padding: 24px 16px 64px; }
+header h1 { font-size: 26px; margin: 0 0 4px; font-weight: 650; }
+header p { margin: 0; color: var(--ink-2); }
+a { color: var(--accent); }
+nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 20px 0 12px; border-bottom: 1px solid var(--grid); }
+nav.tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; font: inherit;
+  color: var(--ink-2); cursor: pointer; }
+nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 8px 0 12px; color: var(--ink-2); }
+select { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--axis); background: var(--surface); color: var(--ink); }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 16px; margin: 12px 0; }
+.note { color: var(--ink-2); font-size: 13.5px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13.5px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--ink-2); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+td.lab { font-weight: 550; }
+td.cell { cursor: pointer; }
+td.cell:hover, td.cell:focus { background: var(--chip); outline: none; }
+td.cell.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+td.dim { color: var(--muted); }
+tr.cross td.lab { color: var(--accent); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.plot { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; padding: 8px 10px 6px; }
+.plot h4 { margin: 0 0 2px; font-size: 13.5px; font-weight: 600; }
+.plot .sub { color: var(--ink-2); font-size: 12.5px; margin-bottom: 4px; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { fill: var(--muted); font-size: 10px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); margin: 4px 0 8px; }
+.key { display: inline-block; width: 16px; height: 2px; vertical-align: middle; margin-right: 6px; }
+.sq { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+#tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--ring);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12); border-radius: 6px; padding: 6px 8px; font-size: 12.5px; display: none; z-index: 9; max-width: 320px; }
+#tip b { font-weight: 650; }
+.empty { color: var(--muted); padding: 12px 0; }
+.fail-ok { color: var(--good-ink); } .fail-bad { color: var(--bad-ink); }
+img.thumb { width: 100%; border-radius: 6px; display: block; }
+@media (max-width: 640px) { header h1 { font-size: 21px; } th, td { padding: 5px 7px; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>CROSS benchmark</h1>
+  <p id="meta">Mapping accuracy, multi-session localization and relocalization success of CROSS and SLAM baselines.
+    Protocol: <a href="../PROTOCOL.md">PROTOCOL.md</a> · tables: <a href="../RESULTS.md">RESULTS.md</a></p>
+</header>
+<nav class="tabs" role="tablist" id="tabs"></nav>
+<section id="view"></section>
+</main>
+<div id="tip" role="tooltip"></div>
+<script src="data.js"></script>
+<script>
+"use strict";
+const B = window.BENCH || {runs: {}, tables: {t1: {}, t2: {}, t3: {}}, failures: {}, summary: "", datasets: {}, systems: {}};
+const $ = (t, a = {}, ...kids) => { const e = document.createElement(t); for (const [k, v] of Object.entries(a)) {
+  if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v); }
+  for (const k of kids) e.append(k instanceof Node ? k : document.createTextNode(k ?? "")); return e; };
+const SVGNS = "http://www.w3.org/2000/svg";
+const s$ = (t, a = {}) => { const e = document.createElementNS(SVGNS, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); return e; };
+const DS = {kitti: "KITTI", openloris: "OpenLORIS-Scene", rover: "ROVER campus_large", simchange: "SimChange v2"};
+const TRACK = {t1: "T1 · mapping accuracy", t2: "T2 · multi-session localization", t3: "T3 · relocalization success"};
+const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "openloris"}, sel: null};
+const tip = document.getElementById("tip");
+function showTip(ev, parts) { tip.replaceChildren(...parts.map(p => Array.isArray(p) ? $("div", {}, $("b", {}, p[0]), " ", p[1]) : $("div", {}, p)));
+  tip.style.display = "block"; const x = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = (ev.clientY + 14) + "px"; }
+function hideTip() { tip.style.display = "none"; }
+const fmt = (x, n = 3) => x == null ? "–" : Number(x).toFixed(n);
+
+document.getElementById("meta").append($("br"), $("span", {class: "note"},
+  `Generated ${B.generated || "–"} from commit ${B.commit || "–"}, seed ${B.seed ?? 0}; ${Object.keys(B.runs).length} runs.`));
+
+const TABS = [["summary", "Summary"], ["t1", "T1 Mapping"], ["t2", "T2 Multi-session"], ["t3", "T3 Relocalization"],
+              ["fail", "Failure cases"], ["legacy", "Earlier results"]];
+const tabs = document.getElementById("tabs");
+for (const [k, lab] of TABS) tabs.append($("button", {role: "tab", "aria-selected": String(state.tab === k), onclick: () => { state.tab = k; state.sel = null; render(); }}, lab));
+
+function render() {
+  for (const b of tabs.children) b.setAttribute("aria-selected", String(TABS[[...tabs.children].indexOf(b)][0] === state.tab));
+  const v = document.getElementById("view"); v.replaceChildren();
+  if (state.tab === "summary") return renderSummary(v);
+  if (state.tab === "fail") return renderFailures(v);
+  if (state.tab === "legacy") return renderLegacy(v);
+  renderTrack(v, state.tab);
+}
+
+// ---------------------------------------------------------------- summary (markdown table from make_tables)
+function mdTable(md) {
+  const lines = (md || "").split("\n").filter(l => l.startsWith("|"));
+  if (lines.length < 2) return $("div", {class: "empty"}, "No results yet.");
+  const cells = l => l.slice(1, -1).split("|").map(s => s.trim());
+  const t = $("table"); const head = cells(lines[0]);
+  t.append($("thead", {}, $("tr", {}, ...head.map(h => $("th", {}, h)))));
+  const tb = $("tbody"); for (const l of lines.slice(2)) { const c = cells(l);
+    const tr = $("tr", {class: c[0].startsWith("CROSS") ? "cross" : ""}, $("td", {class: "lab"}, c[0]), ...c.slice(1).map(x => $("td", {class: x === "·" || x === "" ? "dim" : ""}, x || "n/a")));
+    tb.append(tr); } t.append(tb); return $("div", {class: "scroll"}, t);
+}
+function renderSummary(v) {
+  v.append($("div", {class: "card"}, $("h3", {}, "Headline numbers"),
+    $("p", {class: "note"}, "ATE: mean over the dataset's sequences (m, lower is better). LR: localization recall of whole query sessions against a stored map (higher is better). RS: relocalization success over 10 s trials (higher is better). ⁽ᵒ⁾ uses the dataset's odometry. · not run yet, ✗ failed. Click the T1–T3 tabs for per-scene tables and plots."),
+    mdTable(B.summary)));
+}
+
+// ---------------------------------------------------------------- track tables
+function renderTrack(v, track) {
+  const avail = Object.keys(B.tables[track] || {});
+  if (!avail.includes(state.ds[track])) state.ds[track] = avail[0];
+  const sel = $("select", {"aria-label": "dataset", onchange: e => { state.ds[track] = e.target.value; state.sel = null; render(); }},
+    ...avail.map(d => { const o = $("option", {value: d}, DS[d] || d); if (d === state.ds[track]) o.selected = true; return o; }));
+  v.append($("div", {class: "bar"}, $("span", {}, "Dataset"), sel,
+    $("span", {class: "note"}, track === "t1" ? "ATE RMSE (m) of the final trajectory; scene cells average the scene's sequences." :
+      track === "t2" ? "LR@small / LR@large radius, MS-ATE (m). Query sessions run once against the stored map." :
+      "RS at r_D (strict RS at 1 m / 5°), pooled over the scene's trials.")));
+  const m = B.tables[track][state.ds[track]];
+  if (!m) { v.append($("div", {class: "empty"}, "No results.")); return; }
+  const t = $("table");
+  t.append($("thead", {}, $("tr", {}, $("th", {}, "system · setup"), ...m.cols.map(c => $("th", {}, c)))));
+  const tb = $("tbody");
+  m.rows.forEach((r, ri) => {
+    const tr = $("tr", {class: r.system.startsWith("cross") ? "cross" : ""}, $("td", {class: "lab"}, r.label));
+    if (r.pending) { tr.append($("td", {class: "dim", colspan: m.cols.length}, "in development")); tb.append(tr); return; }
+    r.cells.forEach((c, ci) => {
+      const has = c.runs.length > 0;
+      const td = $("td", {class: (has ? "cell" : "dim") + (state.sel && state.sel.r === ri && state.sel.c === ci ? " sel" : ""), tabindex: has ? "0" : "-1"}, c.text);
+      if (has) { const go = () => { state.sel = {r: ri, c: ci}; render(); document.getElementById("detail").scrollIntoView({behavior: "smooth", block: "nearest"}); };
+        td.addEventListener("click", go); td.addEventListener("keydown", e => { if (e.key === "Enter") go(); }); }
+      tr.append(td); });
+    tb.append(tr); });
+  t.append(tb);
+  v.append($("div", {class: "card scroll"}, t));
+  const d = $("div", {id: "detail"}); v.append(d);
+  if (state.sel) { const r = m.rows[state.sel.r], c = r.cells[state.sel.c];
+    d.append($("h3", {}, `${r.label} — ${m.cols[state.sel.c]}`)); d.append(detail(track, c.runs.map(id => B.runs[id]))); }
+  else d.append($("p", {class: "note"}, "Select a cell to see its runs: trajectories (T1), localization error over the query session (T2), trial outcomes (T3)."));
+}
+
+function detail(track, runs) {
+  const g = $("div", {class: "grid"});
+  if (track === "t1") { g.before; for (const r of runs) g.append(trajPlot(r)); return $("div", {}, legendT1(), g); }
+  if (track === "t2") { for (const r of runs) g.append(errPlot(r)); return $("div", {}, legendT2(), g); }
+  for (const r of runs) g.append(trialPlot(r)); return $("div", {}, legendT3(), g);
+}
+const legendT1 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "key", style: "background:var(--gt)"}), "ground truth"),
+  $("span", {}, $("span", {class: "key", style: "background:var(--est)"}), "estimate (aligned)"));
+const legendT2 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "key", style: "background:var(--est)"}), "position error in the map frame"),
+  $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "no estimate"));
+const legendT3 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "sq", style: "background:var(--good)"}), "✓ relocalized within r_D"),
+  $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "✗ failed"));
+
+function box(title, sub, svg, extra) { const p = $("div", {class: "plot"}, $("h4", {}, title), $("div", {class: "sub"}, sub)); if (svg) p.append(svg); if (extra) p.append(extra); return p; }
+
+// top-down trajectory: ground truth (neutral) vs aligned estimate (series 1)
+function trajPlot(r) {
+  const title = r.sequence || r.query || "run";
+  const sub = r.status !== "ok" ? `failed (rc ${r.rc ?? "?"})` :
+    `ATE ${fmt(r.ate_rmse)} m · completeness ${Math.round(100 * (r.completeness ?? 0))}% · ${r.n_poses ?? "?"} poses${r.align === "sim3" ? " · Sim(3), scale " + fmt(r.scale, 2) : ""}`;
+  if (!r.gt2) return box(title, sub, null, $("div", {class: "empty"}, "no trajectory"));
+  const pts = r.gt2.concat(r.est2 || []);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const W = 300, span = Math.max(x1 - x0, y1 - y0, 1e-3), H = Math.max(120, Math.min(300, W * (y1 - y0) / Math.max(x1 - x0, 1e-3)));
+  const sc = Math.min((W - 20) / Math.max(x1 - x0, 1e-3), (H - 20) / Math.max(y1 - y0, 1e-3));
+  const px = p => [10 + (p[0] - x0) * sc, H - 10 - (p[1] - y0) * sc];
+  const svg = s$("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `trajectory of ${title}`});
+  const line = (arr, col) => s$("polyline", {points: arr.map(p => px(p).join(",")).join(" "), fill: "none", stroke: col, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round"});
+  svg.append(line(r.gt2, "var(--gt)"));
+  if (r.est2) svg.append(line(r.est2, "var(--est)"));
+  // scale bar
+  const nice = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find(v => v * sc > 40) || span;
+  svg.append(s$("line", {x1: W - 10 - nice * sc, x2: W - 10, y1: H - 3, y2: H - 3, stroke: "var(--axis)", "stroke-width": 2}));
+  const t = s$("text", {x: W - 10, y: H - 7, "text-anchor": "end"}); t.textContent = `${nice} m`; svg.append(t);
+  return box(title, sub, svg);
+}
+
+// T2: error over the query session with the recall radii
+function errPlot(r) {
+  const title = `${r.map} → ${r.query}`;
+  const lr = Object.keys(r).filter(k => k.startsWith("lr@")).map(k => `${k.replace("lr@", "LR@")} m ${fmt(r[k], 2)}`).join(" · ");
+  const sub = r.status !== "ok" ? `failed (rc ${r.rc ?? "?"})` : `${lr} · MS-ATE ${fmt(r.ms_ate, 2)} m · estimate on ${Math.round(100 * (r.est_frac ?? 0))}% of frames`;
+  if (!r.err) return box(title, sub, null, $("div", {class: "empty"}, "no per-frame errors"));
+  const W = 300, H = 130, n = r.err.length, cap = Math.max(5, ...Object.keys(r).filter(k => k.startsWith("lr@")).map(k => +k.slice(3) * 3));
+  const X = i => 30 + i / Math.max(n - 1, 1) * (W - 38), Y = e => 8 + (1 - Math.min(e, cap) / cap) * (H - 26);
+  const svg = s$("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `localization error of ${title}`});
+  for (const k of Object.keys(r).filter(k => k.startsWith("lr@"))) { const e = +k.slice(3);
+    svg.append(s$("line", {x1: 30, x2: W - 8, y1: Y(e), y2: Y(e), stroke: "var(--grid)", "stroke-width": 1}));
+    const t = s$("text", {x: 26, y: Y(e) + 3, "text-anchor": "end"}); t.textContent = `${e} m`; svg.append(t); }
+  svg.append(s$("line", {x1: 30, x2: W - 8, y1: H - 18, y2: H - 18, stroke: "var(--axis)", "stroke-width": 1}));
+  let seg = [];
+  const flush = () => { if (seg.length > 1) svg.append(s$("polyline", {points: seg.join(" "), fill: "none", stroke: "var(--est)", "stroke-width": 2, "stroke-linejoin": "round"})); seg = []; };
+  r.err.forEach((e, i) => { if (e < 0) { flush(); svg.append(s$("rect", {x: X(i) - 1, y: H - 16, width: 2.5, height: 5, fill: "var(--bad)"})); } else seg.push(`${X(i)},${Y(e)}`); });
+  flush();
+  const t0 = s$("text", {x: 30, y: H - 3}); t0.textContent = "start"; const t1 = s$("text", {x: W - 8, y: H - 3, "text-anchor": "end"}); t1.textContent = "end of query session"; svg.append(t0, t1);
+  const cross = s$("line", {y1: 8, y2: H - 18, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden"}); svg.append(cross);
+  const hit = s$("rect", {x: 30, y: 0, width: W - 38, height: H - 16, fill: "transparent"}); svg.append(hit);
+  hit.addEventListener("pointermove", ev => { const bb = svg.getBoundingClientRect(); const fx = (ev.clientX - bb.left) / bb.width * W;
+    const i = Math.max(0, Math.min(n - 1, Math.round((fx - 30) / (W - 38) * (n - 1)))); cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("visibility", "visible");
+    const e = r.err[i]; showTip(ev, [[e < 0 ? "no estimate" : `${e.toFixed(2)} m`, ""], `${Math.round(100 * i / Math.max(n - 1, 1))}% through the session`]); });
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+  return box(title, sub, svg);
+}
+
+// T3: one square per trial along the query session, final error on hover
+function trialPlot(r) {
+  const title = `${r.map} → ${r.query}`;
+  const sub = r.status !== "ok" ? `failed (rc ${r.rc ?? "?"})` :
+    `RS ${fmt(r.rs, 2)} (strict ${fmt(r.rs_strict, 2)}) · ${r.n_success}/${r.n_trials} trials${r.concat ? " · map + trial in one stream" : ""}${r.fail_err_median != null ? " · failed trials end " + fmt(r.fail_err_median, 1) + " m off (median)" : ""}`;
+  if (!r.trials) return box(title, sub, null, $("div", {class: "empty"}, "no trials"));
+  const n = r.trials.length, per = Math.min(n, 40), rows = Math.ceil(n / per), cw = 300 / per;
+  const svg = s$("svg", {viewBox: `0 0 300 ${rows * cw + 4}`, role: "img", "aria-label": `trial outcomes of ${title}`});
+  r.trials.forEach((t, i) => { const [start, ok, fe] = t;
+    const c = s$("rect", {x: (i % per) * cw + 1, y: Math.floor(i / per) * cw + 1, width: cw - 2, height: cw - 2, rx: 2, fill: ok ? "var(--good)" : "var(--bad)", tabindex: 0});
+    const tipf = ev => showTip(ev, [[ok ? "✓ relocalized" : "✗ failed", ""], `trial ${i + 1}, frames ${start}–${start + 99}`, `final error ${fe == null ? "–" : fe.toFixed(2) + " m"}`]);
+    c.addEventListener("pointermove", tipf); c.addEventListener("pointerleave", hideTip); c.addEventListener("focus", ev => { const bb = c.getBoundingClientRect(); tipf({clientX: bb.right, clientY: bb.bottom}); }); c.addEventListener("blur", hideTip);
+    svg.append(c); });
+  return box(title, sub, svg);
+}
+
+// ---------------------------------------------------------------- failure cases
+function renderFailures(v) {
+  v.append($("p", {class: "note"}, "For every system and setup: maps that failed or covered less than 80 % of the sequence (worst T1 maps otherwise), the query sessions with the lowest localization recall (T2), and the query sessions with the most failed relocalization trials (T3). Frame pairs show a failed trial's final query frame next to the map keyframe nearest to it in ground truth, when available."));
+  const keys = Object.keys(B.failures || {}).sort((a, b) => (b.startsWith("cross") - a.startsWith("cross")) || a.localeCompare(b));
+  if (!keys.length) { v.append($("div", {class: "empty"}, "No results yet.")); return; }
+  for (const k of keys) { const [system, setup] = k.split("|"); const f = B.failures[k];
+    const lab = `${(B.systems[system] || {}).label || system} · ${setup}`;
+    const card = $("div", {class: "card"}, $("h3", {}, lab));
+    const sect = (name, ids, fn) => { if (!ids.length) return; card.append($("h4", {}, name)); const g = $("div", {class: "grid"}); for (const id of ids) g.append(fn(B.runs[id])); card.append(g); };
+    sect("T1 · weakest maps", f.t1, r => { const p = trajPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.sequence}`; return p; });
+    sect("T2 · lowest localization recall", f.t2, r => { const p = errPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`; return p; });
+    sect("T3 · most failed trials", f.t3, r => { const p = trialPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`;
+      const imgs = (B.assets || []).filter(a => a.includes(`/${r.id}_`)).slice(0, 2);
+      if (imgs.length) p.append($("div", {class: "grid", style: "grid-template-columns:1fr 1fr;gap:6px;margin-top:6px"}, ...imgs.map(a => $("img", {class: "thumb", src: a, alt: a.includes("_q") ? "query frame" : "nearest map keyframe", loading: "lazy"}))));
+      return p; });
+    if (card.children.length === 1) card.append($("div", {class: "empty"}, "No failures recorded."));
+    v.append(card); }
+}
+
+// ---------------------------------------------------------------- earlier results (different protocol)
+function renderLegacy(v) {
+  const L = B.legacy;
+  if (!L) { v.append($("div", {class: "empty"}, "No earlier results.")); return; }
+  v.append($("p", {class: "note"}, L.note || ""));
+  for (const s of L.sections || []) v.append($("div", {class: "card"}, $("h3", {}, s.title), $("p", {class: "note"}, s.note || ""), mdTable(s.table)));
+}
+render();
+</script>
+</body>
+</html>

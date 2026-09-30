@@ -105,8 +105,9 @@ indoors, 5 m outdoors, position only. RS is the fraction of successful trials.
   relocalization error. The absolute variant (map-session alignment, as in T2) is stored as well.
 - Also reported: strict RS at 1 m / 5°, the median final error of the failed trials, and 95 % Wilson intervals.
 - Systems without map persistence (MASt3R-SLAM, VGGT-SLAM, DROID-SLAM) run the map session followed by the trial in one
-  stream. Only the trial frames are scored. This is marked in the tables because it gives the system the map
-  session's live state, which a persistence-based system does not have.
+  stream. Only the trial frames are scored. Every trial re-runs the whole map session, so these systems are scored on at most
+  20 evenly spaced trials per query session. This is marked in the tables because the system keeps the map session's live
+  state, which a persistence-based system does not have.
 
 ## 5. Systems
 

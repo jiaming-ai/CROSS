@@ -47,12 +47,17 @@ def main():
     ap.add_argument("--r-d", type=float, default=2.0)
     ap.add_argument("--config", default="config/base.yaml", help="MASt3R-SLAM config (relative to its repo)")
     ap.add_argument("--timeout", type=float, default=900.0, help="seconds per trial before the run is killed")
+    ap.add_argument("--map-only", action="store_true", help="run on the map sequence alone (single-session accuracy)")
+    ap.add_argument("--max-trials", type=int, default=0, help="evaluate at most this many evenly spaced trials (0: all)")
     args = ap.parse_args()
     m, q = Path(args.map).resolve(), Path(args.query).resolve()
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
-    lm = sorted((m / "left").glob("*.png"))
-    lq = sorted((q / "left").glob("*.png"))
+    def images(seq):
+        return sorted((seq / ("left" if (seq / "left").is_dir() else "rgb")).glob("*.png"))
+
+    lm = images(m)
+    lq = images(q)
     n_map = len(lm)
     calib = json.loads((m / "calib.json").read_text())
     K = np.asarray(calib["K"])
@@ -61,6 +66,10 @@ def main():
     gt_map = np.loadtxt(m / "poses_left.txt").reshape(-1, 4, 4)
     gt_query = np.loadtxt(q / "poses_left.txt").reshape(-1, 4, 4)
     trials = build_trials(len(lq), args.trial_len, args.trial_stride)
+    if args.max_trials and len(trials) > args.max_trials:
+        trials = [trials[i] for i in np.linspace(0, len(trials) - 1, args.max_trials).round().astype(int)]
+    if args.map_only:                    # the map sequence alone: one "trial" with no query frames
+        trials, lq = [(0, 0)], []
     all_rows, per_trial_time = [], []
     map_poses_ref = None
     for ti, (a, b) in enumerate(trials):
@@ -109,6 +118,14 @@ def main():
                     map_poses[idx] = (state, T)
                 else:
                     query_poses[idx - n_map + a] = (state, T)
+        if args.map_only:
+            with open(out / "map_poses.txt", "w") as f:
+                for i in sorted(map_poses):
+                    st, T = map_poses[i]
+                    f.write(f"{i} {st} " + " ".join(f"{v:.9f}" for v in T.reshape(-1)) + "\n")
+            (out / "map_time.json").write_text(json.dumps({"rc": rc, "seconds": dt, "n_frames": n_map}))
+            shutil.rmtree(stream, ignore_errors=True)
+            return
         rws, summ = evaluate(map_poses, query_poses, gt_map, gt_query, sim3=args.sim3, frame_range=(a, b))
         if rws is None:
             rws = [{"frame": i, "trial": ti, "tracked": False, "c0_rel_t_err": np.inf, "c0_rel_r_err": np.inf, "t_err": np.inf, "r_err": np.inf} for i in range(a, b)]

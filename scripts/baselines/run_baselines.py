@@ -60,6 +60,8 @@ def prepare_sequence(seq: Path, snr, seed=0):
     """Write calib_pinhole.txt, depth_mm/ and odom_snr{snr}.txt next to a SimChange sequence; returns the odometry
     file (the sequence's own odom_left.txt when it has one: real odometry, no simulated noise)."""
     from cross.dataloader.stereo_loader import StereoSequenceLoader
+    if (seq / "odom_left.txt").is_file() and not (seq / "left").is_dir():
+        return seq / "odom_left.txt"     # benchmark folder: read-only, the per-run views (make_chunk) expose depth_mm
     calib = json.loads((seq / "calib.json").read_text())
     K = np.asarray(calib["K"])
     (seq / "calib_pinhole.txt").write_text(f"{K[0,0]} {K[1,1]} {K[0,2]} {K[1,2]} {calib['width']} {calib['height']}\n")
@@ -139,7 +141,9 @@ def make_chunk(seq: Path, out: Path, start: int, end: int, snr=None, odom_file=N
         dirs["right"] = "right"
     if (seq / "rgb").is_dir() and not (seq / "left").is_dir():
         dirs["rgb"] = "left"
-    if (seq / "depth").is_dir() and next((seq / "depth").glob("*.png"), None) is not None and not (seq / "depth_mm").exists():
+    if (seq / "depth_mm").exists():
+        dirs.pop("depth", None)
+    elif (seq / "depth").is_dir() and next((seq / "depth").glob("*.png"), None) is not None:
         dirs["depth"] = "depth_mm"
     for d, dst in dirs.items():
         src = seq / d

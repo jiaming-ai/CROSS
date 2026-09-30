@@ -300,6 +300,44 @@ class Job:
             out[track] = res
         return out
 
+    # ------------------------------------------------------------------ systems without map persistence
+    CONCAT = {"mast3r_slam": ["scripts/baselines/run_mast3r_slam.py", "--sim3"],
+              "vggt_slam": ["scripts/baselines/run_vggt_slam.py"]}
+
+    def concat_cmd(self, map_seq, query_seq, out, extra):
+        script, *flags = self.CONCAT[self.a.system]
+        return [PY, script, "--map", self.seq(map_seq), "--query", self.seq(query_seq), "--out", out] + flags + extra
+
+    def concat_map(self, map_seq, out: Path):
+        return sh(self.concat_cmd(map_seq, map_seq, out, ["--map-only", "--timeout", self.a.timeout]), out / "bench.log",
+                  self.a.timeout + 600)
+
+    def concat_query(self, map_dir: Path, q: str, t2: Path, t3: Path):
+        """Map + query (T2) or map + trial (T3) in one stream; T3 is capped at --concat-max-trials evenly spaced trials
+        per query, because every trial re-runs the whole map session."""
+        a = self.a
+        out = {}
+        for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
+                                ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
+                                            "--r-d", self.dcfg["r_d"], "--max-trials", a.concat_max_trials])):
+            if (d / "result.json").is_file() and not a.force:
+                continue
+            d.mkdir(parents=True, exist_ok=True)
+            rc, dt = sh(self.concat_cmd(self.scene["map"], q, d, [str(e) for e in extra] + ["--timeout", a.timeout]),
+                        d / "bench.log", a.timeout * (a.concat_max_trials + 1))
+            if not (d / "reloc_summary.json").is_file():
+                write_result(d / "result.json", {**self.base, "track": track, "map": self.scene["map"], "query": q,
+                                                 "status": "failed", "rc": rc, "wall_s": dt, **env_info()})
+                continue
+            rows = json.loads((d / "reloc_rows.json").read_text())
+            summ = json.loads((d / "reloc_summary.json").read_text())
+            res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ) if track == "t2" \
+                else self.t3_from_summary(summ, q)
+            res.update({"wall_s": dt, "status": "ok", "rc": rc, "concat": True, **env_info()})
+            write_result(d / "result.json", res)
+            out[track] = res
+        return out
+
     # ------------------------------------------------------------------ tasks
     def runner(self):
         r = self.scfg["runner"]
@@ -307,6 +345,8 @@ class Job:
             return self.cross_map, self.cross_t1_result, self.cross_query
         if r == "baseline":
             return self.baseline_map, self.baseline_t1_result, self.baseline_query
+        if r == "concat":
+            return self.concat_map, self.baseline_t1_result, self.concat_query
         raise NotImplementedError(f"runner {r} ({self.a.system})")
 
     def ensure_map(self, map_seq) -> Path:
@@ -383,6 +423,12 @@ class Job:
             m = self.scene["map"]
             md = self.ensure_map(m)
             tag = f"{m}__{a.query}"
+            if json.loads((md / "MAP_DONE").read_text()).get("rc", 0) != 0:     # no map to localize in
+                for track in ("t2", "t3"):
+                    write_result(self.run_root / track / tag / "result.json",
+                                 {**self.base, "track": track, "map": m, "query": a.query, "status": "failed",
+                                  "error": "mapping run failed", **env_info()})
+                return
             do_query(md, a.query, self.run_root / "t2" / tag, self.run_root / "t3" / tag)
 
 
@@ -399,6 +445,8 @@ def main():
     ap.add_argument("--out", default=os.environ.get("BENCH_RESULTS"))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timeout", type=float, default=21600.0, help="seconds per harness run (a T3 run holds all trials)")
+    ap.add_argument("--concat-max-trials", type=int, default=20,
+                    help="T3 trials per query for systems without map persistence (evenly spaced)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--keep-maps", action="store_true")
     ap.add_argument("--keep-rows", action="store_true", help="keep the per-frame rows of the query runs")
