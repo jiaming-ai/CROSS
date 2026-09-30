@@ -35,8 +35,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 ROOT = Path(__file__).resolve().parents[2]
-VS_DIR = Path(os.environ.get("VGGT_SLAM_DIR", "/home/storage/jiaming/vggt_slam/VGGT-SLAM"))
-PY = Path(os.environ.get("VGGT_SLAM_PY", "/home/storage/jiaming/vggt_slam/.venv/bin/python"))
+VS_DIR = Path(os.environ.get("VGGT_SLAM_DIR", ROOT / "third_party/vggt_slam/VGGT-SLAM"))
+PY = Path(os.environ.get("VGGT_SLAM_PY", ROOT / "third_party/vggt_slam/.venv/bin/python"))
 TORCH_HOME = Path(os.environ.get("VGGT_SLAM_TORCH_HOME", VS_DIR.parent / "torch_home"))
 HEADLESS = Path(__file__).resolve().parent / "vggt_slam_headless.py"
 sys.path.insert(0, str(ROOT / "scripts/baselines"))

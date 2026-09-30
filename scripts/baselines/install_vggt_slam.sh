@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install the VGGT-SLAM 2.0 baseline (https://github.com/MIT-SPARK/VGGT-SLAM, main = v2.0) into a target dir.
 #
-#   bash scripts/baselines/install_vggt_slam.sh [TARGET_DIR]      # default /home/storage/jiaming/vggt_slam
+#   bash scripts/baselines/install_vggt_slam.sh [TARGET_DIR]      # default third_party/vggt_slam
 #
 # Layout after install:
 #   TARGET/VGGT-SLAM                 repo (+ third_party/{salad,vggt}); pinned commits below
@@ -12,7 +12,7 @@
 # open-set detection) are skipped.  Needs network, no GPU.  Venv lives on local disk (NAS is noexec).
 set -euo pipefail
 
-TARGET=$(realpath -m "${1:-/home/storage/jiaming/vggt_slam}")
+TARGET=$(realpath -m "${1:-$(dirname "$0")/../../third_party/vggt_slam}")
 UV=${UV:-$(command -v uv || echo "$HOME/.local/bin/uv")}
 VGGT_SLAM_COMMIT=35327ac28b7d193df9ccc39ba6346052bb6f1207   # VGGT-SLAM main, 2026-06-29
 SALAD_COMMIT=33ca9c0ca1e10cbb21efc0d6a5fcb6d45688e42d        # Dominic101/salad

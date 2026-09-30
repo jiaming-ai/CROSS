@@ -185,11 +185,15 @@ class Tables:
         scenes = [s for s in cfg["scenes"] if cfg["scenes"][s].get("queries")] or \
             sorted({r["scene"] for k, v in self.idx.items() if k[0] == "t3" and k[1] == dataset for r in v})
         head = ["system · setup"] + scenes + ["all queries [trials, 95% CI]"]
-        lines = [f"Cells: RS at r_D = {cfg['r_d']:g} m (strict RS at 1 m / 5°), pooled over the scene's trials.", "",
+        cal = sorted({self.sy[k[2]]["label"] for k, v in self.idx.items() if k[0] == "t3" and k[1] == dataset
+                      for r in v if r.get("calibrated")})
+        note = (f" Rows marked *calibrated* ({', '.join(cal)}) use the noise model calibrated without ground truth on the "
+                "first 600 frames of the map traversal." if cal else "")
+        lines = [f"Cells: RS at r_D = {cfg['r_d']:g} m (strict RS at 1 m / 5°), pooled over the scene's trials.{note}", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
             rs_all = self.idx[("t3", dataset, system, setup)]
-            row = [row_label(self.sy, system, setup, dataset)]
+            row = [row_label(self.sy, system, setup, dataset) + (" *calibrated*" if any(r.get("calibrated") for r in rs_all) else "")]
             if self.sy[system]["runner"] == "pending" and not rs_all:
                 lines.append("| " + " | ".join([row[0], "in development"] + [NA] * len(scenes)) + " |")
                 continue

@@ -28,6 +28,8 @@ def main():
     ap.add_argument("--dataset", default="simchange")
     ap.add_argument("--modes", nargs="+", required=True, help="mode=system:setup")
     ap.add_argument("--source", default="imported", help="note stored with every cell")
+    ap.add_argument("--calibrated", nargs="*", default=[],
+                    help="scenes whose runs used a noise model calibrated without ground truth (PROTOCOL section 2)")
     a = ap.parse_args()
     dcfg = yaml.safe_load((ROOT / "benchmark/configs/datasets.yaml").read_text())[a.dataset]
     sy = yaml.safe_load((ROOT / "benchmark/configs/systems.yaml").read_text())
@@ -51,7 +53,7 @@ def main():
                "map": "map", "query": variant, "n_trials": tr["n_trials"], "n_success": k, "rs": tr["RS"],
                "rs_strict": tr["RS_1m_5deg"], "rs_ci95": wilson(k, tr["n_trials"]),
                "fail_err_median": fails[len(fails) // 2] if fails else None, "trials": trials, "r_d": tr.get("r_d", dcfg["r_d"]),
-               "trial_len": dcfg["trial_len"], "status": "ok", "source": a.source,
+               "trial_len": dcfg["trial_len"], "status": "ok", "source": a.source, "calibrated": scene in a.calibrated,
                "time": __import__("time").strftime("%Y-%m-%d %H:%M:%S", __import__("time").localtime(f.stat().st_mtime))}
         o = Path(a.out) / a.dataset / scene / system / setup / seed_dir / "t3" / f"map__{variant}" / "result.json"
         o.parent.mkdir(parents=True, exist_ok=True)
