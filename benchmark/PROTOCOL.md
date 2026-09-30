@@ -41,7 +41,10 @@ Notes.
   - the camera sits at the calibrated offset from the prism (about 0.5 m).
 
   A 2° heading error moves the camera by about 2 cm. On ROVER, therefore, only position errors are reported: there is no
-  strict 1 m / 5° RS.
+  strict 1 m / 5° RS. The total station was set up anew for every recording, so the recordings do not share a frame.
+  Each recording's prism track is registered to the map recording's track by 2-D ICP (x, y, heading) plus a height offset.
+  This works because the robot drives the same lawn-edge route. The residuals are stored in each sequence's `calib.json`.
+  On autumn → summer, for example, the registered tracks lie 0.13 m apart at the median and 0.42 m at the 90th percentile.
 - **Why these datasets.** KITTI is the most widely reported outdoor SLAM benchmark. OpenLORIS-Scene (indoor) and ROVER
   (outdoor) are the two real datasets with RGB-D, stereo, mono, odometry or IMU, and repeated sessions of one place under
   changing conditions. Both were used in the CROSS paper (OpenLORIS Corridor and ROVER Campus). SimChange changes one controlled
