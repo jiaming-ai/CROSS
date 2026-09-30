@@ -32,7 +32,9 @@ np.set_printoptions(formatter={"float": lambda x: f"{x:0.2f}"})
 def load_dataset(path: str, loader: str = "auto", **kwargs):
     """Load a dataset by path, auto-detecting format or using the specified loader."""
     if loader == "auto":
-        if path.endswith(".r3d"):
+        if os.path.isfile(os.path.join(path, "calib.json")) and os.path.isdir(os.path.join(path, "rgb")):
+            loader = "posed"                      # posed RGB-D folder (detected by its layout, before name heuristics)
+        elif path.endswith(".r3d"):
             loader = "r3d"
         elif "rosbag" in path or "topomap" in path:
             loader = "rosbag"
@@ -40,8 +42,6 @@ def load_dataset(path: str, loader: str = "auto", **kwargs):
             loader = "loris"
         elif "tum" in path:
             loader = "tum"
-        elif os.path.isfile(os.path.join(path, "calib.json")) and os.path.isdir(os.path.join(path, "rgb")):
-            loader = "posed"
         else:
             loader = "r3d"
 
