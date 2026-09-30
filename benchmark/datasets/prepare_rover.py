@@ -12,6 +12,11 @@ downloaded zip (extracting ~150k files per recording onto a network drive takes 
 
 with poses_left.txt, times.txt, calib.json, all at 10 Hz.
 
+Common frame.  The total station was set up anew for every recording, so each recording's ground truth is in its own
+frame.  With --align-to <map recording>, the prism track is registered to the map recording's track (the robot drives the
+same lawn-edge route): 2-D ICP over x, y and heading from several initial headings, plus the median height offset.  The
+residual distances between the registered tracks are stored in calib.json ("gt_alignment").
+
 Ground truth.  ROVER's ground truth is the 3-D position of a prism on the robot tracked by a total station (no
 orientation).  The robot drives forward (differential drive, 0.5 m/s), so its heading is the direction of travel of
 the smoothed prism track; roll and pitch are taken as zero.  The camera pose is then T_world_prism * T_prism_cam with the
@@ -87,6 +92,42 @@ def prism_poses(t_gt, p_gt, yaw_gt, t):
         T[:3, 3] = [np.interp(t[k], t_gt, p_gt[:, j]) for j in range(3)]
         out[k] = T
     return out
+
+
+def read_gt(z, top):
+    rows = [l.split() for l in z.read(f"{top}/groundtruth.txt").decode().splitlines() if l.strip() and not l.startswith("#")]
+    g = np.asarray([[float(v) for v in r[:4]] for r in rows])
+    g = g[np.argsort(g[:, 0])]
+    return g[:, 0], g[:, 1:4]
+
+
+def register_track(src, dst, iters=60):
+    """4x4 transform (rotation about z, translation) mapping the prism track `src` onto `dst`, and the residuals (m)."""
+    from scipy.spatial import cKDTree
+    tree = cKDTree(dst[:, :2])
+    best = None
+    for yaw0 in np.radians(np.arange(0, 360, 15)):
+        R = np.array([[np.cos(yaw0), -np.sin(yaw0)], [np.sin(yaw0), np.cos(yaw0)]])
+        t = dst[:, :2].mean(0) - R @ src[:, :2].mean(0)
+        for _ in range(iters):
+            d, j = tree.query((R @ src[:, :2].T).T + t)
+            m = d < np.percentile(d, 90)
+            a, b = src[m, :2], dst[j[m], :2]
+            ma, mb = a.mean(0), b.mean(0)
+            U, _, Vt = np.linalg.svd((a - ma).T @ (b - mb))
+            if np.linalg.det(Vt.T @ U.T) < 0:
+                Vt[1] *= -1
+            R = Vt.T @ U.T
+            t = mb - R @ ma
+        d, _ = tree.query((R @ src[:, :2].T).T + t)
+        if best is None or np.median(d) < np.median(best[2]):
+            best = (R, t, d)
+    R, t, d = best
+    T = np.eye(4)
+    T[:2, :2] = R
+    T[:2, 3] = t
+    T[2, 3] = np.median(dst[:, 2]) - np.median(src[:, 2])
+    return T, d
 
 
 def select_10hz(ts, t0, t1):
@@ -201,25 +242,39 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--names", nargs="*", default=None, help="recordings (zip stems); default: every *.zip.done")
     ap.add_argument("--setups", nargs="*", default=["rgbd", "stereo"])
+    ap.add_argument("--align-to", default=None, help="map recording whose ground-truth frame every recording is registered to")
     a = ap.parse_args()
     root, out_root = Path(a.root), Path(a.out)
     names = a.names or sorted(p.name[:-len(".zip.done")] for p in root.glob("*.zip.done"))
     cal_d, cal_t = read_calib(root)
+    ref = None
+    if a.align_to:
+        zr = zipfile.ZipFile(root / f"{a.align_to}.zip")
+        ref = read_gt(zr, zr.namelist()[0].split("/")[0])[1]
     for name in names:
         z = zipfile.ZipFile(root / f"{name}.zip")
         top = z.namelist()[0].split("/")[0]
-        rows = [l.split() for l in z.read(f"{top}/groundtruth.txt").decode().splitlines() if l.strip() and not l.startswith("#")]
-        g = np.asarray([[float(v) for v in r[:4]] for r in rows])
-        g = g[np.argsort(g[:, 0])]
-        t_gt, p_gt = g[:, 0], g[:, 1:4]
+        t_gt, p_gt = read_gt(z, top)
         gt = (t_gt, p_gt, heading_track(t_gt, p_gt))
+        T_align, info = np.eye(4), {"to": name, "residual_median_m": 0.0, "residual_p90_m": 0.0}
+        if ref is not None and name != a.align_to:
+            T_align, d = register_track(p_gt, ref)
+            info = {"to": a.align_to, "T": T_align.tolist(), "residual_median_m": float(np.median(d)),
+                    "residual_p90_m": float(np.percentile(d, 90))}
         for setup in a.setups:
             o = out_root / name / setup
-            if (o / "calib.json").is_file():
-                print(f"{name}/{setup}: done already")
-                continue
-            n = (prepare_rgbd(z, top, cal_d, gt, o) if setup == "rgbd" else prepare_stereo(z, top, cal_t, gt, o))
-            print(f"{name}/{setup}: {n} frames", flush=True)
+            if not (o / "calib.json").is_file():
+                n = (prepare_rgbd(z, top, cal_d, gt, o) if setup == "rgbd" else prepare_stereo(z, top, cal_t, gt, o))
+                print(f"{name}/{setup}: {n} frames", flush=True)
+            calib = json.loads((o / "calib.json").read_text())
+            if ref is not None and calib.get("gt_alignment", {}).get("to") != info["to"]:
+                # poses were written in the recording's own frame: move them into the map recording's frame
+                P = np.loadtxt(o / "poses_left.txt").reshape(-1, 4, 4)
+                np.savetxt(o / "poses_left.txt", (T_align[None] @ P).reshape(-1, 16), fmt="%.9f")
+                calib["gt_alignment"] = info
+                (o / "calib.json").write_text(json.dumps(calib, indent=1))
+                print(f"{name}/{setup}: ground truth registered to {info['to']} (residual median "
+                      f"{info['residual_median_m']:.2f} m, p90 {info['residual_p90_m']:.2f} m)", flush=True)
 
 
 if __name__ == "__main__":
