@@ -28,6 +28,20 @@ cross_stereo:
   args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3"]
   outdoor_config: [configs/outdoor.yaml]
 
+cross_rgbd_monoreloc:
+  label: CROSS (RGB-D, PnP, relocalization options from CROSS-mono)
+  runner: cross_rgbd
+  setups: [rgbd]
+  uses_odometry: true
+  map_reuse: save/load
+  # A/B of the monocular mode's relocalization design in the RGB-D mode: coordinate charts with session recovery
+  # (a query session keeps its own frame until joined to the map), reserved retrieval slots for the loaded map, and
+  # the two evidence fixes (reset on slot reuse, loop-closure recheck after realization)
+  args: [--set, mapping.hypothesis.session_recovery=true, mapping.hypothesis.chart_aware=true,
+         retrieval.historical_slots=3, retrieval.historical_min_score=0.0,
+         mapping.hypothesis.reset_evidence_on_slot_reuse=true, mapping.hypothesis.lc_recheck_after_realization=true]
+  outdoor_config: [configs/outdoor.yaml]
+
 cross_rgbd_vo:
   label: CROSS (RGB-D, PnP, visual odometry)
   runner: cross_rgbd

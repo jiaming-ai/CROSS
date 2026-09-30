@@ -97,6 +97,12 @@ class DPVOFrontend:
         small = cv2.resize(cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY), (32, 24), interpolation=cv2.INTER_AREA).astype(np.float32)
         return (small - small.mean()) / (small.std() + 1e-6)
 
+    def _needs_mapping_depth(self, initialized, valid):
+        """Dense depth for this frame: every mapping interval, and on the first valid frame (the mapper's first update)."""
+        if not (self.provide_mapping_depth and initialized):
+            return False
+        return self.index % self.config.mapping_interval == 0 or (bool(valid) and not getattr(self, "had_depth", False))
+
     def _check_discontinuity(self, rgb):
         """Detect a jump with little shared content; restart DPVO from this frame and return the bridge."""
         if self.config.discontinuity_ncc <= 0:
@@ -320,14 +326,16 @@ class DPVOFrontend:
         mapping_depth = None      # no depth predicted for this frame (the pipeline predicts one if it maps it)
         if self.config.depth_input:
             mapping_depth = np.asarray(depth, dtype=np.float32)
-        elif self.provide_mapping_depth and initialized and (self.index % self.config.mapping_interval == 0 or not getattr(self, "had_depth", False)):
+        elif self._needs_mapping_depth(initialized, diagnostics["valid"]):
             depth_start = perf_counter()
             if self.metric is not None:
                 mapping_depth = self.metric.predict_metric(rgb, self.K, (h, w))
             else:
                 prediction = self.geometry.predict([self.geometry.prepare(rgb)])
                 mapping_depth = cv2.resize(prediction.depth[0], (w, h))
-            self.had_depth = True
+            # the mapper initializes on the first VALID frame (metric scale accepted), which may fall between mapping
+            # intervals: that frame needs depth even when earlier (still invalid) frames already had one
+            self.had_depth = getattr(self, "had_depth", False) or bool(diagnostics["valid"])
             diagnostics["mapping_depth_seconds"] = perf_counter() - depth_start
         # Keep only frames still eligible for scale observations (plus a small
         # safety tail for active-window reindexing). Images are bounded memory.
