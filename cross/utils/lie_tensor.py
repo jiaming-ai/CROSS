@@ -5,6 +5,22 @@ import pypose as pp
 import torch
 from cross.utils.rotation import quaternion_to_euler_torch
 
+
+def normalize_SE3(x):
+    """Return `x` with unit quaternions (batched SE3 LieTensor or raw (..., 7) tensor).
+
+    pypose never renormalizes: every float32 composition (odometry accumulation, motion update,
+    candidate poses `kf_pose @ rel`) shrinks |q| by ~1e-6, which compounds over thousands of steps
+    into |q| ~ 0.98.  A non-unit quaternion is not a rotation for pypose (Act/matrix blend the
+    rotation with the identity and scale translations), so poses must be renormalized wherever
+    they are composed.
+    """
+    t = x.tensor() if hasattr(x, "ltype") else x
+    q = t[..., 3:7]
+    n = torch.linalg.norm(q, dim=-1, keepdim=True).clamp_min(1e-12)
+    out = torch.cat([t[..., :3], q / n], dim=-1)
+    return pp.SE3(out)
+
 def vec2skew(input:torch.Tensor) -> torch.Tensor:
     r"""
     Convert batched vectors to skew matrices.

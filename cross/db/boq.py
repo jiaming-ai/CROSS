@@ -1,8 +1,61 @@
+import os
 import torch
 import torchvision.transforms as T
 import numpy as np
 from collections import OrderedDict
 import hashlib
+
+HUB_REPO = "amaralibey/bag-of-queries"
+HUB_ENTRY = "get_trained_boq"
+HUB_LOCAL_DIRNAME = "amaralibey_bag-of-queries_main"
+
+
+def _hub_local_dir() -> str:
+    """Local torch-hub checkout of the BoQ repo (override with CROSS_BOQ_LOCAL_DIR)."""
+    return os.environ.get("CROSS_BOQ_LOCAL_DIR") or os.path.join(torch.hub.get_dir(), HUB_LOCAL_DIRNAME)
+
+
+def _hub_offline() -> bool:
+    return os.environ.get("CROSS_HUB_OFFLINE", "").strip().lower() not in ("", "0", "false", "no")
+
+
+def load_boq_hub_model(backbone_name: str, output_dim: int):
+    """torch.hub entry point of BoQ, robust to missing network.
+
+    With CROSS_HUB_OFFLINE=1 (or CROSS_BOQ_LOCAL_DIR set) the cached repo is loaded with source='local' without
+    touching github; otherwise the usual github path is used (trust_repo=True) and, if github is unreachable
+    (torch.hub probes it even when the repo is cached), the local cache is used as a fallback.  The weights come from
+    torch.hub's checkpoint cache in both cases (load_state_dict_from_url inside hubconf, which skips the download when
+    the file exists)."""
+    kw = dict(backbone_name=backbone_name, output_dim=output_dim)
+    local_dir = _hub_local_dir()
+    if (_hub_offline() or os.environ.get("CROSS_BOQ_LOCAL_DIR")) and os.path.isdir(local_dir):
+        return torch.hub.load(local_dir, HUB_ENTRY, source="local", **kw)
+    try:
+        return torch.hub.load(HUB_REPO, HUB_ENTRY, trust_repo=True, **kw)
+    except Exception as e:
+        # Only network-type failures of the github probe fall back to the cache: URLError / HTTPError / socket
+        # timeouts / ConnectionError (all OSError), http.client errors, and the RuntimeError torch.hub raises from
+        # _parse_repo_info when there is "no internet connection".  Anything else (e.g. a model-construction error
+        # inside hubconf) is re-raised unchanged so it is not reported a second time from the local load.
+        if not (_is_network_error(e) and os.path.isdir(local_dir)):
+            raise
+        import warnings
+        warnings.warn(f"torch.hub github load of {HUB_REPO} failed with a network error ({type(e).__name__}: {e}); "
+                      f"falling back to the local cache {local_dir}")
+        return torch.hub.load(local_dir, HUB_ENTRY, source="local", **kw)
+
+
+def _is_network_error(e: BaseException) -> bool:
+    import http.client
+    import urllib.error
+    if isinstance(e, (urllib.error.URLError, OSError, http.client.HTTPException, TimeoutError)):
+        return True
+    if isinstance(e, RuntimeError):
+        msg = str(e).lower()
+        return ("no internet" in msg) or ("could not be found in the cache" in msg) or isinstance(e.__cause__, (urllib.error.URLError, OSError))
+    return False
+
 
 class BoQ():
     def __init__(
@@ -14,21 +67,11 @@ class BoQ():
     ):
         # ResNet50 + BoQ
         if backbone_name == "resnet50":
-            self.vpr_model = torch.hub.load(
-                "amaralibey/bag-of-queries", 
-                "get_trained_boq", 
-                backbone_name=backbone_name, 
-                output_dim=16384,
-            )
+            self.vpr_model = load_boq_hub_model(backbone_name, 16384)
             self.im_size = (384, 384) # to be used with ResNet50 backbone
             self.output_dim = 16384
         elif backbone_name == "dinov2":
-            self.vpr_model = torch.hub.load(
-                "amaralibey/bag-of-queries", 
-                "get_trained_boq", 
-                backbone_name=backbone_name, 
-                output_dim=12288, 
-                )
+            self.vpr_model = load_boq_hub_model(backbone_name, 12288)
             self.im_size = (322, 322) # to be used with DinoV2 backbone
             self.output_dim = 12288
         self.device = device

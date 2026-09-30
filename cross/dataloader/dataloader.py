@@ -18,9 +18,20 @@ class Dataloader(ABC):
         target_width: int | None = None,
         target_height: int | None = None,
         short_side: int = 480,
+        seed: int | None = None,
+        odom_scale_bias: float = 0.0,
+        odom_yaw_drift_deg_per_m: float = 0.0,
         **kwargs,
     ):
         self.snr = snr
+        # systematic odometry error (wheel / VIO-like drift): translations scaled by (1 + odom_scale_bias) and the heading
+        # rotated about the world vertical by odom_yaw_drift_deg_per_m per metre travelled; applied before the white
+        # SNR noise.  The world vertical is set by the loader (`odom_vertical_world`, unit vector in the GT world frame).
+        self.odom_scale_bias = float(odom_scale_bias or 0.0)
+        self.odom_yaw_drift = float(odom_yaw_drift_deg_per_m or 0.0)
+        self.odom_vertical_world = None
+        # odometry-noise generator: seeded runs are reproducible (A/B comparisons on identical noise)
+        self.noise_rng = np.random.default_rng(seed)
         self.target_width = target_width
         self.target_height = target_height
         self.short_side = short_side
@@ -46,10 +57,37 @@ class Dataloader(ABC):
     def get_idx_from_timestamp(self, timestamp):
         pass
 
+    @property
+    def odom_biased(self) -> bool:
+        return self.odom_scale_bias != 0.0 or self.odom_yaw_drift != 0.0
+
+    def _bias_delta(self, delta: np.ndarray, c2w: np.ndarray | None) -> np.ndarray:
+        """Systematic odometry error of one step: T_prev_curr -> Rot(v, r |t|) @ [R | (1+s) t], with v the world
+        vertical in the camera frame (heading drift accumulates about gravity, as for a compass / gyro bias)."""
+        if not self.odom_biased or delta is None:
+            return delta
+        out = np.array(delta, dtype=np.float64, copy=True)
+        out[:3, 3] *= 1.0 + self.odom_scale_bias
+        if self.odom_yaw_drift != 0.0 and c2w is not None and self.odom_vertical_world is not None:
+            v = np.asarray(c2w, dtype=np.float64)[:3, :3].T @ np.asarray(self.odom_vertical_world, dtype=np.float64)
+            v /= max(np.linalg.norm(v), 1e-12)
+            ang = np.deg2rad(self.odom_yaw_drift) * float(np.linalg.norm(delta[:3, 3]))
+            K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+            R = np.eye(3) + np.sin(ang) * K + (1 - np.cos(ang)) * K @ K
+            B = np.eye(4); B[:3, :3] = R
+            out = B @ out
+        return out
+
+    def _noise_delta(self, delta: np.ndarray, c2w: np.ndarray | None) -> np.ndarray:
+        """White SNR noise on one odometry step (seeded generator)."""
+        return self._apply_se3_noise_snr(delta, snr=self.snr, rng=self.noise_rng)
+
     def get_item(self, idx, first_item=False):
         item = self[idx]
+        if item.get("delta_pose") is not None and self.odom_biased:
+            item["delta_pose"] = self._bias_delta(item["delta_pose"], item.get("world_pose"))
         if item.get("delta_pose") is not None and self.snr is not None:
-            item["delta_pose"] = self._apply_se3_noise_snr(item["delta_pose"], snr=self.snr)
+            item["delta_pose"] = self._noise_delta(item["delta_pose"], item.get("world_pose"))
         if first_item:
             item["delta_pose"] = np.eye(4)
         return item
