@@ -278,7 +278,7 @@ def run_rtabmap(args, out: Path):
     map_poses = out / "map_poses.txt"
     extra = ["--Vis/MinInliers", "15", "--Rtabmap/DetectionRate", "0", "--Kp/DetectorStrategy", "6", "--Vis/FeatureType", "6"]
     fps = json.loads((m / "calib.json").read_text()).get("fps", 10.0)
-    extra = ["--fps", str(fps)] + extra
+    extra = ["--fps", str(fps)] + extra + os.environ.get("RTABMAP_PARAMS", "").split()   # later values override
     if args.system == "rtabmap_stereo":
         # stereo mode: RTAB-Map computes its depth by stereo matching of the rectified pair (no GT depth)
         calib = json.loads((m / "calib.json").read_text())

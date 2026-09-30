@@ -32,7 +32,16 @@ Notes.
   (OpenCV SGBM, `cross.dataloader.stereo_loader.SGBMDepth`). Every system that takes depth gets the same depth maps.
 - **Rectified stereo.** The T265 fisheye pairs of OpenLORIS and ROVER are rectified once to a pinhole stereo pair
   (`benchmark/datasets/prepare_*.py`, 640×480, 90° horizontal field of view). All systems receive the same rectified
-  images, so no system gets an advantage from native fisheye support.
+  images, so no system gets an advantage from native fisheye support. ROVER's D435i colour images carry lens distortion.
+  They are undistorted to a pinhole camera, and the registered depth maps get the same undistortion.
+- **ROVER ground truth** is the 3-D position of a prism on the robot, measured by a total station at ~5 Hz. It has no
+  orientation. The benchmark derives camera poses from it:
+  - the heading is the direction of travel of the smoothed prism track, since the robot drives forward at a constant 0.5 m/s;
+  - roll and pitch are zero;
+  - the camera sits at the calibrated offset from the prism (about 0.5 m).
+
+  A 2° heading error moves the camera by about 2 cm. On ROVER, therefore, only position errors are reported: there is no
+  strict 1 m / 5° RS.
 - **Why these datasets.** KITTI is the most widely reported outdoor SLAM benchmark. OpenLORIS-Scene (indoor) and ROVER
   (outdoor) are the two real datasets with RGB-D, stereo, mono, odometry or IMU, and repeated sessions of one place under
   changing conditions. Both were used in the CROSS paper (OpenLORIS Corridor and ROVER Campus). SimChange changes one controlled
@@ -160,6 +169,6 @@ A new system is added by writing a runner that produces the same `result.json` (
 - T1 compares a topological map (CROSS) with metric SLAM systems at their keyframes. CROSS keyframes are sparse and placed where the
   appearance changes, so its ATE is measured on fewer poses.
 - KITTI RGB-D\* depth comes from stereo matching, not from a depth sensor.
-- ROVER odometry is simulated (§3), and ROVER has no rotation ground truth. The rotation used for the map-relative T3 error comes from the
-  direction of travel of the planar ground-truth path.
+- ROVER odometry is simulated (§3). ROVER has no rotation ground truth: the camera orientation is derived from the direction of
+  travel (§1), so ROVER results report position errors only.
 - SimChange is synthetic. Its variants isolate change factors but its appearance is not real.

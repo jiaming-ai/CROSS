@@ -34,6 +34,8 @@ export BENCH_DATA=/path/to/benchmark_data BENCH_RESULTS=/path/to/runs
 bash benchmark/datasets/download_openloris.sh /path/to/openloris
 python benchmark/datasets/prepare_openloris.py /path/to/openloris $BENCH_DATA/openloris
 python benchmark/datasets/prepare_kitti.py /path/to/kitti_raw $BENCH_DATA/kitti
+NO_UNZIP=1 bash benchmark/datasets/download_rover.sh /path/to/rover campus_large     # keeps the zips (~320 GB)
+python benchmark/datasets/prepare_rover.py /path/to/rover $BENCH_DATA/rover          # reads the frames from the zips
 # 2. jobs: maps first, then single-session sequences, then query sessions (T2 + T3)
 python benchmark/jobs.py --dataset openloris --systems cross_rgbd cross_stereo orbslam3 rtabmap > queue.txt
 while read -r job; do python benchmark/run.py $job; done < queue.txt     # or distribute the lines over workers

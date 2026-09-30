@@ -24,6 +24,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "benchmark/site"
 
 
+def run_id(r):
+    """Stable id of a result cell (also names its failure-case images in site/assets/failures/)."""
+    parts = [r.get("track"), r.get("dataset"), r.get("scene"), r.get("system"), r.get("setup"), f"s{r.get('seed', 0)}",
+             r.get("sequence") or f"{r.get('map')}__{r.get('query')}"]
+    return "-".join(str(p) for p in parts).replace("/", "_").replace("+", "p")
+
+
 def plane(traj_gt, traj_est):
     """The two world axes spanning the ground-truth path (a top-down view whatever the world convention)."""
     g = np.asarray(traj_gt, float)
@@ -133,8 +140,8 @@ def main():
     results = json.loads(Path(a.results).read_text())["results"] if Path(a.results).is_file() else []
     results = [r for r in results if r.get("seed", 0) == a.seed]
     runs, runs_by_key = {}, {}
-    for i, r in enumerate(results):
-        rid = f"r{i}"
+    for r in results:
+        rid = run_id(r)
         runs_by_key[id(r)] = rid
         runs[rid] = slim_run(r, rid)
     T = mt.Tables(results, a.seed)

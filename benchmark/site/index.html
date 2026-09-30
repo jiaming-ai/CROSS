@@ -259,8 +259,11 @@ function renderFailures(v) {
     sect("T1 · weakest maps", f.t1, r => { const p = trajPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.sequence}`; return p; });
     sect("T2 · lowest localization recall", f.t2, r => { const p = errPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`; return p; });
     sect("T3 · most failed trials", f.t3, r => { const p = trialPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`;
-      const imgs = (B.assets || []).filter(a => a.includes(`/${r.id}_`)).slice(0, 2);
-      if (imgs.length) p.append($("div", {class: "grid", style: "grid-template-columns:1fr 1fr;gap:6px;margin-top:6px"}, ...imgs.map(a => $("img", {class: "thumb", src: a, alt: a.includes("_q") ? "query frame" : "nearest map keyframe", loading: "lazy"}))));
+      const imgs = (B.assets || []).filter(a => a.includes(`/${r.id}_`)).sort();
+      for (let k = 0; k < imgs.length; k += 2) { const pair = imgs.slice(k, k + 2).sort((x, y) => (y.endsWith("_q.jpg") - x.endsWith("_q.jpg")));
+        p.append($("div", {class: "grid", style: "grid-template-columns:1fr 1fr;gap:6px;margin-top:6px"},
+          ...pair.map(a => $("figure", {style: "margin:0"}, $("img", {class: "thumb", src: a, alt: a.endsWith("_q.jpg") ? "query frame at the end of a failed trial" : "nearest map frame", loading: "lazy"}),
+            $("figcaption", {class: "note"}, a.endsWith("_q.jpg") ? "query, end of failed trial" : "map, nearest in ground truth"))))); }
       return p; });
     if (card.children.length === 1) card.append($("div", {class: "empty"}, "No failures recorded."));
     v.append(card); }
