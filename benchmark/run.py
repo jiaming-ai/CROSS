@@ -176,7 +176,7 @@ class Job:
         out = {}
         for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
                                 ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
-                                            "--r-d", self.dcfg["r_d"]])):
+                                            "--r-d", self.scene.get("r_d", self.dcfg["r_d"])])):
             if (d / "result.json").is_file() and not a.force:
                 continue
             d.mkdir(parents=True, exist_ok=True)
@@ -224,7 +224,7 @@ class Job:
         fails = [t["final_err"] for t in trials if not t["success"] and t["final_err"] is not None and np.isfinite(t["final_err"])]
         return {**self.base, "track": "t3", "map": self.scene["map"], "query": q, "n_trials": n, "n_success": k,
                 "rs": tr["RS"], "rs_strict": tr["RS_1m_5deg"], "rs_ci95": wilson(k, n),
-                "fail_err_median": float(np.median(fails)) if fails else None, "trials": trials, "r_d": self.dcfg["r_d"],
+                "fail_err_median": float(np.median(fails)) if fails else None, "trials": trials, "r_d": self.scene.get("r_d", self.dcfg["r_d"]),
                 "trial_len": self.dcfg["trial_len"]}
 
     # ------------------------------------------------------------------ external baselines
@@ -293,7 +293,7 @@ class Job:
         out = {}
         for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
                                 ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
-                                            "--r-d", self.dcfg["r_d"]])):
+                                            "--r-d", self.scene.get("r_d", self.dcfg["r_d"])])):
             if a.reeval:              # re-score stored pose files with the current metrics
                 if not (d / "query_poses_t0.txt").is_file():
                     continue
@@ -356,7 +356,7 @@ class Job:
         out = {}
         for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
                                 ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
-                                            "--r-d", self.dcfg["r_d"], "--max-trials", a.concat_max_trials])):
+                                            "--r-d", self.scene.get("r_d", self.dcfg["r_d"]), "--max-trials", a.concat_max_trials])):
             if (d / "result.json").is_file() and not a.force:
                 continue
             d.mkdir(parents=True, exist_ok=True)

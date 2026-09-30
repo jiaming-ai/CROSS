@@ -123,11 +123,44 @@ def dataset_section(ds_cfg):
     return "\n".join(out + details)
 
 
+def scene_rd(ds_cfg, dataset, scene):
+    d = ds_cfg.get(dataset, {})
+    return float(d.get("scenes", {}).get(scene, {}).get("r_d", d.get("r_d", 2.0)))
+
+
+def apply_scene_rd(results, ds_cfg):
+    """Re-score T3 trials with the scene's scale-aware radius (PROTOCOL.md, T3) from their stored final errors: success =
+    final error < r_D; strict = the stored 1 m / 5 deg success and final error < min(1 m, r_D).  The values of the run
+    (paper radius) are kept as rs_fixed / n_success_fixed / r_d_fixed."""
+    out = []
+    for r in results:
+        if r.get("track") != "t3" or r.get("status") != "ok" or not r.get("trials") or "rs_fixed" in r:
+            out.append(r)
+            continue
+        rd = scene_rd(ds_cfg, r["dataset"], r["scene"])
+        r = dict(r)
+        trials = []
+        for t in r["trials"]:
+            e = t.get("final_err")
+            ok = e is not None and e < rd
+            strict = bool(t.get("success_strict")) and e is not None and e < min(1.0, rd)
+            trials.append({**t, "success": ok, "success_strict": strict})
+        n = len(trials)
+        k = sum(t["success"] for t in trials)
+        r.update({"rs_fixed": r.get("rs"), "n_success_fixed": r.get("n_success"), "r_d_fixed": r.get("r_d"), "r_d": rd,
+                  "trials": trials, "n_trials": n, "n_success": k, "rs": k / n if n else None,
+                  "rs_strict": sum(t["success_strict"] for t in trials) / n if n else None, "rs_ci95": wilson(k, n)})
+        fails = sorted(t["final_err"] for t in trials if not t["success"] and t.get("final_err") is not None)
+        r["fail_err_median"] = fails[len(fails) // 2] if fails else None
+        out.append(r)
+    return out
+
+
 class Tables:
     def __init__(self, results, seed):
         self.ds, self.sy = load()
         self.idx = defaultdict(list)
-        for r in results:
+        for r in apply_scene_rd(results, self.ds):
             if r.get("seed", 0) != seed:
                 continue
             self.idx[(r["track"], r["dataset"], r["system"], r["setup"])].append(r)
@@ -242,12 +275,14 @@ class Tables:
         cfg = self.ds[dataset]
         scenes = [s for s in cfg["scenes"] if cfg["scenes"][s].get("queries")] or \
             sorted({r["scene"] for k, v in self.idx.items() if k[0] == "t3" and k[1] == dataset for r in v})
-        head = ["system · setup"] + scenes + ["all queries [trials, 95% CI]"]
+        head = ["system · setup"] + [f"{s} (r_D {scene_rd(self.ds, dataset, s):g} m)" for s in scenes] + ["all queries [trials, 95% CI]"]
         cal = sorted({self.sy[k[2]]["label"] for k, v in self.idx.items() if k[0] == "t3" and k[1] == dataset
                       for r in v if r.get("calibrated")})
         note = (f" Rows marked *calibrated* ({', '.join(cal)}) use the noise model calibrated without ground truth on the "
                 "first 600 frames of the map traversal." if cal else "")
-        lines = [f"Cells: RS at r_D = {cfg['r_d']:g} m (strict RS at 1 m / 5°), pooled over the scene's trials.{note}", "",
+        lines = [f"Cells: RS at the scene's r_D (strict: within min(1 m, r_D) and 5°), pooled over the scene's trials. "
+                 f"r_D = 10 % of the extent of the map session's trajectory, between 0.5 m and {cfg['r_d']:g} m (the CROSS "
+                 f"paper's radius).{note}", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
             rs_all = self.idx[("t3", dataset, system, setup)]
@@ -358,7 +393,8 @@ def main():
         parts += ["", f"### {title}", "", T.t2_table(d)]
     parts += ["", "## T3 — relocalization success", "",
               "Independent 10 s trials (100 frames at 10 Hz, stride 50) that start without a pose; success when the final "
-              "estimate is within r_D of the pose the map implies."]
+              "estimate is within the scene's r_D of the pose the map implies; r_D scales with the scene (10 % of the map "
+              "trajectory's extent, clipped to [0.5 m, 2 m] indoors and [0.5 m, 5 m] outdoors)."]
     for d, title in (("openloris", "OpenLORIS-Scene"), ("rover", "ROVER campus_large"), ("simchange", "SimChange v2")):
         parts += ["", f"### {title}", "", T.t3_table(d)]
     if legacy.is_file():
