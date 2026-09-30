@@ -7,6 +7,7 @@ import hashlib
 import inspect
 from pathlib import Path
 
+import numpy as np
 import torch
 
 LIGHTERGLUE_SHA256 = "766102df37f11189efe5b0811d1f47c72b22629b79bfabfcfff9d2a2f84654b8"
@@ -87,7 +88,12 @@ def match_lighterglue(network, reference, current):
         points = features["keypoints"]
         return dict(keypoints=points[None], descriptors=features["descriptors"][None],
                     image_size=points.new_tensor(features["shape"][::-1])[None])
-    result = network(dict(image0=image(reference), image1=image(current)))
+    try:
+        result = network(dict(image0=image(reference), image1=image(current)))
+    except IndexError:
+        # point pruning (width_confidence) can empty one image; kornia then fails in filter_matches: no matches
+        empty = np.empty((0, 2), dtype=np.float32)
+        return empty, empty.copy()
     indices = result["matches"][0]
     return (reference["keypoints"][indices[:, 0]].cpu().numpy(),
             current["keypoints"][indices[:, 1]].cpu().numpy())

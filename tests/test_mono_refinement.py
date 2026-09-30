@@ -52,3 +52,15 @@ def test_replacement_matcher_still_passes_spatial_and_consensus_checks():
     refiner.match = MethodType(lambda self, a, b: (xy, concentrated), refiner)
     assert refiner.estimate(ref, current, depth) is None
     assert refiner.last_match_audit["reason"] in {"pnp_consensus", "poor_spatial_coverage"}
+
+
+def test_lighterglue_pruned_to_empty_returns_no_matches():
+    from cross.mono.learned_matching import match_lighterglue
+
+    class PrunedToEmpty:
+        def __call__(self, data):
+            raise IndexError("max(): Expected reduction dim 2 to have non-zero size.")
+
+    features = dict(keypoints=torch.zeros(30, 2), descriptors=torch.zeros(30, 64), shape=(10, 10))
+    xy_ref, xy_cur = match_lighterglue(PrunedToEmpty(), features, features)
+    assert xy_ref.shape == xy_cur.shape == (0, 2)
