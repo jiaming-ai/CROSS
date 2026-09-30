@@ -103,10 +103,12 @@ def build_trials(n_frames, trial_len, trial_stride=None, min_len=None):
     return trials
 
 
-def summarize_trials(rows, prefix="c0_rel", r_d=2.0):
+def summarize_trials(rows, prefix="c0_rel", r_d=2.0, max_age=10):
     """Relocalization success over trials: a trial succeeds if the *final* estimate of the trial is within
     r_d of the ground truth (position only, as in the CROSS paper); stricter pose variants are also reported.
-    rows need 'trial' and '<prefix>_t_err' / '<prefix>_r_err'."""
+    The final estimate is the system's latest pose in the trial, if it is at most `max_age` frames old (1 s at
+    10 Hz): systems that only report keyframe poses have no pose on most frames.  rows need 'trial' and
+    '<prefix>_t_err' / '<prefix>_r_err'."""
     trials = sorted(set(r["trial"] for r in rows))
     out = {"n_trials": len(trials), "r_d": r_d, "trials": []}
     succ_rd, succ_1m, succ_05 = [], [], []
@@ -115,7 +117,9 @@ def summarize_trials(rows, prefix="c0_rel", r_d=2.0):
         tr = [r for r in rows if r["trial"] == t]
         e_t = np.array([r.get(f"{prefix}_t_err", np.inf) for r in tr], dtype=float)
         e_r = np.array([r.get(f"{prefix}_r_err", np.inf) for r in tr], dtype=float)
-        fin_t, fin_r = float(e_t[-1]), float(e_r[-1])
+        last = np.where(np.isfinite(e_t))[0]
+        last = last[-1] if len(last) and len(e_t) - 1 - last[-1] <= max_age else len(e_t) - 1
+        fin_t, fin_r = float(e_t[last]), float(e_r[last])
         s_rd = bool(fin_t < r_d)
         s_1 = bool(fin_t < 1.0 and fin_r < 5.0)
         s_05 = bool(fin_t < 0.5 and fin_r < 5.0)

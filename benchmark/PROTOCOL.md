@@ -95,7 +95,9 @@ is penalized.
 ### T3 — relocalization success (CROSS paper, §5.1)
 The query session is split into independent trials. Each trial loads the stored map, starts without knowing its pose, and runs
 for a fixed number of frames. **A trial succeeds when its final pose estimate is within r_D of the ground truth**: r_D = 2 m
-indoors, 5 m outdoors, position only. RS is the fraction of successful trials.
+indoors, 5 m outdoors, position only. RS is the fraction of successful trials. The final estimate is the system's
+latest pose in the trial. It must be at most 1 s older than the trial's last frame, because some systems (MASt3R-SLAM, VGGT-SLAM) report poses only at
+keyframes. Monocular systems are aligned with Sim(3) on the map session, so their errors are in metres too.
 - Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset. The CROSS paper used
   200-frame trials at the native 30 Hz, about 7 s. At the benchmark's 10 Hz, 200 frames would be 20 s, which makes
   relocalization easier. The same trials are used for the SimChange v2 runs. Trials overlap by half, so the Wilson intervals

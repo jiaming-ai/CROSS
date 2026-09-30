@@ -105,14 +105,14 @@ const TABS = [["summary", "Summary"], ["t1", "T1 Mapping"], ["t2", "T2 Multi-ses
 const tabs = document.getElementById("tabs");
 for (const [k, lab] of TABS) tabs.append($("button", {role: "tab", "aria-selected": String(state.tab === k), onclick: () => { state.tab = k; state.sel = null; render(); }}, lab));
 
-function render() {
+let render = function () {
   for (const b of tabs.children) b.setAttribute("aria-selected", String(TABS[[...tabs.children].indexOf(b)][0] === state.tab));
   const v = document.getElementById("view"); v.replaceChildren();
   if (state.tab === "summary") return renderSummary(v);
   if (state.tab === "fail") return renderFailures(v);
   if (state.tab === "legacy") return renderLegacy(v);
   renderTrack(v, state.tab);
-}
+};
 
 // ---------------------------------------------------------------- summary (markdown table from make_tables)
 function mdTable(md) {
@@ -122,7 +122,9 @@ function mdTable(md) {
   const t = $("table"); const head = cells(lines[0]);
   t.append($("thead", {}, $("tr", {}, ...head.map(h => $("th", {}, h)))));
   const tb = $("tbody"); for (const l of lines.slice(2)) { const c = cells(l);
-    const tr = $("tr", {class: c[0].startsWith("CROSS") ? "cross" : ""}, $("td", {class: "lab"}, c[0]), ...c.slice(1).map(x => $("td", {class: x === "·" || x === "" ? "dim" : ""}, x || "n/a")));
+    const tr = $("tr", {class: c[0].startsWith("CROSS") ? "cross" : ""}, $("td", {class: "lab"}, c[0]));
+    if (c.slice(1).every(x => x === "in development" || x === "")) tr.append($("td", {class: "dim", colspan: c.length - 1}, "in development"));
+    else tr.append(...c.slice(1).map(x => $("td", {class: x === "·" || x === "" ? "dim" : ""}, x || "n/a")));
     tb.append(tr); } t.append(tb); return $("div", {class: "scroll"}, t);
 }
 function renderSummary(v) {
@@ -271,6 +273,13 @@ function renderLegacy(v) {
   v.append($("p", {class: "note"}, L.note || ""));
   for (const s of L.sections || []) v.append($("div", {class: "card"}, $("h3", {}, s.title), $("p", {class: "note"}, s.note || ""), mdTable(s.table)));
 }
+function fromHash() { const h = decodeURIComponent(location.hash.slice(1)).split(":");
+  if (h[0] && TABS.some(t => t[0] === h[0])) { state.tab = h[0];
+    if (["t1", "t2", "t3"].includes(h[0]) && h[1]) { state.ds[h[0]] = h[1]; state.sel = h.length >= 4 ? {r: +h[2], c: +h[3]} : null; } } }
+const _render = render;
+render = function () { _render(); const t = state.tab; const h = ["t1", "t2", "t3"].includes(t) ? [t, state.ds[t]].concat(state.sel ? [state.sel.r, state.sel.c] : []) : [t];
+  history.replaceState(null, "", "#" + h.join(":")); };
+fromHash();
 render();
 </script>
 </body>

@@ -89,14 +89,21 @@ def evaluate(map_poses, query_poses, gt_map, gt_query, sim3=False, valid_states=
                 return int(k)
         return None
 
-    # map-relative metric (primary): compare with the pose implied by the map's own estimate
+    # map-relative metric (primary): compare with the pose implied by the map's own estimate.  Estimates are first
+    # expressed in the ground-truth frame with the map's alignment, so that a Sim(3)-aligned (monocular) system's
+    # map-relative errors are in metres too (the transform is rigid for SE(3) and leaves those errors unchanged).
+    def to_gt(T):
+        out = np.eye(4)
+        out[:3, :3] = R @ T[:3, :3]
+        out[:3, 3] = s * R @ T[:3, 3] + t
+        return out
     meta = {"kf_gt": {str(i): gt_map[i].reshape(-1).tolist() for i in ids},
-            "kf_est": {str(i): map_poses[i][1].reshape(-1).tolist() for i in ids}}
+            "kf_est": {str(i): to_gt(map_poses[i][1]).reshape(-1).tolist() for i in ids}}
     rrows = []
     for rec in rows:
         i = rec["frame"]
         rrows.append({"gt_pose": gt_query[i].reshape(-1).tolist(),
-                      "c0_pose": query_poses[i][1].reshape(-1).tolist() if (i in query_poses and query_poses[i][0] in valid_states) else None})
+                      "c0_pose": to_gt(query_poses[i][1]).reshape(-1).tolist() if (i in query_poses and query_poses[i][0] in valid_states) else None})
     rel = map_relative_errors(rrows, meta, pose_keys=("c0",))
     for rec, e_ in zip(rows, rel):
         rec.update(e_)
