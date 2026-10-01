@@ -18,6 +18,7 @@ inlier count.
 from __future__ import annotations
 
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple, List, Optional
@@ -57,8 +58,14 @@ class _VGGTOmegaBackend(_Backend):
         ckpt = Path(checkpoint)
         if not ckpt.is_file():
             raise FileNotFoundError(f"VGGT-Omega checkpoint not found: {ckpt}")
-        self.model = VGGTOmega().eval()
-        self.model.load_state_dict(torch.load(ckpt, map_location="cpu"))
+        with _no_weight_init():      # every parameter is overwritten by the checkpoint (checked below)
+            self.model = VGGTOmega().eval()
+        missing, unexpected = self.model.load_state_dict(
+            torch.load(ckpt, map_location="cpu", mmap=True, weights_only=True), strict=False)
+        if missing:
+            raise RuntimeError(f"{ckpt.name} lacks {len(missing)} weights of the model, e.g. {missing[:3]}")
+        if unexpected:      # e.g. the text-alignment head of vggt_omega_1b_256_text.pt, unused here
+            logger.info(f"{ckpt.name}: ignored {len(unexpected)} weights of heads not in use")
         self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         if half_weights:
             # the aggregator already runs under autocast; storing its weights in bf16 halves memory
@@ -109,6 +116,20 @@ class _DA3Backend(_Backend):
         conf = None if pred.conf is None else torch.from_numpy(np.asarray(pred.conf, dtype=np.float32)).to(self.device)
         return FFPrediction(c2w=c2w, K=np.asarray(pred.intrinsics, dtype=np.float64), depth=depth,
                             depth_conf=conf, hw=tuple(depth.shape[-2:]))
+
+
+@contextmanager
+def _no_weight_init():
+    """Skip the random initialisation of a model whose weights are then loaded (saves ~8 s for VGGT-Omega-1B)."""
+    names = [n for n in dir(torch.nn.init) if n.endswith("_") and not n.startswith("_")]
+    saved = {n: getattr(torch.nn.init, n) for n in names}
+    try:
+        for n in names:
+            setattr(torch.nn.init, n, lambda tensor, *args, **kwargs: tensor)
+        yield
+    finally:
+        for n, f in saved.items():
+            setattr(torch.nn.init, n, f)
 
 
 def _to_h(T: np.ndarray) -> np.ndarray:

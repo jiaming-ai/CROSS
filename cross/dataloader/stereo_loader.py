@@ -17,6 +17,7 @@ Pose conventions follow stereo_vggt/src/stereo_scale/datasets.py.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from typing import Optional
@@ -97,6 +98,14 @@ class SGBMDepth:
         depth[ok] = fx * baseline / disp[ok]
         depth[~np.isfinite(depth)] = 0.0
         return depth
+
+
+def sgbm_cache_dir(root: Path) -> Path:
+    """Local cache of the SGBM depth maps of one sequence: $CROSS_CACHE_DIR or $XDG_CACHE_HOME/cross (~/.cache/cross).
+    Not next to the data: a small file written to network storage costs ~1 s, 40x the SGBM itself."""
+    base = os.environ.get("CROSS_CACHE_DIR") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "cross"
+    key = hashlib.sha1(str(Path(root).resolve()).encode()).hexdigest()[:16]
+    return Path(base) / "sgbm_depth" / f"{Path(root).parent.name}_{Path(root).name}_{key}"
 
 
 # ----------------------------------------------------------------------------- #
@@ -327,13 +336,16 @@ class StereoSequenceLoader(Dataloader):
             return depth
         if self.depth_source != "sgbm":
             return None
-        cache = self.root / ".cross_sgbm_depth" / f"{self.left_paths[idx].stem}.npy"
+        name = f"{self.left_paths[idx].stem}.npy"
+        cache = self.root / ".cross_sgbm_depth" / name          # written next to the data by earlier versions
+        if not cache.is_file():
+            cache = sgbm_cache_dir(self.root) / name
         if self.depth_cache and cache.is_file():
             depth = np.load(cache).astype(np.float32)
         else:
             depth = self._sgbm(left, right, float(self.orig_K[0, 0]), self.baseline)
             if self.depth_cache:
-                cache.parent.mkdir(exist_ok=True)
+                cache.parent.mkdir(parents=True, exist_ok=True)
                 np.save(cache, depth.astype(np.float16))
         depth[depth > self.max_depth] = 0.0
         return depth

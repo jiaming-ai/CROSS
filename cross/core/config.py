@@ -556,6 +556,13 @@ class PoseEstConfig:
     obs_min_rotation: float = 0.0
     obs_max_interval_steps: int = 1
     obs_warmup_steps: int = 10
+    # adaptive cadence (off with 0): while one hypothesis holds at least obs_confident_weight of the belief and the last
+    # observation was verified against existing keyframes without adding a permanent one (the place is mapped and the
+    # robot is localized in it), observe only after these larger intervals.  Mapping of new places is unaffected.
+    obs_confident_max_interval_steps: int = 0
+    obs_confident_min_translation: float = 0.6
+    obs_confident_min_rotation: float = 0.3
+    obs_confident_weight: float = 0.9
     ff: FeedForwardConfig = field(default_factory=FeedForwardConfig)
 
 

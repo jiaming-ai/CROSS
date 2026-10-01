@@ -164,6 +164,7 @@ class System:
         self._session_start_frame = 0
         # observation cadence bookkeeping (feed-forward estimator)
         self._steps_since_obs = 0
+        self._last_obs_mapped = False
         self._last_obs_rgb = None
         # intra-hypothesis loop closure bookkeeping: (step, n_long_range_edges) of recent keyframes
         self._intra_lc_events: deque = deque()
@@ -433,6 +434,7 @@ class System:
         self.last_added_kf_id = kf.id
         self.odom_accumulator.reset_odom()
         self._steps_since_obs = 0
+        self._last_obs_mapped = False
         self._last_obs_rgb = rgb_image
         self._session_start_frame = self._processed_frame_num
         if getattr(self, "_lc_verifier", None) is not None:
@@ -1035,6 +1037,7 @@ class System:
             self.hypothesis_manager.reference_support.observe(self._processed_frame_num, {})
             logger.info(f"No valid keyframes found. Continuing with motion-only update")
             self._unsuccessful_retrieval_steps += 1
+            self._last_obs_mapped = False
 
             # Populate ret with current state after motion update
             current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
@@ -1117,6 +1120,7 @@ class System:
         #########################
         new_kf, lc_result = self._add_keyframe_and_detect_loop(rgb_image, depth_image, ret, edge_mapping, timestamp,
                                                                rgb_right=rgb_right)
+        self._last_obs_mapped = new_kf is None or bool(getattr(new_kf, "temporary", False))
 
         if lc_result["loop_closure"]:
             logger.info(
@@ -1527,13 +1531,19 @@ class System:
         self._steps_since_obs += 1
         if self._processed_frame_num - self._session_start_frame <= cfg.obs_warmup_steps:
             return False   # warm-up after (re)initialisation: observe every frame to relocalize quickly
-        if self._steps_since_obs >= cfg.obs_max_interval_steps:
+        max_interval, min_t, min_r = cfg.obs_max_interval_steps, cfg.obs_min_translation, cfg.obs_min_rotation
+        if cfg.obs_confident_max_interval_steps > 0 and self._last_obs_mapped:
+            dist = self.hypothesis_manager.dist
+            if dist is not None and dist[2].numel() > 0 and float(dist[2].max()) >= cfg.obs_confident_weight:
+                max_interval = cfg.obs_confident_max_interval_steps
+                min_t, min_r = cfg.obs_confident_min_translation, cfg.obs_confident_min_rotation
+        if self._steps_since_obs >= max_interval:
             return False
         delta_pose, _ = self.odom_accumulator.get_since_last_reading("since_last_obs", reset=False, return_std=False)
         if delta_pose is None:
             return False
-        moved = cfg.obs_min_translation > 0 and bool(torch.norm(delta_pose.tensor()[:3]) >= cfg.obs_min_translation)
-        rotated = cfg.obs_min_rotation > 0 and bool(rotation_angle_from_quat(delta_pose.tensor()[3:]) >= cfg.obs_min_rotation)
+        moved = min_t > 0 and bool(torch.norm(delta_pose.tensor()[:3]) >= min_t)
+        rotated = min_r > 0 and bool(rotation_angle_from_quat(delta_pose.tensor()[3:]) >= min_r)
         return not (moved or rotated)
 
     def _construct_motion_dist(
