@@ -53,7 +53,7 @@ def main():
          "<p>Study of 2026-09-12. The intra-hypothesis PGO of 2026-09-08 missed loop closures because the back end was "
          "miscalibrated by 20-70x; it is replaced by three consistency tests (prior / in-pass / posterior) with one "
          "parameter (chi-square confidence), a noise model calibrated without ground truth from a minute of data, and an "
-         "online noise scale for appearance change. Sources: <a href='../../design/loop_closure_verified.md'>design note</a>, "
+         "online noise scale for appearance change. Sources: "
          "report section <em>Verified Loop Closure</em> (<a href='report.html'>HTML</a>, <a href='../../report/main.pdf'>PDF</a>), "
          "code <code>cross/core/lc_verify.py</code>, tools <code>scripts/lc/</code>.</p>"]
     h.append("<h2>Figures</h2>")

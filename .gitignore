@@ -66,7 +66,7 @@ scripts/baselines/build/
 *.synctex.gz
 
 # Private project notes (never pushed)
-/docs/
+/memo/
 third_party/ORB_SLAM3
 third_party/Pangolin
 third_party/rtabmap

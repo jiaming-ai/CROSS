@@ -19,17 +19,23 @@ National University of Singapore
 
 **Pose-aware topological mapping for RGB-D, stereo and monocular inputs.**
 
-CROSS builds probabilistic topological maps from RGB-D or stereo camera streams. It maintains a Gaussian mixture belief over SE(3) poses, tracks multiple hypotheses, detects loop closures, and optimizes pose graphs — enabling robust long-term navigation in indoor environments.
+CROSS builds probabilistic topological maps from RGB-D, stereo or monocular camera streams. It maintains a Gaussian mixture belief over SE(3) poses, tracks multiple hypotheses, detects loop closures, and optimizes pose graphs — enabling robust long-term navigation in indoor environments.
 
-Two modes share one back end (belief, hypotheses, verified loop closure, pose graph, retrieval):
+Three sensor modes share one back end (belief, hypotheses, verified loop closure, pose graph, retrieval). Each runs with the dataset's odometry (`--odometry external`) or with DPVO visual odometry (`--odometry visual`):
 
 | mode | relative pose estimator | input | install / run |
 |---|---|---|---|
 | **RGB-D** (default) | XFeat + LightGlue + PnP-RANSAC on keyframe depth | RGB-D (or RGB + predicted depth) + odometry | `bash install.sh`, `python run.py <seq>` |
 | **stereo** | feed-forward multi-view model (VGGT-Omega, optionally Depth Anything 3); one forward pass registers the current view against all retrieved keyframes, the known stereo baseline fixes the metric scale | stereo pairs (or monocular + odometry) | `bash install.sh --stereo`, `python run.py <seq> --mode stereo` |
+| **mono** | metric two-view matching on learned (Depth Anything 3) keyframe depth, feed-forward fallback | colour images only | `bash install.sh --mono`, `python run.py <seq> --mode mono` |
+
+**New here? Start with the [usage guide](docs/USAGE.md)**: modes, configs, multi-session mapping, and running the benchmark.
 
 The stereo mode tolerates lighting, weather and viewpoint changes that break keypoint matching; it was developed as
-CROSS-stereo and is merged here (see [Stereo mode](#stereo-mode)).
+CROSS-stereo and is merged here (see [Stereo mode](#stereo-mode)). The mono mode and visual odometry come from
+CROSS-mono (see [Mono mode and visual odometry](#mono-mode-and-visual-odometry)). A fixed benchmark of all modes and
+baselines (mapping accuracy, multi-session localization, relocalization success) is in [`benchmark/`](benchmark/README.md);
+it is still being extended.
 
 ## Key Features
 
@@ -39,7 +45,9 @@ CROSS-stereo and is merged here (see [Stereo mode](#stereo-mode)).
 - **Visual place recognition** — Keyframe database with embedding-based retrieval for relocalization.
 - **Semantic memory** — Text-conditioned object search across the map using open-vocabulary detectors.
 - **Verified loop closure** — prior, in-pass and posterior consistency tests at one chi-square level, with a noise model calibrated without ground truth from about a minute of the robot's own data.
-- **Stereo mode** — learned multi-view relative poses with stereo scale anchors (see below).
+- **Stereo and mono modes** — learned multi-view relative poses with stereo scale anchors; colour-only operation with learned metric depth.
+- **Visual odometry** — optional DPVO motion source for every mode, so no odometry input is needed.
+- **Benchmark** — one protocol (T1 / T2 / T3) over KITTI, OpenLORIS-Scene, ROVER and SimChange, with ORB-SLAM3, RTAB-Map, MASt3R-SLAM and VGGT-SLAM baselines.
 - **Multiple dataset formats** — R3D, ROS bags, OpenLORIS, TUM RGB-D, posed RGB-D folders; stereo: KITTI raw, TartanAir V2, Virtual KITTI 2, SimChange.
 
 ## Architecture
@@ -48,10 +56,16 @@ CROSS-stereo and is merged here (see [Stereo mode](#stereo-mode)).
 cross/
 ├── core/           # System pipeline, hypothesis management, PGO, planning
 ├── cv/             # Pose estimation (PnP; stereo mode: feed-forward + stereo scale), feature extraction, detection
+├── pipeline.py     # Sensor mode x odometry source: builds a session around the back end
+├── mono/           # Mono mode: DPVO visual odometry, DA3 depth, two-view relocalization, real-time runner
 ├── db/             # Keyframe database and visual place recognition
 ├── dataloader/     # Dataset loaders (R3D, ROS bag, OpenLORIS, TUM, posed RGB-D; stereo sequences)
 ├── utils/          # Math (Lie algebra, rotations), profiling, camera models
 └── visualization/  # Rerun-based 3D visualization, graph plotting
+benchmark/          # Evaluation protocol, dataset converters, system runners, results page
+configs/            # Default, stereo, outdoor, noise and mono-profile configs
+docs/               # Usage guide
+scripts/            # Map-and-relocalize harnesses, dataset converters, baselines, figures
 ```
 
 ## Installation
@@ -136,7 +150,9 @@ Options:
 | `--no-viz` | Disable Rerun visualization |
 | `--frames N` | Process only the first N frames |
 | `--start N` | Start from frame N |
-| `--mode {rgbd,stereo}` | Relative pose estimator: PnP on depth (default) or the stereo mode (layers `configs/stereo.yaml`) |
+| `--mode {rgbd,stereo,mono}` | Sensor mode: PnP on depth (default), the stereo mode (layers `configs/stereo.yaml`), or colour only |
+| `--odometry {external,visual}` | Motion source: the dataset's odometry (default) or DPVO visual odometry |
+| `--config A.yaml B.yaml` | Config layers on top of the defaults, merged left to right |
 | `--loader {r3d,rosbag,loris,tum,posed,stereo}` | Force dataset loader (default: auto-detect) |
 | `--baseline B` | Stereo mode, SimChange sequences: which rendered stereo baseline to use |
 | `--snr FLOAT` | Signal-to-noise ratio for R3D datasets |
@@ -244,9 +260,6 @@ python scripts/eval_relpose.py --ref data/vkitti2/Scene01/clone --query data/vki
     --estimator ff --backend vggt_omega --gaps 0,5,10,20 --n-queries 40 --out outputs/relpose/vk01_sunset_ff.json
 bash scripts/run_experiments.sh all && python scripts/summarize.py && python scripts/make_figures.py
 ```
-
-Design notes: [`design/loop_closure_verified.md`](design/loop_closure_verified.md) (verified loop closure, calibration,
-runtime).
 
 ## Mono mode and visual odometry
 
