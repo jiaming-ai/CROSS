@@ -453,6 +453,10 @@ class Job:
             except FileExistsError:
                 if time.time() - lock.stat().st_mtime > self.a.timeout + 600:   # stale lock of a killed worker
                     shutil.rmtree(lock, ignore_errors=True)
+                    continue
+                if not self.a.wait_for_map:   # another worker builds this map: release the job, it is retried later
+                    print(f"map {map_seq} is being built by another worker", file=sys.stderr)
+                    sys.exit(3)
                 time.sleep(30)
                 continue
             try:
@@ -546,6 +550,7 @@ def main():
     ap.add_argument("--concat-max-trials", type=int, default=20,
                     help="T3 trials per query for systems without map persistence (evenly spaced)")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--wait-for-map", action="store_true", help="wait while another worker builds the map (default: exit 3)")
     ap.add_argument("--reeval", action="store_true", help="baselines: re-score existing query runs from their pose files")
     ap.add_argument("--redo", nargs="*", default=[], choices=["t2", "t3"], help="query task: re-run these tracks although results exist")
     ap.add_argument("--only", nargs="*", default=[], choices=["t2", "t3"], help="query task: run only these tracks")
