@@ -213,8 +213,14 @@ def run_reloc(args, out: Path, meta: dict):
     q_end = args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
     for ti, (ts_, te_) in enumerate(trials):
-        if ti > 0:
-            system.load_map(out / "map.pkl")          # every trial is an independent relocalization session
+        if ti > 0:                                    # every trial is an independent relocalization session
+            try:
+                system.load_map(out / "map.pkl")
+            except RuntimeError:                      # the mono mode loads a map only into a fresh session
+                if hasattr(system, "shutdown"):
+                    system.shutdown()
+                system = new_session(args, ds, args.seed)
+                system.load_map(out / "map.pkl")
         for idx, d in enumerate(ds.replay_data(start_idx=q_start + ts_, end_idx=q_start + te_, stride=args.stride)):
             if idx == 0:
                 d["delta_pose"] = None
