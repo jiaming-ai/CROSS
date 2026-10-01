@@ -106,6 +106,18 @@ def cmd_run(a):
     print(f"{len(maps)} map + {len(queries)} query jobs in {time.time() - t0:.0f} s; failed: {len(failed)}")
     for j in failed:
         print("  failed:", " ".join(j))
+    # a failed run still writes a result.json (status failed), and query jobs of a failed map write none: list both
+    cfg = dev_cfg()
+    for system in a.systems:
+        run = system + (f"@{a.variant}" if a.variant else "")
+        for f in sorted(Path(a.out).glob(f"*/*/{run}/*/s*/t[123]/**/result.json")):
+            r = json.loads(f.read_text())
+            if r.get("status") != "ok":
+                print(f"  failed result: {f.relative_to(a.out)}: {r.get('error') or 'rc ' + str(r.get('rc'))}")
+        cells = load_run(Path(a.out), run, cfg, a.tier)
+        expected = sum(1 + 2 * len(qs) for _, _, _, qs in scenes(cfg, a.tier))
+        if len(cells) < expected:
+            print(f"  {run}: {len(cells)} of {expected} result cells are ok (see the failed results / logs in {log_dir})")
 
 
 # ---------------------------------------------------------------------------------------------------- comparison
@@ -123,8 +135,10 @@ def load_run(out: Path, run: str, cfg, tier):
             continue
         # time of the relative pose estimator: reloc_summary.json of a query run, map_meta.json of the map
         side = f.parent / "reloc_summary.json"
-        if r["track"] == "t1":
+        if r["track"] == "t1":       # the map of a scene, or the native/ folder of another T1 sequence
             side = f.parents[2] / "maps" / f.parent.name / "map_meta.json"
+            if not side.is_file():
+                side = f.parent / "native" / "map_meta.json"
         if side.is_file():
             est = json.loads(side.read_text()).get("timing", {}).get("estimate_pose", {})
             r["_est"] = (est.get("n", 0), est.get("total_s", 0.0))

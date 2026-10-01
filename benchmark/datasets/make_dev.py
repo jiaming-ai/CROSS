@@ -57,6 +57,8 @@ def main():
             continue
         base = Path(a.data) / d.get("data", name)
         for clip, (seq, n) in (d.get("clips") or {}).items():
+            if clip == seq or not clip.startswith(f"{seq}_f"):     # never overwrite a real sequence
+                raise ValueError(f"clip name {clip!r} must be <sequence>_f<frames>, e.g. {seq}_f{n}")
             out = base / clip
             if out.exists() and not a.force:
                 print(f"exists: {out}")
