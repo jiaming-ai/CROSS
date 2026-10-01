@@ -81,3 +81,56 @@ simchange:
     lonemonk:
       map: "lonemonk/map"
       queries: ["lonemonk/light_morning", "lonemonk/light_evening", "lonemonk/light_night", "lonemonk/light_overcast", "lonemonk/move_50", "lonemonk/background", "lonemonk/offset_1.0", "lonemonk/offset_2.0", "lonemonk/yaw_45", "lonemonk/reverse", "lonemonk/half", "lonemonk/reverse+offset_1.0", "lonemonk/light_night+reverse", "lonemonk/light_evening+move_50+reverse+offset_1.0"]
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Development split (benchmark/DEV.md): the same protocol on a few sequences, to test a change in minutes.  dev: true
+# keeps these entries out of the tables and the results page.  data: the dataset folder the sequences are read from.
+# quick: the queries of the quick tier (a scene without it belongs to the full tier only).  clips: sequences cut to their
+# first N frames, written next to their source by benchmark/datasets/make_dev.py.  Queries were chosen where the CROSS
+# modes disagree in the full benchmark (2026-10-01).
+
+dev_openloris:
+  dev: true
+  data: openloris
+  environment: indoor
+  r_d: 2.0
+  thresholds: [1.0, 2.0]
+  trial_len: 100
+  trial_stride: 50
+  odometry: wheel
+  setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
+  clips: {home1-1_f600: [home1-1, 600], home1-4_f400: [home1-4, 400], cafe1-2_f300: [cafe1-2, 300]}
+  scenes:
+    office: {map: office1-1, queries: [office1-2, office1-7, office1-4], quick: [office1-2, office1-7, office1-4]}
+    home:   {map: home1-1_f600, queries: [home1-4_f400]}
+    cafe:   {map: cafe1-1, queries: [cafe1-2_f300]}
+  t1: maps           # T1 of the map sequences only
+
+dev_simchange:
+  dev: true
+  data: simchange
+  environment: indoor
+  r_d: 2.0
+  thresholds: [1.0, 2.0]
+  trial_len: 100
+  trial_stride: 50
+  odometry: simulated
+  snr: 10
+  baseline: 0.3
+  setups: {rgbd: ".", stereo: ".", mono: "."}
+  scenes:
+    classroom: {map: "classroom/map", queries: ["classroom/light_night", "classroom/move_50"],
+                quick: ["classroom/light_night", "classroom/move_50"]}
+  t1: maps
+
+dev_kitti:
+  dev: true
+  data: kitti
+  environment: outdoor
+  r_d: 5.0
+  thresholds: [3.0, 5.0]
+  odometry: oxts_dead_reckoning
+  setups: {stereo: stereo, mono: stereo, rgbd: stereo}
+  scenes:
+    "07": {map: "07"}  # T1 only: the shortest KITTI loop (its closure is at the end, so it is not clipped)
+  t1: maps

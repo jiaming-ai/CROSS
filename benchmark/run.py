@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -120,12 +121,15 @@ class Job:
         self.scfg = self.scfg_all[a.system]
         self.scene = self.dcfg["scenes"][a.scene]
         self.setup_dir = self.dcfg["setups"][a.setup]
-        self.data = Path(a.data) / a.dataset
-        self.run_root = Path(a.out) / a.dataset / a.scene / a.system / a.setup / f"s{a.seed}"
+        self.data = Path(a.data) / self.dcfg.get("data", a.dataset)      # dev splits read another dataset's folders
+        system_dir = a.system + (f"@{a.variant}" if a.variant else "")
+        self.run_root = Path(a.out) / a.dataset / a.scene / system_dir / a.setup / f"s{a.seed}"
         self.outdoor = self.dcfg["environment"] == "outdoor"
         self.snr = self.dcfg.get("snr")
         self.base = {"dataset": a.dataset, "scene": a.scene, "system": a.system, "setup": a.setup, "seed": a.seed,
                      "label": self.scfg["label"], "uses_odometry": self.scfg.get("uses_odometry", False)}
+        if a.variant:
+            self.base["variant"] = a.variant
 
     def seq(self, name) -> Path:
         return self.data / name / self.setup_dir
@@ -155,7 +159,7 @@ class Job:
         cmd += ["--map", self.seq(map_seq), "--query", self.seq(query_seq), "--out", out]
         if cfgs:
             cmd += ["--config"] + [str(ROOT / c) for c in cfgs]
-        return cmd + extra
+        return cmd + shlex.split(a.args) + extra
 
     def cross_map(self, map_seq, out: Path):
         rc, dt = sh(self.cross_cmd(map_seq, map_seq, out, ["--skip-reloc"]), out / "bench.log", self.a.timeout, alloc_conf=True)
@@ -556,6 +560,9 @@ def main():
     ap.add_argument("--only", nargs="*", default=[], choices=["t2", "t3"], help="query task: run only these tracks")
     ap.add_argument("--keep-maps", action="store_true")
     ap.add_argument("--keep-rows", action="store_true", help="keep the per-frame rows of the query runs")
+    ap.add_argument("--variant", default="", help="label of an experiment: results go to <system>@<variant>")
+    ap.add_argument("--args", default="", help="extra arguments of the CROSS command (e.g. \"--max-refs 4\"); a --set or "
+                                               "--config here replaces one given by systems.yaml")
     a = ap.parse_args()
     Job(a).run()
 

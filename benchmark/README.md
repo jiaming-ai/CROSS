@@ -10,6 +10,7 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 
 - [PROTOCOL.md](PROTOCOL.md): datasets, splits, setups, odometry, metrics and run rules.
 - [RESULTS.md](RESULTS.md): result tables, generated from `results/results.json`.
+- [DEV.md](DEV.md): a development split with the same protocol, to test a change in minutes (`dev.py`).
 - [site/index.html](site/index.html): interactive results page with trajectories, localization error curves, trial outcomes
   and failure cases per system. Open it from the file system, or serve the `site/` folder.
 
@@ -22,6 +23,7 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 | `datasets/` | download scripts (`download_*.sh`) and converters to the benchmark folder layout (`prepare_*.py`) |
 | `run.py` | runs one job (`--task map | t1 | query`) and writes `result.json` ([schema](eval/schema.md)) |
 | `jobs.py` | prints the job list of a dataset / set of systems (one `run.py` argument line per job) |
+| `dev.py` | runs the development split and compares two runs ([DEV.md](DEV.md)); `datasets/make_dev.py` writes its clipped sequences |
 | `eval/metrics.py` | ATE, completeness, localization recall, Wilson intervals |
 | `collect.py`, `make_tables.py`, `build_site.py` | merge results, write RESULTS.md, write the page data (`site/data.js`) |
 | `results/` | merged results (`results.json`) and earlier results obtained with other protocols (`legacy.*`) |

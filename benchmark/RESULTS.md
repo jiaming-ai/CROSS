@@ -33,95 +33,95 @@ A *session* is one recorded traversal. In each scene, the map session builds the
 
 <details><summary>OpenLORIS-Scene · office: sessions</summary>
 
-| session | role | frames | duration | path | T3 trials |
-|---|---|---|---|---|---|
-| office1-1 | map | 269 | 27 s | 5 m | – |
-| office1-2 | query | 299 | 30 s | 6 m | 5 |
-| office1-3 | query | 119 | 12 s | 1 m | 2 |
-| office1-4 | query | 289 | 29 s | 7 m | 5 |
-| office1-5 | query | 529 | 53 s | 11 m | 10 |
-| office1-6 | query | 359 | 36 s | 6 m | 7 |
-| office1-7 | query | 380 | 38 s | 6 m | 7 |
+| session | role | frames | duration | path | T3 trials | covered by the map |
+|---|---|---|---|---|---|---|
+| office1-1 | map | 269 | 27 s | 5 m | – | – |
+| office1-2 | query | 299 | 30 s | 6 m | 5 | – |
+| office1-3 | query | 119 | 12 s | 1 m | 2 | – |
+| office1-4 | query | 289 | 29 s | 7 m | 5 | – |
+| office1-5 | query | 529 | 53 s | 11 m | 10 | – |
+| office1-6 | query | 359 | 36 s | 6 m | 7 | – |
+| office1-7 | query | 380 | 38 s | 6 m | 7 | – |
 
 </details>
 
 <details><summary>OpenLORIS-Scene · home: sessions</summary>
 
-| session | role | frames | duration | path | T3 trials |
-|---|---|---|---|---|---|
-| home1-1 | map | 1521 | 152 s | 40 m | – |
-| home1-2 | query | 992 | 99 s | 31 m | 19 |
-| home1-3 | query | 878 | 88 s | 23 m | 17 |
-| home1-4 | query | 709 | 71 s | 21 m | 14 |
-| home1-5 | query | 259 | 26 s | 6 m | 5 |
+| session | role | frames | duration | path | T3 trials | covered by the map |
+|---|---|---|---|---|---|---|
+| home1-1 | map | 1521 | 152 s | 40 m | – | – |
+| home1-2 | query | 992 | 99 s | 31 m | 19 | – |
+| home1-3 | query | 878 | 88 s | 23 m | 17 | – |
+| home1-4 | query | 709 | 71 s | 21 m | 14 | – |
+| home1-5 | query | 259 | 26 s | 6 m | 5 | – |
 
 </details>
 
 <details><summary>OpenLORIS-Scene · cafe: sessions</summary>
 
-| session | role | frames | duration | path | T3 trials |
-|---|---|---|---|---|---|
-| cafe1-1 | map | 569 | 57 s | 28 m | – |
-| cafe1-2 | query | 898 | 90 s | 38 m | 17 |
+| session | role | frames | duration | path | T3 trials | covered by the map |
+|---|---|---|---|---|---|---|
+| cafe1-1 | map | 569 | 57 s | 28 m | – | – |
+| cafe1-2 | query | 898 | 90 s | 38 m | 17 | – |
 
 </details>
 
 <details><summary>ROVER campus_large · campus_large: sessions</summary>
 
-| session | role | frames | duration | path | T3 trials |
-|---|---|---|---|---|---|
-| campus_large_day_2024-09-25 | map | 7087 | 709 s | 280 m | – |
-| campus_large_summer_2023-07-20 | query | 9206 | 921 s | 397 m | 184 |
-| campus_large_autumn_2023-11-07 | query | 9660 | 966 s | 388 m | 193 |
-| campus_large_dusk_2024-09-24_2 | query | 7093 | 709 s | 281 m | 141 |
+| session | role | frames | duration | path | T3 trials | covered by the map |
+|---|---|---|---|---|---|---|
+| campus_large_day_2024-09-25 | map | 7087 | 709 s | 280 m | – | – |
+| campus_large_summer_2023-07-20 | query | 9206 | 921 s | 397 m | 184 | – |
+| campus_large_autumn_2023-11-07 | query | 9660 | 966 s | 388 m | 193 | – |
+| campus_large_dusk_2024-09-24_2 | query | 7093 | 709 s | 281 m | 141 | – |
 
 </details>
 
 <details><summary>SimChange v2 · hssd_house: sessions</summary>
 
-| session | role | frames | duration | path | T3 trials |
-|---|---|---|---|---|---|
-| hssd_house/map | map | 1080 | 108 s | 106 m | – |
+| session | role | frames | duration | path | T3 trials | covered by the map |
+|---|---|---|---|---|---|---|
+| hssd_house/map | map | 1080 | 108 s | 106 m | – | – |
 
 </details>
 
 <details><summary>SimChange v2 · hssd_restaurant: sessions</summary>
 
-| session | role | frames | duration | path | T3 trials |
-|---|---|---|---|---|---|
-| hssd_restaurant/map | map | 1314 | 131 s | 146 m | – |
-| hssd_restaurant/rearr_100+light_evening+reverse | query | 1204 | 120 s | 134 m | 24 |
-| hssd_restaurant/rearr_50+offset_1.0+light_overcast | query | 1406 | 141 s | 139 m | 28 |
+| session | role | frames | duration | path | T3 trials | covered by the map |
+|---|---|---|---|---|---|---|
+| hssd_restaurant/map | map | 1314 | 131 s | 146 m | – | – |
+| hssd_restaurant/rearr_100+light_evening+reverse | query | 1204 | 120 s | 134 m | 24 | – |
+| hssd_restaurant/rearr_50+offset_1.0+light_overcast | query | 1406 | 141 s | 139 m | 28 | – |
 
 </details>
 
 <details><summary>SimChange v2 · classroom: sessions</summary>
 
-| session | role | frames | duration | path | T3 trials |
-|---|---|---|---|---|---|
-| classroom/map | map | 159 | 16 s | 17 m | – |
+| session | role | frames | duration | path | T3 trials | covered by the map |
+|---|---|---|---|---|---|---|
+| classroom/map | map | 159 | 16 s | 17 m | – | – |
 
 </details>
 
 <details><summary>SimChange v2 · lonemonk: sessions</summary>
 
-| session | role | frames | duration | path | T3 trials |
-|---|---|---|---|---|---|
-| lonemonk/map | map | 713 | 71 s | 96 m | – |
-| lonemonk/light_morning | query | 682 | 68 s | 92 m | 13 |
-| lonemonk/light_evening | query | 682 | 68 s | 92 m | 13 |
-| lonemonk/light_night | query | 682 | 68 s | 92 m | 13 |
-| lonemonk/light_overcast | query | 682 | 68 s | 92 m | 13 |
-| lonemonk/move_50 | query | 682 | 68 s | 92 m | 13 |
-| lonemonk/background | query | 682 | 68 s | 92 m | 13 |
-| lonemonk/offset_1.0 | query | 806 | 81 s | 96 m | 16 |
-| lonemonk/offset_2.0 | query | 1057 | 106 s | 102 m | 21 |
-| lonemonk/yaw_45 | query | 682 | 68 s | 92 m | 13 |
-| lonemonk/reverse | query | 684 | 68 s | 92 m | 13 |
-| lonemonk/half | query | 352 | 35 s | 46 m | 7 |
-| lonemonk/reverse+offset_1.0 | query | 983 | 98 s | 94 m | 19 |
-| lonemonk/light_night+reverse | query | 684 | 68 s | 92 m | 13 |
-| lonemonk/light_evening+move_50+reverse+offset_1.0 | query | 983 | 98 s | 94 m | 19 |
+| session | role | frames | duration | path | T3 trials | covered by the map |
+|---|---|---|---|---|---|---|
+| lonemonk/map | map | 713 | 71 s | 96 m | – | – |
+| lonemonk/light_morning | query | 682 | 68 s | 92 m | 13 | – |
+| lonemonk/light_evening | query | 682 | 68 s | 92 m | 13 | – |
+| lonemonk/light_night | query | 682 | 68 s | 92 m | 13 | – |
+| lonemonk/light_overcast | query | 682 | 68 s | 92 m | 13 | – |
+| lonemonk/move_50 | query | 682 | 68 s | 92 m | 13 | – |
+| lonemonk/background | query | 682 | 68 s | 92 m | 13 | – |
+| lonemonk/offset_1.0 | query | 806 | 81 s | 96 m | 16 | – |
+| lonemonk/offset_2.0 | query | 1057 | 106 s | 102 m | 21 | – |
+| lonemonk/yaw_45 | query | 682 | 68 s | 92 m | 13 | – |
+| lonemonk/reverse | query | 684 | 68 s | 92 m | 13 | – |
+| lonemonk/half | query | 352 | 35 s | 46 m | 7 | – |
+| lonemonk/reverse+offset_1.0 | query | 983 | 98 s | 94 m | 19 | – |
+| lonemonk/light_night+reverse | query | 684 | 68 s | 92 m | 13 | – |
+| lonemonk/light_evening+move_50+reverse+offset_1.0 | query | 983 | 98 s | 94 m | 19 | – |
 
 </details>
 
@@ -129,13 +129,12 @@ A *session* is one recorded traversal. In each scene, the map session builds the
 
 | system · setup | KITTI ATE (m) | OpenLORIS ATE (m) | ROVER ATE (m) | OpenLORIS LR@1/2 m | ROVER LR@3/5 m | SimChange LR@1/2 m | OpenLORIS RS@1/2 m | ROVER RS@3/5 m | SimChange RS@1/2 m |
 |---|---|---|---|---|---|---|---|---|---|
-| CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | 1.348 (8 pending) | 0.443 (8 pending) | · | · | · | · | 0.61 / 0.61 | · | 0.74 / 0.74 |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | 3.520 (8 pending) | 0.110 (8 pending) | · | · | · | · | 0.89 / 0.91 | · | 0.89 / 0.91 |
-| CROSS (RGB-D, PnP, relocalization options from CROSS-mono) · RGB-D ⁽ᵒ⁾ | · | · | · | · | · | · | · | · | · |
-| CROSS (RGB-D, PnP, visual odometry) · RGB-D | · | · | · | · | · | · | · | · | · |
-| CROSS (stereo, VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · | · | · | · |
-| CROSS (mono, DPVO + DA3) · mono | · | · | · | · | · | · | · | · | · |
-| CROSS (mono + odometry, DA3) · mono ⁽ᵒ⁾ | · | · | · | · | · | · | · | · | · |
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | 1.348 (8 pending) | 0.443 (8 pending) | · | · | · | · | 0.61 / 0.61 | · | 0.74 / 0.74 |
+| CROSS (PnP, visual odometry) · RGB-D | · | · | · | · | · | · | · | · | · |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 3.520 (8 pending) | 0.110 (8 pending) | · | · | · | · | 0.89 / 0.91 | · | 0.89 / 0.91 |
+| CROSS (VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · | · | · | · |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | · | · | · | · | · | · | · | · | · |
+| CROSS (DA3, visual odometry) · mono | · | · | · | · | · | · | · | · | · |
 | ORB-SLAM3 · RGB-D |  | 0.165 (3✗, 8 pending) | 0.488 (7 pending) | · | · | · | 0.18 / 0.18 | · | 0.63 / 0.63 |
 | ORB-SLAM3 · stereo | 4.604 (5 pending) | 0.109 (4✗, 8 pending) | 0.983 (7 pending) | · | · | · | 0.19 / 0.19 | · | 0.50 / 0.50 |
 | ORB-SLAM3 · mono | 145.840 (5 pending) | 0.789 (7✗, 8 pending) | ✗ (1✗, 7 pending) | · | · | · | 0.08 / 0.08 | · | 0.25 / 0.32 |
@@ -152,13 +151,12 @@ Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular 
 
 | system · setup | 00 | 01 | 02 | 04 | 05 | 06 | 07 | 08 | 09 | 10 | mean |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| CROSS (RGB-D, PnP) · RGB-D* ⁽ᵒ⁾ | · | · | · | · | · | 1.704 | 0.992 | · | · | · | 1.348 (8 pending) |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | · | · | · | · | · | 4.563 | 2.477 | · | · | · | 3.520 (8 pending) |
-| CROSS (RGB-D, PnP, relocalization options from CROSS-mono) · RGB-D* ⁽ᵒ⁾ | · | · | · | · | · | · | · | · | · | · | · |
-| CROSS (RGB-D, PnP, visual odometry) · RGB-D* | · | · | · | · | · | · | · | · | · | · | · |
-| CROSS (stereo, VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · | · | · | · | · | · |
-| CROSS (mono, DPVO + DA3) · mono | · | · | · | · | · | · | · | · | · | · | · |
-| CROSS (mono + odometry, DA3) · mono ⁽ᵒ⁾ | · | · | · | · | · | · | · | · | · | · | · |
+| CROSS (PnP, external odometry) · RGB-D* ⁽ᵒ⁾ | · | · | · | · | · | 1.704 | 0.992 | · | · | · | 1.348 (8 pending) |
+| CROSS (PnP, visual odometry) · RGB-D* | · | · | · | · | · | · | · | · | · | · | · |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | · | · | · | · | · | 4.563 | 2.477 | · | · | · | 3.520 (8 pending) |
+| CROSS (VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · | · | · | · | · | · |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | · | · | · | · | · | · | · | · | · | · | · |
+| CROSS (DA3, visual odometry) · mono | · | · | · | · | · | · | · | · | · | · | · |
 | ORB-SLAM3 · stereo | 2.333 | 16.939 | · | · | 1.332 | 1.716 | 0.700 | · | · | · | 4.604 (5 pending) |
 | ORB-SLAM3 · mono | 47.317 | 609.878 (99%) | · | · | 28.576 | 27.125 | 16.301 | · | · | · | 145.840 (5 pending) |
 | RTAB-Map · stereo ⁽ᵒ⁾ | 8.222 | 3.401 | · | · | 5.993 (98%) | 1.966 | 2.016 (98%) | · | · | · | 4.319 (5 pending) |
@@ -169,13 +167,12 @@ Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular 
 
 | system · setup | office | corridor | home | cafe | market | mean |
 |---|---|---|---|---|---|---|
-| CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | 0.057 | · | 0.112 | 2.620 | · | 0.443 (8 pending) |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | 0.058 | · | 0.104 | 0.309 | · | 0.110 (8 pending) |
-| CROSS (RGB-D, PnP, relocalization options from CROSS-mono) · RGB-D ⁽ᵒ⁾ | · | · | · | · | · | · |
-| CROSS (RGB-D, PnP, visual odometry) · RGB-D | · | · | · | · | · | · |
-| CROSS (stereo, VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · |
-| CROSS (mono, DPVO + DA3) · mono | · | · | · | · | · | · |
-| CROSS (mono + odometry, DA3) · mono ⁽ᵒ⁾ | · | · | · | · | · | · |
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | 0.057 | · | 0.112 | 2.620 | · | 0.443 (8 pending) |
+| CROSS (PnP, visual odometry) · RGB-D | · | · | · | · | · | · |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 0.058 | · | 0.104 | 0.309 | · | 0.110 (8 pending) |
+| CROSS (VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | · | · | · | · | · | · |
+| CROSS (DA3, visual odometry) · mono | · | · | · | · | · | · |
 | ORB-SLAM3 · RGB-D | 0.077 | · | 0.176 (3✗) | 0.465 | · | 0.165 (3✗, 8 pending) |
 | ORB-SLAM3 · stereo | 0.057 | · | 0.179 (4✗) | 0.256 | · | 0.109 (4✗, 8 pending) |
 | ORB-SLAM3 · mono | 0.315 (2✗) | · | 0.292 (4✗) | 3.661 (1✗) | · | 0.789 (7✗, 8 pending) |
@@ -188,13 +185,12 @@ Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular 
 
 | system · setup | campus_large | mean |
 |---|---|---|
-| CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | · | · |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | · | · |
-| CROSS (RGB-D, PnP, relocalization options from CROSS-mono) · RGB-D ⁽ᵒ⁾ | · | · |
-| CROSS (RGB-D, PnP, visual odometry) · RGB-D | · | · |
-| CROSS (stereo, VGGT-Omega, visual odometry) · stereo | · | · |
-| CROSS (mono, DPVO + DA3) · mono | · | · |
-| CROSS (mono + odometry, DA3) · mono ⁽ᵒ⁾ | · | · |
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | · | · |
+| CROSS (PnP, visual odometry) · RGB-D | · | · |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | · | · |
+| CROSS (VGGT-Omega, visual odometry) · stereo | · | · |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | · | · |
+| CROSS (DA3, visual odometry) · mono | · | · |
 | ORB-SLAM3 · RGB-D | 0.488 (7 pending) | 0.488 (7 pending) |
 | ORB-SLAM3 · stereo | 0.983 (7 pending) | 0.983 (7 pending) |
 | ORB-SLAM3 · mono | ✗ (1✗, 7 pending) | ✗ (1✗, 7 pending) |
@@ -209,17 +205,16 @@ The query session runs once from its first frame against the stored map of the s
 
 ### OpenLORIS-Scene
 
-Cells: LR@1 m / LR@2 m and MS-ATE (m), pooled over all frames of the scene's query sessions. LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of the ground truth; frames without such a pose count as failures. MS-ATE = RMSE over the frames that have a pose.
+Cells: LR@1 m / LR@2 m and MS-ATE (m), pooled over the covered frames of the scene's query sessions (frames within the larger threshold of the map session's path). LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of the ground truth; frames without such a pose count as failures. MS-ATE = RMSE over the frames that have a pose.
 
 | system · setup | office | corridor | home | cafe | market | all queries |
 |---|---|---|---|---|---|---|
-| CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | · | · | · | · | · | · |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | · | · | · | · | · | · |
-| CROSS (RGB-D, PnP, relocalization options from CROSS-mono) · RGB-D ⁽ᵒ⁾ | · | · | · | · | · | · |
-| CROSS (RGB-D, PnP, visual odometry) · RGB-D | · | · | · | · | · | · |
-| CROSS (stereo, VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · |
-| CROSS (mono, DPVO + DA3) · mono | · | · | · | · | · | · |
-| CROSS (mono + odometry, DA3) · mono ⁽ᵒ⁾ | · | · | · | · | · | · |
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | · | · | · | · | · | · |
+| CROSS (PnP, visual odometry) · RGB-D | · | · | · | · | · | · |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | · | · | · | · | · | · |
+| CROSS (VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | · | · | · | · | · | · |
+| CROSS (DA3, visual odometry) · mono | · | · | · | · | · | · |
 | ORB-SLAM3 · RGB-D | · | · | · | · | · | · |
 | ORB-SLAM3 · stereo | · | · | · | · | · | · |
 | ORB-SLAM3 · mono | · | · | ✗ | ✗ | · | · |
@@ -230,17 +225,16 @@ Cells: LR@1 m / LR@2 m and MS-ATE (m), pooled over all frames of the scene's que
 
 ### ROVER campus_large
 
-Cells: LR@3 m / LR@5 m and MS-ATE (m), pooled over all frames of the scene's query sessions. LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of the ground truth; frames without such a pose count as failures. MS-ATE = RMSE over the frames that have a pose.
+Cells: LR@3 m / LR@5 m and MS-ATE (m), pooled over the covered frames of the scene's query sessions (frames within the larger threshold of the map session's path). LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of the ground truth; frames without such a pose count as failures. MS-ATE = RMSE over the frames that have a pose.
 
 | system · setup | campus_large | all queries |
 |---|---|---|
-| CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | · | · |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | · | · |
-| CROSS (RGB-D, PnP, relocalization options from CROSS-mono) · RGB-D ⁽ᵒ⁾ | · | · |
-| CROSS (RGB-D, PnP, visual odometry) · RGB-D | · | · |
-| CROSS (stereo, VGGT-Omega, visual odometry) · stereo | · | · |
-| CROSS (mono, DPVO + DA3) · mono | · | · |
-| CROSS (mono + odometry, DA3) · mono ⁽ᵒ⁾ | · | · |
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | · | · |
+| CROSS (PnP, visual odometry) · RGB-D | · | · |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | · | · |
+| CROSS (VGGT-Omega, visual odometry) · stereo | · | · |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | · | · |
+| CROSS (DA3, visual odometry) · mono | · | · |
 | ORB-SLAM3 · RGB-D | · | · |
 | ORB-SLAM3 · stereo | · | · |
 | ORB-SLAM3 · mono | · | · |
@@ -255,17 +249,16 @@ Independent 10 s trials (100 frames at 10 Hz, stride 50) that start without a po
 
 ### OpenLORIS-Scene
 
-Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m / 2 m of the pose the map implies, pooled over the scene's trials.
+Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m / 2 m of the pose the map implies, pooled over the scene's trials whose last frame the map covers.
 
 | system · setup | office | corridor | home | cafe | market | all queries [trials, 95 % CI of RS@2 m] |
 |---|---|---|---|---|---|---|
-| CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | 0.36 / 0.36 | · | 0.76 / 0.76 | 0.65 / 0.65 | · | 0.61 / 0.61 [108, 0.52–0.70] |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | 0.78 / 0.81 | · | 0.96 / 0.96 | 0.88 / 0.94 | · | 0.89 / 0.91 [108, 0.84–0.95] |
-| CROSS (RGB-D, PnP, relocalization options from CROSS-mono) · RGB-D ⁽ᵒ⁾ | · | · | · | · | · | · |
-| CROSS (RGB-D, PnP, visual odometry) · RGB-D | · | · | · | · | · | · |
-| CROSS (stereo, VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · |
-| CROSS (mono, DPVO + DA3) · mono | · | · | · | · | · | · |
-| CROSS (mono + odometry, DA3) · mono ⁽ᵒ⁾ | · | · | · | · | · | · |
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | 0.36 / 0.36 | · | 0.76 / 0.76 | 0.65 / 0.65 | · | 0.61 / 0.61 [108, 0.52–0.70] |
+| CROSS (PnP, visual odometry) · RGB-D | · | · | · | · | · | · |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 0.78 / 0.81 | · | 0.96 / 0.96 | 0.88 / 0.94 | · | 0.89 / 0.91 [108, 0.84–0.95] |
+| CROSS (VGGT-Omega, visual odometry) · stereo | · | · | · | · | · | · |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | · | · | · | · | · | · |
+| CROSS (DA3, visual odometry) · mono | · | · | · | · | · | · |
 | ORB-SLAM3 · RGB-D | 0.17 / 0.17 | · | 0.13 / 0.13 | 0.35 / 0.35 | · | 0.18 / 0.18 [108, 0.12–0.26] |
 | ORB-SLAM3 · stereo | 0.08 / 0.08 | · | 0.18 / 0.18 | 0.41 / 0.41 | · | 0.19 / 0.19 [108, 0.12–0.27] |
 | ORB-SLAM3 · mono | 0.08 / 0.08 | · | ✗ | ✗ | · | 0.08 / 0.08 [36, 0.03–0.22] |
@@ -276,17 +269,16 @@ Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m 
 
 ### ROVER campus_large
 
-Cells: RS@3 m / RS@5 m, the fraction of trials whose final pose lies within 3 m / 5 m of the pose the map implies, pooled over the scene's trials.
+Cells: RS@3 m / RS@5 m, the fraction of trials whose final pose lies within 3 m / 5 m of the pose the map implies, pooled over the scene's trials whose last frame the map covers.
 
 | system · setup | campus_large | all queries [trials, 95 % CI of RS@5 m] |
 |---|---|---|
-| CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ | · | · |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ | · | · |
-| CROSS (RGB-D, PnP, relocalization options from CROSS-mono) · RGB-D ⁽ᵒ⁾ | · | · |
-| CROSS (RGB-D, PnP, visual odometry) · RGB-D | · | · |
-| CROSS (stereo, VGGT-Omega, visual odometry) · stereo | · | · |
-| CROSS (mono, DPVO + DA3) · mono | · | · |
-| CROSS (mono + odometry, DA3) · mono ⁽ᵒ⁾ | · | · |
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | · | · |
+| CROSS (PnP, visual odometry) · RGB-D | · | · |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | · | · |
+| CROSS (VGGT-Omega, visual odometry) · stereo | · | · |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | · | · |
+| CROSS (DA3, visual odometry) · mono | · | · |
 | ORB-SLAM3 · RGB-D | · | · |
 | ORB-SLAM3 · stereo | · | · |
 | ORB-SLAM3 · mono | · | · |
@@ -297,17 +289,16 @@ Cells: RS@3 m / RS@5 m, the fraction of trials whose final pose lies within 3 m 
 
 ### SimChange v2
 
-Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m / 2 m of the pose the map implies, pooled over the scene's trials. Rows marked *calibrated* (CROSS (RGB-D, PnP), CROSS (stereo, VGGT-Omega)) use the noise model calibrated without ground truth on the first 600 frames of the map traversal.
+Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m / 2 m of the pose the map implies, pooled over the scene's trials whose last frame the map covers. Rows marked *calibrated* (CROSS (PnP, external odometry), CROSS (VGGT-Omega, external odometry)) use the noise model calibrated without ground truth on the first 600 frames of the map traversal.
 
 | system · setup | hssd_house | hssd_restaurant | classroom | lonemonk | all queries [trials, 95 % CI of RS@2 m] |
 |---|---|---|---|---|---|
-| CROSS (RGB-D, PnP) · RGB-D ⁽ᵒ⁾ *calibrated* | · | 0.54 / 0.54 | · | 0.78 / 0.78 | 0.74 / 0.74 [138, 0.66–0.81] |
-| CROSS (stereo, VGGT-Omega) · stereo ⁽ᵒ⁾ *calibrated* | · | 0.42 / 0.46 | · | 0.99 / 1.00 | 0.89 / 0.91 [138, 0.85–0.94] |
-| CROSS (RGB-D, PnP, relocalization options from CROSS-mono) · RGB-D ⁽ᵒ⁾ | · | · | · | · | · |
-| CROSS (RGB-D, PnP, visual odometry) · RGB-D | · | · | · | · | · |
-| CROSS (stereo, VGGT-Omega, visual odometry) · stereo | · | · | · | · | · |
-| CROSS (mono, DPVO + DA3) · mono | · | · | · | · | · |
-| CROSS (mono + odometry, DA3) · mono ⁽ᵒ⁾ | · | · | · | · | · |
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ *calibrated* | · | 0.54 / 0.54 | · | 0.78 / 0.78 | 0.74 / 0.74 [138, 0.66–0.81] |
+| CROSS (PnP, visual odometry) · RGB-D | · | · | · | · | · |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ *calibrated* | · | 0.42 / 0.46 | · | 0.99 / 1.00 | 0.89 / 0.91 [138, 0.85–0.94] |
+| CROSS (VGGT-Omega, visual odometry) · stereo | · | · | · | · | · |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | · | · | · | · | · |
+| CROSS (DA3, visual odometry) · mono | · | · | · | · | · |
 | ORB-SLAM3 · RGB-D | · | 0.21 / 0.21 | · | 0.80 / 0.80 | 0.63 / 0.63 [179, 0.55–0.69] |
 | ORB-SLAM3 · stereo | · | 0.10 / 0.10 | · | 0.64 / 0.64 | 0.50 / 0.50 [200, 0.43–0.57] |
 | ORB-SLAM3 · mono | · | 0.00 / 0.00 | · | 0.34 / 0.42 | 0.25 / 0.32 [213, 0.26–0.38] |

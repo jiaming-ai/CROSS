@@ -56,8 +56,11 @@ def slim_run(r, rid):
         c = np.asarray(r["err_curve"], float)
         keep["err"] = np.round(c[:: max(1, len(c) // 400)], 2).tolist()
     if r.get("trials") is not None:
+        # [start, success at the larger threshold, final error, success at the smaller threshold, covered by the map]
         keep["trials"] = [[t.get("start"), int(t.get("final_err") is not None and t["final_err"] < thr[1]),
-                           None if t.get("final_err") is None else round(t["final_err"], 2)] for t in r["trials"]]
+                           None if t.get("final_err") is None else round(t["final_err"], 2),
+                           int(t.get("final_err") is not None and t["final_err"] < thr[0]), int(t.get("covered", True))]
+                          for t in r["trials"]]
     return keep
 
 
@@ -164,6 +167,7 @@ def main():
         "failures": failures(results, runs_by_key), "assets": assets,
         "legacy": json.loads(legacy.read_text()) if legacy.is_file() else None,
         "datastats": json.loads(dstats.read_text()) if dstats.is_file() else {},
+        "order": [[k, su] for k, v in T.sy.items() if not v.get("hidden") for su in v["setups"]],
         "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", []), "thresholds": c["thresholds"]}]
                        for sc, v in c["scenes"].items()]
                    for d, c in T.ds.items()},

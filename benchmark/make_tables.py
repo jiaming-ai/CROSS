@@ -21,6 +21,7 @@ PENDING, NA, FAIL = "·", "", "✗"
 
 def load():
     ds = yaml.safe_load((ROOT / "benchmark/configs/datasets.yaml").read_text())
+    ds = {k: v for k, v in ds.items() if not v.get("dev")}       # the development split is not part of the tables
     sy = yaml.safe_load((ROOT / "benchmark/configs/systems.yaml").read_text())
     return ds, sy
 
@@ -155,15 +156,15 @@ def rescore_t3(results, ds_cfg):
             continue
         t1, t2 = ds_cfg[r["dataset"]]["thresholds"]
         gaps = uncovered(r["dataset"], r["query"], ds_cfg[r["dataset"]]["setups"].get(r["setup"], ""))
-        trials = r["trials"]
-        if gaps:          # only trials whose last frame the map session passed near (T3 in PROTOCOL.md)
-            def last(t):
-                return int(t.get("start") or 0) + int(ds_cfg[r["dataset"]]["trial_len"]) - 1
-            trials = [t for t in trials if not any(a <= last(t) <= b for a, b in gaps)]
+        tl = int(ds_cfg[r["dataset"]]["trial_len"])
+        annotated = [{**t, "covered": not any(a <= int(t.get("start") or 0) + tl - 1 <= b for a, b in (gaps or []))}
+                     for t in r["trials"]]           # only trials whose last frame the map covers count (PROTOCOL.md, T3)
+        trials = [t for t in annotated if t["covered"]]
         e = [t.get("final_err") for t in trials]
         n = len(e)
         r = dict(r)
         r["n_trials_all"] = len(r["trials"])
+        r["trials"] = annotated
         r["n_s1"] = sum(1 for x in e if x is not None and x < t1)
         r["n_s2"] = sum(1 for x in e if x is not None and x < t2)
         r["rs1"], r["rs2"] = (r["n_s1"] / n, r["n_s2"] / n) if n else (None, None)
