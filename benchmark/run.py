@@ -427,6 +427,12 @@ class Job:
                 continue
             rows = json.loads((d / "reloc_rows.json").read_text())
             summ = json.loads((d / "reloc_summary.json").read_text())
+            crashed = [t for t in summ.get("times", []) if t.get("rc", 0) != 0]
+            if crashed:               # out of memory / timeout of the system: not a localization result, re-run later
+                write_result(d / "result.json", {**self.base, "track": track, "map": self.scene["map"], "query": q, "status": "failed",
+                                                 "error": f"{len(crashed)} of {len(summ.get('times', []))} runs crashed or timed out",
+                                                 "rc": crashed[0].get("rc"), "wall_s": dt, "concat": True, **env_info()})
+                continue
             res = self.t2_from_rows(rows, q, "t_err", [r.get("c0_rel_t_err", np.inf) for r in rows], summ, d) if track == "t2" \
                 else self.t3_from_summary(summ, q)
             res.update({"wall_s": dt, "status": "ok", "rc": rc, "concat": True, **env_info()})
@@ -551,7 +557,7 @@ def main():
     ap.add_argument("--timeout", type=float, default=21600.0, help="seconds per harness run (a T3 run holds all trials)")
     ap.add_argument("--concat-timeout", type=float, default=5400.0,
                     help="seconds per run of a system without map persistence (map + trial stream)")
-    ap.add_argument("--concat-max-trials", type=int, default=20,
+    ap.add_argument("--concat-max-trials", type=int, default=5,
                     help="T3 trials per query for systems without map persistence (evenly spaced)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--wait-for-map", action="store_true", help="wait while another worker builds the map (default: exit 3)")

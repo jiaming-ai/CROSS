@@ -129,7 +129,8 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 - Also reported: the median final error of the failed trials, and 95 % Wilson intervals.
 - Systems without map persistence (MASt3R-SLAM, VGGT-SLAM, DROID-SLAM) run the map session followed by the trial in one
   stream. Only the trial frames are scored. Every trial re-runs the whole map session, so these systems are scored on at most
-  20 evenly spaced trials per query session. This is marked in the tables because the system keeps the map session's live
+  5 evenly spaced trials per query session. A run that crashes (out of memory) or times out is reported as failed and re-run;
+  it is not scored as a relocalization failure. This is marked in the tables because the system keeps the map session's live
   state, which a persistence-based system does not have.
 
 ## 5. Systems

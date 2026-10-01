@@ -55,13 +55,23 @@ def interp_poses(ts, poses7, query):
 
 
 def read_extrinsic(seq: Path, child: str) -> np.ndarray:
+    """base_link -> child, composed along the parent chain of trans_matrix.yaml (market stores the colour camera under
+    base_link -> laser -> d400_color_optical_frame)."""
     fs = cv2.FileStorage(str(seq / "trans_matrix.yaml"), cv2.FILE_STORAGE_READ)
     node = fs.getNode("trans_matrix")
+    parent_of = {}
     for i in range(node.size()):
         n = node.at(i)
-        if n.getNode("parent_frame").string() == "base_link" and n.getNode("child_frame").string() == child:
-            return np.asarray(n.getNode("matrix").mat(), dtype=np.float64)
-    raise KeyError(f"no base_link -> {child} in {seq}/trans_matrix.yaml")
+        parent_of[n.getNode("child_frame").string()] = (n.getNode("parent_frame").string(),
+                                                        np.asarray(n.getNode("matrix").mat(), dtype=np.float64))
+    T, frame = np.eye(4), child
+    while frame != "base_link":
+        if frame not in parent_of:
+            raise KeyError(f"no base_link -> {child} in {seq}/trans_matrix.yaml")
+        parent, M = parent_of[frame]
+        T = M @ T
+        frame = parent
+    return T
 
 
 def read_intrinsics(seq: Path, sensor: str):
