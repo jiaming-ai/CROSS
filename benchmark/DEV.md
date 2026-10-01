@@ -20,7 +20,8 @@ The full tier contains the quick tier. The entries are `dev_openloris`, `dev_sim
 [configs/datasets.yaml](configs/datasets.yaml) (`dev: true`). They read the prepared folders of `openloris`,
 `simchange` and `kitti` (`data:`), so no data is duplicated. Only the map sequences get a T1 result.
 
-One CROSS mode takes about 6 minutes for the quick tier on an RTX 5090.
+One CROSS mode takes about 7 minutes for the quick tier and 14 minutes for the full tier on an RTX 5090
+(stereo mode, alone on the GPU).
 
 ## Use
 
@@ -44,10 +45,18 @@ the GPU time of the jobs.
 
 ## Reading a comparison
 
-- **T2 recall** (hundreds of frames per query) and T1 ATE are the regression signals. The quick tier has only about 20
-  T3 trials, so a T3 rate alone cannot detect a change of less than about 20 %. The paired flips say which trials
+- **T2 recall** (hundreds of frames per query) and T1 ATE are the regression signals. The quick tier has 16 T3 trials
+  and the full tier 27, so a T3 rate alone cannot detect a change of less than about 20 %. The paired flips say which trials
   changed.
-- **Noise.** On an otherwise idle GPU, two runs of the same code are identical (checked on the RTX 5090, 2026-10-01).
-  On a shared GPU, or with a different GPU model, results vary slightly, so compare only runs from the same GPU.
-  `compare` warns when the GPUs differ.
+- **Noise.** On an otherwise idle GPU, two runs of the same code are identical (checked on the RTX 5090, 2026-10-01),
+  so a code change that should not change results can be checked exactly. That does not make every difference
+  meaningful: a change that should be neutral (transformer weights in fp32 instead of bf16) moved office1-7 T2 LR@1
+  from 0.45 to 0.86 and flipped one T3 trial, because one continuous run is sensitive to small perturbations. Treat
+  single-query T2 swings and single T3 flips as noise; run such a null variant next to a real one when in doubt
+  (`--variant fp32w --args "--set pose_est.ff.half_precision_weights=false"` for the stereo mode). On a shared GPU, or
+  with a different GPU model, results also vary, so compare only runs from the same GPU; `compare` warns when the GPUs
+  differ.
+- The SimChange classroom queries are easy for every stereo variant tried (one T3 trial each, same T2); they guard
+  against breakage rather than separate variants. The same holds for the full tier's home and cafe queries in the
+  stereo mode.
 - A change that passes the dev split is then run on the full benchmark (`benchmark/README.md`).
