@@ -340,13 +340,19 @@ class StereoSequenceLoader(Dataloader):
         cache = self.root / ".cross_sgbm_depth" / name          # written next to the data by earlier versions
         if not cache.is_file():
             cache = sgbm_cache_dir(self.root) / name
+        depth = None
         if self.depth_cache and cache.is_file():
-            depth = np.load(cache).astype(np.float32)
-        else:
+            try:
+                depth = np.load(cache).astype(np.float32)
+            except (ValueError, OSError, EOFError):     # a file another process is still writing (or a broken one)
+                depth = None
+        if depth is None:
             depth = self._sgbm(left, right, float(self.orig_K[0, 0]), self.baseline)
             if self.depth_cache:
                 cache.parent.mkdir(parents=True, exist_ok=True)
-                np.save(cache, depth.astype(np.float16))
+                tmp = cache.with_name(f".{cache.stem}.{os.getpid()}.tmp.npy")   # atomic: parallel jobs share the cache
+                np.save(tmp, depth.astype(np.float16))
+                os.replace(tmp, cache)
         depth[depth > self.max_depth] = 0.0
         return depth
 
