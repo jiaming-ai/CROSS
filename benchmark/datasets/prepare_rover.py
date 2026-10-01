@@ -260,18 +260,28 @@ def main():
         gt = (t_gt, p_gt, heading_track(t_gt, p_gt))
         T_align, info = np.eye(4), {"to": name, "residual_median_m": 0.0, "residual_p90_m": 0.0}
         if ref is not None and name != a.align_to:
-            T_align, d = register_track(p_gt, ref)
-            info = {"to": a.align_to, "T": T_align.tolist(), "residual_median_m": float(np.median(d)),
-                    "residual_p90_m": float(np.percentile(d, 90))}
+            # register the shorter route onto the longer one (every point of the shorter route has a counterpart; the
+            # 2023 / spring recordings drive a longer route than the September 2024 ones)
+            L = lambda p: float(np.linalg.norm(np.diff(p, axis=0), axis=1).sum())
+            if L(p_gt) <= L(ref):
+                T_align, d = register_track(p_gt, ref)
+            else:
+                T_inv, d = register_track(ref, p_gt)
+                T_align = np.linalg.inv(T_inv)
+            info = {"to": a.align_to, "method": "shorter-onto-longer", "T": T_align.tolist(),
+                    "residual_median_m": float(np.median(d)), "residual_p90_m": float(np.percentile(d, 90))}
         for setup in a.setups:
             o = out_root / name / setup
             if not (o / "calib.json").is_file():
                 n = (prepare_rgbd(z, top, cal_d, gt, o) if setup == "rgbd" else prepare_stereo(z, top, cal_t, gt, o))
                 print(f"{name}/{setup}: {n} frames", flush=True)
             calib = json.loads((o / "calib.json").read_text())
-            if ref is not None and calib.get("gt_alignment", {}).get("to") != info["to"]:
-                # poses were written in the recording's own frame: move them into the map recording's frame
+            old = calib.get("gt_alignment", {})
+            if ref is not None and (old.get("to") != info["to"] or old.get("method") != info.get("method")):
+                # move the poses into the map recording's frame (undoing an earlier registration first)
                 P = np.loadtxt(o / "poses_left.txt").reshape(-1, 4, 4)
+                if "T" in old:
+                    P = np.linalg.inv(np.asarray(old["T"]))[None] @ P
                 np.savetxt(o / "poses_left.txt", (T_align[None] @ P).reshape(-1, 16), fmt="%.9f")
                 calib["gt_alignment"] = info
                 (o / "calib.json").write_text(json.dumps(calib, indent=1))

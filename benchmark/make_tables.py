@@ -119,11 +119,30 @@ def dataset_section(ds_cfg):
             out.append(f"| {names[d]} | {scene} | 1 + {nq} | {mtxt} | {qtxt} | {trials if nq else '–'} |")
             if nq == 0:
                 continue
-            det = [f"| {n} | {r['role']} | {fr(r)[0]} | {fr(r)[0] / 10:.0f} s | {fr(r)[1]:.0f} m | {r.get('trials', '–')} |"
+            def cov(r):
+                c = [x.get("covered") for x in r["setups"].values() if x.get("covered") is not None]
+                return f"{100 * min(c):.0f} %" if c else "–"
+            det = [f"| {n} | {r['role']} | {fr(r)[0]} | {fr(r)[0] / 10:.0f} s | {fr(r)[1]:.0f} m | {r.get('trials', '–')} | {cov(r)} |"
                    for n, r in rows.items()]
             details += ["", f"<details><summary>{names[d]} · {scene}: sessions</summary>", "",
-                        "| session | role | frames | duration | path | T3 trials |", "|---|---|---|---|---|---|"] + det + ["", "</details>"]
+                        "| session | role | frames | duration | path | T3 trials | covered by the map |", "|---|---|---|---|---|---|---|"] + det + ["", "</details>"]
     return "\n".join(out + details)
+
+
+_COVERAGE = None
+
+
+def uncovered(dataset, query, setup_dir):
+    """Uncovered frame intervals of a query session (benchmark/results/datasets.json, from dataset_stats.py)."""
+    global _COVERAGE
+    if _COVERAGE is None:
+        f = ROOT / "benchmark/results/datasets.json"
+        _COVERAGE = json.loads(f.read_text()) if f.is_file() else {}
+    for scene in _COVERAGE.get(dataset, {}).values():
+        r = scene.get(query)
+        if r and setup_dir in r.get("setups", {}):
+            return r["setups"][setup_dir].get("uncovered")
+    return None
 
 
 def rescore_t3(results, ds_cfg):
@@ -135,9 +154,16 @@ def rescore_t3(results, ds_cfg):
             out.append(r)          # (already re-scored: keep the same object)
             continue
         t1, t2 = ds_cfg[r["dataset"]]["thresholds"]
-        e = [t.get("final_err") for t in r["trials"]]
+        gaps = uncovered(r["dataset"], r["query"], ds_cfg[r["dataset"]]["setups"].get(r["setup"], ""))
+        trials = r["trials"]
+        if gaps:          # only trials whose last frame the map session passed near (T3 in PROTOCOL.md)
+            def last(t):
+                return int(t.get("start") or 0) + int(ds_cfg[r["dataset"]]["trial_len"]) - 1
+            trials = [t for t in trials if not any(a <= last(t) <= b for a, b in gaps)]
+        e = [t.get("final_err") for t in trials]
         n = len(e)
         r = dict(r)
+        r["n_trials_all"] = len(r["trials"])
         r["n_s1"] = sum(1 for x in e if x is not None and x < t1)
         r["n_s2"] = sum(1 for x in e if x is not None and x < t2)
         r["rs1"], r["rs2"] = (r["n_s1"] / n, r["n_s2"] / n) if n else (None, None)
@@ -230,7 +256,7 @@ class Tables:
         thr = cfg["thresholds"]
         scenes = [s for s in cfg["scenes"] if cfg["scenes"][s].get("queries")]
         head = ["system · setup"] + [f"{s}" for s in scenes] + ["all queries"]
-        lines = [f"Cells: LR@{thr[0]:g} m / LR@{thr[1]:g} m and MS-ATE (m), pooled over all frames of the scene's query sessions. "
+        lines = [f"Cells: LR@{thr[0]:g} m / LR@{thr[1]:g} m and MS-ATE (m), pooled over the covered frames of the scene's query sessions (frames within the larger threshold of the map session's path). "
                  "LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of "
                  "the ground truth; frames without such a pose count as failures. MS-ATE = RMSE over the frames that have a pose.", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
@@ -275,7 +301,7 @@ class Tables:
         note = (f" Rows marked *calibrated* ({', '.join(cal)}) use the noise model calibrated without ground truth on the "
                 "first 600 frames of the map traversal." if cal else "")
         lines = [f"Cells: RS@{t1:g} m / RS@{t2:g} m, the fraction of trials whose final pose lies within {t1:g} m / {t2:g} m of the "
-                 f"pose the map implies, pooled over the scene's trials.{note}", "",
+                 f"pose the map implies, pooled over the scene's trials whose last frame the map covers.{note}", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
             rs_all = self.idx[("t3", dataset, system, setup)]

@@ -103,6 +103,10 @@ is penalized.
   and it matters for systems that report poses only at keyframes. Frames with no pose that recent count as failures. Thresholds: x = 1 m and 2 m indoors, 3 m and 5 m outdoors, the same as T3. This is the headline T2 number because it
   compares systems that report no pose until they relocalize with systems that always report one.
 - **MS-ATE** (m): the RMSE over the frames that have an estimate, reported with their fraction.
+- **Coverage**: only query frames that the map covers are evaluated. A frame is covered when its ground-truth position lies
+  within the larger threshold (2 m indoors, 5 m outdoors) of the map session's ground-truth path. Where the map session never
+  went, no system can relocalize. Coverage is close to 100 % on OpenLORIS and SimChange. On ROVER, the 2023 and spring
+  recordings drive a longer route than the September 2024 map session. Coverage fractions are listed per session.
 - **Aggregation**: LR and MS-ATE are computed per query session. Scene and dataset cells pool the frames of all query
   sessions (localized frames / all frames), so each session counts in proportion to its length, as T3 pools trials.
 - **Time to localize**: the first frame after which the error stays below 1 m (indoor) or 5 m (outdoor) for 5 consecutive frames.
@@ -114,6 +118,7 @@ fixed thresholds per environment: **x = 1 m and 2 m indoors, 3 m and 5 m outdoor
 radii. RS is the fraction of successful trials. The final estimate is the system's
 latest pose in the trial. It must be at most 1 s older than the trial's last frame, because some systems (MASt3R-SLAM, VGGT-SLAM) report poses only at
 keyframes. Monocular systems are aligned with Sim(3) on the map session, so their errors are in metres too.
+- Only trials whose last frame is covered by the map (see T2, Coverage) are counted.
 - Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset. The CROSS paper used
   200-frame trials at the native 30 Hz, about 7 s. At the benchmark's 10 Hz, 200 frames would be 20 s, which makes
   relocalization easier. The same trials are used for the SimChange v2 runs. Trials overlap by half, so the Wilson intervals

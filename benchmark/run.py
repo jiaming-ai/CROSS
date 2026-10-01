@@ -218,20 +218,39 @@ class Job:
         if track != "t2" or not (d / "result.json").is_file():
             return False
         r = json.loads((d / "result.json").read_text())
-        return r.get("status") == "ok" and any(f"lr@{x:g}" not in r for x in self.dcfg["thresholds"])
+        return r.get("status") == "ok" and (any(f"lr@{x:g}" not in r for x in self.dcfg["thresholds"]) or "covered" not in r)
 
     # ------------------------------------------------------------------ results shared by all systems
     LR_GRID = (0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0)      # T2 recall is stored at every threshold of this grid
 
+    def covered(self, q):
+        """Query frames whose ground-truth position lies within the larger threshold of the map session's ground-truth path
+        (only these are evaluated: elsewhere the map has nothing to relocalize against)."""
+        from scipy.spatial import cKDTree
+        gq = gt_poses(self.seq(q))[:, :3, 3]
+        gm = gt_poses(self.seq(self.scene["map"]))[:, :3, 3]
+        return cKDTree(gm).query(gq)[0] < self.dcfg["thresholds"][1]
+
     def t2_from_rows(self, rows, q, key, rel_errors, summ, out_dir=None):
         thr = self.dcfg["thresholds"]
+        cov = self.covered(q)
+        frames = [int(r.get("frame", i)) for i, r in enumerate(rows)]
+        keep = np.array([cov[f] if 0 <= f < len(cov) else True for f in frames], dtype=bool)
+        e_all = np.array([r.get(key, np.inf) if r.get(key) is not None else np.inf for r in rows], dtype=float)
+        rel_all = np.array([np.inf if v is None else v for v in rel_errors], dtype=float)
+        rows = [r for r, k in zip(rows, keep) if k]
+        rel_errors = list(rel_all[keep])
+        lr_all = multisession(e_all, thresholds=self.LR_GRID)
         e = np.array([r.get(key, np.inf) if r.get(key) is not None else np.inf for r in rows], dtype=float)
         m = multisession(e, thresholds=self.LR_GRID, loc_threshold=thr[0])
         rel = np.array([np.inf if v is None else v for v in rel_errors], dtype=float)
         m_rel = multisession(rel, thresholds=self.LR_GRID)
         if out_dir is not None:          # per-frame errors: later threshold changes need no rerun
-            np.savez_compressed(Path(out_dir) / "errors.npz", err=e.astype(np.float32), err_map_relative=rel.astype(np.float32))
+            np.savez_compressed(Path(out_dir) / "errors.npz", err=e_all.astype(np.float32), err_map_relative=rel_all.astype(np.float32),
+                                covered=keep, frame=np.asarray(frames))
         return {**self.base, "track": "t2", "map": self.scene["map"], "query": q, **m,
+                "covered": float(keep.mean()) if len(keep) else None, "n_frames_all": int(len(keep)),
+                "all_frames": {k: v for k, v in lr_all.items() if k.startswith("lr@") or k == "ms_ate"},
                 "map_relative": {k: v for k, v in m_rel.items() if k.startswith("lr@") or k == "ms_ate"},
                 "err_curve": downsample(np.where(np.isfinite(e), e, -1.0)).round(3),
                 "fps": summ.get("fps") or summ.get("fps_steps")}

@@ -30,6 +30,27 @@ def seq_stats(folder: Path, fps: float):
             "extent_m": float(np.linalg.norm(P[:, :3, 3].max(0) - P[:, :3, 3].min(0)))}
 
 
+def coverage(query_folder: Path, map_folder: Path, radius: float):
+    """Frames of a query session whose ground-truth position lies within `radius` of the map session's ground-truth path:
+    (fraction covered, list of [first, last] frame intervals that are NOT covered)."""
+    from scipy.spatial import cKDTree
+    q = np.loadtxt(query_folder / "poses_left.txt").reshape(-1, 4, 4)[:, :3, 3]
+    m = np.loadtxt(map_folder / "poses_left.txt").reshape(-1, 4, 4)[:, :3, 3]
+    d, _ = cKDTree(m).query(q)
+    ok = d < radius
+    gaps, i = [], 0
+    while i < len(ok):
+        if not ok[i]:
+            j = i
+            while j + 1 < len(ok) and not ok[j + 1]:
+                j += 1
+            gaps.append([int(i), int(j)])
+            i = j + 1
+        else:
+            i += 1
+    return float(ok.mean()), gaps
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
@@ -54,6 +75,10 @@ def main():
                         r = rows.setdefault(key, {"role": role, "setups": {}})
                         if sub not in r["setups"]:
                             r["setups"][sub] = seq_stats(f, 10.0)
+                            mf = Path(a.data) / d / sc["map"] / sub
+                            if role == "query" and (mf / "calib.json").is_file():
+                                frac, gaps = coverage(f, mf, c["thresholds"][1])
+                                r["setups"][sub].update({"covered": frac, "uncovered": gaps})
                     if name in rows and role == "query" and c.get("trial_len"):
                         n = min(v["frames"] for v in rows[name]["setups"].values())
                         rows[name]["trials"] = len(build_trials(n, c["trial_len"], c["trial_stride"]))

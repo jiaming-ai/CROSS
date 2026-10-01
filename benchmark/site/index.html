@@ -289,14 +289,16 @@ function renderMetrics(v) {
     sec("T2 · multi-session localization (LR, MS-ATE): one run per query session",
       ul("Each query session is run once, from its first frame to its last, against the stored map of the scene's map session, starting without a pose.",
          "Per frame i: the estimate is the system's latest pose at frame i, if it is at most 1 s (10 frames) old; it is expressed in the ground-truth frame with the alignment computed on the map session (the query session is never re-aligned). e_i = distance between that position and the ground-truth position. A frame without such a pose has e_i = ∞.",
-         "LR@x of a session = (number of frames with e_i < x) / (number of frames of the session), for x = 1 m and 2 m indoors, 3 m and 5 m outdoors.",
+         "Coverage: only frames whose ground-truth position lies within the larger threshold (2 m indoors, 5 m outdoors) of the map session's ground-truth path are evaluated; where the map session never went no system can relocalize. The Datasets tab lists each session's coverage (about 100 % except on ROVER, where the 2023 / spring routes are longer than the 2024 map route).",
+         "LR@x of a session = (number of covered frames with e_i < x) / (number of covered frames), for x = 1 m and 2 m indoors, 3 m and 5 m outdoors.",
          "MS-ATE of a session = RMSE of e_i over the frames that have a pose.",
          "Scene and dataset cells pool all frames of the query sessions (localized frames / all frames), so longer sessions weigh more.")),
     sec("T3 · relocalization success (RS): many short trials per query session",
       ul("Each query session is cut into trials of 100 frames (10 s); a new trial starts every 50 frames (trials overlap by half; a last trial of at least 50 frames is kept). The Datasets tab lists the number of trials per session.",
          "Every trial is an independent run: a fresh system loads the map and processes only the trial's frames, starting without a pose.",
          "The trial's final error is the distance between the system's final pose (its latest pose at the trial's last frame, at most 1 s old) and the pose the map implies for that frame: the nearest map keyframe's estimated pose composed with its ground-truth offset to the query frame, so map drift is not counted as a relocalization error.",
-         "RS@x = trials with final error below x / all trials, pooled over the scene's query sessions (x = 1 m and 2 m indoors, 3 m and 5 m outdoors); 95 % Wilson interval of the larger threshold in the last column.")),
+         "Only trials whose last frame is covered by the map (as in T2) are counted.",
+         "RS@x = trials with final error below x / all counted trials, pooled over the scene's query sessions (x = 1 m and 2 m indoors, 3 m and 5 m outdoors); 95 % Wilson interval of the larger threshold in the last column.")),
     sec("How T2 and T3 differ",
       "T3 asks how often a system relocalizes within 10 s from a cold start, and judges only the end of each trial. T2 asks how much of a whole session the system spends correctly localized in the map, including the time before it first relocalizes and any later losses. A system that relocalizes slowly but then holds on can have T2 above T3; one that relocalizes quickly but loses the map again can have T3 above T2."),
     sec("Small scenes", "In small rooms (OpenLORIS office spans about 4 m, SimChange classroom about 6 m) even the 1 m threshold is a large fraction of the room; read those cells with the scene size in mind (Datasets tab)."));
@@ -326,11 +328,12 @@ function renderData(v) {
         $("td", {}, sp.queries.length ? String(trials) : "–"), $("td", {}, `${sp.thresholds[0]} / ${sp.thresholds[1]} m`)));
       if (sp.queries.length) {
         const det = $("details", {}, $("summary", {class: "note"}, `${sc}: every session`));
-        const dt = $("table"); dt.append($("thead", {}, $("tr", {}, ...["session", "role", "frames", "duration", "path", "T3 trials"].map(h => $("th", {}, h)))));
+        const dt = $("table"); dt.append($("thead", {}, $("tr", {}, ...["session", "role", "frames", "duration", "path", "T3 trials", "covered by the map"].map(h => $("th", {}, h)))));
         const dtb = $("tbody");
         for (const q of [sp.map].concat(sp.queries)) { const r = rows[q];
           dtb.append($("tr", {}, $("td", {}, q), $("td", {}, q === sp.map ? "map" : "query"), $("td", {}, r ? String(fr(r)) : "not prepared"),
-            $("td", {}, r ? `${(fr(r) / 10).toFixed(0)} s` : ""), $("td", {}, r ? `${path(r).toFixed(0)} m` : ""), $("td", {}, r && r.trials != null ? String(r.trials) : q === sp.map ? "–" : ""))); }
+            $("td", {}, r ? `${(fr(r) / 10).toFixed(0)} s` : ""), $("td", {}, r ? `${path(r).toFixed(0)} m` : ""), $("td", {}, r && r.trials != null ? String(r.trials) : q === sp.map ? "–" : ""),
+            $("td", {}, r && q !== sp.map ? (() => { const c = Object.values(r.setups).map(x => x.covered).filter(x => x != null); return c.length ? `${Math.round(100 * Math.min(...c))} %` : ""; })() : ""))); }
         dt.append(dtb); det.append($("div", {class: "scroll"}, dt));
         tb.append($("tr", {}, $("td", {colspan: 7}, det)));
       }
