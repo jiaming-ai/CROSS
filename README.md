@@ -253,6 +253,14 @@ system.step(obs={"rgb": left, "rgb_right": right, "depth": None, "conf": None,
                  "delta_pose": odom_delta, "timestamp": t})
 ```
 
+**Speed.** One observation with the default 10-image pass takes ~120 ms on an RTX 5090 (bf16, compute-bound); the
+frames in between take ~3 ms. The pass reuses the DINO patch tokens of every image seen before (`pose_est.ff.token_cache`;
+a loaded map's keyframes are embedded once at load), runs compiled transformer blocks (`pose_est.ff.compile`; a few
+seconds of warm-up per process, kernels cached in `TORCHINDUCTOR_CACHE_DIR`) replayed as CUDA graphs
+(`pose_est.ff.cuda_graphs`), and the filter state lives on the CPU (`state_device`). None of these changes the estimate
+beyond floating-point rounding. The number of images is the main remaining lever: `--max-refs 4 --n-ref-anchors 1`
+(7 images) takes ~90 ms per observation with the same relocalization success on OpenLORIS.
+
 Module-level evaluation (relative pose accuracy vs. ground truth) and the report experiments:
 
 ```bash

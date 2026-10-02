@@ -165,7 +165,7 @@ class HypothesisManager:
         self.odom_edges: Dict[Tuple[int, int], Edge] = {}  # odom edges are always from previous kf to current kf
         self.hypotheses: Dict[int, Hypothesis] = {}
         self.system = system
-        self.device = getattr(system, "device", "cuda")
+        self.device = getattr(system, "state_device", None) or getattr(system, "device", "cuda")
         self.disappearance_counts = collections.defaultdict(int)
         # Graph-lock to guard structural reads/writes across threads (nodes/edges/adjacency)
         # Use re-entrant lock since some operations call other locked methods.

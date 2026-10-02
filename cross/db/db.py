@@ -274,7 +274,7 @@ class KeyframeDatabase:
             "next_atlas_id": self._next_atlas_id,
         }
     
-    def load_state(self, db_data: dict, storage_device: str):
+    def load_state(self, db_data: dict, storage_device: str, pose_device=None):
         """Load the database state from saved data.
         
         Args:
@@ -316,14 +316,14 @@ class KeyframeDatabase:
                 raw_rgb_image=kf_data["raw_rgb_image"].to(storage_device) if kf_data["raw_rgb_image"] is not None else None,
                 depth_image=kf_data["depth_image"].to(storage_device) if kf_data["depth_image"] is not None else None,
                 raw_rgb_right=kf_data.get("raw_rgb_right").to(storage_device) if kf_data.get("raw_rgb_right") is not None else None,
-                pose_mu=kf_data["pose_mu"].to(storage_device) if kf_data["pose_mu"] is not None else None,
-                pose_std=kf_data["pose_std"].to(storage_device) if kf_data["pose_std"] is not None else None,
-                pose_weights=kf_data["pose_weights"].to(storage_device) if kf_data["pose_weights"] is not None else None,
+                pose_mu=kf_data["pose_mu"].to(pose_device or storage_device) if kf_data["pose_mu"] is not None else None,
+                pose_std=kf_data["pose_std"].to(pose_device or storage_device) if kf_data["pose_std"] is not None else None,
+                pose_weights=kf_data["pose_weights"].to(pose_device or storage_device) if kf_data["pose_weights"] is not None else None,
                 atlas=atlas,
                 timestamp=kf_data["timestamp"],
                 temporary=kf_data["temporary"],
                 last_pgo_step=kf_data["last_pgo_step"],
-                pose_charts=kf_data["pose_charts"].to(storage_device) if kf_data.get("pose_charts") is not None else None,
+                pose_charts=kf_data["pose_charts"].to(pose_device or storage_device) if kf_data.get("pose_charts") is not None else None,
                 metric_source=kf_data.get("metric_source"),
                 conditional_poses=restore(kf_data.get("conditional_poses")),
             )
@@ -506,26 +506,17 @@ class KeyframeDatabase:
         
         result_scores = []
         result_keyframes = []
-        
-        # Loop through the final top-k items
-        for i in range(final_top_k_original_db_indices.numel()):
-            # original_db_idx_in_scores is an index into database_emb
-            original_db_idx_in_scores = final_top_k_original_db_indices[i] 
-            score_value = final_top_k_scores[i].item()
-
-            if target_atlases is not None:
-                # original_db_idx_in_scores is an index for database_emb, which was self._embedding_buffer[valid_indices].
-                # So, valid_indices[original_db_idx_in_scores.item()] gives the true buffer_idx.
-                buffer_idx = valid_indices[original_db_idx_in_scores.item()]
-            else:
-                # original_db_idx_in_scores is an index for database_emb, which was self._embedding_buffer[:self._current_size].
-                # So, original_db_idx_in_scores is directly the buffer_idx.
-                buffer_idx = original_db_idx_in_scores.item()
-            
+        # one transfer for all results (original indices index database_emb, i.e. valid_indices or the buffer)
+        top_scores = final_top_k_scores.tolist()
+        top_indices = final_top_k_original_db_indices.tolist()
+        for score_value, db_index in zip(top_scores, top_indices):
+            buffer_idx = valid_indices[db_index] if target_atlases is not None else db_index
+            if isinstance(buffer_idx, torch.Tensor):
+                buffer_idx = int(buffer_idx)
             atlas, list_idx = self._index_to_atlas_idx[buffer_idx]
             result_scores.append(score_value)
             result_keyframes.append(self._keyframe_by_atlas[atlas][list_idx])
-            
+
         return {
             "scores": result_scores,
             "keyframes": result_keyframes,

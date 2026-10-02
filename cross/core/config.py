@@ -507,8 +507,18 @@ class FeedForwardConfig:
     # torch.compile the transformer blocks (~25 % faster; a few seconds per process once the kernels are tuned and
     # cached, ~1 min the first time).  Falls back to eager execution if compilation fails.
     compile: bool = True
+    # torch.compile mode of the blocks.  "default" is deterministic (two runs give identical results);
+    # "max-autotune-no-cudagraphs" is ~4 % faster but picks kernels by timing them, so runs differ in rounding.
+    compile_mode: str = "default"
     # depth head under bf16 autocast (half its time; depth changes by ~0.1 %, the covisibility test allows 15 %)
     dense_head_bf16: bool = True
+    # run each pass as CUDA graphs (one per input shape, captured on first use, ~0.3 s each): removes the kernel-launch
+    # and Python overhead of a pass; the kernels and results are the same.  Needs token_cache.
+    cuda_graphs: bool = True
+    # round the current images to 8 bits (as keyframes are stored, <= 0.2 % per pixel): a keyframe's tokens are then
+    # reused when it is retrieved later.  Off: this small input change alone moved the OpenLORIS home1-1 map from 1 to 4
+    # verified loop closures (map ATE 0.109 -> 0.237 m), and it saves only one embedding per new keyframe.
+    quantize_input: bool = False
     max_refs: int = 6                    # at most this many retrieved references per forward pass
     n_ref_anchors: int = 2               # stored right images of the best references used as extra anchors
     use_curr_anchor: bool = True         # include the current right image (ablation switch)
@@ -597,6 +607,10 @@ class VisualizationConfig:
 class SystemConfig:
     """Root configuration for the CROSS system."""
     async_update: bool = False
+    # device of the filter state (hypotheses, odometry, keyframe poses, pose graph); None: the compute device.  The
+    # state is a few dozen numbers per hypothesis: on the CPU each operation costs microseconds instead of a GPU kernel
+    # launch and a synchronisation (an observation step makes ~180 of them).  Images and networks stay on the GPU.
+    state_device: Optional[str] = "cpu"
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
     mapping: MappingConfig = field(default_factory=MappingConfig)

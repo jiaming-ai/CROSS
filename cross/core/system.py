@@ -98,6 +98,7 @@ class System:
 
         self.device = device
         self.storage_device = device
+        self.state_device = torch.device(self.config.state_device or device)
         self.visualize = visualize
         self.debug = debug
         self.use_depth_pred = self.config.depth_pred.use_depth_pred
@@ -138,7 +139,7 @@ class System:
                 std_per_radian=self.odom_std_per_radian,
                 min_std_translation=self.odom_min_std_translation,
                 min_std_rotation=self.odom_min_std_rotation,
-                device=self.device,
+                device=self.state_device,
             )
             self.odom_accumulator.register_item("since_last_step")
             self.odom_accumulator.register_item("since_last_add_kf")
@@ -254,7 +255,7 @@ class System:
             self._lc_engine = LoopClosureEngine(
                 hypothesis_manager=self.hypothesis_manager,
                 apply_queue=self._pgo_apply_queue,
-                device=self.device,
+                device=self.state_device,
                 depth=1000,
                 k_hop=2,
                 queue_size=lc_cfg.queue_size,
@@ -383,15 +384,15 @@ class System:
         if self.db.get_size() > 0:
             # init from previous map
             new_pose = new_atlas_center(self)
-            mu = pp.identity_SE3(self.kf_gmm_n_components, device=self.storage_device)
+            mu = pp.identity_SE3(self.kf_gmm_n_components, device=self.state_device)
             mu[0,:3] = torch.tensor(new_pose)
-            sigma = pp.identity_se3(self.kf_gmm_n_components, device=self.storage_device)
-            weights = torch.zeros(self.kf_gmm_n_components, device=self.storage_device)
+            sigma = pp.identity_se3(self.kf_gmm_n_components, device=self.state_device)
+            weights = torch.zeros(self.kf_gmm_n_components, device=self.state_device)
             weights[0] = 1.0
 
         else:
             # init from scratch
-            mu = pp.identity_SE3(self.kf_gmm_n_components, device=self.storage_device)
+            mu = pp.identity_SE3(self.kf_gmm_n_components, device=self.state_device)
             if initial_chart_pose is not None:
                 matrix = np.asarray(initial_chart_pose, dtype=np.float64)
                 if (matrix.shape != (4, 4) or not np.isfinite(matrix).all()
@@ -400,16 +401,16 @@ class System:
                         or not np.isclose(np.linalg.det(matrix[:3, :3]), 1., atol=1e-5, rtol=0)):
                     raise ValueError('Initial chart pose must be a finite rigid 4x4 camera pose')
                 mu[0] = normalize_se3(pp.mat2SE3(torch.as_tensor(matrix, dtype=mu.dtype,
-                                                               device=self.storage_device)))
-            sigma= pp.identity_se3(self.kf_gmm_n_components, device=self.storage_device)
-            weights = torch.zeros(self.kf_gmm_n_components, device=self.storage_device)
+                                                               device=self.state_device)))
+            sigma= pp.identity_se3(self.kf_gmm_n_components, device=self.state_device)
+            weights = torch.zeros(self.kf_gmm_n_components, device=self.state_device)
             weights[0] = 1.0
 
         # .to() aliases when storage and tracking use the same device. The
         # first saved node must remain a snapshot when live motion mutates
         # its prior, including its conditional source-response center.
-        self.hypothesis_manager.dist = (mu.to(self.device).clone(), sigma.to(self.device).clone(),
-                                       weights.to(self.device).clone())
+        self.hypothesis_manager.dist = (mu.to(self.state_device).clone(), sigma.to(self.state_device).clone(),
+                                       weights.to(self.state_device).clone())
         self.hypothesis_manager.start_tracking_chart()
         if self.config.mapping.hypothesis.conditional_sources:
             self.hypothesis_manager.initialize_source_filter()
@@ -488,7 +489,7 @@ class System:
             chart = int(self.hypothesis_manager.component_charts[0])
             all_nodes = [n for n in all_nodes if int(n.pose_charts[0]) == chart]
         all_node_poses = [n.pose_mu[0] for n in all_nodes]
-        all_node_poses = torch.stack(all_node_poses).to(self.device)
+        all_node_poses = torch.stack(all_node_poses).to(self.state_device)
 
         # consider only the translation part
         distances = torch.norm(all_node_poses.tensor()[:, :3] - \
@@ -501,7 +502,7 @@ class System:
 
         all_perm_nodes = [kf for kf in all_nodes if not kf.temporary]
         all_perm_node_poses = [n.pose_mu[0] for n in all_perm_nodes]
-        all_perm_node_poses = torch.stack(all_perm_node_poses).to(self.device)
+        all_perm_node_poses = torch.stack(all_perm_node_poses).to(self.state_device)
         all_perm_distances = torch.norm(all_perm_node_poses.tensor()[:, :3] - \
             current_pose.tensor()[None,:3], dim=1)
         closest_perm_node_id = torch.argmin(all_perm_distances).item()
@@ -614,7 +615,7 @@ class System:
                         c_after_apply = self.hypothesis_manager.graph_cost_now()
                         try:   # diagnostics: the most expensive factor of the fresh graph vs the same pair in the optimiser's graph
                             import gtsam as _g
-                            pgd = PoseGraph(self.hypothesis_manager, depth=1000, k_hop=2, device=self.device, noise_fn=self.hypothesis_manager.pgo_noise_fn(), skip_fn=self.hypothesis_manager.pgo_skip_fn())
+                            pgd = PoseGraph(self.hypothesis_manager, depth=1000, k_hop=2, device=self.state_device, noise_fn=self.hypothesis_manager.pgo_noise_fn(), skip_fn=self.hypothesis_manager.pgo_skip_fn())
                             pgd.eval_only = True
                             with self.hypothesis_manager.graph_lock:
                                 pgd.construct_for_loop_closure(target_node_id=max(self.hypothesis_manager.nodes.keys()), other_hypothesis_id=0)
@@ -741,15 +742,15 @@ class System:
         # --- 3. Restore Database (includes atlases and keyframes) ---
         existing_keyframes = self.db.load_state(
             save_data["db_data"],
-            self.storage_device
+            self.storage_device, pose_device=self.state_device
         )
 
         # --- 4. Restore Hypothesis Manager (graph structure only, hypothesis 0 only) ---
         self.hypothesis_manager.load_state(
             save_data["hypo_data"],
             self.db,
-            self.storage_device,
-            self.device,
+            self.state_device,
+            self.state_device,
             existing_keyframes
         )
 
@@ -784,6 +785,15 @@ class System:
         # Clear visualization state to avoid timeline conflicts when step counter resets
         if self.visualize:
             self.visualizer.reset(new_session=False)
+
+        if self.pose_est_type == PoseEstType.FF and hasattr(self.pose_est, "precompute"):
+            # tokens of every map image now (exact, a few seconds once per process: the cache keeps them across map
+            # reloads), instead of a slower pass whenever a map keyframe is retrieved for the first time
+            from cross.db.db import as_float_image
+            kfs = self.db.get_all_keyframes()
+            images = [as_float_image(k.raw_rgb_image) for k in kfs if k.raw_rgb_image is not None]
+            images += [as_float_image(k.raw_rgb_right) for k in kfs if getattr(k, "raw_rgb_right", None) is not None]
+            self.pose_est.precompute(images)
 
         logger.info(f"Map loaded successfully from {load_path}")
         logger.info(f"  - Loaded {len(save_data['db_data']['keyframes'])} permanent keyframes")
@@ -932,7 +942,7 @@ class System:
         # Build pose update mask based on filter mode
         # By default, update all components with retrieval filtering
         #################################
-        pose_update_mask = torch.ones(self.kf_gmm_n_components, dtype=torch.bool, device=self.device)
+        pose_update_mask = torch.ones(self.kf_gmm_n_components, dtype=torch.bool, device=self.state_device)
         if self.filter_mode == FilterMode.SKIP_ACTIVE:
             # Skip retrieval-based filtering for component 0 (active world)
             pose_update_mask[0] = False
@@ -1609,7 +1619,7 @@ class System:
 
         # Build graph inside lock for a consistent snapshot
         with self.hypothesis_manager.graph_lock:
-            pg = PoseGraph(self.hypothesis_manager, depth=window_kfs, k_hop=k_hop, device=self.device)
+            pg = PoseGraph(self.hypothesis_manager, depth=window_kfs, k_hop=k_hop, device=self.state_device)
             pg.construct_for_local_smoothing(target_node_id=target_node_id, window_kfs=window_kfs, k_hop=k_hop)
 
         if not pg.vertices or not pg.edges:
@@ -1702,9 +1712,9 @@ class System:
                 self._processed_frame_num,
                 rgb_image.to(self.storage_device), 
                 depth_image.to(self.storage_device) if depth_image is not None else None, 
-                mu=mu.to(self.storage_device), 
-                sigma=sigma.to(self.storage_device), 
-                weights=weights.to(self.storage_device),    
+                mu=mu.to(self.state_device), 
+                sigma=sigma.to(self.state_device), 
+                weights=weights.to(self.state_device),    
                 atlas=self.current_atlas,
                 timestamp=timestamp,
                 temporary=is_temp_kf,
@@ -1716,9 +1726,9 @@ class System:
         else:
             # otherwise create a temporary keyframe
             keyframe = Keyframe(
-                pose_mu=mu.to(self.storage_device),
-                pose_std=sigma.to(self.storage_device),
-                pose_weights=weights.to(self.storage_device),
+                pose_mu=mu.to(self.state_device),
+                pose_std=sigma.to(self.state_device),
+                pose_weights=weights.to(self.state_device),
                 timestamp=timestamp,
                 temporary=is_temp_kf,
                 pose_charts=pose_charts,
@@ -1832,10 +1842,10 @@ class System:
         if dbscan_eps is None:
             dbscan_eps = self.config.mapping.cluster_eps
 
-        convolved_mus = ret["convolved_mus"].to(self.device)  # (B, K, 7)
-        convolved_stds = ret["convolved_stds"].to(self.device)  # (B, K, 6)
-        confidences = ret['pose_est_conf'].to(self.device)  # (B)
-        component_weights = ret["valid_ref_component_weights"].to(self.device)  # (B, K)
+        convolved_mus = ret["convolved_mus"].to(self.state_device)  # (B, K, 7)
+        convolved_stds = ret["convolved_stds"].to(self.state_device)  # (B, K, 6)
+        confidences = ret['pose_est_conf'].to(self.state_device)  # (B)
+        component_weights = ret["valid_ref_component_weights"].to(self.state_device)  # (B, K)
         B, K = convolved_mus.shape[:2]
 
         # --- 1. Flatten Data and Track Sources in Batch ---
@@ -1865,7 +1875,7 @@ class System:
         source_indices_map = torch.stack(valid_indices_tuple, dim=1)
 
         # change batch_id to kf_id
-        kf_ids = torch.tensor([kf.id for kf in ret['valid_keyframes']], device=self.device)
+        kf_ids = torch.tensor([kf.id for kf in ret['valid_keyframes']], device=self.state_device)
         source_indices_map[:, 0] = kf_ids[source_indices_map[:, 0]]
         
 
@@ -1878,7 +1888,7 @@ class System:
         # --- 2. Run DBSCAN ---
         if self.hypothesis_manager.chart_aware:
             from cross.core.charts import cluster_by_chart
-            charts = torch.stack([kf.pose_charts for kf in ret['valid_keyframes']]).to(self.device)
+            charts = torch.stack([kf.pose_charts for kf in ret['valid_keyframes']]).to(self.state_device)
             flat_charts = charts[valid_mask].cpu().numpy()
             labels = cluster_by_chart(clustering_data, flat_charts, dbscan_eps, dbscan_min_samples)
         else:
@@ -2022,7 +2032,7 @@ class System:
                 message = ConditionalPose(S,message.factor)
                 hypotheses[-1]['conditional_pose'] = message
                 hypotheses[-1]['std'] = pp.se3(torch.as_tensor(S.diagonal().copy(),
-                                            device=self.device,dtype=representative_std.dtype).clamp_min(0).sqrt())
+                                            device=self.state_device,dtype=representative_std.dtype).clamp_min(0).sqrt())
 
         # make sure the hypotheses are in the same order as the current state GMM
         return self.hypothesis_manager.align_proposal_prior(hypotheses)
@@ -2345,13 +2355,13 @@ class System:
                 
             valid_masks = valid_masks[1:]
 
-        valid_poses = valid_poses.to(self.device)
-        valid_stds = valid_stds.to(self.device)
+        valid_poses = valid_poses.to(self.state_device)
+        valid_stds = valid_stds.to(self.state_device)
 
 
-        valid_ref_mus = torch.stack([p.pose_mu for p in valid_keyframes], dim=0).to(self.device) # (B, K, 7)
-        valid_ref_stds = torch.stack([p.pose_std for p in valid_keyframes], dim=0).to(self.device) # (B, K, 6)
-        valid_ref_component_weights = torch.stack([p.pose_weights for p in valid_keyframes], dim=0).to(self.device) # (B, K)
+        valid_ref_mus = torch.stack([p.pose_mu for p in valid_keyframes], dim=0).to(self.state_device) # (B, K, 7)
+        valid_ref_stds = torch.stack([p.pose_std for p in valid_keyframes], dim=0).to(self.state_device) # (B, K, 6)
+        valid_ref_component_weights = torch.stack([p.pose_weights for p in valid_keyframes], dim=0).to(self.state_device) # (B, K)
 
         # convolve the Gaussian with the GMM of the L keyframes
         convolved_mus, convolved_stds = convolve_gmm_batch_SE3(
@@ -2386,9 +2396,9 @@ class System:
                         raise ValueError('An active retrieved component has no conditional pose model')
                     pose,model = compose(kf.pose_mu[c].matrix().double().cpu().numpy(),node_model,
                         valid_poses[i].matrix().double().cpu().numpy(),relative,self.hypothesis_manager.source_states[0])
-                    convolved_mus[i,c] = pp.from_matrix(torch.as_tensor(pose,device=self.device,dtype=convolved_mus.dtype),pp.SE3_type)
+                    convolved_mus[i,c] = pp.from_matrix(torch.as_tensor(pose,device=self.state_device,dtype=convolved_mus.dtype),pp.SE3_type)
                     convolved_stds[i,c] = pp.se3(torch.as_tensor(model.geometry_covariance.diagonal().copy(),
-                                                device=self.device,dtype=convolved_stds.dtype).clamp_min(0).sqrt())
+                                                device=self.state_device,dtype=convolved_stds.dtype).clamp_min(0).sqrt())
                     row.append(model)
                 models.append(row)
             conditional_ret = dict(convolved_conditional_poses=models,relative_conditional_poses=relative_models)
