@@ -113,6 +113,15 @@ def _clean(x):
     return x
 
 
+def map_run_ok(out: Path) -> bool:
+    """The baseline's mapping run finished (map_time.json with rc 0); a run killed at BASELINE_TIMEOUT leaves a
+    truncated map behind."""
+    try:
+        return int(json.loads((out / "map_time.json").read_text()).get("rc", -1)) == 0
+    except (OSError, ValueError):
+        return False
+
+
 class Job:
     def __init__(self, a):
         self.a = a
@@ -294,8 +303,10 @@ class Job:
                     (out / f).unlink()
             rc, dt = sh(self.baseline_cmd(map_seq, map_seq, out, ["--map-only"]), out / "bench.log", self.a.timeout)
             total += dt
-            if rc == 0 and all((out / f).is_file() and (out / f).stat().st_size > 0 for f in need):
+            if rc == 0 and all((out / f).is_file() and (out / f).stat().st_size > 0 for f in need) and map_run_ok(out):
                 return 0, total
+            if (out / "map_time.json").is_file() and json.loads((out / "map_time.json").read_text()).get("rc") == -9:
+                break                                       # killed at BASELINE_TIMEOUT: a retry would time out too
         return (rc if rc != 0 else 1), total
 
     def baseline_t1_result(self, seq_name, out: Path, dt):
