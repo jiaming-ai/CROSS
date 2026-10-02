@@ -16,6 +16,10 @@ results page.
 | full | OpenLORIS cafe | cafe1-1 (570) → cafe1-2, first 300 | people and clutter |
 | full | KITTI 07 | 07 (1101), T1 only | outdoor scale and the loop closure at the end of the drive |
 
+A third tier, `val`, is a confirmation set: every OpenLORIS office, home and cafe query of the benchmark (11 queries,
+about 106 T3 trials), T2 and T3 only (entry `val_openloris`, `tier: val`). It takes about 25 minutes per stereo variant
+on an RTX 5090, and is meant for a change that passed the dev split, before the full benchmark.
+
 The full tier contains the quick tier. The entries are `dev_openloris`, `dev_simchange` and `dev_kitti` in
 [configs/datasets.yaml](configs/datasets.yaml) (`dev: true`). They read the prepared folders of `openloris`,
 `simchange` and `kitti` (`data:`), so no data is duplicated. Only the map sequences get a T1 result.
