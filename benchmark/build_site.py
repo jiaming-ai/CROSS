@@ -158,7 +158,7 @@ def main():
     a = ap.parse_args()
     results = json.loads(Path(a.results).read_text())["results"] if Path(a.results).is_file() else []
     ds_cfg = mt.load()[0]
-    results = mt.rescore_t3([r for r in results if r.get("seed", 0) == a.seed], ds_cfg)
+    results = mt.count_failed_queries(mt.rescore_t3([r for r in results if r.get("seed", 0) == a.seed], ds_cfg), ds_cfg, mt.load()[1])
     for r in results:                      # the dataset's two thresholds travel with every run (page labels)
         r["thresholds"] = ds_cfg[r["dataset"]]["thresholds"]
     runs, runs_by_key = {}, {}

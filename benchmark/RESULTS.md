@@ -223,12 +223,12 @@ A *session* is one recorded traversal. In each scene, the map session builds the
 | CROSS (DA3, visual odometry) · mono | 17.921 | 3.228 | 47.427 | 0.41 / 0.49 | · | 0.35 / 0.84 | 0.50 / 0.60 | · | 0.82 / 0.86 | · (7 pending) |
 | ORB-SLAM3 · RGB-D |  | 0.470 (9/22 ✗) | 0.953 (3/8 ✗) | 0.20 / 0.27 | 0.38 / 0.41 | 0.82 / 0.84 | 0.17 / 0.23 | 0.05 / 0.05 | 0.66 / 0.66 | 0.29 / 0.32 |
 | ORB-SLAM3 · stereo | 3.585 | 0.588 (8/22 ✗) | 1.268 (2/8 ✗) | 0.22 / 0.36 | 0.46 / 0.47 | 0.80 / 0.82 | 0.20 / 0.27 | 0.15 / 0.16 | 0.54 / 0.54 | 0.30 / 0.32 |
-| ORB-SLAM3 · mono | 94.343 | 5.732 (11/22 ✗) | 12.717 (6/8 ✗) | 0.13 / 0.17 (9/17 ✗) | 7/7 ✗ | 0.16 / 0.18 (21/76 ✗) | 0.10 / 0.23 (9/17 ✗) | 7/7 ✗ | 0.12 / 0.14 (21/76 ✗) | 37/100 ✗ |
-| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ |  | 1.412 | 5.236 | 0.23 / 0.29 | 7/7 ✗ | 0.71 / 0.91 (1/76 ✗) | 0.27 / 0.34 | 7/7 ✗ | 0.64 / 0.73 (1/76 ✗) | 8/100 ✗ |
-| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 6.085 | 1.615 | 4.912 | 0.24 / 0.27 | 0.00 / 0.00 (6/7 ✗) | 0.50 / 0.81 | 0.27 / 0.32 | 7/7 ✗ | 0.58 / 0.64 | 7/100 ✗ |
+| ORB-SLAM3 · mono | 94.343 | 5.732 (11/22 ✗) | 12.717 (6/8 ✗) | 0.05 / 0.06 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.11 / 0.12 (21/76 ✗) | 0.04 / 0.08 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.08 / 0.09 (21/76 ✗) | 0.04 / 0.06 (37/100 ✗) |
+| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ |  | 1.412 | 5.236 | 0.23 / 0.29 | 0.00 / 0.00 (7/7 ✗) | 0.70 / 0.90 (1/76 ✗) | 0.27 / 0.34 | 0.00 / 0.00 (7/7 ✗) | 0.63 / 0.72 (1/76 ✗) | 0.30 / 0.35 (8/100 ✗) |
+| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 6.085 | 1.615 | 4.912 | 0.24 / 0.27 | 0.00 / 0.00 (6/7 ✗) | 0.50 / 0.81 | 0.27 / 0.32 | 0.00 / 0.00 (7/7 ✗) | 0.58 / 0.64 | 0.28 / 0.32 (7/100 ✗) |
 | RTAB-Map (visual odometry) · RGB-D |  | · | · | · | · | · | · | · | · | · |
 | RTAB-Map (visual odometry) · stereo | · | · | · | · | · | · | · | · | · | · |
-| MASt3R-SLAM · mono | 10/10 ✗ | 2.257 (7/22 ✗) | 8/8 ✗ | 0.03 / 0.03 | 0.00 / 0.00 (2 pending) | 0.09 / 0.12 (1/76 ✗, 2 pending) | 0.05 / 0.06 | 0.00 / 0.00 (2 pending) | 0.29 / 0.34 (1/76 ✗, 2 pending) | 0.11 / 0.13 (1/100 ✗, 4 pending) |
+| MASt3R-SLAM · mono | 10/10 ✗ | 2.257 (7/22 ✗) | 8/8 ✗ | 0.03 / 0.03 | 0.00 / 0.00 (2 pending) | 0.09 / 0.11 (1/76 ✗, 2 pending) | 0.05 / 0.06 | 0.00 / 0.00 (2 pending) | 0.28 / 0.34 (1/76 ✗, 2 pending) | 0.11 / 0.13 (1/100 ✗, 4 pending) |
 | VGGT-SLAM · mono | 60.284 (1/10 ✗) | 5.206 (7/22 ✗) | 8/8 ✗ | 0.13 / 0.20 | 0.09 / 0.15 | 0.10 / 0.21 | 0.30 / 0.37 | 0.11 / 0.18 | 0.25 / 0.42 | 0.22 / 0.32 |
 
 ## T1 — mapping accuracy (ATE RMSE, m)
@@ -298,7 +298,7 @@ The query session runs once from its first frame against the stored map of the s
 
 ### OpenLORIS-Scene
 
-Cells: LR@1 m / LR@2 m and MS-ATE (m), pooled over the covered frames of the scene's query sessions (frames within the larger threshold of the map session's path). LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of the ground truth; frames without such a pose count as failures. MS-ATE = RMSE over the frames that have a pose.
+Cells: LR@1 m / LR@2 m and MS-ATE (m), pooled over the covered frames of the scene's query sessions (frames within the larger threshold of the map session's path). LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of the ground truth; frames without such a pose count as failures, as do all covered frames of a failed query session (k/N ✗). MS-ATE = RMSE over the frames that have a pose.
 
 | system · setup | office | corridor | home | cafe | market | all queries |
 |---|---|---|---|---|---|---|
@@ -310,7 +310,7 @@ Cells: LR@1 m / LR@2 m and MS-ATE (m), pooled over the covered frames of the sce
 | CROSS (DA3, visual odometry) · mono | 0.50 / 0.50, 3.69 m | 0.01 / 0.02, 25.03 m | 0.81 / 0.86, 2.42 m | 0.97 / 0.97, 1.53 m | 0.35 / 0.75, 3.18 m | 0.41 / 0.49, 14.97 m |
 | ORB-SLAM3 · RGB-D | 0.24 / 0.24, 2.73 m | 0.00 / 0.03, 22.60 m | 0.32 / 0.35, 4.09 m | 1.00 / 1.00, 0.45 m | 0.02 / 0.37, 2.81 m | 0.20 / 0.27, 10.60 m |
 | ORB-SLAM3 · stereo | 0.18 / 0.20, 3.21 m | 0.00 / 0.05, 37.58 m | 0.34 / 0.65, 1.02 m | 1.00 / 1.00, 0.31 m | 0.15 / 0.46, 2.39 m | 0.22 / 0.36, 18.46 m |
-| ORB-SLAM3 · mono | 0.20 / 0.20, 0.07 m | 4/4 ✗ | 4/4 ✗ | 1/1 ✗ | 0.06 / 0.14, 2.03 m | 0.13 / 0.17, 1.55 m (9/17 ✗) |
+| ORB-SLAM3 · mono | 0.20 / 0.20, 0.07 m | 0.00 / 0.00, · m (4/4 ✗) | 0.00 / 0.00, · m (4/4 ✗) | 0.00 / 0.00, · m (1/1 ✗) | 0.06 / 0.14, 2.03 m | 0.05 / 0.06, 1.55 m (9/17 ✗) |
 | RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.24 / 0.24, 0.08 m | 0.04 / 0.22, 2.73 m | 0.38 / 0.38, 0.27 m | 1.00 / 1.00, 0.25 m | 0.00 / 0.00, 18.82 m | 0.23 / 0.29, 9.81 m |
 | RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 0.35 / 0.35, 0.08 m | 0.02 / 0.09, 2.63 m | 0.38 / 0.38, 0.26 m | 1.00 / 1.00, 0.29 m | 0.00 / 0.02, 16.62 m | 0.24 / 0.27, 8.80 m |
 | RTAB-Map (visual odometry) · RGB-D | · | · | · | · | · | · |
@@ -320,7 +320,7 @@ Cells: LR@1 m / LR@2 m and MS-ATE (m), pooled over the covered frames of the sce
 
 ### ROVER campus_large
 
-Cells: LR@3 m / LR@5 m and MS-ATE (m), pooled over the covered frames of the scene's query sessions (frames within the larger threshold of the map session's path). LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of the ground truth; frames without such a pose count as failures. MS-ATE = RMSE over the frames that have a pose.
+Cells: LR@3 m / LR@5 m and MS-ATE (m), pooled over the covered frames of the scene's query sessions (frames within the larger threshold of the map session's path). LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of the ground truth; frames without such a pose count as failures, as do all covered frames of a failed query session (k/N ✗). MS-ATE = RMSE over the frames that have a pose.
 
 | system · setup | campus_large | all queries |
 |---|---|---|
@@ -332,8 +332,8 @@ Cells: LR@3 m / LR@5 m and MS-ATE (m), pooled over the covered frames of the sce
 | CROSS (DA3, visual odometry) · mono | · | · |
 | ORB-SLAM3 · RGB-D | 0.38 / 0.41, 11.51 m | 0.38 / 0.41, 11.51 m |
 | ORB-SLAM3 · stereo | 0.46 / 0.47, 1.86 m | 0.46 / 0.47, 1.86 m |
-| ORB-SLAM3 · mono | 7/7 ✗ | 7/7 ✗ |
-| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 7/7 ✗ | 7/7 ✗ |
+| ORB-SLAM3 · mono | 0.00 / 0.00, · m (7/7 ✗) | 0.00 / 0.00, · m (7/7 ✗) |
+| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.00 / 0.00, · m (7/7 ✗) | 0.00 / 0.00, · m (7/7 ✗) |
 | RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 0.00 / 0.00, 27.43 m (6/7 ✗) | 0.00 / 0.00, 27.43 m (6/7 ✗) |
 | RTAB-Map (visual odometry) · RGB-D | · | · |
 | RTAB-Map (visual odometry) · stereo | · | · |
@@ -346,7 +346,7 @@ Independent 10 s trials (100 frames at 10 Hz, stride 50) that start without a po
 
 ### Overall
 
-Overall = mean over the three datasets of the pooled success at each dataset's smaller / larger threshold (a method missing a dataset has no overall value). (k/N ✗): k of the N query sessions failed (crash or timeout after re-runs); their trials are not in the pooled rates.
+Overall = mean over the three datasets of the pooled success at each dataset's smaller / larger threshold (a method missing a dataset has no overall value). (k/N ✗): k of the N query sessions failed (crash or timeout after re-runs, or a failed map); every covered trial of a failed session counts as a failure.
 
 | system · setup | OpenLORIS RS@1/2 m | ROVER RS@3/5 m | SimChange RS@1/2 m | overall |
 |---|---|---|---|---|
@@ -358,17 +358,17 @@ Overall = mean over the three datasets of the pooled success at each dataset's s
 | CROSS (DA3, visual odometry) · mono | 0.50 / 0.60 | · | 0.82 / 0.86 | · (7 pending) |
 | ORB-SLAM3 · RGB-D | 0.17 / 0.23 | 0.05 / 0.05 | 0.66 / 0.66 | 0.29 / 0.32 |
 | ORB-SLAM3 · stereo | 0.20 / 0.27 | 0.15 / 0.16 | 0.54 / 0.54 | 0.30 / 0.32 |
-| ORB-SLAM3 · mono | 0.10 / 0.23 (9/17 ✗) | 7/7 ✗ | 0.12 / 0.14 (21/76 ✗) | 37/100 ✗ |
-| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.27 / 0.34 | 7/7 ✗ | 0.64 / 0.73 (1/76 ✗) | 8/100 ✗ |
-| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 0.27 / 0.32 | 7/7 ✗ | 0.58 / 0.64 | 7/100 ✗ |
+| ORB-SLAM3 · mono | 0.04 / 0.08 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.08 / 0.09 (21/76 ✗) | 0.04 / 0.06 (37/100 ✗) |
+| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.27 / 0.34 | 0.00 / 0.00 (7/7 ✗) | 0.63 / 0.72 (1/76 ✗) | 0.30 / 0.35 (8/100 ✗) |
+| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 0.27 / 0.32 | 0.00 / 0.00 (7/7 ✗) | 0.58 / 0.64 | 0.28 / 0.32 (7/100 ✗) |
 | RTAB-Map (visual odometry) · RGB-D | · | · | · | · |
 | RTAB-Map (visual odometry) · stereo | · | · | · | · |
-| MASt3R-SLAM · mono | 0.05 / 0.06 | 0.00 / 0.00 (2 pending) | 0.29 / 0.34 (1/76 ✗, 2 pending) | 0.11 / 0.13 (1/100 ✗, 4 pending) |
+| MASt3R-SLAM · mono | 0.05 / 0.06 | 0.00 / 0.00 (2 pending) | 0.28 / 0.34 (1/76 ✗, 2 pending) | 0.11 / 0.13 (1/100 ✗, 4 pending) |
 | VGGT-SLAM · mono | 0.30 / 0.37 | 0.11 / 0.18 | 0.25 / 0.42 | 0.22 / 0.32 |
 
 ### OpenLORIS-Scene
 
-Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m / 2 m of the pose the map implies, pooled over the scene's trials whose last frame the map covers.
+Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m / 2 m of the pose the map implies, pooled over the scene's trials whose last frame the map covers. (k/N ✗): k of the N query sessions failed; their trials count as failures.
 
 | system · setup | office | corridor | home | cafe | market | all queries [trials, 95 % CI of RS@2 m] |
 |---|---|---|---|---|---|---|
@@ -380,7 +380,7 @@ Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m 
 | CROSS (DA3, visual odometry) · mono | 0.44 / 0.47 | 0.37 / 0.38 | 0.71 / 0.73 | 0.75 / 0.75 | 0.48 / 0.88 | 0.50 / 0.60 [218, 0.53–0.66] |
 | ORB-SLAM3 · RGB-D | 0.17 / 0.17 | 0.08 / 0.08 | 0.13 / 0.13 | 0.50 / 0.50 | 0.29 / 0.62 | 0.17 / 0.23 [218, 0.18–0.29] |
 | ORB-SLAM3 · stereo | 0.08 / 0.08 | 0.07 / 0.08 | 0.19 / 0.19 | 0.58 / 0.58 | 0.47 / 0.82 | 0.20 / 0.27 [216, 0.22–0.34] |
-| ORB-SLAM3 · mono | 0.08 / 0.08 | 4/4 ✗ | 4/4 ✗ | 1/1 ✗ | 0.12 / 0.36 | 0.10 / 0.23 [78, 0.15–0.34] (9/17 ✗) |
+| ORB-SLAM3 · mono | 0.08 / 0.08 | 0.00 / 0.00 (4/4 ✗) | 0.00 / 0.00 (4/4 ✗) | 0.00 / 0.00 (1/1 ✗) | 0.12 / 0.36 | 0.04 / 0.08 [218, 0.05–0.13] (9/17 ✗) |
 | RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.19 / 0.19 | 0.16 / 0.17 | 0.33 / 0.33 | 0.83 / 0.83 | 0.31 / 0.64 | 0.27 / 0.34 [218, 0.28–0.40] |
 | RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 0.28 / 0.28 | 0.11 / 0.11 | 0.35 / 0.35 | 0.67 / 0.67 | 0.35 / 0.62 | 0.27 / 0.32 [216, 0.26–0.38] |
 | RTAB-Map (visual odometry) · RGB-D | · | · | · | · | · | · |
@@ -390,7 +390,7 @@ Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m 
 
 ### ROVER campus_large
 
-Cells: RS@3 m / RS@5 m, the fraction of trials whose final pose lies within 3 m / 5 m of the pose the map implies, pooled over the scene's trials whose last frame the map covers.
+Cells: RS@3 m / RS@5 m, the fraction of trials whose final pose lies within 3 m / 5 m of the pose the map implies, pooled over the scene's trials whose last frame the map covers. (k/N ✗): k of the N query sessions failed; their trials count as failures.
 
 | system · setup | campus_large | all queries [trials, 95 % CI of RS@5 m] |
 |---|---|---|
@@ -402,9 +402,9 @@ Cells: RS@3 m / RS@5 m, the fraction of trials whose final pose lies within 3 m 
 | CROSS (DA3, visual odometry) · mono | · | · |
 | ORB-SLAM3 · RGB-D | 0.05 / 0.05 | 0.05 / 0.05 [1028, 0.04–0.07] |
 | ORB-SLAM3 · stereo | 0.15 / 0.16 | 0.15 / 0.16 [1019, 0.14–0.18] |
-| ORB-SLAM3 · mono | 7/7 ✗ | 7/7 ✗ |
-| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 7/7 ✗ | 7/7 ✗ |
-| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 7/7 ✗ | 7/7 ✗ |
+| ORB-SLAM3 · mono | 0.00 / 0.00 (7/7 ✗) | 0.00 / 0.00 [1028, 0.00–0.00] (7/7 ✗) |
+| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.00 / 0.00 (7/7 ✗) | 0.00 / 0.00 [1028, 0.00–0.00] (7/7 ✗) |
+| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 0.00 / 0.00 (7/7 ✗) | 0.00 / 0.00 [1019, 0.00–0.00] (7/7 ✗) |
 | RTAB-Map (visual odometry) · RGB-D | · | · |
 | RTAB-Map (visual odometry) · stereo | · | · |
 | MASt3R-SLAM · mono | 0.00 / 0.00 (2 pending) | 0.00 / 0.00 [37, 0.00–0.09] (2 pending) |
@@ -412,7 +412,7 @@ Cells: RS@3 m / RS@5 m, the fraction of trials whose final pose lies within 3 m 
 
 ### SimChange v2
 
-Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m / 2 m of the pose the map implies, pooled over the scene's trials whose last frame the map covers.
+Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m / 2 m of the pose the map implies, pooled over the scene's trials whose last frame the map covers. (k/N ✗): k of the N query sessions failed; their trials count as failures.
 
 | system · setup | hssd_house | hssd_restaurant | classroom | lonemonk | all queries [trials, 95 % CI of RS@2 m] |
 |---|---|---|---|---|---|
@@ -424,12 +424,12 @@ Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m 
 | CROSS (DA3, visual odometry) · mono | 0.96 / 0.96 | 0.78 / 0.86 | 0.97 / 1.00 | 0.59 / 0.66 | 0.82 / 0.86 [1134, 0.84–0.88] |
 | ORB-SLAM3 · RGB-D | 0.71 / 0.73 | 0.60 / 0.60 | 0.92 / 0.92 | 0.65 / 0.65 | 0.66 / 0.66 [1134, 0.64–0.69] |
 | ORB-SLAM3 · stereo | 0.50 / 0.50 | 0.56 / 0.57 | 0.85 / 0.85 | 0.48 / 0.48 | 0.54 / 0.54 [1134, 0.51–0.57] |
-| ORB-SLAM3 · mono | 21/21 ✗ | 0.00 / 0.00 | 0.92 / 0.95 | 0.27 / 0.34 | 0.12 / 0.14 [737, 0.12–0.17] (21/76 ✗) |
-| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.59 / 0.76 | 0.59 / 0.67 | 0.92 / 0.97 | 0.80 / 0.81 (1/14 ✗) | 0.64 / 0.73 [1115, 0.71–0.76] (1/76 ✗) |
+| ORB-SLAM3 · mono | 0.00 / 0.00 (21/21 ✗) | 0.00 / 0.00 | 0.92 / 0.95 | 0.27 / 0.34 | 0.08 / 0.09 [1134, 0.08–0.11] (21/76 ✗) |
+| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.59 / 0.76 | 0.59 / 0.67 | 0.92 / 0.97 | 0.73 / 0.73 (1/14 ✗) | 0.63 / 0.72 [1134, 0.70–0.75] (1/76 ✗) |
 | RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 0.83 / 0.83 | 0.41 / 0.48 | 0.95 / 0.95 | 0.46 / 0.61 | 0.58 / 0.64 [1134, 0.61–0.67] |
 | RTAB-Map (visual odometry) · RGB-D | · | · | · | · | · |
 | RTAB-Map (visual odometry) · stereo | · | · | · | · | · |
-| MASt3R-SLAM · mono | 0.17 / 0.18 (2 pending) | 0.24 / 0.30 (1/21 ✗) | 0.51 / 0.82 | 0.47 / 0.47 | 0.29 / 0.34 [346, 0.30–0.40] (1/76 ✗, 2 pending) |
+| MASt3R-SLAM · mono | 0.17 / 0.18 (2 pending) | 0.23 / 0.29 (1/21 ✗) | 0.51 / 0.82 | 0.47 / 0.47 | 0.28 / 0.34 [351, 0.29–0.39] (1/76 ✗, 2 pending) |
 | VGGT-SLAM · mono | 0.28 / 0.47 | 0.09 / 0.23 | 0.69 / 0.90 | 0.43 / 0.63 | 0.25 / 0.42 [983, 0.39–0.45] |
 
 ## Earlier results (other protocols)

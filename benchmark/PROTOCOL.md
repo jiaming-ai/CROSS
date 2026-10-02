@@ -130,8 +130,11 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 - Also reported: the median final error of the failed trials, and 95 % Wilson intervals.
 - **Overall RS** of a system: the mean over OpenLORIS, ROVER and SimChange of its pooled RS at each dataset's smaller and
   larger threshold (each dataset weighs the same, whatever its number of trials).
-- **Failed query sessions** (a crash or timeout that persists after re-runs) are shown as *k/N* ✗ (k of the N query sessions
-  failed); their trials are not in the pooled rates. The same notation counts failed sequences in the T1 means.
+- **Failed query sessions** (a crash or timeout that persists after re-runs, or a failed map) are shown as *k/N* ✗ (k of
+  the N query sessions failed). Every covered trial of a failed session counts as a failed trial (systems without map
+  persistence: the 5 evenly spaced trials they would have run), and in T2 every covered frame counts as not localized, so a
+  system that crashes cannot score higher than one that runs and fails. T1 means leave failed sequences out and give their
+  count with the same notation.
 - Systems without map persistence (MASt3R-SLAM, VGGT-SLAM, DROID-SLAM) run the map session followed by the trial in one
   stream. Only the trial frames are scored. Every trial re-runs the whole map session, so these systems are scored on at most
   5 evenly spaced trials per query session. A run that crashes (out of memory) or times out is reported as failed and re-run;

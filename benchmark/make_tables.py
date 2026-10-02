@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -174,11 +175,64 @@ def rescore_t3(results, ds_cfg):
     return out
 
 
+def query_stats(dataset, query, setup_dir):
+    """(frames, covered fraction, uncovered intervals) of a prepared query session, from benchmark/results/datasets.json."""
+    uncovered(dataset, query, setup_dir)            # loads _COVERAGE
+    for scene in _COVERAGE.get(dataset, {}).values():
+        r = scene.get(query)
+        if r and setup_dir in r.get("setups", {}):
+            st = r["setups"][setup_dir]
+            return st["frames"], st.get("covered", 1.0), st.get("uncovered") or []
+    return None
+
+
+def count_failed_queries(results, ds_cfg, sy):
+    """A query session whose run failed (crash or timeout after re-runs, or a failed map) counts as a failure of every
+    covered frame (T2) and of every covered trial (T3): it adds its frames / trials to the pools with no success.  Systems
+    without map persistence are scored on at most --concat-max-trials evenly spaced trials, so their failed queries add
+    the same selection.  Failed runs of sessions without dataset statistics stay out of the pools."""
+    import numpy as np
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from reloc_metrics import build_trials
+    out = []
+    for r in results:
+        if r.get("track") not in ("t2", "t3") or r.get("status") == "ok" or "query" not in r or r.get("counted_failure"):
+            out.append(r)
+            continue
+        cfg = ds_cfg[r["dataset"]]
+        st = query_stats(r["dataset"], r["query"], cfg["setups"].get(r["setup"], ""))
+        if st is None:
+            out.append(r)
+            continue
+        frames, cov, gaps = st
+        r = dict(r, counted_failure=True)
+        if r["track"] == "t2":
+            r.update({f"lr@{x:g}": 0.0 for x in LR_GRID}, n_frames=int(round(frames * cov)), est_frac=0.0, ms_ate=None)
+        else:
+            tl = int(cfg["trial_len"])
+            trials = build_trials(frames, tl, int(cfg["trial_stride"]))
+            if sy[r["system"]]["runner"] == "concat" and len(trials) > CONCAT_MAX_TRIALS:
+                trials = [trials[i] for i in np.linspace(0, len(trials) - 1, CONCAT_MAX_TRIALS).round().astype(int)]
+            n = sum(1 for a, _ in trials if not any(g0 <= a + tl - 1 <= g1 for g0, g1 in gaps))
+            r.update(n_trials=n, n_s1=0, n_s2=0, rs1=0.0, rs2=0.0, trials=[])
+        out.append(r)
+    return out
+
+
+LR_GRID = (0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0)      # as benchmark/run.py
+CONCAT_MAX_TRIALS = 5                                 # benchmark/run.py --concat-max-trials
+
+
+def scored(r):
+    """Counts in the pooled T2 / T3 rates: a finished run, or a failed one counted as failure (count_failed_queries)."""
+    return r.get("status") == "ok" or bool(r.get("counted_failure"))
+
+
 class Tables:
     def __init__(self, results, seed):
         self.ds, self.sy = load()
         self.idx = defaultdict(list)
-        for r in rescore_t3(results, self.ds):
+        for r in count_failed_queries(rescore_t3(results, self.ds), self.ds, self.sy):
             if r.get("seed", 0) != seed:
                 continue
             self.idx[(r["track"], r["dataset"], r["system"], r["setup"])].append(r)
@@ -254,7 +308,7 @@ class Tables:
         head = ["system · setup"] + [f"{s}" for s in scenes] + ["all queries"]
         lines = [f"Cells: LR@{thr[0]:g} m / LR@{thr[1]:g} m and MS-ATE (m), pooled over the covered frames of the scene's query sessions (frames within the larger threshold of the map session's path). "
                  "LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of "
-                 "the ground truth; frames without such a pose count as failures. MS-ATE = RMSE over the frames that have a pose.", "",
+                 "the ground truth; frames without such a pose count as failures, as do all covered frames of a failed query session (k/N ✗). MS-ATE = RMSE over the frames that have a pose.", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
             cells = {(r["map"], r["query"]): r for r in self.idx[("t2", dataset, system, setup)]}
@@ -275,12 +329,12 @@ class Tables:
     def t2_str(self, rs, n, thr, ms_ate=True):
         if not rs:
             return PENDING
-        ok = [r for r in rs if r.get("status") == "ok" and all(r.get(f"lr@{t:g}") is not None for t in thr)]
+        ok = [r for r in rs if scored(r) and all(r.get(f"lr@{t:g}") is not None for t in thr)]
         a, b, ms = t2_pool(ok, thr) if ok else (None, None, None)
         s = (f"{a:.2f} / {b:.2f}" + (f", {fmt(ms, 2)} m" if ms_ate else "")) if a is not None else \
             FAIL if all(r.get("status") != "ok" for r in rs) else PENDING
         failed = len([r for r in rs if r.get("status") != "ok"])
-        stale = len([r for r in rs if r.get("status") == "ok"]) - len(ok)        # results of an older format: re-score
+        stale = len([r for r in rs if scored(r)]) - len(ok)        # results of an older format: re-score
         return cell(s, failed, n, n - len(rs) + stale)
 
     # ---------------------------------------------------------------- T3
@@ -295,7 +349,8 @@ class Tables:
         note = (f" Rows marked *calibrated* ({', '.join(cal)}) use the noise model calibrated without ground truth on the "
                 "first 600 frames of the map traversal." if cal else "")
         lines = [f"Cells: RS@{t1:g} m / RS@{t2:g} m, the fraction of trials whose final pose lies within {t1:g} m / {t2:g} m of the "
-                 f"pose the map implies, pooled over the scene's trials whose last frame the map covers.{note}", "",
+                 f"pose the map implies, pooled over the scene's trials whose last frame the map covers. (k/N ✗): k of the N query "
+                 f"sessions failed; their trials count as failures.{note}", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
             rs_all = self.idx[("t3", dataset, system, setup)]
@@ -310,8 +365,9 @@ class Tables:
         return "\n".join(lines)
 
     def t3_str(self, rs, n_queries=None, ci=False):
-        """RS@t1 / RS@t2 pooled over the trials of the successful query runs, then (k/N ✗) for k failed of N queries."""
-        ok = [r for r in rs if r.get("status") == "ok" and r.get("n_trials")]
+        """RS@t1 / RS@t2 pooled over the trials of the query runs (a failed run's trials count as failures), then
+        (k/N ✗) for k failed of N queries."""
+        ok = [r for r in rs if scored(r) and r.get("n_trials")]
         if not rs:
             return PENDING
         n_q = n_queries or len(rs)
@@ -329,7 +385,7 @@ class Tables:
         return s + note
 
     def t3_rates(self, rs):
-        ok = [r for r in rs if r.get("status") == "ok" and r.get("n_trials")]
+        ok = [r for r in rs if scored(r) and r.get("n_trials")]
         n = sum(r["n_trials"] for r in ok)
         return (sum(r["n_s1"] for r in ok) / n, sum(r["n_s2"] for r in ok) / n) if n else None
 
@@ -358,7 +414,7 @@ class Tables:
                                      for d in T3_DATASETS] + ["overall"]
         lines = ["Overall = mean over the three datasets of the pooled success at each dataset's smaller / larger threshold "
                  "(a method missing a dataset has no overall value). (k/N ✗): k of the N query sessions failed (crash or "
-                 "timeout after re-runs); their trials are not in the pooled rates.", "",
+                 "timeout after re-runs, or a failed map); every covered trial of a failed session counts as a failure.", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, sc in self.sy.items():
             if sc.get("hidden"):

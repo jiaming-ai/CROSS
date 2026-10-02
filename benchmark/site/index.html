@@ -157,8 +157,9 @@ function mdTable(md) {
     tb.append(tr); } t.append(tb); return $("div", {class: "scroll"}, t);
 }
 // ---------------------------------------------------------------- column ranking: shade the three best complete cells per column
-// A cell is ranked by its first number; cells with failed or pending sessions (✗, pending, ·) are not ranked, as their
-// value covers only part of the sessions.  lowerBetter(ci) gives the direction of column ci.
+// A cell is ranked by its first number.  Cells with pending sessions are not ranked, nor ATE cells with failed sequences
+// (the mean covers only the others); LR / RS cells count failed queries as failures and are ranked.
+// lowerBetter(ci) gives the direction of column ci (ATE columns).
 function rankColumns(tbody, lowerBetter) {
   const rows = [...tbody.querySelectorAll("tr")].map(tr => [...tr.querySelectorAll("td")].slice(1));
   const ncol = Math.max(0, ...rows.map(r => r.length));
@@ -166,7 +167,7 @@ function rankColumns(tbody, lowerBetter) {
     const vals = [];
     for (const r of rows) { const td = r[ci]; if (!td || td.colSpan > 1) continue;
       const t = td.textContent.trim(), m = t.match(/^-?\d+(\.\d+)?/);
-      if (m && !/✗|pending|·/.test(t)) vals.push([parseFloat(m[0]), td]); }
+      if (m && !/pending|·/.test(t) && !(lowerBetter(ci) && /✗/.test(t))) vals.push([parseFloat(m[0]), td]); }
     const uniq = [...new Set(vals.map(x => x[0]))].sort((a, b) => lowerBetter(ci) ? a - b : b - a);
     if (uniq.length < 2) continue;
     for (const [x, td] of vals) { const k = uniq.indexOf(x); if (k < 3) td.classList.add(`rank${k + 1}`); }
@@ -174,11 +175,11 @@ function rankColumns(tbody, lowerBetter) {
 }
 const rankNote = () => $("span", {class: "note"}, " Shading:", $("span", {class: "rankkey", style: "background: var(--rank1)"}), "best (bold)",
   $("span", {class: "rankkey", style: "background: var(--rank2)"}), "2nd", $("span", {class: "rankkey", style: "background: var(--rank3)"}), "3rd per column, by the first number;",
-  " cells with failed or pending sessions are not ranked. k/N ✗: k of the N sessions or queries failed.");
+  " cells with pending sessions, and ATE cells with failed sequences, are not ranked. k/N ✗: k of the N sequences or query sessions failed (LR, RS: their frames / trials count as failures).");
 
 function renderSummary(v) {
   v.append($("div", {class: "card"}, $("h3", {}, "Headline numbers"),
-    $("p", {class: "note"}, "ATE: mean over the dataset's sequences (m, lower is better). LR: localization recall of whole query sessions against a stored map (higher is better). RS: relocalization success over 10 s trials (higher is better); RS overall = mean over OpenLORIS, ROVER and SimChange. ⁽ᵒ⁾ uses the dataset's odometry. · not run yet; k/N ✗: k of the dataset's N sequences (ATE) or query sessions (LR, RS) failed, and the value covers the others. Click the T1–T3 tabs for per-scene tables and plots."),
+    $("p", {class: "note"}, "ATE: mean over the dataset's sequences (m, lower is better). LR: localization recall of whole query sessions against a stored map (higher is better). RS: relocalization success over 10 s trials (higher is better); RS overall = mean over OpenLORIS, ROVER and SimChange. ⁽ᵒ⁾ uses the dataset's odometry. · not run yet; k/N ✗: k of the dataset's N sequences (ATE: the mean covers the others) or query sessions (LR, RS: their frames / trials count as failures) failed. Click the T1–T3 tabs for per-scene tables and plots."),
     mdTable(B.summary), rankNote()));
   const t = v.querySelector("table"); if (t) { const heads = [...t.querySelectorAll("th")].slice(1).map(h => h.textContent);
     rankColumns(t.querySelector("tbody"), ci => /ATE/.test(heads[ci] || "")); }
