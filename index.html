@@ -40,15 +40,15 @@
       <span class="hero-sub">Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation</span>
     </h1>
     <p class="authors">
-      <span>Jiaming Wang<sup>*</sup></span>
-      <span>Jizhuo Chen<sup>*</sup></span>
-      <span>Diwen Liu<sup>*</sup></span>
+      <span>Jiaming Wang</span>
+      <span>Jizhuo Chen</span>
+      <span>Diwen Liu</span>
       <span>Atharva Ghotavadekar</span>
       <span>Jiaxuan Da</span>
       <span>Linh Kästner</span>
       <span>Harold Soh</span>
     </p>
-    <p class="affil">National University of Singapore<span>*</span>Equal contribution</p>
+    <p class="affil">National University of Singapore</p>
     <nav class="hero-links" aria-label="Paper links">
       <a class="pill" href="https://arxiv.org/pdf/2605.02227" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h7l5 5v13H7z M14 3v5h5" /></svg>Paper</a>
       <a class="pill" href="https://arxiv.org/abs/2605.02227" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M9 5h10v10" /></svg>arXiv</a>
@@ -330,14 +330,18 @@
           <p>XFeat + LightGlue matches and an E-PnP solve give the relative pose between the current frame and keyframe <em>i</em>. Composing it with the keyframe's own pose mixture turns a retrieval into a global SE(3) pose mode with an uncertainty that shrinks with the inlier count. Summing over candidates gives a <em>global</em> measurement message that can place modes anywhere in the map, which is what lets the filter recover from tracking loss and detect revisits.</p>
         </div>
         <div class="step-eq">$$x_t \approx c_i\,T_{i,t}$$
-          $$\Sigma^{(k)}_{i,t}\approx \mathrm{Ad}_{T_{i,t}^{-1}}\,\Sigma^{(k)}_{i}\,\mathrm{Ad}_{T_{i,t}^{-1}}^{\top}+\Gamma^{\text{pnp}}_{i,t}$$<span class="eq-note">Γ<sup>pnp</sup> = λI / max(n<sub>inliers</sub>, 1)</span></div>
+          $$\Sigma^{(k)}_{i,t}\approx \mathrm{Ad}_{T_{i,t}^{-1}}\,\Sigma^{(k)}_{i}\,\mathrm{Ad}_{T_{i,t}^{-1}}^{\top}+\Gamma^{\text{pnp}}_{i,t}$$<span class="eq-note">Γ<sup>pnp</sup> = λI / max(n<sub>inliers</sub>, 1)</span>
+          $$\begin{aligned}m^{\text{meas}}_t(x_t)&=\sum_{i=1}^{N_t}P(i)\sum_{k=1}^{K}w^{(k)}_i\\&\qquad\mathcal{N}_{\mathfrak{se}(3)}\!\Big(\log\!\big((\mu^{(k)}_i T_{i,t})^{-1}x_t\big);\,0,\,\Sigma^{(k)}_{i,t}\Big)\end{aligned}$$<span class="eq-note">measurement message: one mixture over all N<sub>t</sub> retrieved keyframes, not just the tracked branch</span></div>
       </div>
       <div class="step-panel" data-panel="2" role="tabpanel">
         <div class="step-text">
           <h3>Let odometry test the branches</h3>
           <p>The belief over the current pose is a bounded Gaussian mixture on SE(3), updated by forward message passing: odometry pushes every branch forward, and the global measurement message re-weights them by overlap. Measurement modes are clustered with an SE(3)-aware DBSCAN, then fused into existing branches, born as new ones, or pruned when their weight or overlap vanishes. A look-alike that fits the image but not the motion loses weight step by step.</p>
         </div>
-        <div class="step-eq">$$p(x_t\mid z_{1:t},u_{1:t},\mathcal{G})\;\propto\; m^{\text{meas}}_t(x_t)\;m^{\text{mot}}_t(x_t)$$
+        <div class="step-eq">$$m^{\text{mot}}_t(x_t)=\int p(x_t\mid x_{t-1},u_t)\,p(x_{t-1}\mid z_{1:t-1},u_{1:t-1})\,dx_{t-1}$$
+          $$\approx\sum_{k=1}^{K}w^{(k)}_{t-1}\,\mathcal{N}_{\mathfrak{se}(3)}\!\Big(\log\!\big((\mu^{(k)}_{t\mid t-1})^{-1}x_t\big);\,0,\,\Sigma^{(k)}_{t\mid t-1}\Big)$$
+          $$\mu^{(k)}_{t\mid t-1}=\mu^{(k)}_{t-1}\,u_t,\qquad \Sigma^{(k)}_{t\mid t-1}\approx\mathrm{Ad}_{u_t^{-1}}\,\Sigma^{(k)}_{t-1}\,\mathrm{Ad}_{u_t^{-1}}^{\top}+Q_t$$<span class="eq-note">motion message: odometry u<sub>t</sub> pushes every branch forward · Q<sub>t</sub>: process noise · weights unchanged</span>
+          $$p(x_t\mid z_{1:t},u_{1:t},\mathcal{G})\;\propto\; m^{\text{meas}}_t(x_t)\;m^{\text{mot}}_t(x_t)$$
           $$w^{(i,j)}_t\;\propto\; w^{(i)}_{\text{mot}}\,w^{(j)}_{\text{meas}}\,C_{ij}$$<span class="eq-note">C<sub>ij</sub>: Gaussian overlap of motion component i and measurement component j</span></div>
       </div>
       <div class="step-panel" data-panel="3" role="tabpanel">
@@ -509,7 +513,7 @@
     <div class="section-head">
       <p class="eyebrow">Robustness</p>
       <h2>When the camera lies, the branches wait</h2>
-      <p class="section-intro">When images are unusable, branches keep moving on odometry and their uncertainty grows. When good frames return, the global measurement message finds the right keyframe again. Step through each case, or watch it in the video.</p>
+      <p class="section-intro">When images are unusable, branches keep moving on odometry and their uncertainty grows. When good frames return, the global measurement message finds the right keyframe again. Pick a case and watch it play.</p>
     </div>
 
     <div class="tabs tabs-lg" role="tablist" aria-label="Robustness scenario" id="robTabs">
@@ -519,17 +523,14 @@
     </div>
 
     <div class="card rob" id="rob">
-      <div class="rob-stage" id="robStage"></div>
+      <div class="rob-stage">
+        <video id="robVideo" controls muted loop playsinline preload="metadata" poster="static/video/rob-occlusion-poster.jpg">
+          <source src="static/video/rob-occlusion.mp4" type="video/mp4">
+        </video>
+      </div>
       <div class="rob-side">
         <p class="rob-step" id="robStepLabel"></p>
         <p class="rob-caption" id="robCaption"></p>
-        <div class="rob-controls">
-          <button class="btn btn-primary" id="robPlay" type="button" aria-label="Play">
-            <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
-            <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
-          </button>
-          <div class="ticks" id="robTicks" role="tablist" aria-label="Step"></div>
-        </div>
         <p class="rob-legend" id="robLegend"></p>
         <button class="linklike" type="button" id="robSeek">Watch in the video ▸</button>
       </div>

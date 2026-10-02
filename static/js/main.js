@@ -197,107 +197,48 @@
   lb.addEventListener('click', closeLb);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !lb.hidden) closeLb(); });
 
-  // ------------------------------------------------------------ robustness stepper
+  // ------------------------------------------------------------ robustness videos
   const ROB = {
     occlusion: {
       seek: 255,
-      panes: ['Belief on the map', 'Camera'],
-      legend: 'Yellow: estimated trajectory. Blue: motion message. Green: measurement message. Ellipse axes show uncertainty.',
-      steps: [
-        { imgs: ['occlusion/m1', 'occlusion/p1'], t: 'Clear view. Motion and measurement agree and uncertainty is small.' },
-        { imgs: ['occlusion/m2', 'occlusion/p2'], t: 'The camera is covered. No usable retrieval, so the motion message keeps moving on odometry while the measurement message stays where it was.' },
-        { imgs: ['occlusion/m3', 'occlusion/p3'], t: 'Still covered. The motion message grows as it propagates; nothing is written to the map.' },
-        { imgs: ['occlusion/m4', 'occlusion/p4'], t: 'A usable frame: the two messages overlap again, so the retrieval is aligned with the stored memory.' },
-        { imgs: ['occlusion/m5', 'occlusion/p5'], t: 'Covered again, and uncertainty grows again with the motion.' },
-        { imgs: ['occlusion/m6', 'occlusion/p6'], t: 'The view clears, uncertainty collapses and the robot is confidently localized.' },
-      ],
+      src: 'rob-occlusion',
+      label: 'Camera occlusion',
+      t: 'The camera is covered twice. With no usable retrieval the motion message keeps moving on odometry and its uncertainty grows, while nothing is written to the map. When a clear frame returns, the measurement message overlaps the motion message again and uncertainty collapses.',
+      legend: 'Left: belief on the map. Right: camera. Yellow: estimated trajectory. Blue: motion message. Green: measurement message. Ellipse axes show uncertainty.',
     },
     fast: {
       seek: 229,
-      panes: ['Belief on the map', 'Camera'],
-      legend: 'Yellow: estimated trajectory. Blue: measurement message. Cyan: motion message. Ellipse axes show uncertainty.',
-      steps: [
-        { imgs: ['fastmotion/m1', 'fastmotion/p1'], t: 'Normal motion, low uncertainty.' },
-        { imgs: ['fastmotion/m2', 'fastmotion/p2'], t: 'Severe motion blur: the observation uncertainty jumps.' },
-        { imgs: ['fastmotion/m3', 'fastmotion/p3'], t: 'Tracking holds, with high uncertainty, through the residual blur.' },
-        { imgs: ['fastmotion/m4', 'fastmotion/p4'], t: 'Heavy blur again. Very uncertain observations spawn spurious branches.' },
-        { imgs: ['fastmotion/m5', 'fastmotion/p5'], t: 'The spurious branches live on while the blur lasts, but none is committed.' },
-        { imgs: ['fastmotion/m6', 'fastmotion/p6'], t: 'Sharp frames return, and temporal filtering starts removing the spurious branches.' },
-        { imgs: ['fastmotion/m7', 'fastmotion/p7'], t: 'One consistent branch is left.' },
-      ],
+      src: 'rob-fast',
+      label: 'Fast, blurry motion',
+      t: 'Severe motion blur makes observations very uncertain and spawns spurious branches. They live on while the blur lasts, but none is committed. When sharp frames return, temporal filtering removes them and one consistent branch is left.',
+      legend: 'Left: belief on the map. Right: camera. Yellow: estimated trajectory. Blue: measurement message. Cyan: motion message. Ellipse axes show uncertainty.',
     },
     noise: {
       seek: 270,
-      panes: ['Full trajectory'],
+      src: 'rob-noise',
+      label: 'Corrupted odometry',
+      t: 'Noise is injected into the odometry, up to five times the size of each motion step. The odometry alone drifts far off, yet retrievals keep pulling the estimate back, so it stays close to the reference trajectory.',
       legend: 'Yellow: CROSS estimate. Green: reference trajectory from SLAM. Blue: the corrupted odometry CROSS is given. Noise is injected as T·exp(ξ) with its size set by a signal-to-noise ratio.',
-      tickLabels: ['1', '0.5', '0.2'],
-      stepLabel: (i) => ['SNR = 1', 'SNR = 0.5', 'SNR = 0.2'][i],
-      steps: [
-        { imgs: ['noisyodom/snr1'], t: 'Per-step noise about as large as the motion itself. Dead reckoning already wanders; the estimate stays on the reference.' },
-        { imgs: ['noisyodom/snr05'], t: 'Noise twice the size of each step. The odometry is badly distorted, yet retrievals keep pulling the estimate back.' },
-        { imgs: ['noisyodom/snr02'], t: 'Noise five times the motion. The odometry is barely recognisable, and the estimate still stays close to the reference.' },
-      ],
     },
   };
-  const robStage = $('#robStage'), robTicks = $('#robTicks'), robCap = $('#robCaption'), robLab = $('#robStepLabel');
-  const robLegend = $('#robLegend'), robPlay = $('#robPlay'), robSeek = $('#robSeek');
-  let robKey = 'occlusion', robIdx = 0, robTimer = null;
-  Object.values(ROB).forEach((sc) => sc.steps.forEach((s) => s.imgs.forEach((p) => { const im = new Image(); im.src = `static/img/${p}.webp`; })));
-  function robBuild() {
+  const robVideo = $('#robVideo'), robCap = $('#robCaption'), robLab = $('#robStepLabel');
+  const robLegend = $('#robLegend'), robSeek = $('#robSeek');
+  let robKey = 'occlusion';
+  function robBuild(autoplay) {
     const sc = ROB[robKey];
-    robStage.replaceChildren();
-    sc.panes.forEach((label, k) => {
-      const pane = document.createElement('div');
-      pane.className = 'rob-pane';
-      pane.style.flex = sc.panes.length === 1 ? '1' : (k === 0 ? '1.35' : '0.85');
-      const img = document.createElement('img');
-      img.alt = label;
-      const tag = document.createElement('span');
-      tag.textContent = label;
-      pane.append(img, tag);
-      robStage.appendChild(pane);
-    });
-    robTicks.replaceChildren();
-    sc.steps.forEach((s, i) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.setAttribute('role', 'tab');
-      b.textContent = sc.tickLabels ? sc.tickLabels[i] : String(i + 1);
-      b.addEventListener('click', () => { robStop(); robShow(i); });
-      robTicks.appendChild(b);
-    });
+    robVideo.poster = `static/video/${sc.src}-poster.jpg`;
+    robVideo.src = `static/video/${sc.src}.mp4`;
+    robVideo.load();
+    if (autoplay) robVideo.play().catch(() => {});
+    robLab.textContent = sc.label;
+    robCap.textContent = sc.t;
     robLegend.textContent = sc.legend;
-    robSeek.textContent = `Watch in the video ▸ ${Math.floor(sc.seek / 60)}:${String(sc.seek % 60).padStart(2, '0')}`;
-    robShow(0);
+    robSeek.textContent = `Watch in the full video ▸ ${Math.floor(sc.seek / 60)}:${String(sc.seek % 60).padStart(2, '0')}`;
   }
-  function robShow(i) {
-    const sc = ROB[robKey];
-    robIdx = i;
-    const s = sc.steps[i];
-    $$('.rob-pane img', robStage).forEach((img, k) => {
-      img.src = `static/img/${s.imgs[k]}.webp`;
-      img.alt = `${sc.panes[k]}, ${sc.stepLabel ? sc.stepLabel(i) : 'step ' + (i + 1)}`;
-    });
-    $$('button', robTicks).forEach((b, k) => { b.classList.toggle('on', k === i); b.setAttribute('aria-selected', k === i); });
-    robLab.textContent = sc.stepLabel ? sc.stepLabel(i) : `Step ${i + 1} of ${sc.steps.length}`;
-    robCap.textContent = s.t;
-  }
-  function robStop() { clearInterval(robTimer); robTimer = null; robPlay.classList.remove('playing'); robPlay.setAttribute('aria-label', 'Play'); }
-  function robStart() {
-    robStop();
-    robPlay.classList.add('playing'); robPlay.setAttribute('aria-label', 'Pause');
-    if (robIdx >= ROB[robKey].steps.length - 1) robShow(0);
-    robTimer = setInterval(() => {
-      const n = ROB[robKey].steps.length;
-      if (robIdx >= n - 1) { robStop(); return; }
-      robShow(robIdx + 1);
-    }, 2400);
-  }
-  robPlay.addEventListener('click', () => (robTimer ? robStop() : robStart()));
   robSeek.addEventListener('click', () => seek(ROB[robKey].seek));
   $$('#robTabs button').forEach((b) => b.addEventListener('click', () => {
     $$('#robTabs button').forEach((o) => { o.classList.toggle('on', o === b); o.setAttribute('aria-selected', o === b); });
-    robKey = b.dataset.rob; robStop(); robBuild();
+    robKey = b.dataset.rob; robBuild(true);
   }));
   robBuild();
 

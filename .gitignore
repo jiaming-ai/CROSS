@@ -1,3 +1,6 @@
 # Raw video export (75 MB). The page uses the re-encoded static/video/cross.mp4.
 cross_nips.mp4
 .DS_Store
+fast_n_lc.mp4
+noisy_odom.mp4
+occlusion.mp4

@@ -650,27 +650,11 @@ input[type="range"]::-moz-range-thumb {
 
 /* ------------------------------------------------------------------ robustness */
 .rob { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 28px; margin-bottom: 28px; }
-.rob-stage { display: flex; gap: 10px; align-items: stretch; min-height: 320px; }
-.rob-pane {
-  position: relative; border-radius: 12px; overflow: hidden; background: var(--fig-bg); border: 1px solid var(--line);
-  display: flex; align-items: center; justify-content: center;
-}
-.rob-pane img { width: 100%; height: 100%; object-fit: contain; transition: opacity .3s; }
-.rob-pane span {
-  position: absolute; left: 8px; top: 8px; font-family: var(--mono); font-size: 11px; padding: 3px 7px;
-  border-radius: 6px; background: rgba(14, 14, 16, .7); color: #fff; letter-spacing: .03em;
-}
+.rob-stage { border-radius: 12px; overflow: hidden; background: #fdfdfb; border: 1px solid var(--line); align-self: start; }
+.rob-stage video { display: block; width: 100%; height: auto; max-height: 460px; object-fit: contain; }
 .rob-side { display: flex; flex-direction: column; }
 .rob-step { font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent-ink); }
-.rob-caption { margin-top: 10px; font-size: 18px; line-height: 1.5; color: var(--ink); min-height: 5.8em; font-weight: 450; }
-.rob-controls { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
-.ticks { display: flex; gap: 6px; flex-wrap: wrap; }
-.ticks button {
-  min-width: 34px; height: 34px; padding: 0 8px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--surface);
-  font-family: var(--mono); font-size: 12.5px; cursor: pointer; color: var(--ink-2); transition: all .15s;
-}
-.ticks button:hover { border-color: var(--ink-3); color: var(--ink); }
-.ticks button.on { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.rob-caption { margin-top: 10px; font-size: 17px; line-height: 1.55; color: var(--ink); font-weight: 450; }
 .rob-legend { margin-top: auto; padding-top: 18px; font-size: 13px; color: var(--ink-3); line-height: 1.55; }
 .rob-side .linklike { margin-top: 10px; align-self: flex-start; font-size: 14px; }
 .runtime { margin-top: 0; }
@@ -752,7 +736,6 @@ input[type="range"]::-moz-range-thumb {
   .demo { padding: 16px; border-radius: 16px; }
   .demo-controls .seg { order: 3; }
   .card { padding: 16px; }
-  .rob-stage { min-height: 220px; gap: 6px; }
   .settings { gap: 6px; }
   .setting { padding: 5px; }
   .topnav-inner { gap: 10px; }
