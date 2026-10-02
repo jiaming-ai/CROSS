@@ -258,8 +258,9 @@ frames in between take ~3 ms. The pass reuses the DINO patch tokens of every ima
 a loaded map's keyframes are embedded once at load), runs compiled transformer blocks (`pose_est.ff.compile`; a few
 seconds of warm-up per process, kernels cached in `TORCHINDUCTOR_CACHE_DIR`) replayed as CUDA graphs
 (`pose_est.ff.cuda_graphs`), and the filter state lives on the CPU (`state_device`). None of these changes the estimate
-beyond floating-point rounding. The number of images is the main remaining lever: `--max-refs 4 --n-ref-anchors 1`
-(7 images) takes ~90 ms per observation with the same relocalization success on OpenLORIS.
+beyond floating-point rounding. The pass itself runs at the GPU's bf16 peak, so the number of images is the remaining
+lever: `--max-refs 4 --n-ref-anchors 1` (7 images) takes ~90 ms per observation and `--max-refs 4 --n-ref-anchors 0`
+(6 images) ~73 ms (p95 79 ms), with the same relocalization success on OpenLORIS office / home / cafe.
 
 Module-level evaluation (relative pose accuracy vs. ground truth) and the report experiments:
 
