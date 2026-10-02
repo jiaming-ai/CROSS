@@ -37,6 +37,9 @@ Notes.
   They are undistorted to a pinhole camera, and the registered depth maps get the same undistortion.
 - **ROVER ground truth** is the 3-D position of a prism on the robot, measured by a total station at ~5 Hz. It has no
   orientation. The benchmark derives camera poses from it:
+  - the total-station coordinates are a left-handed frame (the track turns opposite to the robot's gyroscope and to
+    visual odometry of both cameras), so y is negated; `prepare_rover.py` checks the turning direction against the
+    VN-100 gyroscope of every recording;
   - the heading is the direction of travel of the smoothed prism track, since the robot drives forward at a constant 0.5 m/s;
   - roll and pitch are zero;
   - the camera sits at the calibrated offset from the prism (about 0.5 m).

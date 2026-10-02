@@ -37,6 +37,7 @@ import yaml
 
 RECT_W, RECT_H, RECT_HFOV_DEG = 640, 480, 90.0
 FPS = 10.0
+GT_LABEL = "prism position (y negated: right-handed) + heading of travel"
 
 
 def _inv(T):
@@ -95,12 +96,34 @@ def prism_poses(t_gt, p_gt, yaw_gt, t):
 
 
 def read_gt(z, top):
+    """Prism track (times, positions) in a right-handed frame.  The total-station coordinates in groundtruth.txt are
+    left-handed: the track turns opposite to the VN-100 gyro (z up) and to visual odometry of both cameras (day: track
+    +1083 deg over three laps, gyro -1089 deg), so y is negated."""
     names = set(z.namelist())
     member = f"{top}/groundtruth.txt" if f"{top}/groundtruth.txt" in names else f"{top}/groundtruth"   # night-light: no suffix
     rows = [l.split() for l in z.read(member).decode().splitlines() if l.strip() and not l.startswith("#")]
     g = np.asarray([[float(v) for v in r[:4]] for r in rows])
     g = g[np.argsort(g[:, 0])]
-    return g[:, 0], g[:, 1:4]
+    p = g[:, 1:4] * np.array([1.0, -1.0, 1.0])
+    check_handedness(z, top, g[:, 0], p)
+    return g[:, 0], p
+
+
+def check_handedness(z, top, t_gt, p_gt):
+    """Fails unless the net turn of the prism track has the sign of the integrated VN-100 z gyro (prism frame, z up)."""
+    rows = [l.split() for l in z.read(f"{top}/vn100/imu.txt").decode().splitlines() if l.strip() and not l.startswith("#")]
+    a = np.asarray([[float(r[0]), float(r[7])] for r in rows])
+    a = a[(a[:, 0] > t_gt[0]) & (a[:, 0] < t_gt[-1])]
+    gyro = np.degrees(np.sum(a[:-1, 1] * np.diff(a[:, 0])))
+    keep = [0]                                    # travel direction over steps of > 0.3 m
+    for i in range(1, len(p_gt)):
+        if np.linalg.norm(p_gt[i, :2] - p_gt[keep[-1], :2]) > 0.3:
+            keep.append(i)
+    d = np.diff(p_gt[keep, :2], axis=0)
+    yaw = np.unwrap(np.arctan2(d[:, 1], d[:, 0]))
+    track = np.degrees(yaw[-1] - yaw[0])
+    if abs(gyro) > 180 and np.sign(gyro) != np.sign(track):
+        raise RuntimeError(f"{top}: ground-truth track turns {track:+.0f} deg, gyro {gyro:+.0f} deg (mirrored frame?)")
 
 
 def register_track(src, dst, iters=60):
@@ -181,18 +204,19 @@ def prepare_rgbd(z, top, cal_d, gt, out: Path):
     write_common(out, poses, times, {
         "K": Knew.tolist(), "width": w, "height": h, "fps": FPS, "dataset": "rover", "sensor": "d435i (undistorted)",
         "source": top, "depth": "D435i depth registered to colour, uint16 mm, 0 = invalid",
-        "odometry": "none recorded: simulated from ground truth by the benchmark", "gt": "prism position + heading of travel"})
+        "odometry": "none recorded: simulated from ground truth by the benchmark", "gt": GT_LABEL})
     return k
 
 
-def prepare_stereo(z, top, cal_t, gt, out: Path):
-    tl, pl = stamped(z.read(f"{top}/realsense_T265/cam_left.txt").decode())
-    tr, pr = stamped(z.read(f"{top}/realsense_T265/cam_right.txt").decode())
-    names = set(z.namelist())
+def t265_member(z, top, side, p):
+    """Zip member of a T265 image: the txt files say rgb/<file>, the images live in cam_left / cam_right."""
+    cand = f"{top}/realsense_T265/cam_{side}/{Path(p).name}"
+    return cand if cand in set(z.namelist()) else f"{top}/realsense_T265/{p}"
 
-    def member(side, p):                      # the txt files say rgb/<file>, the images live in cam_left / cam_right
-        cand = f"{top}/realsense_T265/cam_{side}/{Path(p).name}"
-        return cand if cand in names else f"{top}/realsense_T265/{p}"
+
+def stereo_rectification(z, top, cal_t):
+    """Rectification of the T265 pair: (remap tables left/right, rectified K, T_prism_rect, baseline)."""
+    _, pl = stamped(z.read(f"{top}/realsense_T265/cam_left.txt").decode())
 
     def intr(key):
         c = cal_t[key]
@@ -202,7 +226,7 @@ def prepare_stereo(z, top, cal_t, gt, out: Path):
     K1, D1 = intr("CamLeft_Intrinsics")
     K2, D2 = intr("CamRight_Intrinsics")
     T_rl = np.asarray(cal_t["CamRight-To-CamLeft"], dtype=np.float64)    # Kalibr: x_right = R x_left + t
-    first = cv2.imdecode(np.frombuffer(z.read(member("left", pl[0])), np.uint8), cv2.IMREAD_UNCHANGED)
+    first = cv2.imdecode(np.frombuffer(z.read(t265_member(z, top, "left", pl[0])), np.uint8), cv2.IMREAD_UNCHANGED)
     size = (first.shape[1], first.shape[0])
     R1, R2, _, _, _ = cv2.fisheye.stereoRectify(K1, D1, K2, D2, size, T_rl[:3, :3], T_rl[:3, 3], flags=cv2.CALIB_ZERO_DISPARITY)
     f = (RECT_W / 2) / np.tan(np.radians(RECT_HFOV_DEG) / 2)
@@ -213,6 +237,14 @@ def prepare_stereo(z, top, cal_t, gt, out: Path):
     T_cam_rect[:3, :3] = R1.T
     T_prism_rect = np.asarray(cal_t["CamLeft-To-Prism"], dtype=np.float64) @ T_cam_rect
     baseline = float(np.linalg.norm(T_rl[:3, 3]))
+    return maps, K, T_prism_rect, baseline
+
+
+def prepare_stereo(z, top, cal_t, gt, out: Path):
+    tl, pl = stamped(z.read(f"{top}/realsense_T265/cam_left.txt").decode())
+    tr, pr = stamped(z.read(f"{top}/realsense_T265/cam_right.txt").decode())
+    member = lambda side, p: t265_member(z, top, side, p)
+    maps, K, T_prism_rect, baseline = stereo_rectification(z, top, cal_t)
     t_gt, p_gt, yaw_gt = gt
     sel = select_10hz(tl, max(tl[0], t_gt[0]), min(tl[-1], t_gt[-1]))
     P = prism_poses(t_gt, p_gt, yaw_gt, tl[sel])
@@ -234,8 +266,25 @@ def prepare_stereo(z, top, cal_t, gt, out: Path):
     write_common(out, poses, times, {
         "K": K.tolist(), "width": RECT_W, "height": RECT_H, "fps": FPS, "baseline": baseline, "T_right_in_left": T.tolist(),
         "dataset": "rover", "sensor": "t265 (rectified, grayscale)", "source": top,
-        "odometry": "none recorded: simulated from ground truth by the benchmark", "gt": "prism position + heading of travel"})
+        "odometry": "none recorded: simulated from ground truth by the benchmark", "gt": GT_LABEL})
     return k
+
+
+def rewrite_poses(z, top, cal_d, cal_t, gt, o: Path, setup, T_align, info):
+    """Ground-truth poses of a prepared folder at its frame times (same frames: the ground-truth range is unchanged)."""
+    t = np.loadtxt(o / "times.txt").reshape(-1)
+    T_prism_cam = np.asarray(cal_d["Cam-To-Prism"], dtype=np.float64) if setup == "rgbd" else stereo_rectification(z, top, cal_t)[2]
+    P = prism_poses(*gt, t) @ T_prism_cam
+    if not np.isfinite(P).all():
+        raise RuntimeError(f"{o}: frames outside the ground-truth range")
+    np.savetxt(o / "poses_left.txt", (T_align[None] @ P).reshape(-1, 16), fmt="%.9f")
+    calib = json.loads((o / "calib.json").read_text())
+    calib["gt"] = GT_LABEL
+    if info is not None:
+        calib["gt_alignment"] = info
+    (o / "calib.json").write_text(json.dumps(calib, indent=1))
+    print(f"{o}: {len(t)} poses rewritten" + (f" (registered to {info['to']}, residual median "
+          f"{info['residual_median_m']:.2f} m)" if info else ""), flush=True)
 
 
 def main():
@@ -245,6 +294,8 @@ def main():
     ap.add_argument("--names", nargs="*", default=None, help="recordings (zip stems); default: every *.zip.done")
     ap.add_argument("--setups", nargs="*", default=["rgbd", "stereo"])
     ap.add_argument("--align-to", default=None, help="map recording whose ground-truth frame every recording is registered to")
+    ap.add_argument("--poses-only", action="store_true",
+                    help="rewrite poses_left.txt (and the registration) of prepared folders from their times.txt, keeping the images")
     a = ap.parse_args()
     root, out_root = Path(a.root), Path(a.out)
     names = a.names or sorted(p.name[:-len(".zip.done")] for p in root.glob("*.zip.done"))
@@ -272,6 +323,9 @@ def main():
                     "residual_median_m": float(np.median(d)), "residual_p90_m": float(np.percentile(d, 90))}
         for setup in a.setups:
             o = out_root / name / setup
+            if a.poses_only:
+                rewrite_poses(z, top, cal_d, cal_t, gt, o, setup, T_align, info if ref is not None else None)
+                continue
             if not (o / "calib.json").is_file():
                 n = (prepare_rgbd(z, top, cal_d, gt, o) if setup == "rgbd" else prepare_stereo(z, top, cal_t, gt, o))
                 print(f"{name}/{setup}: {n} frames", flush=True)
