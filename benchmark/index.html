@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CROSS Benchmark Results</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10);
+  --est: #2a78d6; --gt: #898781; --good: #0ca30c; --bad: #d03b3b; --warn: #fab219;
+  --good-ink: #006300; --bad-ink: #b02a2a; --chip: #f0efec; --accent: #2a78d6;
+  --c1: #2a78d6; --c2: #eb6834; --c3: #1baf7a; --c4: #eda100; --c5: #e87ba4; --c6: #008300; --c7: #4a3aa7;
+  --s-hi: #184f95; --s-lo: #86b6ef; --hatch: #e1e0d9;
+  --row-hover: #ecebe6; --rank1: rgba(42,120,214,0.30); --rank2: rgba(42,120,214,0.17); --rank3: rgba(42,120,214,0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+    --est: #3987e5; --gt: #898781; --good-ink: #0ca30c; --bad-ink: #e66767; --chip: #262624; --accent: #3987e5;
+    --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500; --c5: #d55181; --c6: #008300; --c7: #9085e9;
+    --s-hi: #5598e7; --s-lo: #1c5cab; --hatch: #2c2c2a;
+    --row-hover: #2a2a28; --rank1: rgba(57,135,229,0.42); --rank2: rgba(57,135,229,0.25); --rank3: rgba(57,135,229,0.12);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+  --est: #3987e5; --gt: #898781; --good-ink: #0ca30c; --bad-ink: #e66767; --chip: #262624; --accent: #3987e5;
+    --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500; --c5: #d55181; --c6: #008300; --c7: #9085e9;
+    --s-hi: #5598e7; --s-lo: #1c5cab; --hatch: #2c2c2a;
+    --row-hover: #2a2a28; --rank1: rgba(57,135,229,0.42); --rank2: rgba(57,135,229,0.25); --rank3: rgba(57,135,229,0.12);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1240px; margin: 0 auto; padding: 24px 16px 64px; }
+header h1 { font-size: 26px; margin: 0 0 4px; font-weight: 650; }
+header p { margin: 0; color: var(--ink-2); }
+a { color: var(--accent); }
+nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 20px 0 12px; border-bottom: 1px solid var(--grid); }
+nav.tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; font: inherit;
+  color: var(--ink-2); cursor: pointer; }
+nav.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin: 8px 0 12px; color: var(--ink-2); }
+select { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--axis); background: var(--surface); color: var(--ink); }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 16px; margin: 12px 0; }
+.note { color: var(--ink-2); font-size: 13.5px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13.5px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--ink-2); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+td.lab { font-weight: 550; }
+.scroll th:first-child, .scroll td.lab { position: sticky; left: 0; z-index: 1; background-color: var(--surface); box-shadow: inset -1px 0 0 var(--grid); }
+.scroll th:first-child { z-index: 2; }
+tbody tr:hover td, tbody tr:hover td.lab { background-color: var(--row-hover); }
+td.rank1 { background-image: linear-gradient(var(--rank1), var(--rank1)); font-weight: 700; }
+td.rank2 { background-image: linear-gradient(var(--rank2), var(--rank2)); }
+td.rank3 { background-image: linear-gradient(var(--rank3), var(--rank3)); }
+.rankkey { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 8px; }
+td.cell { cursor: pointer; }
+td.cell:hover, td.cell:focus { background: var(--chip); outline: none; }
+td.cell.sel { box-shadow: inset 0 0 0 2px var(--accent); }
+td.dim { color: var(--muted); }
+tr.cross td.lab { color: var(--accent); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.plot { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; padding: 8px 10px 6px; }
+.plot h4 { margin: 0 0 2px; font-size: 13.5px; font-weight: 600; }
+.plot .sub { color: var(--ink-2); font-size: 12.5px; margin-bottom: 4px; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { fill: var(--muted); font-size: 10px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-2); margin: 4px 0 8px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--grid); background: var(--surface); color: var(--ink-2);
+  border-radius: 999px; padding: 3px 10px 3px 8px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--axis); background: var(--chip); }
+.chip[aria-pressed="false"] svg { opacity: 0.35; }
+.chip svg { width: 22px; height: 8px; flex: none; display: inline-block; }
+.chip { white-space: nowrap; }
+.chip .v { color: var(--muted); font-variant-numeric: tabular-nums; }
+.btn { border: 1px solid var(--grid); background: var(--surface); color: var(--ink-2); border-radius: 6px; padding: 3px 10px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.vizplot { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; padding: 8px; }
+.key { display: inline-block; width: 16px; height: 2px; vertical-align: middle; margin-right: 6px; }
+.sq { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+#tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--ring);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12); border-radius: 6px; padding: 6px 8px; font-size: 12.5px; display: none; z-index: 9; max-width: 320px; }
+#tip b { font-weight: 650; }
+.empty { color: var(--muted); padding: 12px 0; }
+.fail-ok { color: var(--good-ink); } .fail-bad { color: var(--bad-ink); }
+.samples { margin: 6px 0 14px; }
+.samples h4 { margin: 14px 0 2px; font-size: 14px; font-weight: 650; }
+.samples .fam { margin: 12px 0 0; }
+.samples .fam > .note { margin: 0 0 6px; }
+.imgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
+.imgrid figure { margin: 0; }
+.imgrid figure a { display: block; }
+.imgrid figure img { width: 100%; height: auto; display: block; border-radius: 6px; border: 1px solid var(--ring); background: var(--chip); }
+.imgrid figure.map img { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.imgrid figcaption { font-size: 12.5px; line-height: 1.3; margin-top: 3px; color: var(--ink-2); }
+.imgrid figcaption b { color: var(--ink); font-weight: 600; }
+.imgrid figcaption .s { color: var(--muted); display: block; font-size: 11.5px; }
+.samples details > summary { cursor: pointer; font-weight: 600; margin: 10px 0 4px; }
+.samples label.hl { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); margin: 4px 0; cursor: pointer; }
+@media (max-width: 640px) { .imgrid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); } }
+img.thumb { width: 100%; border-radius: 6px; display: block; }
+@media (max-width: 640px) { header h1 { font-size: 21px; } th, td { padding: 5px 7px; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>CROSS benchmark</h1>
+  <p id="meta">Mapping accuracy, multi-session localization and relocalization success of CROSS and SLAM baselines.
+    Protocol: <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/PROTOCOL.md">PROTOCOL.md</a> · tables: <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/RESULTS.md">RESULTS.md</a></p>
+</header>
+<nav class="tabs" role="tablist" id="tabs"></nav>
+<section id="view"></section>
+</main>
+<div id="tip" role="tooltip"></div>
+<script src="data.js"></script>
+<script>
+"use strict";
+const B = window.BENCH || {runs: {}, tables: {t1: {}, t2: {}, t3: {}}, failures: {}, summary: "", datasets: {}, systems: {}};
+const $ = (t, a = {}, ...kids) => { const e = document.createElement(t); for (const [k, v] of Object.entries(a)) {
+  if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v); }
+  for (const k of kids) e.append(k instanceof Node ? k : document.createTextNode(k ?? "")); return e; };
+const SVGNS = "http://www.w3.org/2000/svg";
+const s$ = (t, a = {}) => { const e = document.createElementNS(SVGNS, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); return e; };
+const DS = {all: "All datasets (overall)", kitti: "KITTI", openloris: "OpenLORIS-Scene", rover: "ROVER campus_large", simchange: "SimChange v2"};
+const TRACK = {t1: "T1 · mapping accuracy", t2: "T2 · multi-session localization", t3: "T3 · relocalization success"};
+const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "all"}, sel: null, hl: true};
+const tip = document.getElementById("tip");
+function showTip(ev, parts) { tip.replaceChildren(...parts.map(p => Array.isArray(p) ? $("div", {}, $("b", {}, p[0]), " ", p[1]) : $("div", {}, p)));
+  tip.style.display = "block"; const x = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = (ev.clientY + 14) + "px"; }
+function hideTip() { tip.style.display = "none"; }
+const fmt = (x, n = 3) => x == null ? "–" : Number(x).toFixed(n);
+
+document.getElementById("meta").append($("br"), $("span", {class: "note"},
+  `Generated ${B.generated || "–"} from commit ${B.commit || "–"}, seed ${B.seed ?? 0}; ${Object.keys(B.runs).length} runs.`));
+
+const TABS = [["summary", "Summary"], ["metrics", "Metrics"], ["data", "Datasets"], ["t1", "T1 Mapping"], ["t2", "T2 Multi-session"],
+              ["t3", "T3 Relocalization"], ["viz", "Trajectories"], ["fail", "Failure cases"], ["legacy", "Earlier results"]];
+const tabs = document.getElementById("tabs");
+for (const [k, lab] of TABS) tabs.append($("button", {role: "tab", "aria-selected": String(state.tab === k), onclick: () => { state.tab = k; state.sel = null; render(); }}, lab));
+
+let render = function () {
+  for (const b of tabs.children) b.setAttribute("aria-selected", String(TABS[[...tabs.children].indexOf(b)][0] === state.tab));
+  const v = document.getElementById("view"); v.replaceChildren();
+  if (state.tab === "summary") return renderSummary(v);
+  if (state.tab === "fail") return renderFailures(v);
+  if (state.tab === "metrics") return renderMetrics(v);
+  if (state.tab === "data") return renderData(v);
+  if (state.tab === "viz") return renderViz(v);
+  if (state.tab === "legacy") return renderLegacy(v);
+  renderTrack(v, state.tab);
+};
+
+// ---------------------------------------------------------------- summary (markdown table from make_tables)
+function mdTable(md) {
+  const lines = (md || "").split("\n").filter(l => l.startsWith("|"));
+  if (lines.length < 2) return $("div", {class: "empty"}, "No results yet.");
+  const cells = l => l.slice(1, -1).split("|").map(s => s.trim());
+  const t = $("table"); const head = cells(lines[0]);
+  t.append($("thead", {}, $("tr", {}, ...head.map(h => $("th", {}, h)))));
+  const tb = $("tbody"); for (const l of lines.slice(2)) { const c = cells(l);
+    const tr = $("tr", {class: c[0].startsWith("CROSS") ? "cross" : ""}, $("td", {class: "lab"}, c[0]));
+    if (c.slice(1).every(x => x === "in development" || x === "")) tr.append($("td", {class: "dim", colspan: c.length - 1}, "in development"));
+    else tr.append(...c.slice(1).map(x => $("td", {class: x === "·" || x === "" ? "dim" : ""}, x || "n/a")));
+    tb.append(tr); } t.append(tb); return $("div", {class: "scroll"}, t);
+}
+// ---------------------------------------------------------------- column ranking: shade the three best complete cells per column
+// A cell is ranked by its first number.  Cells with pending sessions are not ranked, nor ATE cells with failed sequences
+// (the mean covers only the others); LR / RS cells count failed queries as failures and are ranked.
+// lowerBetter(ci) gives the direction of column ci (ATE columns).
+function rankColumns(tbody, lowerBetter) {
+  const rows = [...tbody.querySelectorAll("tr")].map(tr => [...tr.querySelectorAll("td")].slice(1));
+  const ncol = Math.max(0, ...rows.map(r => r.length));
+  for (let ci = 0; ci < ncol; ci++) {
+    const vals = [];
+    for (const r of rows) { const td = r[ci]; if (!td || td.colSpan > 1) continue;
+      const t = td.textContent.trim(), m = t.match(/^-?\d+(\.\d+)?/);
+      if (m && !/pending|·/.test(t) && !(lowerBetter(ci) && /✗/.test(t))) vals.push([parseFloat(m[0]), td]); }
+    const uniq = [...new Set(vals.map(x => x[0]))].sort((a, b) => lowerBetter(ci) ? a - b : b - a);
+    if (uniq.length < 2) continue;
+    for (const [x, td] of vals) { const k = uniq.indexOf(x); if (k < 3) td.classList.add(`rank${k + 1}`); }
+  }
+}
+const rankNote = () => $("span", {class: "note"}, " Shading:", $("span", {class: "rankkey", style: "background: var(--rank1)"}), "best (bold)",
+  $("span", {class: "rankkey", style: "background: var(--rank2)"}), "2nd", $("span", {class: "rankkey", style: "background: var(--rank3)"}), "3rd per column, by the first number;",
+  " cells with pending sessions, and ATE cells with failed sequences, are not ranked. k/N ✗: k of the N sequences or query sessions failed (LR, RS: their frames / trials count as failures).");
+
+function renderSummary(v) {
+  v.append($("p", {class: "note"}, "⁽ᵒ⁾ uses the dataset's odometry. · not run yet; k/N ✗: k of the dataset's N sequences (ATE: the mean covers the others) or query sessions (LR, RS: their frames / trials count as failures) failed. Click the T1–T3 tabs for per-scene tables and plots."));
+  const tables = Array.isArray(B.summary) ? B.summary : [["all", "Headline numbers", "", B.summary]];
+  for (const [key, title, note, md] of tables) {
+    const card = $("div", {class: "card"}, $("h3", {}, title), note ? $("p", {class: "note"}, note) : "", mdTable(md), rankNote());
+    v.append(card);
+    const t = card.querySelector("table"); if (!t) continue;
+    const heads = [...t.querySelectorAll("th")].slice(1).map(h => h.textContent);
+    rankColumns(t.querySelector("tbody"), ci => key === "ate" || /ATE/.test(heads[ci] || ""));
+  }
+}
+
+// ---------------------------------------------------------------- track tables
+function renderTrack(v, track) {
+  const avail = Object.keys(B.tables[track] || {});
+  if (!avail.includes(state.ds[track])) state.ds[track] = avail[0];
+  const sel = $("select", {"aria-label": "dataset", onchange: e => { state.ds[track] = e.target.value; state.sel = null; render(); }},
+    ...avail.map(d => { const o = $("option", {value: d}, DS[d] || d); if (d === state.ds[track]) o.selected = true; return o; }));
+  v.append($("div", {class: "bar"}, $("span", {}, "Dataset"), sel,
+    $("span", {class: "note"}, track === "t1" ? "ATE RMSE (m) of the final trajectory; scene cells average the scene's sequences." :
+      track === "t2" ? "LR@1 m / LR@2 m indoors (LR@3 m / LR@5 m outdoors), MS-ATE (m). Query sessions run once against the stored map." :
+      state.ds[track] === "all" ? "Overall relocalization success of every method: pooled RS per dataset and the mean over the three datasets (RS@1 / 2 m indoors, RS@3 / 5 m outdoors)." :
+      "RS@1 m / RS@2 m indoors (RS@3 m / RS@5 m outdoors), pooled over the scene's trials.")));
+  const m = B.tables[track][state.ds[track]];
+  if (!m) { v.append($("div", {class: "empty"}, "No results.")); return; }
+  if (track === "t3" && state.ds[track] !== "all") renderT3Plots(v, state.ds[track]);
+  const t = $("table");
+  t.append($("thead", {}, $("tr", {}, $("th", {}, "system · setup"), ...m.cols.map(c => $("th", {}, c)))));
+  const tb = $("tbody");
+  m.rows.forEach((r, ri) => {
+    const tr = $("tr", {class: r.system.startsWith("cross") ? "cross" : ""}, $("td", {class: "lab"}, r.label));
+    if (r.pending) { tr.append($("td", {class: "dim", colspan: m.cols.length}, "in development")); tb.append(tr); return; }
+    r.cells.forEach((c, ci) => {
+      const has = c.runs.length > 0;
+      const td = $("td", {class: (has ? "cell" : c.text === "·" || c.text === "" ? "dim" : "") + (state.sel && state.sel.r === ri && state.sel.c === ci ? " sel" : ""), tabindex: has ? "0" : "-1"}, c.text);
+      if (has) { const go = () => { state.sel = {r: ri, c: ci}; render(); document.getElementById("detail").scrollIntoView({behavior: "smooth", block: "nearest"}); };
+        td.addEventListener("click", go); td.addEventListener("keydown", e => { if (e.key === "Enter") go(); }); }
+      tr.append(td); });
+    tb.append(tr); });
+  t.append(tb);
+  rankColumns(tb, () => track === "t1");
+  v.append($("div", {class: "card"}, $("div", {class: "scroll"}, t), rankNote()));
+  const d = $("div", {id: "detail"}); v.append(d);
+  if (state.sel && !((m.rows[state.sel.r] || {}).cells || [])[state.sel.c]?.runs?.length) state.sel = null;
+  if (state.sel) { const r = m.rows[state.sel.r], c = r.cells[state.sel.c];
+    d.append($("h3", {}, `${r.label} — ${m.cols[state.sel.c]}`)); d.append(detail(track, c.runs.map(id => B.runs[id]))); }
+  else d.append($("p", {class: "note"}, "Select a cell to see its runs: trajectories (T1), localization error over the query session (T2), trial outcomes (T3)."));
+}
+
+function detail(track, runs) {
+  const g = $("div", {class: "grid"});
+  if (track === "t1") { g.before; for (const r of runs) g.append(trajPlot(r)); return $("div", {}, legendT1(), g); }
+  if (track === "t2") { for (const r of runs) g.append(errPlot(r)); return $("div", {}, legendT2(), g); }
+  for (const r of runs) g.append(trialPlot(r)); return $("div", {}, legendT3(), g);
+}
+const legendT1 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "key", style: "background:var(--gt)"}), "ground truth"),
+  $("span", {}, $("span", {class: "key", style: "background:var(--est)"}), "estimate (aligned)"));
+const legendT2 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "key", style: "background:var(--est)"}), "position error in the map frame"),
+  $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "no estimate"));
+const legendT3 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "sq", style: "background:var(--good)"}), "✓ final pose within the larger threshold (2 m indoors, 5 m outdoors)"),
+  $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "✗ failed"));
+
+function box(title, sub, svg, extra) { const p = $("div", {class: "plot"}, $("h4", {}, title), $("div", {class: "sub"}, sub)); if (svg) p.append(svg); if (extra) p.append(extra); return p; }
+
+// top-down trajectory: ground truth (neutral) vs aligned estimate (series 1)
+function trajPlot(r) {
+  const title = r.sequence || r.query || "run";
+  const sub = r.status !== "ok" ? `failed (rc ${r.rc ?? "?"})` :
+    `ATE ${fmt(r.ate_rmse)} m · completeness ${Math.round(100 * (r.completeness ?? 0))}% · ${r.n_poses ?? "?"} poses${r.align === "sim3" ? " · Sim(3), scale " + fmt(r.scale, 2) : ""}`;
+  if (!r.gt2) return box(title, sub, null, $("div", {class: "empty"}, "no trajectory"));
+  const pts = r.gt2.concat(r.est2 || []);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const W = 300, span = Math.max(x1 - x0, y1 - y0, 1e-3), H = Math.max(120, Math.min(300, W * (y1 - y0) / Math.max(x1 - x0, 1e-3)));
+  const sc = Math.min((W - 20) / Math.max(x1 - x0, 1e-3), (H - 20) / Math.max(y1 - y0, 1e-3));
+  const px = p => [10 + (p[0] - x0) * sc, H - 10 - (p[1] - y0) * sc];
+  const svg = s$("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `trajectory of ${title}`});
+  const line = (arr, col) => s$("polyline", {points: arr.map(p => px(p).join(",")).join(" "), fill: "none", stroke: col, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round"});
+  svg.append(line(r.gt2, "var(--gt)"));
+  if (r.est2) svg.append(line(r.est2, "var(--est)"));
+  // scale bar
+  const nice = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find(v => v * sc > 40) || span;
+  svg.append(s$("line", {x1: W - 10 - nice * sc, x2: W - 10, y1: H - 3, y2: H - 3, stroke: "var(--axis)", "stroke-width": 2}));
+  const t = s$("text", {x: W - 10, y: H - 7, "text-anchor": "end"}); t.textContent = `${nice} m`; svg.append(t);
+  return box(title, sub, svg);
+}
+
+// T2: error over the query session with the recall radii
+function errPlot(r) {
+  const title = `${r.map} → ${r.query}`;
+  const lr = Object.keys(r).filter(k => k.startsWith("lr@")).map(k => `${k.replace("lr@", "LR@")} m ${fmt(r[k], 2)}`).join(" · ");
+  const sub = r.status !== "ok" ? `failed (rc ${r.rc ?? "?"})` : `${lr} · MS-ATE ${fmt(r.ms_ate, 2)} m · estimate on ${Math.round(100 * (r.est_frac ?? 0))}% of frames`;
+  if (!r.err) return box(title, sub, null, $("div", {class: "empty"}, "no per-frame errors"));
+  const W = 300, H = 130, n = r.err.length, cap = Math.max(5, ...Object.keys(r).filter(k => k.startsWith("lr@")).map(k => +k.slice(3) * 3));
+  const X = i => 30 + i / Math.max(n - 1, 1) * (W - 38), Y = e => 8 + (1 - Math.min(e, cap) / cap) * (H - 26);
+  const svg = s$("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `localization error of ${title}`});
+  for (const k of Object.keys(r).filter(k => k.startsWith("lr@"))) { const e = +k.slice(3);
+    svg.append(s$("line", {x1: 30, x2: W - 8, y1: Y(e), y2: Y(e), stroke: "var(--grid)", "stroke-width": 1}));
+    const t = s$("text", {x: 26, y: Y(e) + 3, "text-anchor": "end"}); t.textContent = `${e} m`; svg.append(t); }
+  svg.append(s$("line", {x1: 30, x2: W - 8, y1: H - 18, y2: H - 18, stroke: "var(--axis)", "stroke-width": 1}));
+  let seg = [];
+  const flush = () => { if (seg.length > 1) svg.append(s$("polyline", {points: seg.join(" "), fill: "none", stroke: "var(--est)", "stroke-width": 2, "stroke-linejoin": "round"})); seg = []; };
+  r.err.forEach((e, i) => { if (e < 0) { flush(); svg.append(s$("rect", {x: X(i) - 1, y: H - 16, width: 2.5, height: 5, fill: "var(--bad)"})); } else seg.push(`${X(i)},${Y(e)}`); });
+  flush();
+  const t0 = s$("text", {x: 30, y: H - 3}); t0.textContent = "start"; const t1 = s$("text", {x: W - 8, y: H - 3, "text-anchor": "end"}); t1.textContent = "end of query session"; svg.append(t0, t1);
+  const cross = s$("line", {y1: 8, y2: H - 18, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden"}); svg.append(cross);
+  const hit = s$("rect", {x: 30, y: 0, width: W - 38, height: H - 16, fill: "transparent"}); svg.append(hit);
+  hit.addEventListener("pointermove", ev => { const bb = svg.getBoundingClientRect(); const fx = (ev.clientX - bb.left) / bb.width * W;
+    const i = Math.max(0, Math.min(n - 1, Math.round((fx - 30) / (W - 38) * (n - 1)))); cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("visibility", "visible");
+    const e = r.err[i]; showTip(ev, [[e < 0 ? "no estimate" : `${e.toFixed(2)} m`, ""], `${Math.round(100 * i / Math.max(n - 1, 1))}% through the session`]); });
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+  return box(title, sub, svg);
+}
+
+// T3: one square per trial along the query session, final error on hover
+function trialPlot(r) {
+  const title = `${r.map} → ${r.query}`;
+  const sub = r.status !== "ok" ? `failed (rc ${r.rc ?? "?"})` :
+    `RS@${r.thresholds[0]} m ${fmt(r.rs1, 2)} · RS@${r.thresholds[1]} m ${fmt(r.rs2, 2)} · ${r.n_trials} trials${r.concat ? " · map + trial in one stream" : ""}`;
+  if (!r.trials) return box(title, sub, null, $("div", {class: "empty"}, "no trials"));
+  const n = r.trials.length, per = Math.min(n, 40), rows = Math.ceil(n / per), cw = 300 / per;
+  const svg = s$("svg", {viewBox: `0 0 300 ${rows * cw + 4}`, role: "img", "aria-label": `trial outcomes of ${title}`});
+  r.trials.forEach((t, i) => { const [start, ok, fe, ok1, cov] = t;
+    const c = s$("rect", {x: (i % per) * cw + 1, y: Math.floor(i / per) * cw + 1, width: cw - 2, height: cw - 2, rx: 2, fill: cov === 0 ? "var(--hatch)" : ok ? "var(--good)" : "var(--bad)", tabindex: 0});
+    const tipf = ev => showTip(ev, [[cov === 0 ? "not covered by the map" : ok ? "✓ relocalized" : "✗ failed", ""], `trial ${i + 1}, frames ${start}–${start + 99}`, `final error ${fe == null ? "–" : fe.toFixed(2) + " m"}`]);
+    c.addEventListener("pointermove", tipf); c.addEventListener("pointerleave", hideTip); c.addEventListener("focus", ev => { const bb = c.getBoundingClientRect(); tipf({clientX: bb.right, clientY: bb.bottom}); }); c.addEventListener("blur", hideTip);
+    svg.append(c); });
+  return box(title, sub, svg);
+}
+
+// ---------------------------------------------------------------- failure cases
+function renderFailures(v) {
+  v.append($("p", {class: "note"}, "For every system and setup: maps that failed or covered less than 80 % of the sequence (worst T1 maps otherwise), the query sessions with the lowest localization recall (T2), and the query sessions with the most failed relocalization trials (T3). Frame pairs show a failed trial's final query frame next to the map keyframe nearest to it in ground truth, when available."));
+  const keys = Object.keys(B.failures || {}).sort((a, b) => (b.startsWith("cross") - a.startsWith("cross")) || a.localeCompare(b));
+  if (!keys.length) { v.append($("div", {class: "empty"}, "No results yet.")); return; }
+  for (const k of keys) { const [system, setup] = k.split("|"); const f = B.failures[k];
+    const lab = `${(B.systems[system] || {}).label || system} · ${setup}`;
+    const card = $("div", {class: "card"}, $("h3", {}, lab));
+    const sect = (name, ids, fn) => { if (!ids.length) return; card.append($("h4", {}, name)); const g = $("div", {class: "grid"}); for (const id of ids) g.append(fn(B.runs[id])); card.append(g); };
+    sect("T1 · weakest maps", f.t1, r => { const p = trajPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.sequence}`; return p; });
+    sect("T2 · lowest localization recall", f.t2, r => { const p = errPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`; return p; });
+    sect("T3 · most failed trials", f.t3, r => { const p = trialPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`;
+      const imgs = (B.assets || []).filter(a => a.includes(`/${r.id}_`)).sort();
+      for (let k = 0; k < imgs.length; k += 2) { const pair = imgs.slice(k, k + 2).sort((x, y) => (y.endsWith("_q.jpg") - x.endsWith("_q.jpg")));
+        p.append($("div", {class: "grid", style: "grid-template-columns:1fr 1fr;gap:6px;margin-top:6px"},
+          ...pair.map(a => $("figure", {style: "margin:0"}, $("img", {class: "thumb", src: a, alt: a.endsWith("_q.jpg") ? "query frame at the end of a failed trial" : "nearest map frame", loading: "lazy"}),
+            $("figcaption", {class: "note"}, a.endsWith("_q.jpg") ? "query, end of failed trial" : "map, nearest in ground truth"))))); }
+      return p; });
+    if (card.children.length === 1) card.append($("div", {class: "empty"}, "No failures recorded."));
+    v.append(card); }
+}
+
+// ---------------------------------------------------------------- metric definitions
+function renderMetrics(v) {
+  const sec = (title, ...paras) => $("div", {class: "card"}, $("h3", {}, title), ...paras.map(p => typeof p === "string" ? $("p", {}, p) : p));
+  const ul = (...items) => $("ul", {}, ...items.map(i => $("li", {}, i)));
+  v.append(
+    sec("Sessions, maps and queries",
+      "A session is one recorded traversal of a scene. In every scene one session is the map session; all other sessions of the scene are query sessions (see Datasets for the list). All sessions are processed at 10 Hz, every frame in order, without lookahead.",
+      "Systems that store maps (CROSS, ORB-SLAM3, RTAB-Map) map the map session once and save the map; every query run loads it. Systems without map persistence (MASt3R-SLAM, VGGT-SLAM 2.0) run the map session followed by the query frames in one stream."),
+    sec("T1 · mapping accuracy (one session at a time)",
+      ul("Each session (map and query sessions alike on OpenLORIS and ROVER; each KITTI sequence) is mapped from scratch.",
+         "ATE RMSE: position error of the system's final trajectory (after all loop closures) against ground truth, after the best SE(3) alignment (Sim(3) for monocular systems without metric input). Evaluated at the frames the final trajectory contains (CROSS: its map keyframes).",
+         "Completeness: fraction of the session's frames within 1 s of an evaluated pose; below 80 % the run counts as a tracking failure (✗).",
+         "Scene cell = mean ATE of the scene's sessions; mean column = mean over all sessions of the dataset.")),
+    sec("Thresholds", "Both localization metrics use two fixed position thresholds: 1 m and 2 m indoors (OpenLORIS, SimChange), 3 m and 5 m outdoors (ROVER). The larger ones are the CROSS paper's radii. Rotation is not thresholded (ROVER has no rotation ground truth)."),
+    sec("T2 · multi-session localization (LR, MS-ATE): one run per query session",
+      ul("Each query session is run once, from its first frame to its last, against the stored map of the scene's map session, starting without a pose.",
+         "Per frame i: the estimate is the system's latest pose at frame i, if it is at most 1 s (10 frames) old; it is expressed in the ground-truth frame with the alignment computed on the map session (the query session is never re-aligned). e_i = distance between that position and the ground-truth position. A frame without such a pose has e_i = ∞.",
+         "Coverage: only frames whose ground-truth position lies within the larger threshold (2 m indoors, 5 m outdoors) of the map session's ground-truth path are evaluated; where the map session never went no system can relocalize. The Datasets tab lists each session's coverage (about 100 % except on ROVER, where the 2023 / spring routes are longer than the 2024 map route).",
+         "LR@x of a session = (number of covered frames with e_i < x) / (number of covered frames), for x = 1 m and 2 m indoors, 3 m and 5 m outdoors.",
+         "MS-ATE of a session = RMSE of e_i over the frames that have a pose.",
+         "Scene and dataset cells pool all frames of the query sessions (localized frames / all frames), so longer sessions weigh more.")),
+    sec("T3 · relocalization success (RS): many short trials per query session",
+      ul("Each query session is cut into trials of 100 frames (10 s); a new trial starts every 50 frames (trials overlap by half; a last trial of at least 50 frames is kept). The Datasets tab lists the number of trials per session.",
+         "Every trial is an independent run: a fresh system loads the map and processes only the trial's frames, starting without a pose.",
+         "The trial's final error is the distance between the system's final pose (its latest pose at the trial's last frame, at most 1 s old) and the pose the map implies for that frame: the nearest map keyframe's estimated pose composed with its ground-truth offset to the query frame, so map drift is not counted as a relocalization error.",
+         "Only trials whose last frame is covered by the map (as in T2) are counted.",
+         "RS@x = trials with final error below x / all counted trials, pooled over the scene's query sessions (x = 1 m and 2 m indoors, 3 m and 5 m outdoors); 95 % Wilson interval of the larger threshold in the last column.")),
+    sec("How T2 and T3 differ",
+      "T3 asks how often a system relocalizes within 10 s from a cold start, and judges only the end of each trial. T2 asks how much of a whole session the system spends correctly localized in the map, including the time before it first relocalizes and any later losses. A system that relocalizes slowly but then holds on can have T2 above T3; one that relocalizes quickly but loses the map again can have T3 above T2."),
+    sec("Small scenes", "In small rooms (OpenLORIS office spans about 4 m, SimChange classroom about 6 m) even the 1 m threshold is a large fraction of the room; read those cells with the scene size in mind (Datasets tab)."));
+}
+
+// ---------------------------------------------------------------- dataset samples: what each dataset looks like and what changes between sessions
+const SAMPLE_INTRO = {
+  kitti: "Single drives (no repeated sessions, so KITTI is used for T1 only): one frame from the middle of each sequence. Sequence 01 is a highway; the others are town streets and country roads around Karlsruhe, recorded in daylight.",
+  openloris: "Each scene was recorded several times, the later sessions after the scene had changed through human activity and the time of day. Every row is one place of the map session (blue frame) with the frame of each query session that is nearest to it in ground-truth pose, so the differences between the tiles are what changed between the sessions. Sessions that never pass the place are left out.",
+  rover: "The same lawn-edge route on a university campus, driven by a ground robot in eight recordings over fourteen months. The map session is the day recording of 2024-09-25; each row is one place of it with the nearest frame (by ground-truth position) of every other recording. What changes is the season (vegetation, low winter sun, bare lawn), the weather and the time of day: dusk, night, and night with extra light.",
+  simchange: "Rendered scenes in which one factor changes per traversal. Every row shows the same place (the map session's frame, then the frame of each query traversal nearest to it in pose), grouped by what was changed. Use the switch to mark the pixels that differ from the map frame in the object-change traversals (they are rendered from the map's own camera poses).",
+};
+const SCENE_NOTE = {
+  office: "Daylight through the windows and the camera exposure differ between sessions (windows blown out or dark); desks, chairs and equipment are moved or covered, people sit at the desks.",
+  corridor: "From a bright, daylit corridor to a dark one lit by a few lamps; a person walks through the corridor in some sessions.",
+  home: "People, objects such as the bag on the cabinet, the curtains and the daylight through the window differ between sessions.",
+  cafe: "Customers and the light differ between the two sessions (more people and warm light in the map session, fewer people and cooler light in the query session).",
+  market: "A supermarket: shoppers and carts move through the aisles, and the goods on the shelves and display stands differ between sessions.",
+  campus_large: "Season, weather and time of day. The night recordings are almost black except for lamps; in the night-light recording the grass in front of the robot is lit by an extra light.",
+  hssd_house: "A furnished HSSD apartment (about 100 m route, 708 placed objects).",
+  hssd_restaurant: "A restaurant with a sea-view terrace (about 146 m route, 1410 placed objects).",
+  classroom: "A small classroom (17 m route).",
+  lonemonk: "A cloister with arcades and an open courtyard (96 m route; outdoor sky).",
+};
+const imgTile = (t, label, sub, cls = "") => {
+  const img = $("img", {src: t.img, alt: `${label} (${t.session})`, loading: "lazy"});
+  if (t.diff) { img.dataset.plain = t.img; img.dataset.diff = t.diff; if (state.hl) img.src = t.diff; }
+  const title = t.dist != null ? `${t.session}: frame ${t.frame}, ${t.dist} m and ${t.angle}° from the map frame` + (t.changed_px != null ? `, ${(100 * t.changed_px).toFixed(1)} % of the pixels changed` : "") : t.session;
+  return $("figure", {class: cls, title}, $("a", {href: t.img, target: "_blank", rel: "noopener"}, img), $("figcaption", {}, $("b", {}, label), sub ? $("span", {class: "s"}, sub) : ""));
+};
+function renderSamples(d) {
+  const X = (B.samples || {})[d]; if (!X) return null;
+  const box = $("div", {class: "samples"}, $("p", {class: "note"}, SAMPLE_INTRO[d] || ""));
+  if (d === "kitti") {
+    const st = (B.datastats || {}).kitti || {}, g = $("div", {class: "imgrid"});
+    for (const t of X) { const r = ((st[t.session] || {})[t.session] || {}).setups; const path = r ? Math.max(...Object.values(r).map(x => x.path_m)) : null;
+      g.append(imgTile(t, `Sequence ${t.session}`, (t.session === "01" ? "highway · " : "") + (path ? `${(path / 1000).toFixed(1)} km` : ""))); }
+    box.append(g); return box;
+  }
+  if (d === "simchange") {
+    const hl = $("input", {type: "checkbox", onchange: e => { state.hl = e.target.checked; for (const im of box.querySelectorAll("img[data-diff]")) im.src = state.hl ? im.dataset.diff : im.dataset.plain; }});
+    hl.checked = !!state.hl;
+    box.append($("label", {class: "hl"}, hl, "Mark the pixels that differ from the map frame (object changes)"));
+  }
+  let first = true;
+  for (const [sc, E] of Object.entries(X)) {
+    if (!E.places.length) continue;
+    const det = $("details", first ? {open: ""} : {}, $("summary", {}, DSCENE(d, sc))); first = false;
+    det.append($("p", {class: "note"}, SCENE_NOTE[sc] || ""));
+    E.places.forEach((pl, k) => {
+      if (E.places.length > 1 || !pl.aligned) det.append($("h4", {}, pl.aligned ? `Place ${k + 1}` : `Frames at ${["25 %", "60 %"][k] || ""} of each session (no ground truth: not the same place)`));
+      if (d === "simchange") {
+        const fams = B.samples.simchange_families || [];
+        for (const [key, title, desc] of fams) {
+          const ts = pl.tiles.filter(t => t.family === key); if (!ts.length) continue;
+          const g = $("div", {class: "imgrid"});
+          for (const t of ts) g.append(imgTile(t, t.label, key === "map" ? "" : t.session.split("/").pop(), t.role === "map" ? "map" : ""));
+          det.append($("div", {class: "fam"}, $("div", {}, $("b", {}, title), $("span", {class: "note"}, " · " + desc)), g));
+        }
+      } else {
+        const g = $("div", {class: "imgrid"});
+        for (const t of pl.tiles) g.append(imgTile(t, d === "rover" ? t.label : t.session, d === "rover" ? t.note : (t.role === "map" ? "map session" : ""), t.role === "map" ? "map" : ""));
+        det.append(g);
+      }
+    });
+    box.append(det);
+  }
+  return box;
+}
+const DSCENE = (d, sc) => ({hssd_house: "HSSD house", hssd_restaurant: "HSSD restaurant", classroom: "Classroom", lonemonk: "Lone Monk", campus_large: "campus_large"}[sc] || sc[0].toUpperCase() + sc.slice(1));
+
+// ---------------------------------------------------------------- dataset details
+function renderData(v) {
+  const S = B.datastats || {}, SP = B.splits || {};
+  v.append($("p", {class: "note"}, "Representative images of every dataset, then the sessions per scene, as prepared (10 Hz). Frames and path length of each session; T3 trials = number of 100-frame trials (stride 50) of a query session. Rows marked 'not prepared yet' are still downloading or converting."));
+  for (const d of ["kitti", "openloris", "rover", "simchange"]) {
+    if (!SP[d]) continue;
+    const card = $("div", {class: "card"}, $("h3", {}, DS[d] || d), renderSamples(d) || "");
+    const t = $("table"); t.append($("thead", {}, $("tr", {}, ...["scene", "sessions", "map session", "query sessions", "query frames", "T3 trials", "thresholds"].map(h => $("th", {}, h)))));
+    const tb = $("tbody");
+    for (const [sc, sp] of SP[d]) {
+      const rows = (S[d] || {})[sc] || {};
+      const fr = r => r ? Math.min(...Object.values(r.setups).map(x => x.frames)) : null;
+      const path = r => r ? Math.max(...Object.values(r.setups).map(x => x.path_m)) : null;
+      const m = rows[sp.map];
+      const qs = sp.queries.filter(q => rows[q]);
+      const qf = qs.map(q => fr(rows[q]));
+      const trials = qs.reduce((a, q) => a + (rows[q].trials || 0), 0);
+      tb.append($("tr", {}, $("td", {class: "lab"}, sc), $("td", {}, `1 + ${sp.queries.length}`),
+        $("td", {class: m ? "" : "dim"}, m ? `${sp.map}: ${fr(m)} frames, ${(fr(m) / 10).toFixed(0)} s, ${path(m).toFixed(0)} m` : "not prepared yet"),
+        $("td", {}, sp.queries.length ? `${qs.length}/${sp.queries.length} prepared` : "–"),
+        $("td", {}, qf.length ? `${Math.min(...qf)}–${Math.max(...qf)} each, ${qf.reduce((a, b) => a + b, 0)} total` : "–"),
+        $("td", {}, sp.queries.length ? String(trials) : "–"), $("td", {}, `${sp.thresholds[0]} / ${sp.thresholds[1]} m`)));
+      if (sp.queries.length) {
+        const det = $("details", {}, $("summary", {class: "note"}, `${sc}: every session`));
+        const dt = $("table"); dt.append($("thead", {}, $("tr", {}, ...["session", "role", "frames", "duration", "path", "T3 trials", "covered by the map"].map(h => $("th", {}, h)))));
+        const dtb = $("tbody");
+        for (const q of [sp.map].concat(sp.queries)) { const r = rows[q];
+          dtb.append($("tr", {}, $("td", {}, q), $("td", {}, q === sp.map ? "map" : "query"), $("td", {}, r ? String(fr(r)) : "not prepared"),
+            $("td", {}, r ? `${(fr(r) / 10).toFixed(0)} s` : ""), $("td", {}, r ? `${path(r).toFixed(0)} m` : ""), $("td", {}, r && r.trials != null ? String(r.trials) : q === sp.map ? "–" : ""),
+            $("td", {}, r && q !== sp.map ? (() => { const c = Object.values(r.setups).map(x => x.covered).filter(x => x != null); return c.length ? `${Math.round(100 * Math.min(...c))} %` : ""; })() : ""))); }
+        dt.append(dtb); det.append($("div", {class: "scroll"}, dt));
+        tb.append($("tr", {}, $("td", {colspan: 7}, det)));
+      }
+    }
+    t.append(tb); card.append($("div", {class: "scroll"}, t)); v.append(card);
+  }
+}
+
+// ---------------------------------------------------------------- system styling: one hue per system family, line style per setup / odometry
+const SYS_STYLE = {
+  "cross_rgbd|rgbd": ["--c1", ""], "cross_rgbd_vo|rgbd": ["--c1", "6 4"],
+  "cross_stereo|stereo": ["--c2", ""], "cross_stereo_vo|stereo": ["--c2", "6 4"],
+  "cross_mono_odom|mono": ["--c3", ""], "cross_mono|mono": ["--c3", "6 4"],
+  "orbslam3|stereo": ["--c4", ""], "orbslam3|rgbd": ["--c4", "6 4"], "orbslam3|mono": ["--c4", "1.5 3"],
+  "rtabmap|stereo": ["--c7", ""], "rtabmap|rgbd": ["--c7", "6 4"],
+  "rtabmap_vo|stereo": ["--c7", "1.5 3"], "rtabmap_vo|rgbd": ["--c7", "8 3 1.5 3"],
+  "mast3r_slam|mono": ["--c6", ""], "vggt_slam|mono": ["--c5", ""]};
+const SETUP = {rgbd: "RGB-D", stereo: "stereo", mono: "mono"};
+const sysKey = r => `${r.system}|${r.setup}`;
+const sysLabel = (system, setup, d) => `${(B.systems[system] || {}).label || system} · ${d === "kitti" && setup === "rgbd" ? "RGB-D*" : SETUP[setup] || setup}`;
+const ODO = {cross_rgbd: "ext. odometry", cross_stereo: "ext. odometry", cross_mono_odom: "ext. odometry",
+             cross_rgbd_vo: "visual odometry", cross_stereo_vo: "visual odometry", cross_mono: "visual odometry"};
+const shortLabel = (system, setup, d) => {         // compact row label of the plots
+  const su = d === "kitti" && setup === "rgbd" ? "RGB-D*" : SETUP[setup] || setup;
+  if (ODO[system]) return `CROSS ${su} · ${ODO[system]}`;
+  return `${((B.systems[system] || {}).label || system)} · ${su}`; };
+const sysColor = k => `var(${(SYS_STYLE[k] || ["--muted"])[0]})`;
+const sysDash = k => (SYS_STYLE[k] || ["", ""])[1];
+const lineKey = k => { const sv = s$("svg", {width: 22, height: 8, viewBox: "0 0 22 8"});
+  sv.append(s$("line", {x1: 1, x2: 21, y1: 4, y2: 4, stroke: sysColor(k), "stroke-width": 2.5, "stroke-dasharray": sysDash(k), "stroke-linecap": "round"})); return sv; };
+const orderIndex = () => { const o = {}; (B.order || []).forEach(([a, b], i) => o[`${a}|${b}`] = i); return o; };
+const shortName = q => String(q).split("/").pop();
+const runsWhere = f => Object.values(B.runs).filter(f);
+
+// ---------------------------------------------------------------- trajectories of every system, one plot per scene
+const vizState = {ds: "openloris", hidden: {}};
+function renderViz(v) {
+  const dsets = ["openloris", "kitti", "rover"].filter(d => (B.splits || {})[d]);
+  if (!dsets.includes(vizState.ds)) vizState.ds = dsets[0];
+  const sel = $("select", {"aria-label": "dataset", onchange: e => { vizState.ds = e.target.value; render(); }},
+    ...dsets.map(d => { const o = $("option", {value: d}, DS[d] || d); if (d === vizState.ds) o.selected = true; return o; }));
+  v.append($("div", {class: "bar"}, $("span", {}, "Dataset"), sel,
+    $("span", {class: "note"}, "Top-down view of every system's final trajectory (T1, aligned to the ground truth) on one session per plot. Hue = system family, line style = setup or odometry (solid: external odometry / stereo; dashed: visual odometry / RGB-D; dotted: mono). Click a legend entry to show or hide it; hover an entry or a line to highlight it.")));
+  const d = vizState.ds, oi = orderIndex();
+  for (const [scene, sp] of B.splits[d]) {
+    const seqs = [sp.map].concat(sp.queries);
+    const card = $("div", {class: "card"});
+    const key = `${d}|${scene}`;
+    const seqSel = $("select", {"aria-label": "session"}, ...seqs.map(q => $("option", {value: q}, q === sp.map ? `${shortName(q)} (map session)` : shortName(q))));
+    if (vizState[key]) seqSel.value = vizState[key];
+    const body = $("div");
+    const draw = () => { vizState[key] = seqSel.value; body.replaceChildren(trajOverlay(d, scene, seqSel.value, oi)); };
+    seqSel.addEventListener("change", draw);
+    card.append($("div", {class: "bar"}, $("h3", {style: "margin:0"}, d === "kitti" ? `sequence ${scene}` : scene), seqs.length > 1 ? seqSel : ""));
+    card.append(body); draw(); v.append(card);
+  }
+}
+
+function trajOverlay(d, scene, seq, oi) {
+  const runs = runsWhere(r => r.track === "t1" && r.dataset === d && r.scene === scene && r.sequence === seq && r.gt2)
+    .sort((a, b) => (oi[sysKey(a)] ?? 99) - (oi[sysKey(b)] ?? 99));
+  if (!runs.length) return $("div", {class: "empty"}, "No trajectories yet.");
+  const gt = runs[0].gt2;
+  // default: hide the dashed / dotted variants until the reader asks for them
+  for (const r of runs) { const k = `${d}|${sysKey(r)}`; if (!(k in vizState.hidden)) vizState.hidden[k] = sysDash(sysKey(r)) !== ""; }
+  const xs = gt.map(p => p[0]), ys = gt.map(p => p[1]);
+  let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pad = 0.12 * Math.max(x1 - x0, y1 - y0, 1); x0 -= pad; x1 += pad; y0 -= pad; y1 += pad;
+  const W = 760, H = Math.max(260, Math.min(620, W * (y1 - y0) / Math.max(x1 - x0, 1e-3)));
+  const sc = Math.min((W - 20) / (x1 - x0), (H - 20) / (y1 - y0));
+  const ox = (W - sc * (x1 - x0)) / 2, oy = (H - sc * (y1 - y0)) / 2;
+  const px = p => [ox + (p[0] - x0) * sc, H - oy - (p[1] - y0) * sc];
+  // poses exist only at keyframes, so a long gap between keyframes is left open rather than bridged by a straight line;
+  // gaps are found on the run's own ground truth (a step over 5x its median step), so the estimate's errors stay visible
+  const pathD = (pts, ref) => { const st = ref.slice(1).map((p, i) => Math.hypot(p[0] - ref[i][0], p[1] - ref[i][1]));
+    const med = [...st].sort((a, b) => a - b)[st.length >> 1] || 0;
+    return pts.map((p, i) => (i === 0 || st[i - 1] > 5 * med + 1e-6 ? "M" : "L") + px(p).join(",")).join(" "); };
+  const svg = s$("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `trajectories on ${seq}`});
+  const cid = "clip" + Math.random().toString(36).slice(2);
+  const defs = s$("defs"); const cp = s$("clipPath", {id: cid}); cp.append(s$("rect", {x: 0, y: 0, width: W, height: H})); defs.append(cp); svg.append(defs);
+  const g = s$("g", {"clip-path": `url(#${cid})`}); svg.append(g);
+  g.append(s$("path", {d: pathD(gt, gt), fill: "none", stroke: "var(--gt)", "stroke-width": 4, opacity: 0.45, "stroke-linejoin": "round"}));
+  const lines = {};
+  for (const r of runs) { if (!r.est2) continue; const k = sysKey(r);
+    const pl = s$("path", {d: r.gt2.length === r.est2.length ? pathD(r.est2, r.gt2) : pathD(r.est2, r.est2), fill: "none", stroke: sysColor(k), "stroke-width": 2,
+      "stroke-dasharray": sysDash(k), "stroke-linejoin": "round", "stroke-linecap": "round"});
+    pl.style.display = vizState.hidden[`${d}|${k}`] ? "none" : ""; lines[k] = pl; g.append(pl); }
+  // several hues sit close (no 7-color set separates every pair), so identity never rests on color alone
+  const order = Object.keys(lines);
+  const emphasize = k => { for (const kk of order) { const pl = lines[kk];
+      pl.setAttribute("stroke-width", kk === k ? 3.5 : 2); pl.style.opacity = k && kk !== k ? 0.18 : ""; }
+    for (const kk of order) g.append(lines[kk]);          // restore the draw order, then raise the emphasized line
+    if (k && lines[k]) g.append(lines[k]); };
+  const span = Math.max(x1 - x0, y1 - y0);
+  const nice = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find(v => v * sc > 60) || span;
+  svg.append(s$("line", {x1: W - 14 - nice * sc, x2: W - 14, y1: H - 6, y2: H - 6, stroke: "var(--axis)", "stroke-width": 2}));
+  const t = s$("text", {x: W - 14, y: H - 10, "text-anchor": "end"}); t.textContent = `${nice} m`; svg.append(t);
+  // hover: nearest visible trajectory
+  const hit = s$("rect", {x: 0, y: 0, width: W, height: H, fill: "transparent"}); svg.append(hit);
+  hit.addEventListener("pointermove", ev => { const bb = svg.getBoundingClientRect(); const mx = (ev.clientX - bb.left) / bb.width * W, my = (ev.clientY - bb.top) / bb.height * H;
+    let best = null; for (const r of runs) { if (!r.est2 || vizState.hidden[`${d}|${sysKey(r)}`]) continue;
+      for (const p of r.est2) { const [a, b] = px(p); const dd = (a - mx) ** 2 + (b - my) ** 2; if (!best || dd < best[0]) best = [dd, r]; } }
+    if (best && best[0] < 400) { const r = best[1]; emphasize(sysKey(r)); showTip(ev, [[r.ate_rmse != null ? `ATE ${r.ate_rmse.toFixed(3)} m` : "failed", ""], sysLabel(r.system, r.setup, d), `completeness ${Math.round(100 * (r.completeness || 0))} %`]); }
+    else { emphasize(null); hideTip(); } });
+  hit.addEventListener("pointerleave", () => { emphasize(null); hideTip(); });
+  // legend chips (toggle)
+  const chips = $("div", {class: "chips"});
+  chips.append($("span", {class: "chip", "aria-pressed": "true", style: "cursor:default"}, (() => { const sv = s$("svg", {width: 22, height: 8}); sv.append(s$("line", {x1: 1, x2: 21, y1: 4, y2: 4, stroke: "var(--gt)", "stroke-width": 4, opacity: 0.45})); return sv; })(), "ground truth"));
+  for (const r of runs) { const k = sysKey(r), hk = `${d}|${k}`;
+    const b = $("button", {class: "chip", "aria-pressed": String(!vizState.hidden[hk]), title: sysLabel(r.system, r.setup, d)}, lineKey(k), shortLabel(r.system, r.setup, d),
+      $("span", {class: "v"}, r.ate_rmse != null && r.status === "ok" ? `${r.ate_rmse.toFixed(2)} m${r.failed ? " ✗" : ""}` : "✗"));
+    b.addEventListener("click", () => { vizState.hidden[hk] = !vizState.hidden[hk]; b.setAttribute("aria-pressed", String(!vizState.hidden[hk])); if (lines[k]) lines[k].style.display = vizState.hidden[hk] ? "none" : ""; });
+    for (const [ev, kk] of [["pointerenter", k], ["focus", k], ["pointerleave", null], ["blur", null]]) b.addEventListener(ev, () => emphasize(kk));
+    chips.append(b); }
+  const all = $("button", {class: "btn", onclick: () => { for (const r of runs) { const hk = `${d}|${sysKey(r)}`; vizState.hidden[hk] = false; } render(); }}, "show all");
+  const sol = $("button", {class: "btn", onclick: () => { for (const r of runs) { const hk = `${d}|${sysKey(r)}`; vizState.hidden[hk] = sysDash(sysKey(r)) !== ""; } render(); }}, "solid only");
+  return $("div", {}, chips, $("div", {class: "bar"}, all, sol, $("span", {class: "note"}, "ATE in the legend; ✗ = failed or tracking completeness below 80 %.")), $("div", {class: "vizplot"}, svg));
+}
+
+// ---------------------------------------------------------------- T3 plots (after the CROSS paper's Fig. 4): outcomes along the route + RS heatmap
+const RAMP = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5", "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b"];
+const rampColor = x => RAMP[Math.max(0, Math.min(RAMP.length - 1, Math.round(x * (RAMP.length - 1))))];
+const inkOn = hex => { const n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255; return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? "#0b0b0b" : "#ffffff"; };
+
+function renderT3Plots(v, d) {
+  const sp = (B.splits || {})[d]; if (!sp) return;
+  const oi = orderIndex();
+  for (const [scene, s] of sp) {
+    if (!s.queries.length) continue;
+    const runs = runsWhere(r => r.track === "t3" && r.dataset === d && r.scene === scene && r.status === "ok" && r.trials);
+    if (!runs.length) continue;
+    const keys = [...new Set(runs.map(sysKey))].sort((a, b) => (oi[a] ?? 99) - (oi[b] ?? 99));
+    const thr = runs[0].thresholds || [1, 2];
+    const card = $("div", {class: "card"}, $("h3", {}, `${scene}: relocalization outcomes`),
+      $("p", {class: "note"}, `Each column is a 10 s trial at its position along the query sessions (separated by gaps, labelled below); each row a system. Dark: final pose within ${thr[0]} m; light: within ${thr[1]} m only; empty: failed; grey: the map does not cover the trial (not counted). Right: RS@${thr[1]} m for every query session (cell value).`));
+    const wrap = $("div", {style: "display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px;align-items:start"});
+    wrap.append($("div", {class: "scroll"}, outcomeStrips(d, s, runs, keys, thr)), $("div", {class: "scroll"}, rsHeatmap(d, s, runs, keys, thr)));
+    card.append(wrap); v.append(card);
+  }
+}
+
+function outcomeStrips(d, s, runs, keys, thr) {
+  // trial grid per query session from the longest run of any system
+  const nT = q => Math.max(0, ...runs.filter(r => r.query === q).map(r => r.trials.length));
+  const qs = s.queries.filter(q => nT(q) > 0);
+  const total = qs.reduce((a, q) => a + nT(q), 0), gap = 6, lab = 250, rowH = 14, W = Math.max(560, lab + total * 2 + gap * qs.length);
+  const names = qs.map(shortName); let pre = 0;
+  while (names.length > 1 && names.every(n => n.length > pre + 1 && n[pre] === names[0][pre])) pre++;
+  const cut = pre > 2 ? (names[0].slice(0, pre).lastIndexOf("_") >= 0 ? names[0].slice(0, pre).lastIndexOf("_") + 1 : (names[0].match(/^[a-z_]+/i) || [""])[0].length) : 0;
+  const tag = q => { const n = shortName(q).slice(cut); return /_\d{4}-/.test(n) ? n.split("_")[0] : n; };   // ROVER: season / light
+  const cw = (W - lab - gap * qs.length) / total, H = keys.length * rowH + 46;
+  const svg = s$("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "relocalization outcomes", style: `min-width:${Math.min(W, 900)}px`});
+  keys.forEach((k, i) => { const [system, setup] = k.split("|"); const y = 4 + i * rowH;
+    const t = s$("text", {x: lab - 8, y: y + rowH * 0.7, "text-anchor": "end"}); t.textContent = shortLabel(system, setup, d); svg.append(t);
+    svg.append(s$("line", {x1: lab, x2: W, y1: y + rowH - 1, y2: y + rowH - 1, stroke: "var(--grid)", "stroke-width": 1})); });
+  let x = lab;
+  for (const q of qs) {
+    const n = nT(q);
+    keys.forEach((k, i) => { const r = runs.find(rr => rr.query === q && sysKey(rr) === k); if (!r) return; const y = 4 + i * rowH;
+      r.trials.forEach((t, j) => { const [start, ok2, fe, ok1, cov] = t;
+        const fill = !cov ? "var(--hatch)" : ok1 ? "var(--s-hi)" : ok2 ? "var(--s-lo)" : null;
+        const cell = s$("rect", {x: x + j * cw, y: y + 1, width: Math.max(cw - (cw > 3 ? 1 : 0), 0.8), height: rowH - 3, fill: fill || "transparent"});
+        cell.addEventListener("pointermove", ev => showTip(ev, [[!cov ? "not covered by the map" : fe == null ? "no pose" : `${fe.toFixed(2)} m`, ""], sysLabel(r.system, r.setup, d), `${shortName(q)}, frames ${start}–${start + 99}`]));
+        cell.addEventListener("pointerleave", hideTip); svg.append(cell); }); });
+    const tl = s$("text", {x: x + n * cw / 2, y: keys.length * rowH + 18, "text-anchor": "middle"}); tl.textContent = tag(q).slice(0, Math.max(3, Math.floor(n * cw / 5.5)));
+    svg.append(tl); x += n * cw + gap;
+  }
+  return svg;
+}
+
+function rsHeatmap(d, s, runs, keys, thr) {
+  const qs = s.queries.filter(q => runs.some(r => r.query === q));
+  const t = $("table", {style: "font-size:12px"});
+  t.append($("thead", {}, $("tr", {}, $("th", {}, ""), ...qs.map(q => $("th", {title: q, style: "writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;padding:4px 2px"}, shortName(q))))));
+  const tb = $("tbody");
+  for (const k of keys) { const [system, setup] = k.split("|");
+    const tr = $("tr", {}, $("td", {class: "lab", style: "white-space:nowrap"}, shortLabel(system, setup, d)));
+    for (const q of qs) { const r = runs.find(rr => rr.query === q && sysKey(rr) === k);
+      if (!r || !r.n_trials) { tr.append($("td", {class: "dim", style: "text-align:center"}, "·")); continue; }
+      const c = rampColor(r.rs2), td = $("td", {tabindex: "0", style: `background:${c};color:${inkOn(c)};text-align:center;padding:4px 3px;border:2px solid var(--surface)`}, (r.rs2 * 100).toFixed(0));
+      const tipf = ev => showTip(ev, [[`RS@${thr[1]} m ${r.rs2.toFixed(2)}`, ""], `RS@${thr[0]} m ${r.rs1.toFixed(2)} over ${r.n_trials} trials`, `${sysLabel(system, setup, d)} · ${shortName(q)}`]);
+      td.addEventListener("pointermove", tipf); td.addEventListener("pointerleave", hideTip);
+      td.addEventListener("focus", ev => { const bb = td.getBoundingClientRect(); tipf({clientX: bb.right, clientY: bb.bottom}); }); td.addEventListener("blur", hideTip);
+      tr.append(td); }
+    tb.append(tr); }
+  t.append(tb);
+  const scale = $("div", {class: "legend", style: "align-items:center"}, $("span", {}, "0 %"),
+    $("span", {style: `display:inline-block;width:120px;height:10px;border-radius:3px;background:linear-gradient(90deg,${RAMP.join(",")})`}), $("span", {}, `100 %  (RS@${thr[1]} m)`));
+  return $("div", {}, t, scale);
+}
+
+// ---------------------------------------------------------------- earlier results (different protocol)
+function renderLegacy(v) {
+  const L = B.legacy;
+  if (!L) { v.append($("div", {class: "empty"}, "No earlier results.")); return; }
+  v.append($("p", {class: "note"}, L.note || ""));
+  for (const s of L.sections || []) v.append($("div", {class: "card"}, $("h3", {}, s.title), $("p", {class: "note"}, s.note || ""), mdTable(s.table)));
+}
+function fromHash() { const h = decodeURIComponent(location.hash.slice(1)).split(":");
+  if (h[0] && TABS.some(t => t[0] === h[0])) { state.tab = h[0];
+    if (["t1", "t2", "t3"].includes(h[0]) && h[1]) { state.ds[h[0]] = h[1]; state.sel = h.length >= 4 ? {r: +h[2], c: +h[3]} : null; } } }
+const _render = render;
+render = function () { _render(); const t = state.tab; const h = ["t1", "t2", "t3"].includes(t) ? [t, state.ds[t]].concat(state.sel ? [state.sel.r, state.sel.c] : []) : [t];
+  history.replaceState(null, "", "#" + h.join(":")); };
+fromHash();
+render();
+</script>
+</body>
+</html>
