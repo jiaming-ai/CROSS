@@ -68,6 +68,51 @@ cross_mono:
   # driving speed (KITTI 07, 300 frames: map ATE 11.3 m; 1.4 m with the default chain model below)
   outdoor_args: [--mono-args, "--cross-config mapping.loop_closure.noise.odom_k_t=0.06 --cross-config mapping.loop_closure.noise.odom_k_r=0.07 --cross-config mapping.loop_closure.noise.odom_floor_t=0.002 --cross-config mapping.loop_closure.noise.odom_floor_r=0.001"]
 
+# mono mode with the IMU (--odometry vio: DPVO whose metric scale comes from the IMU, cross/imu) and the mono mode with
+# the stereo mode's VGGT-Omega estimator (--mono-estimator ff: metric scale from the motion and the map); hidden until
+# the development split picked the configuration for the tables
+cross_mono_vio:
+  label: CROSS (DA3, visual-inertial odometry)
+  runner: cross_mono
+  hidden: true
+  setups: [mono]
+  uses_odometry: false
+  uses_imu: true
+  map_reuse: save/load
+  args: [--mode, mono, --odometry, vio]
+  outdoor_config: [configs/outdoor.yaml]
+
+cross_mono_ff_odom:
+  label: CROSS (VGGT-Omega mono, external odometry)
+  runner: cross_mono
+  hidden: true
+  setups: [mono]
+  uses_odometry: true
+  map_reuse: save/load
+  args: [--mode, mono, --mono-estimator, ff, --odometry, external]
+  outdoor_config: [configs/outdoor.yaml]
+
+cross_mono_ff:
+  label: CROSS (VGGT-Omega mono, visual odometry)
+  runner: cross_mono
+  hidden: true
+  setups: [mono]
+  uses_odometry: false
+  map_reuse: save/load
+  args: [--mode, mono, --mono-estimator, ff, --odometry, visual]
+  outdoor_config: [configs/outdoor.yaml]
+
+cross_mono_ff_vio:
+  label: CROSS (VGGT-Omega mono, visual-inertial odometry)
+  runner: cross_mono
+  hidden: true
+  setups: [mono]
+  uses_odometry: false
+  uses_imu: true
+  map_reuse: save/load
+  args: [--mode, mono, --mono-estimator, ff, --odometry, vio]
+  outdoor_config: [configs/outdoor.yaml]
+
 cross_rgbd_monoreloc:
   label: CROSS (RGB-D, PnP, relocalization options from CROSS-mono)
   runner: cross_rgbd

@@ -46,10 +46,11 @@ class MonocularSystem(Pipeline):
     pose_estimator: reuse the estimator of an earlier session (its models); mono_defaults: apply the monocular back-end
     defaults (filter mode, visual-odometry motion noise, top_k 3) on top of system_config (default: only when no
     system_config is given); external_odometry: the frontend passes on dataset odometry, keep the back end's default
-    odometry noise model."""
+    odometry noise model; odometry: the pipeline's odometry label (default external / visual), vio keeps the back end's
+    default odometry noise model as well (the motion is metric, as with external odometry)."""
 
     def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None,
-                 pose_estimator=None, mono_defaults=None, external_odometry=False):
+                 pose_estimator=None, mono_defaults=None, external_odometry=False, odometry=None):
         if frontend is None and getattr(config, "frontend", None) in {"streaming_pnp", "streaming_dpvo"}:
             raise ValueError("Use StreamingMonocularSystem for a streaming frontend")
         from cross.core.config import FilterMode, PoseEstType, SystemConfig
@@ -102,7 +103,8 @@ class MonocularSystem(Pipeline):
             cfg.tracking.odom_std_per_radian = 0.1
             cfg.retrieval.top_k = 3
         overrides = self.config.cross_overrides
-        if external_odometry:
+        odometry = odometry or ("external" if external_odometry else "visual")
+        if odometry in ("external", "vio"):
             # dataset odometry: the back end's default odometry noise (as in the rgbd / stereo modes), not the DPVO one
             defaults = SystemConfig()
             cfg.tracking.odom_std_per_meter = defaults.tracking.odom_std_per_meter
@@ -137,8 +139,7 @@ class MonocularSystem(Pipeline):
                                                if self.config.two_view_rotation_check else {}))
         mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         attach_pair_motion(self.frontend, pose_estimator, self.config, K)
-        super().__init__(mapper, self.frontend, self.config.mapping_interval, mode="mono",
-                         odometry="external" if external_odometry else "visual",
+        super().__init__(mapper, self.frontend, self.config.mapping_interval, mode="mono", odometry=odometry,
                          depth_model=getattr(self.frontend, "metric", None), K=np.array(K, dtype=np.float64))
 
     def step(self, rgb, timestamp):

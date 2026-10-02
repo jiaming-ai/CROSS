@@ -7,6 +7,8 @@ Layout::
     <root>/depth/*.npy       metric depth in metres (float), or depth/*.png as uint16 millimetres
     <root>/poses_left.txt    one camera-to-world pose per image (16 values per row, OpenCV camera convention)
     <root>/odom_left.txt     optional: camera poses from the robot's own odometry (same format)
+    <root>/imu.txt, imu.json optional: the IMU rigidly attached to the camera (cross/dataloader/imu.py); replayed frames
+                             then carry the IMU samples since the previous frame
 
 The ground-truth poses serve as ground truth.  The odometry is the consecutive difference of odom_left.txt when it
 exists (real odometry, e.g. wheel encoders; no simulated noise is added), otherwise of the ground truth with simulated
@@ -23,6 +25,7 @@ import cv2
 import numpy as np
 
 from cross.dataloader.dataloader import Dataloader
+from cross.dataloader.imu import ImuStream
 
 
 def _invert(T: np.ndarray) -> np.ndarray:
@@ -56,6 +59,7 @@ class PosedRGBDLoader(Dataloader):
         self.rgb_width, self.rgb_height = int(calib["width"]), int(calib["height"])
         self.fps = float(calib.get("fps", 10.0))
         self.odom_vertical_world = self._world_vertical()
+        self.imu = ImuStream.load(self.root, len(self.rgb_paths), self.fps)
 
     def _world_vertical(self) -> np.ndarray:
         """World vertical of the ground-truth frame for the heading-drift model: the camera axis whose world direction
@@ -120,5 +124,7 @@ class PosedRGBDLoader(Dataloader):
                         d = self._noise_delta(d, self.c2w[j])
                     T = T @ d
                 item["delta_pose"] = T
+            if self.imu is not None:
+                item.update(self.imu.window(prev, i), imu_calib=self.imu.calib)
             prev = i
             yield item

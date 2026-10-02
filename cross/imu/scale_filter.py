@@ -1,0 +1,462 @@
+"""Metric scale of monocular visual odometry from an IMU: a sliding-window MAP estimate over the visual trajectory.
+
+Visual odometry (DPVO) gives camera poses up to an unknown, slowly drifting scale; its rotations are accurate.  With
+the rotations taken as known (the visual rotation at each frame, the gyroscope between frames), the IMU constrains the
+metric motion, and the visual displacements are that motion in visual-odometry units.  Unknowns over a window of the
+last W frame intervals (metric units; W = the visual odometry's world frame):
+
+    v_k   velocity of the IMU at frame k, in W                       (k = 0..W)
+    l_k   log scale at frame k: metres per visual-odometry unit is exp(l_k) (random walk: the drift of the visual odometry)
+    g     gravity in W, pointing down (|g| = 9.81)
+    b     accelerometer bias (IMU frame)
+
+Residuals (each in the space where its noise is additive):
+
+    IMU      v_{k+1} - v_k - g dt - R_k (dv_k - J_v b)                         ~ IMU noise (metric)
+    visual   z_k - exp(-l_k) (v_k dt + g dt^2/2 + R_k (dp_k - J_p b) - L_k)    ~ visual noise (units)
+    drift    l_{k+1} - l_k                                                     ~ scale_drift^2 dt
+    gravity  |g| - 9.81;  learned depth  l_k - log(scale observed)  (optional, weak);  marginalization prior
+
+with z_k the visual displacement of the camera (units), L_k = (R_WC,k+1 - R_WC,k) t_cb the lever arm of the IMU, and
+(dv_k, dp_k, J_v, J_p) the preintegrated IMU (cross.imu.preintegration).  Gauss-Newton with Huber weights on the visual
+residuals, warm-started every frame; the oldest frame is marginalized into a Gaussian prior (Schur complement) when the
+window slides, so the velocity keeps the metric scale across stretches of constant velocity.
+
+(Two Kalman filters were tried first: with the visual displacement as a regressor of the scale, its noise attenuated the
+scale; with the IMU increment as a regressor of the inverse scale, the IMU noise inflated it, by 20-30 % on simulated
+robot drives.  Both noises as residuals of a joint MAP estimate have neither bias.)
+
+Start-up: until the scale is known, the window is solved for a grid of constant log scales (the problem is linear in
+the other unknowns for a fixed scale) and Gauss-Newton starts from the best one, so a wrong initial guess cannot trap
+it.  The scale counts as known once its marginal log std is below init_log_std.  A learned-depth scale observation (log
+scale, variance) enters as a weak measurement of l at the newest frame.
+
+The class exposes the interface of cross.mono.scale.LogScaleFilter (scale, initialized, uncertainty_variance,
+update(observation)), so it replaces that filter in the DPVO frontend.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from .preintegration import Preintegrated
+
+GRAVITY = 9.81
+
+
+@dataclass
+class ImuConfig:
+    enabled: bool = False
+    # learned-depth scale observations (DA3 metric depth vs DPVO depth, every metric_interval frames) also enter as
+    # measurements of the scale, each with at least depth_prior_std_floor.  Their errors are partly one domain bias (DA3
+    # is 1.9x off on ROVER), but treating them as one prior per window (depth_prior_independent false, floor 0.3) let
+    # the IMU dominate where its scale is weakly observed (slow indoor robots: OpenLORIS home 0.6x, office 0.93x), so
+    # each observation counts (front end on six development sequences: scale within 2-3 % on office, cafe, KITTI 07
+    # and SimChange; ROVER 1.37x vs 1.86x for learned depth alone; home 0.80x vs 1.04x)
+    depth_prior: bool = True
+    depth_prior_std_floor: float = 0.15
+    depth_prior_independent: bool = True
+    window: int = 100                            # frame intervals in the window (10 s at 10 Hz)
+    scale_drift: float = 0.02                    # log-scale drift of the visual odometry per sqrt(second)
+    # gravity in the (gyro-propagated) world frame moves with the residual gyro bias (m/s^2 per sqrt(second)); added to
+    # the marginalization prior as the window slides, as is the accelerometer bias walk
+    gravity_drift: float = 0.02
+    accel_bias_walk: float = 0.005               # m/s^3/sqrt(Hz), larger than the datasheet for unmodelled errors
+    accel_bias_std: float = 0.1                  # prior std of the accelerometer bias (m/s^2)
+    gravity_std: float = 0.3                     # prior std of the initial gravity estimate (m/s^2, per axis)
+    gravity_norm_std: float = 0.05               # |g| = 9.81 (m/s^2)
+    # m/s^2/sqrt(Hz) added to the IMU noise: gravity leakage through visual rotation jitter (~0.2 deg).  0.1 helped
+    # OpenLORIS home1-1 (front end 0.70 -> 0.45 m) but on the development split it made 4 of 5 maps and T3 worse
+    extra_accel_noise: float = 0.01
+    # per-axis noise of a frame-to-frame visual displacement, in visual-odometry units: a part proportional to the
+    # scene depth (in units) and one proportional to the displacement
+    visual_std_depth: float = 0.0005
+    visual_std_rel: float = 0.01
+    huber: float = 3.0                           # visual residuals beyond this many sigmas get Huber weights
+    lag_frames: int = 3                          # measure the visual displacement this many frames late (refined poses)
+    gyro_check_deg: float = 0.5                  # skip a visual displacement whose rotation differs from the gyro's by more
+    gyro_bias_window: int = 600                  # intervals of the running median of the gyro bias (vs DPVO rotations)
+    time_offset_after: int = 150                 # calibrate the camera-IMU time offset after this many intervals (0: off)
+    time_offset_max: float = 0.15                # s, searched range
+    imu_buffer_samples: int = 20000              # IMU samples kept by the frontend (> 60 s at 300 Hz)
+    # continuous start (mono feed-forward back end): per-frame std of the unknown motion before DPVO's metric
+    # trajectory is valid: translation (m), rotation without / with the gyroscope (rad)
+    unknown_motion_std: tuple = (0.15, 0.1, 0.01)
+    reset_nis: float = 50.0                      # restart the estimate when the mean visual NIS of the last
+    reset_frames: int = 10                       # reset_frames intervals exceeds this (the visual and IMU motion disagree)
+    init_log_std: float = 0.35                   # the scale counts as known once its log std is below this
+    scale_prior_log_std: float = 3.0             # start-up grid: +-this around the learned-depth (or unit) scale
+    grid_step: float = 0.2
+    iterations: int = 3                          # Gauss-Newton iterations per frame
+
+
+@dataclass
+class _Observation:      # the fields of cross.mono.scale.ScaleObservation that the filter reads
+    log_scale: float
+    variance: float
+    accepted: bool = True
+    reason: str = ""
+
+
+@dataclass
+class _Interval:
+    dt: float
+    R: np.ndarray            # R_WB at the start of the interval
+    dv: np.ndarray
+    dp: np.ndarray
+    J_v: np.ndarray
+    J_p: np.ndarray
+    W_v: np.ndarray          # whitening of the IMU velocity residual (inverse Cholesky factor of its covariance in W)
+    var_p: float             # metric variance (per axis) of the IMU displacement
+    z: np.ndarray            # visual displacement (units)
+    lever: np.ndarray        # (R_WC,j - R_WC,i) t_cb (metres)
+    sigma_u: float           # visual noise (units, per axis)
+    obs: tuple | None = None  # learned-depth (log scale, variance) observed at the end of the interval
+
+
+class InertialScaleFilter:
+    def __init__(self, config: ImuConfig, T_cam_imu: np.ndarray, gyro_noise: float, accel_noise: float):
+        self.config = config
+        self.R_cb = np.asarray(T_cam_imu, dtype=np.float64)[:3, :3]       # IMU orientation in the camera frame
+        self.t_cb = np.asarray(T_cam_imu, dtype=np.float64)[:3, 3]        # IMU position in the camera frame (m)
+        self.gyro_noise = float(gyro_noise)
+        self.accel_noise = float(np.hypot(accel_noise, config.extra_accel_noise))
+        self.intervals: list[_Interval] = []
+        self.v = np.zeros((1, 3))           # v_0..v_W
+        self.l = np.zeros(1)                # l_0..l_W
+        self.g = np.zeros(3)
+        self.g0 = np.zeros(3)
+        self.b = np.zeros(3)
+        # marginalization prior on (v_0, l_0, g, b): cost |L^T (d + shift)|^2 / 2, d = x - x_lin
+        self.prior = None
+        self.started = False
+        self.initialized = False
+        self.accepted = self.rejected = self.reinitializations = 0
+        self.gated = 0
+        self.pending = []                 # (LogScaleFilter interface; no deferred observations here)
+        self.prior_log_scale = None       # the last learned-depth observation before the start
+        self.pending_obs = None
+        self._log_std = float("inf")
+        self.last_nis = float("nan")
+        self._mean_step = None
+        self._since_grid = 0
+        self._recent_nis = []
+
+    # ------------------------------------------------------------------ LogScaleFilter interface
+    @property
+    def mean(self) -> float:
+        if self.started:
+            return float(self.l[-1])
+        return self.prior_log_scale[0] if self.prior_log_scale is not None else 0.0
+
+    @property
+    def scale(self) -> float:
+        return float(np.exp(self.mean))
+
+    @property
+    def log_std(self) -> float:
+        return self._log_std
+
+    @property
+    def uncertainty_variance(self) -> float:
+        return min(self.log_std ** 2, 1.0)
+
+    @property
+    def variance(self) -> float:
+        return self.uncertainty_variance
+
+    @property
+    def velocity(self) -> np.ndarray:
+        return self.v[-1].copy()
+
+    def predict(self, frames=1):
+        """(LogScaleFilter interface) the estimate is updated in step() with the IMU data."""
+
+    def update(self, observation) -> bool:
+        """A learned-depth scale observation (log scale, variance): a weak measurement of the newest log scale."""
+        if not self.config.depth_prior or not getattr(observation, "accepted", False):
+            return False
+        obs = (float(observation.log_scale), max(float(observation.variance), self.config.depth_prior_std_floor ** 2))
+        if not self.started:
+            # until the IMU window starts, the learned-depth scale is the estimate (as in the learned-depth mode, so a
+            # session starts as early as without the IMU)
+            self.prior_log_scale = obs
+            self._log_std = float(np.sqrt(obs[1]))
+            self._check_initialized()
+        if self.intervals:
+            self.intervals[-1].obs = obs
+        else:
+            self.pending_obs = obs
+        self.accepted += 1
+        return True
+
+    # ------------------------------------------------------------------ steps
+    def start(self, R_wc: np.ndarray, accel_mean: np.ndarray):
+        """First frame with a visual pose: gravity from the mean specific force, scale from the learned-depth prior."""
+        g = -(R_wc @ self.R_cb) @ np.asarray(accel_mean, dtype=np.float64)
+        self.g = GRAVITY * g / max(np.linalg.norm(g), 1e-9)
+        self.g0 = self.g.copy()
+        self.b = np.zeros(3)
+        self.l = np.array([self.prior_log_scale[0] if self.prior_log_scale is not None else 0.0])
+        self.v = np.zeros((1, 3))
+        self.started = True
+
+    def step(self, pre: Preintegrated, R_wc_i: np.ndarray, R_wc_j: np.ndarray, dp_units: np.ndarray,
+             depth_units: float | None = None, visual_ok: bool = True) -> dict:
+        """Add the frame interval i -> j (IMU and visual displacement in units) and re-estimate the window.
+        visual_ok False: the visual displacement is not used (the IMU alone links the two frames)."""
+        cfg = self.config
+        dt = pre.dt
+        R_i = R_wc_i @ self.R_cb
+        q = self.accel_noise ** 2
+        cov_v = R_i @ pre.cov[3:6, 3:6] @ R_i.T + q * dt * np.eye(3)
+        var_p = float(np.trace(pre.cov[6:9, 6:9]) / 3 + q * dt ** 3 / 3)
+        z = np.asarray(dp_units, dtype=np.float64)
+        step_len = float(np.linalg.norm(z))
+        self._mean_step = step_len if self._mean_step is None else 0.98 * self._mean_step + 0.02 * step_len
+        floor = cfg.visual_std_depth * depth_units if depth_units else 0.1 * self._mean_step
+        sigma_u = float(np.hypot(cfg.visual_std_rel * step_len, max(floor, 1e-12))) if visual_ok else float("inf")
+        it = _Interval(dt, R_i, pre.dv, pre.dp, pre.J_v, pre.J_p, np.linalg.inv(np.linalg.cholesky(cov_v)), var_p, z,
+                       (R_wc_j - R_wc_i) @ self.t_cb, sigma_u, self.pending_obs)
+        self.pending_obs = None
+        self.intervals.append(it)
+        # the new frame's states predicted from the last ones
+        self.v = np.vstack([self.v, self.v[-1] + self.g * dt + R_i @ (pre.dv - pre.J_v @ self.b)])
+        self.l = np.append(self.l, self.l[-1])
+        if len(self.intervals) > cfg.window:
+            self._marginalize_oldest()
+        if not self.initialized and (self._since_grid == 0 or len(self.intervals) < 30):
+            self._grid_search()
+        self._since_grid = (self._since_grid + 1) % 10
+        info = self._solve(cfg.iterations)
+        self._recent_nis = (self._recent_nis + [info["nis"]])[-cfg.reset_frames:]
+        if len(self._recent_nis) == cfg.reset_frames and np.mean(self._recent_nis) > cfg.reset_nis:
+            # the visual and inertial motion disagree persistently (a visual-odometry failure, or a wrong estimate):
+            # start over from the current gravity direction and the learned-depth / current scale
+            self._reset()
+            return {"nis": info["nis"], "scale": self.scale, "log_std": self._log_std, "reset": True,
+                    "window": len(self.intervals)}
+        self._check_initialized()
+        return {"nis": info["nis"], "scale": self.scale, "log_std": self._log_std,
+                "speed": float(np.linalg.norm(self.v[-1])), "gravity_norm": float(np.linalg.norm(self.g)),
+                "accel_bias": self.b.round(4).tolist(), "window": len(self.intervals)}
+
+    # ------------------------------------------------------------------ the least-squares problem
+    def _stack(self, its):
+        """The intervals' data as arrays (n leading)."""
+        a = {k: np.stack([getattr(it, k) for it in its]) for k in ("R", "dv", "dp", "J_v", "J_p", "W_v", "z", "lever")}
+        a["dt"] = np.array([it.dt for it in its])
+        a["var_p"] = np.array([it.var_p for it in its])
+        a["sigma_u"] = np.array([it.sigma_u for it in its])
+        a["has_obs"] = np.array([it.obs is not None for it in its])
+        a["obs"] = np.array([it.obs if it.obs is not None else (0.0, 1.0) for it in its])
+        if not self.config.depth_prior_independent:
+            a["obs"][:, 1] *= max(int(a["has_obs"].sum()), 1)    # all observations of the window weigh as one
+        return a
+
+    def _local(self, a, v0, v1, l0, l1, g, b, fixed_scale=False):
+        """Whitened residuals (n, 8) and Jacobians (n, 8, 14) of every interval over its local variables
+        (v_k, l_k, v_k+1, l_k+1, g, b); rows: IMU (3), visual (3, Huber-weighted), drift, learned depth (0 if none).
+        Also returns the visual errors in sigmas."""
+        cfg = self.config
+        n = len(a["dt"])
+        dt = a["dt"]
+        I3 = np.eye(3)
+        r = np.zeros((n, 8))
+        J = np.zeros((n, 8, 14))
+        Rb = a["R"]
+        imu = v1 - v0 - g[None] * dt[:, None] - np.einsum("nij,nj->ni", Rb, a["dv"] - np.einsum("nij,j->ni", a["J_v"], b))
+        W = a["W_v"]
+        r[:, 0:3] = np.einsum("nij,nj->ni", W, imu)
+        J[:, 0:3, 4:7] = W
+        J[:, 0:3, 0:3] = -W
+        J[:, 0:3, 8:11] = -W * dt[:, None, None]
+        J[:, 0:3, 11:14] = np.einsum("nij,njk,nkl->nil", W, Rb, a["J_v"])
+        s_inv = np.exp(-l0)
+        mdisp = (v0 * dt[:, None] + 0.5 * g[None] * dt[:, None] ** 2
+                 + np.einsum("nij,nj->ni", Rb, a["dp"] - np.einsum("nij,j->ni", a["J_p"], b)) - a["lever"])
+        used = np.isfinite(a["sigma_u"])
+        sig = np.sqrt(np.where(used, a["sigma_u"], 1.0) ** 2 + s_inv ** 2 * a["var_p"])
+        res = a["z"] - s_inv[:, None] * mdisp
+        e = np.where(used, np.linalg.norm(res, axis=1) / sig, 0.0)
+        w = np.where(used, np.where(e <= cfg.huber, 1.0, np.sqrt(cfg.huber / np.maximum(e, 1e-12))) / sig, 0.0)
+        r[:, 3:6] = w[:, None] * res
+        if not fixed_scale:
+            J[:, 3:6, 3] = (w * s_inv)[:, None] * mdisp
+        ws = (w * s_inv)[:, None, None]
+        J[:, 3:6, 0:3] = -ws * dt[:, None, None] * I3
+        J[:, 3:6, 8:11] = -ws * 0.5 * dt[:, None, None] ** 2 * I3
+        J[:, 3:6, 11:14] = ws * np.einsum("nij,njk->nik", Rb, a["J_p"])
+        if not fixed_scale:
+            sd = cfg.scale_drift * np.sqrt(dt)
+            r[:, 6] = (l1 - l0) / sd
+            J[:, 6, 7], J[:, 6, 3] = 1 / sd, -1 / sd
+            so = np.sqrt(a["obs"][:, 1])
+            m = a["has_obs"].astype(float)
+            r[:, 7] = m * (l1 - a["obs"][:, 0]) / so
+            J[:, 7, 7] = m / so
+        return r, J, e
+
+    def _prior_rows(self, x_prior, fixed_scale=False):
+        """Residuals of the marginalization prior (or the start-up priors) over (v0, l0, g, b) (10 columns)."""
+        cfg = self.config
+        if self.prior is not None:
+            L, shift, x_lin = self.prior
+            J = L.T.copy()
+            if fixed_scale:
+                J[:, 3] = 0.0
+            return L.T @ (x_prior - x_lin + shift), J
+        J = np.zeros((6, 10))
+        J[:3, 4:7] = np.eye(3) / cfg.gravity_std
+        J[3:, 7:10] = np.eye(3) / cfg.accel_bias_std
+        return np.concatenate([(x_prior[4:7] - self.g0) / cfg.gravity_std, x_prior[7:10] / cfg.accel_bias_std]), J
+
+    def _normal(self, a, v, l, g, b, fixed_scale=False):
+        """Normal equations (H, gradient), cost and visual errors of the window (columns: v_0..v_n, l_0..l_n, g, b)."""
+        cfg = self.config
+        n = len(a["dt"])
+        m = 4 * (n + 1) + 6
+        ig, ib = 4 * (n + 1), 4 * (n + 1) + 3
+        r, J, e = self._local(a, v[:-1], v[1:], l[:-1], l[1:], g, b, fixed_scale)
+        k = np.arange(n)
+        idx = np.stack([3 * k, 3 * k + 1, 3 * k + 2, 3 * (n + 1) + k, 3 * k + 3, 3 * k + 4, 3 * k + 5,
+                        3 * (n + 1) + k + 1] + [np.full(n, ig + j) for j in range(3)]
+                       + [np.full(n, ib + j) for j in range(3)], axis=1)              # (n, 14)
+        H = np.zeros((m, m))
+        np.add.at(H, (idx[:, :, None], idx[:, None, :]), np.einsum("nri,nrj->nij", J, J))
+        grad = np.zeros(m)
+        np.add.at(grad, idx, np.einsum("nri,nr->ni", J, r))
+        cost = float((r ** 2).sum())
+        gn = float(np.linalg.norm(g))
+        jg = g / max(gn, 1e-9) / cfg.gravity_norm_std
+        rg = (gn - GRAVITY) / cfg.gravity_norm_std
+        H[ig:ig + 3, ig:ig + 3] += np.outer(jg, jg)
+        grad[ig:ig + 3] += jg * rg
+        cost += rg ** 2
+        cols = np.r_[0:3, 3 * (n + 1), ig:ig + 3, ib:ib + 3]
+        rp, Jp = self._prior_rows(np.concatenate([v[0], [l[0]], g, b]), fixed_scale)
+        H[np.ix_(cols, cols)] += Jp.T @ Jp
+        grad[cols] += Jp.T @ rp
+        cost += float(rp @ rp)
+        return H, grad, cost, e
+
+    def _split(self, x):
+        n = len(self.intervals)
+        return (x[:3 * (n + 1)].reshape(-1, 3), x[3 * (n + 1):4 * (n + 1)], x[4 * (n + 1):4 * (n + 1) + 3],
+                x[4 * (n + 1) + 3:4 * (n + 1) + 6])
+
+    def _solve(self, iterations):
+        a = self._stack(self.intervals)
+        x = np.concatenate([self.v.reshape(-1), self.l, self.g, self.b])
+        n = len(self.intervals)
+        damping = 1e-6
+        H, grad, cost, vis = self._normal(a, *self._split(x))
+        for _ in range(iterations):
+            step = np.linalg.solve(H + damping * np.diag(np.diag(H) + 1e-9), -grad)
+            x_new = x + step
+            H_new, grad_new, c_new, vis_new = self._normal(a, *self._split(x_new))
+            if c_new <= cost:
+                x, H, grad, vis, cost = x_new, H_new, grad_new, vis_new, c_new
+                damping = max(damping / 10, 1e-9)
+            else:
+                damping *= 10
+        v, l, g, b = self._split(x)
+        self.v, self.l, self.g, self.b = v.copy(), l.copy(), g.copy(), b.copy()
+        e = np.zeros(len(x))
+        e[3 * (n + 1) + n] = 1.0
+        try:
+            self._log_std = float(np.sqrt(max(np.linalg.solve(H + 1e-12 * np.eye(len(x)), e)[3 * (n + 1) + n], 0.0)))
+        except np.linalg.LinAlgError:
+            self._log_std = float("inf")
+        self.last_nis = float(vis[-1] ** 2) if len(vis) else float("nan")
+        self.gated += int(len(vis) > 0 and vis[-1] > self.config.huber)
+        return {"nis": self.last_nis, "cost": cost}
+
+    def _grid_search(self):
+        """Solve the window for constant log scales on a grid (linear in the rest up to |g|); start from the best."""
+        cfg = self.config
+        center = self.prior_log_scale[0] if self.prior_log_scale is not None else 0.0
+        grid = center + np.arange(-cfg.scale_prior_log_std, cfg.scale_prior_log_std + 1e-9, cfg.grid_step)
+        a = self._stack(self.intervals)
+        n = len(self.intervals)
+        x0 = np.concatenate([self.v.reshape(-1), self.l, self.g, self.b])
+        keep = np.r_[0:3 * (n + 1), 4 * (n + 1):4 * (n + 1) + 6]
+        best = None
+        for lg in grid:
+            x = x0.copy()
+            x[3 * (n + 1):4 * (n + 1)] = lg
+            for _ in range(2):           # linear for a fixed scale, up to the gravity norm: two Gauss-Newton steps
+                H, grad, _, _ = self._normal(a, *self._split(x), fixed_scale=True)
+                Hk = H[np.ix_(keep, keep)]
+                x[keep] += np.linalg.solve(Hk + 1e-9 * np.eye(len(keep)), -grad[keep])
+            _, _, c, _ = self._normal(a, *self._split(x), fixed_scale=True)
+            n_obs = 1 if cfg.depth_prior_independent else max(sum(it.obs is not None for it in self.intervals), 1)
+            c += sum((lg - it.obs[0]) ** 2 / (it.obs[1] * n_obs) for it in self.intervals if it.obs is not None)
+            if best is None or c < best[0]:
+                best = (c, x)
+        v, l, g, b = self._split(best[1])
+        self.v, self.l, self.g, self.b = v.copy(), l.copy(), g.copy(), b.copy()
+
+    def _marginalize_oldest(self):
+        """Drop v_0, l_0 and interval 0: their factors (prior, IMU, visual, drift) become a Gaussian prior on
+        (v_1, l_1, g, b) by the Schur complement, linearized at the current estimate."""
+        cfg = self.config
+        it = self.intervals[0]
+        a = self._stack(self.intervals[:1])
+        if not cfg.depth_prior_independent:
+            a["has_obs"][:] = False                              # the learned-depth prior is not carried on
+        r, J, _ = self._local(a, self.v[0:1], self.v[1:2], self.l[0:1], self.l[1:2], self.g, self.b)
+        r, J = r[0], J[0]
+        x_lin = np.concatenate([self.v[0], [self.l[0]], self.v[1], [self.l[1]], self.g, self.b])
+        sel = np.r_[0:4, 8:14]                                  # (v0, l0, g, b) among the 14 columns
+        rp, Jp = self._prior_rows(x_lin[sel])
+        full = np.zeros((len(rp), 14))
+        full[:, sel] = Jp
+        r, J = np.concatenate([r, rp]), np.vstack([J, full])
+        H, c = J.T @ J, J.T @ r
+        mi, ri = np.r_[0:4], np.r_[4:14]
+        K = H[np.ix_(ri, mi)] @ np.linalg.inv(H[np.ix_(mi, mi)] + 1e-9 * np.eye(4))
+        Hp = H[np.ix_(ri, ri)] - K @ H[np.ix_(mi, ri)]
+        cp = c[ri] - K @ c[mi]
+        Hp = 0.5 * (Hp + Hp.T) + 1e-9 * np.eye(10)
+        # cost 1/2 d^T Hp d + cp^T d: a Gaussian with mean x_lin - Hp^-1 cp; gravity and bias random walks over the
+        # interval are added to its covariance (variables v1 l1 g b: g at 4:7, b at 7:10)
+        mean = x_lin[ri] - np.linalg.solve(Hp, cp)
+        cov = np.linalg.inv(Hp)
+        cov[4:7, 4:7] += np.eye(3) * cfg.gravity_drift ** 2 * it.dt
+        cov[7:10, 7:10] += np.eye(3) * cfg.accel_bias_walk ** 2 * it.dt
+        Hp = np.linalg.inv(0.5 * (cov + cov.T))
+        L = np.linalg.cholesky(0.5 * (Hp + Hp.T))
+        self.prior = (L, np.zeros(10), mean)
+        self.intervals.pop(0)
+        self.v = self.v[1:]
+        self.l = self.l[1:]
+
+    def _check_initialized(self):
+        """The scale counts as known once its log std is below init_log_std: with a learned-depth prior at once, with
+        the IMU alone after at least 10 intervals of the window."""
+        if self.initialized or self._log_std >= self.config.init_log_std:
+            return
+        if self.prior_log_scale is not None or len(self.intervals) >= 10:
+            self.initialized = True
+
+    def _reset(self):
+        g_dir = self.g / max(np.linalg.norm(self.g), 1e-9)
+        scale = self.l[-1]
+        self.intervals = []
+        self.prior = None
+        self.g = GRAVITY * g_dir
+        self.g0 = self.g.copy()
+        self.b = np.zeros(3)
+        self.v = np.zeros((1, 3))
+        self.l = np.array([scale])
+        self._recent_nis = []
+        self._since_grid = 0
+        self.reinitializations += 1
+        # the scale stays usable (it was known before); its uncertainty restarts from the learned-depth prior level
+        self._log_std = max(self._log_std, self.config.depth_prior_std_floor)
+
+    def as_observation(self):
+        return _Observation(self.mean, self.uncertainty_variance)

@@ -78,6 +78,23 @@ CROSS fuses an odometry stream with its visual observations. Each dataset gives 
   perturbed with SNR 10 noise, seeded, as in the CROSS paper's noise study and in SimChange. It is marked *sim-odom* in the tables.
 - **SimChange**: simulated, SNR 10, seed 0 for the map session and seed 1 for queries.
 
+**IMU.** The monocular visual-inertial setups (CROSS mono with `--odometry vio`) get the IMU rigidly attached to the
+monocular camera, at its native rate, with its calibrated extrinsics and noise (`benchmark/datasets/prepare_imu.py`,
+written as `imu.txt` / `imu.json` next to the images):
+
+- **OpenLORIS**: the D435i IMU (gyroscope 400 Hz, accelerometer 250 Hz, the factory intrinsics of `sensors.yaml`
+  applied), extrinsics to the D435i colour camera from `trans_matrix.yaml`.
+- **KITTI**: the OXTS RT3003 accelerations and angular rates in the vehicle frame (`ax ay az`, `wx wy wz`), 10 Hz in the
+  synced drives; no velocities and no GPS. The OXTS timestamps jitter by ±5 ms, so the frames' times are the camera's
+  (`image_02/timestamps.txt`).
+- **ROVER**: the D435i IMU (about 270 Hz; Kalibr extrinsics and noise of `calib_d435i.yaml`). The dusk recording has no
+  D435i IMU and uses the VN-100 (66 Hz) with its calibrated extrinsics.
+- **SimChange**: simulated from the ground truth (C2 spline, 200 Hz) with the noise and bias of the D435i's IMU
+  (BMI055), seeded by the sequence name.
+
+The system calibrates the camera-IMU time offset and the gyroscope bias online (against its visual odometry); nothing is
+taken from the ground truth. IMU setups are marked ⁽ⁱ⁾ in the tables.
+
 Baselines that accept external odometry (RTAB-Map) get the same odometry stream; RTAB-Map also runs with its own visual
 odometry (`rtabmap_vo`). Visual(-inertial) systems (ORB-SLAM3,
 MASt3R-SLAM, VGGT-SLAM 2.0, DROID-SLAM) run on images only. The tables mark every system that uses odometry or IMU, so the
@@ -159,6 +176,8 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 | CROSS (VGGT-Omega) | stereo | visual odometry (DPVO, scale from stereo depth) | save / load map | `--mode stereo --odometry visual` |
 | CROSS (Depth Anything 3) | mono | external odometry | save / load map | `--mode mono --odometry external` |
 | CROSS (Depth Anything 3) | mono | visual odometry (DPVO + learned metric scale) | save / load map | `--mode mono --odometry visual` |
+| CROSS (VGGT-Omega mono) | mono | external odometry | save / load map | `--mode mono --mono-estimator ff` |
+| CROSS (VGGT-Omega mono) | mono | visual-inertial odometry (DPVO + IMU scale) | save / load map | `--mode mono --mono-estimator ff --odometry vio` |
 | ORB-SLAM3 | mono, stereo, RGB-D | none (visual) | atlas save / load, multi-map merge | [UZ-SLAMLab/ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) + `scripts/baselines/orbslam3_reloc.cc` |
 | RTAB-Map | RGB-D, stereo | same odometry as CROSS | database, localization mode | [introlab/rtabmap](https://github.com/introlab/rtabmap) + `scripts/baselines/rtabmap_reloc.cc`; every frame processed, `Mem/STMSize 30` (RTAB-Map's KITTI setting) |
 | RTAB-Map (visual odometry) | RGB-D, stereo | none: RTAB-Map's own visual odometry (frame-to-map, reset to the latest pose after a lost frame) | database, localization mode | as above, `rtabmap_reloc --vo` |

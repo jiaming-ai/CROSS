@@ -149,6 +149,9 @@ class StereoSequenceLoader(Dataloader):
             self.rgb_width, self.rgb_height = self._resize_cfg["final_w"], self._resize_cfg["final_h"]
         self._sgbm = SGBMDepth(self.orig_width) if depth_source == "sgbm" else None
         self.odom_vertical_world = self._world_vertical()
+        # the IMU rigidly attached to the left camera (imu.txt / imu.json of a prepared folder; cross/dataloader/imu.py)
+        from cross.dataloader.imu import ImuStream
+        self.imu = ImuStream.load(self.root, len(self.left_paths), self.fps) if (self.root / "calib.json").is_file() else None
 
     def _world_vertical(self) -> np.ndarray:
         """World vertical of the GT frame, for the heading-drift model: the camera axis whose world direction stays
@@ -263,6 +266,8 @@ class StereoSequenceLoader(Dataloader):
             right_dir = self.root / dirs[key]
             baseline = self.requested_baseline
         self.right_paths = sorted(right_dir.glob("*.png"))
+        if not right_dir.is_dir():          # a copy for the monocular setup holds the left images only
+            self.right_paths = [None] * len(self.left_paths)
         d = self.root / "depth"             # SimChange: depth/*.png (uint16 mm; current renders) or depth/*.npy (m, v1)
         self.depth_paths = (sorted(d.glob("*.png")) or sorted(d.glob("*.npy"))) if d.is_dir() else []
         assert len(self.left_paths) == len(self.right_paths) > 0
@@ -400,5 +405,7 @@ class StereoSequenceLoader(Dataloader):
                         d = self._noise_delta(d, self.left_c2w[j])
                     T = T @ d
                 item["delta_pose"] = T
+            if self.imu is not None:
+                item.update(self.imu.window(prev_idx, i), imu_calib=self.imu.calib)
             prev_idx = i
             yield item

@@ -5,9 +5,16 @@ Two independent choices define a run:
   mode      rgbd | stereo | mono     what the back end observes.  rgbd: RGB + depth, PnP relative poses; stereo: stereo
                                      pairs, feed-forward multi-view relative poses with stereo scale; mono: RGB only,
                                      learned metric depth and monocular two-view / feed-forward relative poses
-  odometry  external | visual        where the motion between frames comes from.  external: the dataset's odometry
+  odometry  external | visual | vio  where the motion between frames comes from.  external: the dataset's odometry
                                      (wheel, VIO, simulated); visual: DPVO visual odometry whose metric scale comes
-                                     from the mode's depth (sensor depth, stereo depth, or learned metric depth)
+                                     from the mode's depth (sensor depth, stereo depth, or learned metric depth);
+                                     vio (mono mode): DPVO with its metric scale from the IMU (cross/imu), learned depth
+                                     as an optional weak prior
+
+The mono mode has two back ends (mono_estimator): da3, the monocular system of cross/mono (learned metric depth,
+two-view / feed-forward DA3 relative poses), and ff, the stereo mode's feed-forward multi-view estimator (VGGT-Omega) on
+the single image, whose metric scale comes from the motion (the previous observation and the metric odometry between
+them) and from the map (pairs of retrieved keyframes with known relative pose) instead of a stereo pair.
 
 Every motion source feeds the same channel of the back end: a relative pose (and optionally its covariance) per frame,
 accumulated into the odometry chain of the pose graph.  With external odometry in the rgbd and stereo modes the
@@ -21,7 +28,8 @@ import copy
 import numpy as np
 
 MODES = ("rgbd", "stereo", "mono")
-ODOMETRY = ("external", "visual")
+ODOMETRY = ("external", "visual", "vio")
+MONO_ESTIMATORS = ("da3", "ff")
 
 
 def _inverse(T):
@@ -32,15 +40,19 @@ def _inverse(T):
 
 
 def restrict_inputs(frame: dict, mode: str, odometry: str) -> dict:
-    """The inputs a mode may use: mono sees no depth and no right image; visual odometry sees no odometry."""
+    """The inputs a mode may use: mono sees no depth and no right image; visual odometry sees no odometry; only
+    visual-inertial odometry sees the IMU."""
     out = dict(frame)
     if mode == "mono":
         out["depth"] = None
         out["rgb_right"] = None
     elif mode == "rgbd":
         out["rgb_right"] = None
-    if odometry == "visual":
+    if odometry in ("visual", "vio"):
         out["delta_pose"] = None
+    if odometry != "vio":
+        for key in ("imu", "imu_t0", "imu_t1", "imu_calib"):
+            out.pop(key, None)
     return out
 
 
@@ -95,6 +107,7 @@ class Pipeline:
         self.last_estimate = None
         self.last_mapping_seconds = 0.0
         self._frames = 0
+        self.continuous_start_in_map = False
 
     # ------------------------------------------------------------------ back-end passthroughs
     @property
@@ -116,6 +129,8 @@ class Pipeline:
             self.frontend.shutdown() if hasattr(self.frontend, "shutdown") else None
             self.frontend = self.frontend_factory()
         self.map_alignment, self.best_alignment, self.initialized = np.eye(4), np.eye(4), False
+        if self.frontend is not None and hasattr(self.frontend, "continuous_start"):
+            self.frontend.continuous_start = self.continuous_start_in_map
         self.mapper.load_map(str(path))
 
     # ------------------------------------------------------------------ one frame
@@ -123,6 +138,8 @@ class Pipeline:
         """Process one frame (loader dict: rgb, timestamp, and depth / rgb_right / delta_pose as the mode allows).
         (MonocularSystem.step(rgb, timestamp) is the monocular CLI's per-image entry point.)"""
         if self.frontend is None:
+            if self.mode == "mono":           # (rgbd / stereo: frames unchanged, as before the pipeline existed)
+                frame = restrict_inputs(frame, self.mode, self.odometry)
             self.mapper.step(obs=frame, data=frame)
             self.mapped_now = True
             return None
@@ -141,8 +158,11 @@ class Pipeline:
         estimate = frontend.track(frame) if hasattr(frontend, "track") else frontend.step(frame["rgb"], frame["timestamp"])
         start = perf_counter()
         valid = bool(estimate.diagnostics.get("valid", True))
+        # a frontend with a continuous start reports unknown motion (wide covariance) while it initializes: the back
+        # end may observe then (relocalization in a loaded map needs no metric motion)
+        observable = valid or bool(estimate.diagnostics.get("unknown_motion", False))
         index = getattr(frontend, "index", 1) - 1
-        map_now = valid and (not self.initialized or index % self.mapping_interval == 0)
+        map_now = observable and (not self.initialized or index % self.mapping_interval == 0)
         rgb = frame["rgb"]
         depth = right = None
         if map_now:
@@ -254,20 +274,71 @@ def visual_odometry_config(dpvo_checkpoint, seed=0, mask_people=False):
                       seed=seed, mask_people=mask_people, mask_interval=3, scale=scale)
 
 
+def mono_ff_config(cfg):
+    """The stereo mode's feed-forward estimator for the mono mode (in place): no stereo anchors; the metric scale of a
+    forward pass comes from the previous observation with the odometry between them and from pairs of references with
+    their relative pose in the map.  Observation cadence of the stereo mode (configs/stereo.yaml, the benchmark's
+    cross_stereo arguments)."""
+    from cross.core.config import PoseEstType
+    cfg.pose_est.type = PoseEstType.FF
+    ff = cfg.pose_est.ff
+    ff.use_curr_anchor = False
+    ff.n_ref_anchors = 0
+    ff.use_odom_anchor = True
+    ff.use_map_anchors = True
+    cfg.pose_est.obs_min_translation = 0.3
+    cfg.pose_est.obs_min_rotation = 0.15
+    cfg.pose_est.obs_max_interval_steps = 3
+    return cfg
+
+
 def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in_left=None, mono_config=None,
-                  vo_config=None, device="cuda", visualize=False) -> Pipeline:
+                  vo_config=None, device="cuda", visualize=False, mono_estimator: str = "da3",
+                  continuous_start: bool = True) -> Pipeline:
     """A fresh session (empty map; call load_map to relocalize in a stored one).
 
     camera: cross.core.types.Camera of the input images; system_config: SystemConfig (copied); mono_config: MonoConfig
-    of the mono mode (mono_config_from_profile); vo_config: MonoConfig of the visual odometry of the rgbd / stereo
-    modes (visual_odometry_config)."""
+    of the mono mode (mono_config_from_profile; with odometry vio, its imu.enabled is set); vo_config: MonoConfig of
+    the visual odometry of the rgbd / stereo modes (visual_odometry_config); mono_estimator: the mono mode's back end
+    (da3 | ff; ff needs system_config prepared by mono_ff_config)."""
     from cross.core.system import System
     from cross.core.types import Camera
-    if mode not in MODES or odometry not in ODOMETRY:
-        raise ValueError(f"Unknown mode / odometry: {mode} / {odometry}")
+    if mode not in MODES or odometry not in ODOMETRY or mono_estimator not in MONO_ESTIMATORS:
+        raise ValueError(f"Unknown mode / odometry / mono estimator: {mode} / {odometry} / {mono_estimator}")
+    if odometry == "vio" and mode != "mono":
+        raise ValueError("Visual-inertial odometry is implemented for the mono mode")
     K = np.array(camera.K, dtype=np.float64).copy()        # before System rescales camera.K to its storage size
     size = (int(camera.frame_width), int(camera.frame_height))
     cfg = copy.deepcopy(system_config)
+    mc = mono_config
+    if mode == "mono" and odometry == "vio":
+        if mc is None:
+            raise ValueError("The mono mode needs a mono_config (mono_config_from_profile)")
+        mc = copy.deepcopy(mc)
+        mc.imu.enabled = True
+
+    if mode == "mono" and mono_estimator == "ff":
+        system = System(visualize=visualize, debug=False, camera=Camera(K.copy(), *size), config=cfg)
+        if odometry == "external":
+            return Pipeline(system, None, 1, mode, odometry)
+        if mc is None or mc.frontend != "dpvo":
+            raise ValueError("The mono mode's visual odometry needs a mono_config with the dpvo frontend")
+        from cross.mono.dpvo_frontend import DPVOFrontend
+        from cross.mono.models import DA3MetricDepth
+        # learned metric depth only for DPVO's scale observations (the feed-forward back end needs no depth)
+        learned_scale = not (mc.imu.enabled and not mc.imu.depth_prior)
+        metric = _cached(("metric", mc.metric_model, mc.metric_resolution),
+                         lambda: DA3MetricDepth(mc.metric_model, device, mc.metric_resolution)) if learned_scale else None
+
+        def factory():
+            frontend = DPVOFrontend(K, mc, device, metric_model=metric, load_metric=learned_scale)
+            frontend.provide_mapping_depth = False
+            return frontend
+        pipeline = Pipeline(system, factory(), 1, mode, odometry, frontend_factory=factory)
+        # in a loaded map the feed-forward back end takes its scale from the map: it can relocalize while DPVO
+        # initializes (a new map waits for DPVO's metric trajectory, so that its first keyframes are placed right)
+        pipeline.continuous_start_in_map = continuous_start
+        return pipeline
 
     if mode in ("rgbd", "stereo"):
         system = System(visualize=visualize, debug=False, camera=Camera(K.copy(), *size), config=cfg,
@@ -283,11 +354,10 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
         return Pipeline(system, factory(), 1, mode, odometry, frontend_factory=factory)
 
     # mono
-    if mono_config is None:
+    if mc is None:
         raise ValueError("The mono mode needs a mono_config (mono_config_from_profile)")
     from cross.mono.models import DA3Geometry, DA3MetricDepth
     from cross.mono.system import MonocularSystem
-    mc = mono_config
     geometry = _cached(("geometry", mc.pose_model, mc.resolution), lambda: DA3Geometry(mc.pose_model, device, mc.resolution))
     metric = _cached(("metric", mc.metric_model, mc.metric_resolution),
                      lambda: DA3MetricDepth(mc.metric_model, device, mc.metric_resolution))
@@ -304,7 +374,7 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
     key = ("mono_pose_estimator", repr(mc))
     session = MonocularSystem(K, size, mc, system_config=cfg, device=device, frontend=factory(),
                               pose_estimator=_MODEL_CACHE.get(key), mono_defaults=True,
-                              external_odometry=odometry == "external")
+                              external_odometry=odometry == "external", odometry=odometry)
     _MODEL_CACHE[key] = session.mapper.pose_est
     session.mode, session.odometry = "mono", odometry
     session.frontend_factory = factory
@@ -319,7 +389,11 @@ def add_session_args(ap):
     ap.add_argument("--mode", choices=MODES, default=None,
                     help="sensor mode (default: the runner's own: rgbd for posed RGB-D, stereo / rgbd for --estimator ff / pnp)")
     ap.add_argument("--odometry", choices=ODOMETRY, default="external",
-                    help="external: the dataset's odometry; visual: DPVO visual odometry scaled by the mode's depth")
+                    help="external: the dataset's odometry; visual: DPVO visual odometry scaled by the mode's depth; "
+                         "vio (mono mode): DPVO scaled by the IMU (imu.txt / imu.json next to the images)")
+    ap.add_argument("--mono-estimator", choices=MONO_ESTIMATORS, default="da3",
+                    help="mono mode back end: da3 (learned metric depth, cross/mono) or ff (the stereo mode's "
+                         "VGGT-Omega multi-view estimator, metric scale from the odometry and the map)")
     ap.add_argument("--dpvo-checkpoint", default=os.environ.get("CROSS_DPVO_CHECKPOINT", "models/dpvo.pth"))
     ap.add_argument("--mono-profile", default="configs/mono_benchmark_10hz.json",
                     help="mono mode: cross.mono.run arguments (JSON with an 'arguments' list)")
@@ -332,13 +406,16 @@ def add_session_args(ap):
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):
     """A callable building fresh sessions for the runner's --mode / --odometry (one per map run or query trial)."""
     mode, odometry = args.mode, args.odometry
+    mono_estimator = getattr(args, "mono_estimator", "da3") if mode == "mono" else "da3"
     cfg = copy.deepcopy(system_config)
+    if mono_estimator == "ff":
+        mono_ff_config(cfg)
     mono_config = vo_config = None
     if mode == "mono":
         import shlex
-        extra = shlex.split(args.mono_args or "") + ["--seed", str(seed)]
-        mono_config = mono_config_from_profile(args.mono_profile, args.dpvo_checkpoint if odometry == "visual" else None,
-                                               extra)
+        extra = shlex.split(args.mono_args or "") + ["--seed", str(seed)] + (["--imu"] if odometry == "vio" else [])
+        mono_config = mono_config_from_profile(args.mono_profile,
+                                               args.dpvo_checkpoint if odometry in ("visual", "vio") else None, extra)
     elif odometry == "visual":
         # The back end keeps the odometry noise model of the mode (the depth-scaled DPVO drifts about as much as wheel
         # odometry, ~0.5 % on KITTI 07); the monocular DPVO noise constants (mapping.loop_closure.noise.odom_k_t = 1.0,
@@ -348,6 +425,6 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
 
     def make():
         return build_session(mode, odometry, camera, cfg, T_right_in_left=T_right_in_left, mono_config=mono_config,
-                             vo_config=vo_config, visualize=visualize)
+                             vo_config=vo_config, visualize=visualize, mono_estimator=mono_estimator)
     return make
 

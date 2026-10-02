@@ -130,6 +130,10 @@ def build_parser():
     parser.add_argument("--discontinuity-ncc", type=float, default=0.0,
                         help="dpvo frontend: bridge or restart across view jumps below this thumbnail correlation "
                              "(needs --retrieval-pose ff for the overlap check)")
+    parser.add_argument("--imu", action="store_true",
+                        help="dpvo frontend: metric scale from the IMU of the frames (visual-inertial odometry)")
+    parser.add_argument("--imu-config", action="append", default=[], metavar="KEY=VALUE",
+                        help="Override an ImuConfig entry (cross/imu/scale_filter.py), e.g. depth_prior=false")
     parser.add_argument("--cross-config", action="append", default=[], metavar="KEY=VALUE",
                         help="Override a CROSS SystemConfig entry, e.g. mapping.hypothesis.h0_informative_only=true")
     parser.add_argument("--seed", type=int, default=0)
@@ -137,8 +141,20 @@ def build_parser():
     return parser
 
 
+def imu_config_from_args(args):
+    import yaml
+    from cross.imu.scale_filter import ImuConfig
+    cfg = ImuConfig(enabled=bool(getattr(args, "imu", False)))
+    for item in getattr(args, "imu_config", None) or []:
+        key, _, value = item.partition("=")
+        if not hasattr(cfg, key.strip()):
+            raise ValueError(f"Unknown ImuConfig key: {key}")
+        setattr(cfg, key.strip(), yaml.safe_load(value))
+    return cfg
+
+
 def config_from_args(args):
-    return MonoConfig(frontend=args.frontend,
+    return MonoConfig(frontend=args.frontend, imu=imu_config_from_args(args),
                         seed=args.seed,
                         dpvo_metric_bootstrap=args.dpvo_metric_bootstrap,
                         rotation_tracker=args.rotation_tracker,

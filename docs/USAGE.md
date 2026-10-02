@@ -12,14 +12,32 @@ A run is two independent choices:
 | `rgbd` (default) | colour + depth | XFeat + LightGlue + PnP-RANSAC on keyframe depth | `install.sh` |
 | `stereo` | left + right image | VGGT-Omega (one forward pass), metric scale from the stereo baseline | `install.sh --stereo` |
 | `mono` | colour only | metric two-view matching, Depth Anything 3 as fallback | `install.sh --mono` |
+| `mono --mono-estimator ff` | colour only | VGGT-Omega as in the stereo mode, metric scale from the motion and the map | `install.sh --mono --stereo` |
 
 | `--odometry` | motion between frames |
 |---|---|
 | `external` (default) | the dataset's odometry (wheel, OXTS, or simulated from ground truth with `--snr`) |
 | `visual` | DPVO from the images; metric scale from the mode's depth (sensor, stereo, or learned for mono) |
+| `vio` (mono mode) | DPVO with its metric scale from the IMU (visual-inertial; learned depth as a prior) |
 
-All six combinations work. Visual odometry needs DPVO (`install.sh --mono`) and its weights in `models/dpvo.pth`
-(or `--dpvo-checkpoint`, env `CROSS_DPVO_CHECKPOINT`).
+All modes run with `external` and `visual`; `vio` is for the mono mode. Visual odometry needs DPVO (`install.sh
+--mono`) and its weights in `models/dpvo.pth` (or `--dpvo-checkpoint`, env `CROSS_DPVO_CHECKPOINT`).
+
+**Mono back ends.** `--mono-estimator da3` (default) is the monocular system of `cross/mono/` (learned metric depth,
+two-view matching, DA3 fallback). `--mono-estimator ff` uses the stereo mode's VGGT-Omega multi-view estimator on the
+single image; the metric scale of each forward pass comes from the previous observation and the (metric) odometry
+between the two, and from pairs of retrieved keyframes whose relative pose the map knows.
+
+**Visual-inertial odometry (`--odometry vio`).** The IMU must be rigidly attached to the camera. A sequence folder
+carries it as `imu.txt` (`t wx wy wz ax ay az`, IMU frame, rad/s and m/s², specific force including gravity) and
+`imu.json` (`T_cam_imu`: the IMU's pose in the camera frame; noise densities; optional `frame_times`: the file of the
+image timestamps on the IMU clock, default `times.txt`), see `cross/dataloader/imu.py`; `benchmark/datasets/prepare_imu.py`
+writes them for the benchmark datasets. DPVO tracks the images; a sliding-window estimate (`cross/imu/scale_filter.py`)
+finds the metric scale of DPVO's trajectory from the preintegrated IMU (velocity, gravity and accelerometer bias as
+unknowns, in a gyro-propagated frame so that DPVO's rotation drift does not tilt gravity), with learned depth (Depth
+Anything 3) as a prior; the gyro bias and the camera-IMU time offset are calibrated online against DPVO's rotations.
+The back end receives the metric DPVO motion as odometry, as with external odometry. Settings: `--mono-args "--imu-config
+key=value"` (fields of `ImuConfig`).
 
 ## 2. Run one sequence
 
@@ -29,6 +47,7 @@ python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo
 python run.py data/sim/lonemonk/map --mode stereo --baseline 0.3         # SimChange: which rendered baseline
 python run.py data/posed/home1-1 --loader posed --odometry visual        # RGB-D, no odometry input
 python run.py data/posed/home1-1 --loader posed --mode mono --odometry visual
+python run.py $BENCH_DATA/openloris/home1-1/rgbd --loader posed --mode mono --mono-estimator ff --odometry vio
 ```
 
 Useful flags: `--no-viz` (no Rerun window; use it on a server), `--frames N`, `--start N`, `--loader` (default:
@@ -106,6 +125,8 @@ A **system** is an entry of `benchmark/configs/systems.yaml`: its runner, setups
 | `cross_rgbd`, `cross_rgbd_vo` | CROSS RGB-D mode, external / visual odometry |
 | `cross_stereo`, `cross_stereo_vo` | CROSS stereo mode, external / visual odometry |
 | `cross_mono_odom`, `cross_mono` | CROSS mono mode, external / visual odometry |
+| `cross_mono_vio` | CROSS mono mode, visual-inertial odometry (IMU) |
+| `cross_mono_ff_odom`, `cross_mono_ff`, `cross_mono_ff_vio` | CROSS mono mode with VGGT-Omega (`--mono-estimator ff`), external / visual / visual-inertial odometry |
 | `orbslam3`, `rtabmap` | baselines (drivers in `scripts/baselines/`, built separately) |
 | `mast3r_slam`, `vggt_slam` | baselines without map persistence (map + query run as one stream) |
 

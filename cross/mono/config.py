@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 
+from cross.imu.scale_filter import ImuConfig
+
 
 @dataclass
 class ScaleConfig:
@@ -86,6 +88,8 @@ class MonoConfig:
     rotation_std_per_radian: float = 0.0
     max_relative_rotation: float = 1.2
     scale: ScaleConfig = field(default_factory=ScaleConfig)
+    # dpvo frontend: metric scale from the IMU (cross.imu.scale_filter; frames carry `imu`), learned depth optional
+    imu: ImuConfig = field(default_factory=ImuConfig)
     # 'dotted.path=value' overrides of the CROSS SystemConfig, applied after the monocular defaults
     cross_overrides: tuple = ()
 
@@ -105,6 +109,8 @@ class MonoConfig:
             raise ValueError('Unknown shared map geometry basis')
         if self.map_geometry_basis == 'factor' and not self.schmidt_map_geometry:
             raise ValueError('Persistent factor geometry requires Schmidt map geometry')
+        if self.imu.enabled and (self.frontend != "dpvo" or self.depth_input or self.scale.mode == "relative"):
+            raise ValueError("IMU scale is supported by the synchronous dpvo frontend without input depth")
         if self.depth_input and (self.frontend != "dpvo" or self.scale.mode == "relative"):
             raise ValueError("Input depth is supported by the synchronous dpvo frontend with a metric scale mode")
         if self.rotation_tracker not in {"none", "dpvo"}:

@@ -46,6 +46,7 @@ def row_label(sy, system, setup, dataset=None):
     if dataset == "kitti" and setup == "rgbd":
         s = "RGB-D*"
     odo = " ⁽ᵒ⁾" if sy[system].get("uses_odometry") else ""
+    odo += " ⁽ⁱ⁾" if sy[system].get("uses_imu") else ""
     return f"{lab} · {s}{odo}"
 
 
@@ -598,7 +599,8 @@ def main():
         "",
         f"Legend: `{PENDING}` not run yet, `{FAIL}` failed (crash, timeout or tracking completeness < 80 %), (xx%) completeness, "
         "⁽ᵒ⁾ the system uses the dataset's odometry (wheel odometry on OpenLORIS, OXTS dead reckoning on KITTI, "
-        "simulated on ROVER and SimChange), RGB-D* = left image + stereo-matched depth (KITTI).",
+        "simulated on ROVER and SimChange), ⁽ⁱ⁾ the system uses the IMU of the camera (simulated on SimChange), "
+        "RGB-D* = left image + stereo-matched depth (KITTI).",
         "",
         dataset_section(T.ds),
         "",

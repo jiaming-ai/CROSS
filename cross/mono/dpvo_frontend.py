@@ -14,6 +14,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 import torch
 
+from cross.imu import InertialScaleFilter, preintegrate
+
 from .config import MonoConfig
 from .frontend import MonoEstimate
 from .geometry import inverse, scale_translation_covariance
@@ -22,8 +24,13 @@ from .scale import LogScaleFilter, observe_sparse_scale
 from .scaled_motion import ScaledTranslation
 
 
+def _so3_log(R):
+    return Rotation.from_matrix(R).as_rotvec()
+
+
 class DPVOFrontend:
-    def __init__(self, K, config=None, device="cuda", geometry_model=None, external_masks=False, metric_model=None):
+    def __init__(self, K, config=None, device="cuda", geometry_model=None, external_masks=False, metric_model=None,
+                 load_metric=True):
         self.config = config or MonoConfig(frontend="dpvo")
         if not self.config.dpvo_checkpoint or not Path(self.config.dpvo_checkpoint).is_file():
             raise FileNotFoundError("Supply --dpvo-checkpoint pointing to released dpvo.pth")
@@ -32,10 +39,31 @@ class DPVOFrontend:
         self.device = device
         self.K = np.asarray(K).copy()
         self._geometry = geometry_model      # DA3 geometry, loaded on first use (not needed with input depth)
-        self.metric = None if self.config.scale.mode == "relative" or self.config.depth_input else (
+        # learned metric depth: scale observations (unless the IMU alone sets the scale) and mapping depth;
+        # load_metric=False for a back end that needs no depth with IMU-only scale
+        self.metric = None if self.config.scale.mode == "relative" or self.config.depth_input or not load_metric else (
             metric_model or DA3MetricDepth(self.config.metric_model, device, self.config.metric_resolution))
         self.depth_memory = {}               # input depth of the frames still eligible for scale observations
-        self.scale_filter = LogScaleFilter(self.config.scale)
+        # IMU scale (visual-inertial): the filter is created with the calibration of the first frame
+        self.inertial = bool(self.config.imu.enabled)
+        self.imu_calib = None
+        self.accel_history = []
+        self.prev_tracked = False
+        self.imu_queue = []
+        self._gyro_rotation = None
+        # continuous start (set by the pipeline for back ends that can observe without metric motion): frames before
+        # the metric trajectory is valid are reported as unknown motion instead of being withheld
+        self.continuous_start = False
+        self.output_valid = False
+        self.gyro_rejections = 0
+        self.gyro_bias = np.zeros(3)
+        self.bias_samples = []
+        self.gyro_world = None
+        self.imu_buffer = np.zeros((0, 7))
+        self.time_offset = 0.0              # camera clock = IMU clock + time_offset
+        self.time_offset_done = False
+        self.rate_log = []
+        self.scale_filter = self._new_scale_filter()
         self.tracker = None
         self.index = 0
         self.metric_pose = np.eye(4)
@@ -62,6 +90,20 @@ class DPVOFrontend:
         self.vo_cpu_rng = torch.Generator().manual_seed(self.config.seed).get_state()
         self.vo_cuda_rng = torch.Generator(device="cuda").manual_seed(self.config.seed).get_state()
 
+    def _new_scale_filter(self):
+        if not self.inertial:
+            return LogScaleFilter(self.config.scale)
+        if self.imu_calib is None:
+            return None
+        c = self.imu_calib
+        return InertialScaleFilter(self.config.imu, c.T_cam_imu, c.gyro_noise_density, c.accel_noise_density)
+
+    def _depth_units(self, tracker):
+        """Median patch depth of a recent keyframe (visual-odometry units): the scale of the visual noise."""
+        inverse = tracker.pg.patches_[max(0, tracker.n - 2), :, 2, 1, 1].float().cpu().numpy()
+        inverse = inverse[np.isfinite(inverse) & (inverse > 1e-6)]
+        return float(np.median(1.0 / inverse)) if len(inverse) else None
+
     @property
     def geometry(self):
         if self._geometry is None:
@@ -73,9 +115,18 @@ class DPVOFrontend:
         self._geometry = model
 
     def track(self, frame):
-        """Pipeline interface: one input frame (dict with rgb, timestamp and, with depth_input, depth)."""
+        """Pipeline interface: one input frame (dict with rgb, timestamp and, with depth_input, depth; with the IMU,
+        imu / imu_t0 / imu_t1 / imu_calib of cross.dataloader.imu)."""
+        imu = None
+        if self.inertial:
+            if frame.get("imu_calib") is None:
+                raise ValueError("IMU scale needs frames with an IMU stream (imu.txt / imu.json next to the images)")
+            if self.imu_calib is None:
+                self.imu_calib = frame["imu_calib"]
+                self.scale_filter = self._new_scale_filter()
+            imu = frame
         return self.step(frame["rgb"], frame["timestamp"],
-                         depth=frame.get("depth") if self.config.depth_input else None)
+                         depth=frame.get("depth") if self.config.depth_input else None, imu=imu)
 
     def input_index(self, tracker_stamp):
         """Input frame index of a tracker frame counter (the counter restarts with the tracker)."""
@@ -87,7 +138,10 @@ class DPVOFrontend:
         self.frame_offset = self.index + 1 if next_frame is None else next_frame
         self.gauge_origin = self.metric_pose.copy()
         self.scaled_translation = ScaledTranslation()
-        self.scale_filter = LogScaleFilter(self.config.scale)
+        self.scale_filter = self._new_scale_filter()
+        self.prev_tracked = False
+        self.imu_queue = []
+        self.gyro_world = None
         self.rgb_memory = {}
         self.depth_memory = {}
         self.restarts += 1
@@ -160,21 +214,21 @@ class DPVOFrontend:
             self.tracker.network.patchify = self.background_patchifier
 
     @torch.inference_mode()
-    def step(self, rgb, timestamp, exclusion_boxes=None, depth=None):
+    def step(self, rgb, timestamp, exclusion_boxes=None, depth=None, imu=None):
         # The pinned upstream extensions launch kernels on CUDA's default
         # stream. Keep their PyTorch allocations and consumers on that same
         # stream; CROSS may call us from its high-priority tracking stream.
         caller = torch.cuda.current_stream(self.device)
         native = torch.cuda.default_stream(self.device)
         if caller == native:
-            return self._step(rgb, timestamp, exclusion_boxes, depth)
+            return self._step(rgb, timestamp, exclusion_boxes, depth, imu)
         native.wait_stream(caller)
         with torch.cuda.stream(native):
-            result = self._step(rgb, timestamp, exclusion_boxes, depth)
+            result = self._step(rgb, timestamp, exclusion_boxes, depth, imu)
         caller.wait_stream(native)
         return result
 
-    def _step(self, rgb, timestamp, exclusion_boxes=None, depth=None):
+    def _step(self, rgb, timestamp, exclusion_boxes=None, depth=None, imu=None):
         if rgb.dtype != np.uint8 or rgb.ndim != 3 or rgb.shape[2] != 3:
             raise ValueError("Expected uint8 RGB")
         if not np.isfinite(timestamp) or (self.last_timestamp is not None and timestamp <= self.last_timestamp):
@@ -251,9 +305,20 @@ class DPVOFrontend:
             tracker.pg.patches_[slot, indices, 2] = inverse_depth[:, None, None]
             self.bootstrap_metric_calls += 1
             diagnostics["bootstrap_metric_seconds"] = perf_counter() - bootstrap_start
+        self._gyro_rotation = None
+        if self.inertial and imu is not None:
+            diagnostics["imu"] = self._inertial_step(imu, tracker, initialized)
+            if len(imu["imu"]) and imu["imu_t1"] > imu["imu_t0"]:
+                raw = np.asarray(imu["imu"], dtype=np.float64).copy()
+                raw[:, 1:4] -= self.gyro_bias
+                R_cb = self.imu_calib.T_cam_imu[:3, :3]
+                dR = preintegrate(raw, float(imu["imu_t0"]), float(imu["imu_t1"]), 0.0, 0.0).dR
+                self._gyro_rotation = R_cb @ dR @ R_cb.T
         # Only mature patch depths constrain metric scale. They belong to a
         # past image still in the active window; no future image enters inference.
         due = self.index - self.last_metric_index >= self.config.scale.interval
+        if self.inertial and not self.config.imu.depth_prior:
+            due = False
         if self.config.scale.mode == "initial" and self.scale_filter.initialized:
             due = False
         metric_seconds = 0.0
@@ -281,7 +346,9 @@ class DPVOFrontend:
                 metric_seconds = perf_counter() - metric_start
         delta = np.eye(4)
         unit_translation = None
-        if initialized:
+        valid_now = bool(diagnostics["valid"] and initialized and self.scale_filter.initialized)
+        hold = self.continuous_start and not valid_now     # unknown motion until the metric trajectory is valid
+        if initialized and not hold:
             current = self._pose_at(self.index)
             # The VO gauge is anchored at its first camera (internal loop
             # closures/normalization are disabled). Include local-BA corrections
@@ -295,6 +362,9 @@ class DPVOFrontend:
             # The first accepted scale anchors all motion accumulated so far.
             local[:3, 3] = self.scaled_translation.update(
                 current[:3, 3], self.scale_filter.scale if self.scale_filter.initialized else None)
+            if self.continuous_start and not self.output_valid:
+                # continue from the last reported pose: the motion before this frame was reported as unknown
+                self.gauge_origin = self.metric_pose @ inverse(local)
             next_metric = self.gauge_origin @ local
             delta = inverse(self.metric_pose) @ next_metric
             self.unit_pose = current
@@ -306,10 +376,21 @@ class DPVOFrontend:
                                            'metres' if self.scale_filter.initialized else 'unavailable'))
         covariance = np.diag([0.005**2] * 3 + [0.01**2] * 3)
         covariance[:3, :3] += scale_translation_covariance(delta[:3, 3], self.scale_filter.uncertainty_variance)
-        if not initialized:
+        if hold:
+            # continuous start: frames before the metric trajectory is valid carry unknown motion (the gyro's rotation
+            # when there is an IMU) with a wide covariance, so the back end can observe from the first frame
+            rotation_std = self.config.imu.unknown_motion_std[1]
+            if self._gyro_rotation is not None:
+                delta[:3, :3] = self._gyro_rotation
+                rotation_std = self.config.imu.unknown_motion_std[2]
+            self.metric_pose = self.metric_pose @ delta
+            covariance = np.diag([self.config.imu.unknown_motion_std[0] ** 2] * 3 + [rotation_std ** 2] * 3)
+        elif not initialized:
             covariance += np.eye(6)
         elif not diagnostics["valid"]:
             covariance += np.eye(6)
+        self.output_valid = bool(diagnostics["valid"])
+        diagnostics["unknown_motion"] = bool(hold)
         if bridge is not None:
             # the jump itself: learned relative pose (inflated uncertainty), or unknown motion
             T, covis = bridge
@@ -356,6 +437,97 @@ class DPVOFrontend:
         self.last_timestamp = timestamp
         self.index += 1
         return MonoEstimate(timestamp, self.metric_pose.copy(), delta, covariance, mapping_depth, diagnostics)
+
+    def _inertial_step(self, imu, tracker, initialized):
+        """Buffer the IMU samples and queue the last frame interval; intervals whose ends are tracked by DPVO enter the
+        inertial scale filter imu.lag_frames frames late, with the refined DPVO poses of both ends.
+
+        The filter works in a gyro-propagated world frame: the gyroscope (bias-corrected) carries the orientation from
+        interval to interval and DPVO contributes its displacement in its own camera frame, so a drift of DPVO's
+        global rotation (several degrees on some OpenLORIS sequences) does not tilt the gravity the filter sees.  The
+        gyro bias is the robust running median of (gyro - DPVO) rotation rates over intervals where both agree, and
+        the camera-IMU time offset is calibrated once from the same rates (time_offset_after intervals)."""
+        cfg = self.config.imu
+        c = self.imu_calib
+        samples = np.asarray(imu["imu"], dtype=np.float64)
+        t0, t1 = float(imu["imu_t0"]), float(imu["imu_t1"])
+        if len(samples):
+            if len(self.imu_buffer):
+                samples = samples[samples[:, 0] > self.imu_buffer[-1, 0]]
+            self.imu_buffer = np.concatenate([self.imu_buffer, samples])[-cfg.imu_buffer_samples:]
+        info = {}
+        if t1 > t0 and len(self.imu_buffer):
+            sel = (self.imu_buffer[:, 0] >= t0 - self.time_offset - 0.05) & (self.imu_buffer[:, 0] <= t1 - self.time_offset + 0.05)
+            if sel.any():
+                self.accel_history = (self.accel_history + [self.imu_buffer[sel, 4:7].mean(0)])[-20:]
+        tracked = bool(initialized and tracker is not None)
+        if tracked and self.prev_tracked and t1 > t0 and self.index - 1 >= self.frame_offset:
+            self.imu_queue.append((self.index - 1, t0, t1))
+        elif not tracked:
+            self.imu_queue = []
+            self.gyro_world = None
+        self.prev_tracked = tracked
+        f = self.scale_filter
+        R_cb = c.T_cam_imu[:3, :3]
+        while self.imu_queue and self.imu_queue[0][0] + 1 <= self.index - cfg.lag_frames:
+            i, a0, a1 = self.imu_queue.pop(0)
+            P_i, P_j = self._pose_at(i).astype(np.float64), self._pose_at(i + 1).astype(np.float64)
+            dR_vis = P_i[:3, :3].T @ P_j[:3, :3]                  # DPVO's rotation over the interval (camera frame)
+            self._calibrate_time_offset(a0, a1, R_cb.T @ dR_vis @ R_cb)
+            # the interval's samples on the camera clock (camera = IMU + offset), bias-corrected
+            buf = self.imu_buffer
+            lo = max(int(np.searchsorted(buf[:, 0] + self.time_offset, a0, side="right")) - 1, 0)
+            hi = min(int(np.searchsorted(buf[:, 0] + self.time_offset, a1, side="left")) + 1, len(buf))
+            corrected = buf[lo:hi].copy()
+            corrected[:, 0] += self.time_offset
+            corrected[:, 1:4] -= self.gyro_bias
+            pre = preintegrate(corrected, a0, a1, c.gyro_noise_density, c.accel_noise_density)
+            dR_gyro = R_cb @ pre.dR @ R_cb.T
+            rel = dR_gyro.T @ dR_vis
+            slip = float(np.degrees(np.arccos(np.clip((np.trace(rel) - 1) / 2, -1.0, 1.0))))
+            ok = slip <= cfg.gyro_check_deg
+            if ok and pre.dt > 0:
+                # gyro bias sample (IMU frame): the residual rotation rate of the gyro w.r.t. DPVO, plus the current bias
+                w_res = _so3_log(R_cb.T @ rel.T @ R_cb) / pre.dt
+                self.bias_samples = (self.bias_samples + [self.gyro_bias + w_res])[-cfg.gyro_bias_window:]
+                if len(self.bias_samples) >= 10:
+                    self.gyro_bias = np.median(np.asarray(self.bias_samples), axis=0)
+            self.gyro_rejections += int(not ok)
+            if self.gyro_world is None or self.gyro_world[0] != i:
+                self.gyro_world = (i, P_i[:3, :3].copy())          # (re)anchor the gyro frame at DPVO's rotation
+            R_gi = self.gyro_world[1]
+            R_gj = R_gi @ dR_gyro
+            self.gyro_world = (i + 1, R_gj)
+            z = R_gi @ (P_i[:3, :3].T @ (P_j[:3, 3] - P_i[:3, 3]))   # DPVO's displacement, camera frame i -> gyro world
+            if not f.started:
+                f.start(R_gi, np.mean(self.accel_history, axis=0))
+            info = f.step(pre, R_gi, R_gj, z, depth_units=self._depth_units(tracker), visual_ok=ok)
+            info.update(rotation_slip_deg=slip, gyro_rejections=self.gyro_rejections,
+                        gyro_bias=self.gyro_bias.round(5).tolist(), time_offset=self.time_offset)
+        return info
+
+    def _calibrate_time_offset(self, a0, a1, dR_vis_imu):
+        """Collect DPVO rotation rates (IMU frame); after time_offset_after intervals, the camera-IMU time offset that
+        best aligns the gyro with them (a grid over +-time_offset_max s), kept when it clearly beats no offset."""
+        cfg = self.config.imu
+        if self.time_offset_done or cfg.time_offset_after <= 0 or a1 <= a0:
+            return
+        self.rate_log.append((0.5 * (a0 + a1), _so3_log(dR_vis_imu) / (a1 - a0)))
+        if len(self.rate_log) < cfg.time_offset_after:
+            return
+        tm = np.array([r[0] for r in self.rate_log])
+        rates = np.array([r[1] for r in self.rate_log])
+        buf = self.imu_buffer
+        errs = []
+        for off in np.arange(-cfg.time_offset_max, cfg.time_offset_max + 1e-9, 0.005):
+            g = np.stack([np.interp(tm - off, buf[:, 0], buf[:, 1 + j]) for j in range(3)], axis=1) - self.gyro_bias
+            errs.append((float(np.sqrt(((g - rates) ** 2).sum(1).mean())), float(off)))
+        best = min(errs)
+        at_zero = min(errs, key=lambda e: abs(e[1]))
+        if best[0] < 0.85 * at_zero[0]:
+            self.time_offset = round(best[1], 3)
+        self.time_offset_done = True
+        self.rate_log = []
 
     def finalized_trajectory(self):
         """Return offline-refined unit poses; never overwrite causal outputs."""
