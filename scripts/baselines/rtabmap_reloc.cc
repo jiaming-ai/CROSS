@@ -1,13 +1,18 @@
 // RTAB-Map RGB-D mapping / localization driver for SimChange-style sequences.
 //
-//   rtabmap_reloc <sequence_dir> <odom.txt> <database.db> <out_poses.txt> [--localization] [--fps F] [--Param value ...]
+//   rtabmap_reloc <sequence_dir> <odom.txt> <database.db> <out_poses.txt> [--localization] [--vo] [--fps F] [--Param value ...]
 //
 // sequence_dir: left/*.png, depth_mm/*.png (16-bit millimetres), calib.json (fx fy cx cy read from calib_pinhole.txt)
 // odom.txt    : per-frame odometry camera-to-world (OpenCV convention), 16 values per row (noisy, as given to CROSS)
 // Mapping run : creates database.db (Mem/IncrementalMemory=true).
 // Localization: opens database.db read-only (Mem/IncrementalMemory=false, Mem/InitWMWithAllNodes=true).
+// --vo        : RTAB-Map's own visual odometry (Odom/Strategy, default frame-to-map) instead of odom.txt (still read for
+//               the frame count); after a frame without odometry it resets to its latest pose (Odom/ResetCountdown 1)
+//               and frames without odometry are written with state 0.
 // Every frame writes:  idx  state  t00 ... t33  (camera-to-world in the map frame; state 3 once localized)
 #include <rtabmap/core/Rtabmap.h>
+#include <rtabmap/core/Odometry.h>
+#include <rtabmap/core/OdometryInfo.h>
 #include <rtabmap/core/SensorData.h>
 #include <rtabmap/core/CameraModel.h>
 #include <rtabmap/core/StereoCameraModel.h>
@@ -20,6 +25,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -52,18 +58,20 @@ int main(int argc, char** argv) {
     ULogger::setType(ULogger::kTypeConsole);
     ULogger::setLevel(ULogger::kWarning);
     std::string seq = argv[1], odomFile = argv[2], db = argv[3], out = argv[4];
-    bool localization = false;
+    bool localization = false, visualOdometry = false;
     double fps = 10.0;
     std::string stereo_dir;          // stereo mode: directory with the right images (rectified, same intrinsics)
     double baseline = 0.0;
     for (int i = 5; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--localization") localization = true;
+        else if (a == "--vo") visualOdometry = true;
         else if (a == "--fps" && i + 1 < argc) fps = atof(argv[++i]);
         else if (a == "--stereo" && i + 2 < argc) { stereo_dir = argv[++i]; baseline = atof(argv[++i]); }
     }
     ParametersMap params = Parameters::parseArguments(argc, argv, true);
     params.insert(ParametersPair(Parameters::kRGBDEnabled(), "true"));
+    params.insert(ParametersPair(Parameters::kOdomResetCountdown(), "1"));   // (used by --vo only)
     params.insert(ParametersPair(Parameters::kMemIncrementalMemory(), localization ? "false" : "true"));
     if (localization) {
         params.insert(ParametersPair(Parameters::kMemInitWMWithAllNodes(), "true"));
@@ -113,7 +121,9 @@ int main(int argc, char** argv) {
     Transform optical = CameraModel::opticalRotation();       // base -> camera
     std::ofstream fo(out);
     fo << std::setprecision(9);
-    int nLoc = 0;
+    int nLoc = 0, nLost = 0;
+    std::unique_ptr<Odometry> vo(visualOdometry ? Odometry::create(params) : nullptr);
+    Transform lastOdom = Transform::getIdentity();
     for (size_t i = 0; i < left.size(); ++i) {
         cv::Mat rgb = cv::imread(left[i], cv::IMREAD_COLOR);
         SensorData data;
@@ -127,19 +137,37 @@ int main(int argc, char** argv) {
             data = SensorData(rgb, d16, model, (int)i + 1, i / fps);
         }
         Transform odomBase = odom[i] * optical.inverse();        // camera c2w -> base c2w
-        rtabmap.process(data, odomBase);
-        const Statistics& st = rtabmap.getStatistics();
-        int lc = st.loopClosureId() > 0 ? st.loopClosureId() : st.proximityDetectionId();
-        if (lc > 0) nLoc++;
-        bool localized = localization ? (nLoc > 0) : true;
+        int lc = 0;
+        bool tracked = true;
+        if (vo) {
+            OdometryInfo info;
+            Transform p = vo->process(data, &info);
+            tracked = !p.isNull();
+            if (tracked) {
+                odomBase = lastOdom = p;
+                rtabmap.process(data, odomBase, info.reg.covariance);
+            } else {
+                odomBase = lastOdom;
+                nLost++;
+            }
+        } else {
+            rtabmap.process(data, odomBase);
+        }
+        if (tracked) {
+            const Statistics& st = rtabmap.getStatistics();
+            lc = st.loopClosureId() > 0 ? st.loopClosureId() : st.proximityDetectionId();
+            if (lc > 0) nLoc++;
+        }
+        bool localized = tracked && (localization ? (nLoc > 0) : true);
         Transform mapPose = rtabmap.getMapCorrection() * odomBase * optical;   // camera c2w in map frame
         Eigen::Matrix4f M = mapPose.toEigen4f();
-        fo << i << " " << (localized ? 2 : 1);   // 2 = localized (same code as ORB-SLAM3 OK)
+        fo << i << " " << (localized ? 2 : tracked ? 1 : 0);   // 2 = localized (same code as ORB-SLAM3 OK), 0 = no odometry
         for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) fo << " " << M(r, c);
         fo << " " << lc << "\n";
         fo.flush();
     }
     std::cerr << "frames with a loop/proximity detection: " << nLoc << "/" << left.size() << "\n";
+    if (vo) std::cerr << "frames without visual odometry: " << nLost << "/" << left.size() << "\n";
     // final optimized graph (node id = frame index + 1): the mapping trajectory after all loop closures
     {
         std::map<int, Transform> poses;

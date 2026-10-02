@@ -288,6 +288,8 @@ def run_rtabmap(args, out: Path):
         b = args.baseline if args.baseline is not None else float(np.asarray(calib["T_right_in_left"])[0, 3])
         rd = calib["right_dirs"][f"{b:.2f}"] if args.baseline is not None else "right"
         extra = ["--stereo", rd, str(b)] + extra
+    if args.rtab_vo:
+        extra = ["--vo"] + extra          # RTAB-Map's own visual odometry instead of the given odometry
     rtab = binary("rtabmap_reloc")
     if not db.is_file() or not map_poses.is_file() or not _map_run_ok(out):
         if args.require_map:
@@ -376,6 +378,7 @@ def main():
     ap.add_argument("--trial-len", type=int, default=0)
     ap.add_argument("--trial-stride", type=int, default=None)
     ap.add_argument("--r-d", type=float, default=2.0)
+    ap.add_argument("--rtab-vo", action="store_true", help="RTAB-Map: its own visual odometry instead of the dataset odometry")
     ap.add_argument("--orb-sensor", choices=["stereo", "rgbd", "mono"], default="stereo", help="ORB-SLAM3 input")
     ap.add_argument("--map-only", action="store_true", help="map the map sequence only (single-session accuracy)")
     ap.add_argument("--keep-chunks", action="store_true", help="keep the per-trial symlink folders")

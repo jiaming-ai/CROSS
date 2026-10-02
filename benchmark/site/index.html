@@ -367,6 +367,7 @@ const SYS_STYLE = {
   "cross_mono_odom|mono": ["--c3", ""], "cross_mono|mono": ["--c3", "6 4"],
   "orbslam3|stereo": ["--c4", ""], "orbslam3|rgbd": ["--c4", "6 4"], "orbslam3|mono": ["--c4", "1.5 3"],
   "rtabmap|stereo": ["--c5", ""], "rtabmap|rgbd": ["--c5", "6 4"],
+  "rtabmap_vo|stereo": ["--c5", "1.5 3"], "rtabmap_vo|rgbd": ["--c5", "8 3 1.5 3"],
   "mast3r_slam|mono": ["--c6", ""], "vggt_slam|mono": ["--c7", ""]};
 const SETUP = {rgbd: "RGB-D", stereo: "stereo", mono: "mono"};
 const sysKey = r => `${r.system}|${r.setup}`;

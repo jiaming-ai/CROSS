@@ -93,10 +93,18 @@ orbslam3:
   skip: [kitti/rgbd]          # RGB-D* (stereo-matched depth) is a CROSS setup; baselines run KITTI in stereo
 
 rtabmap:
-  label: RTAB-Map
+  label: RTAB-Map (external odometry)
   runner: baseline
   setups: [rgbd, stereo]
   uses_odometry: true
+  map_reuse: database, localization mode
+  skip: [kitti/rgbd]
+
+rtabmap_vo:
+  label: RTAB-Map (visual odometry)
+  runner: baseline
+  setups: [rgbd, stereo]
+  uses_odometry: false
   map_reuse: database, localization mode
   skip: [kitti/rgbd]
 
