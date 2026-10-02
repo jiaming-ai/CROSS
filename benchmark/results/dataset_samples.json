@@ -1,0 +1,1391 @@
+{
+ "openloris": {
+  "office": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 260,
+     "tiles": [
+      {
+       "session": "office1-1",
+       "role": "map",
+       "frame": 260,
+       "img": "assets/datasets/openloris/office/f260/office1-1.jpg"
+      },
+      {
+       "session": "office1-3",
+       "role": "query",
+       "frame": 0,
+       "dist": 0.06,
+       "angle": 1.3,
+       "img": "assets/datasets/openloris/office/f260/office1-3.jpg"
+      },
+      {
+       "session": "office1-4",
+       "role": "query",
+       "frame": 0,
+       "dist": 0.24,
+       "angle": 19.7,
+       "img": "assets/datasets/openloris/office/f260/office1-4.jpg"
+      },
+      {
+       "session": "office1-6",
+       "role": "query",
+       "frame": 358,
+       "dist": 0.24,
+       "angle": 5.3,
+       "img": "assets/datasets/openloris/office/f260/office1-6.jpg"
+      }
+     ]
+    },
+    {
+     "aligned": true,
+     "frame": 80,
+     "tiles": [
+      {
+       "session": "office1-1",
+       "role": "map",
+       "frame": 80,
+       "img": "assets/datasets/openloris/office/f80/office1-1.jpg"
+      },
+      {
+       "session": "office1-5",
+       "role": "query",
+       "frame": 400,
+       "dist": 0.22,
+       "angle": 0.9,
+       "img": "assets/datasets/openloris/office/f80/office1-5.jpg"
+      },
+      {
+       "session": "office1-6",
+       "role": "query",
+       "frame": 182,
+       "dist": 0.23,
+       "angle": 0.4,
+       "img": "assets/datasets/openloris/office/f80/office1-6.jpg"
+      }
+     ]
+    }
+   ]
+  },
+  "corridor": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 1910,
+     "tiles": [
+      {
+       "session": "corridor1-1",
+       "role": "map",
+       "frame": 1910,
+       "img": "assets/datasets/openloris/corridor/f1910/corridor1-1.jpg"
+      },
+      {
+       "session": "corridor1-2",
+       "role": "query",
+       "frame": 928,
+       "dist": 0.37,
+       "angle": 0.0,
+       "img": "assets/datasets/openloris/corridor/f1910/corridor1-2.jpg"
+      },
+      {
+       "session": "corridor1-4",
+       "role": "query",
+       "frame": 4,
+       "dist": 0.55,
+       "angle": 7.9,
+       "img": "assets/datasets/openloris/corridor/f1910/corridor1-4.jpg"
+      },
+      {
+       "session": "corridor1-5",
+       "role": "query",
+       "frame": 756,
+       "dist": 0.11,
+       "angle": 1.5,
+       "img": "assets/datasets/openloris/corridor/f1910/corridor1-5.jpg"
+      }
+     ]
+    },
+    {
+     "aligned": true,
+     "frame": 1075,
+     "tiles": [
+      {
+       "session": "corridor1-1",
+       "role": "map",
+       "frame": 1075,
+       "img": "assets/datasets/openloris/corridor/f1075/corridor1-1.jpg"
+      },
+      {
+       "session": "corridor1-2",
+       "role": "query",
+       "frame": 257,
+       "dist": 0.01,
+       "angle": 2.5,
+       "img": "assets/datasets/openloris/corridor/f1075/corridor1-2.jpg"
+      },
+      {
+       "session": "corridor1-3",
+       "role": "query",
+       "frame": 286,
+       "dist": 0.08,
+       "angle": 6.3,
+       "img": "assets/datasets/openloris/corridor/f1075/corridor1-3.jpg"
+      },
+      {
+       "session": "corridor1-5",
+       "role": "query",
+       "frame": 377,
+       "dist": 0.18,
+       "angle": 4.0,
+       "img": "assets/datasets/openloris/corridor/f1075/corridor1-5.jpg"
+      }
+     ]
+    }
+   ]
+  },
+  "home": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 575,
+     "tiles": [
+      {
+       "session": "home1-1",
+       "role": "map",
+       "frame": 575,
+       "img": "assets/datasets/openloris/home/f575/home1-1.jpg"
+      },
+      {
+       "session": "home1-2",
+       "role": "query",
+       "frame": 347,
+       "dist": 0.06,
+       "angle": 2.9,
+       "img": "assets/datasets/openloris/home/f575/home1-2.jpg"
+      },
+      {
+       "session": "home1-3",
+       "role": "query",
+       "frame": 0,
+       "dist": 0.55,
+       "angle": 5.5,
+       "img": "assets/datasets/openloris/home/f575/home1-3.jpg"
+      },
+      {
+       "session": "home1-4",
+       "role": "query",
+       "frame": 614,
+       "dist": 0.05,
+       "angle": 7.6,
+       "img": "assets/datasets/openloris/home/f575/home1-4.jpg"
+      }
+     ]
+    },
+    {
+     "aligned": true,
+     "frame": 810,
+     "tiles": [
+      {
+       "session": "home1-1",
+       "role": "map",
+       "frame": 810,
+       "img": "assets/datasets/openloris/home/f810/home1-1.jpg"
+      },
+      {
+       "session": "home1-2",
+       "role": "query",
+       "frame": 579,
+       "dist": 0.1,
+       "angle": 7.6,
+       "img": "assets/datasets/openloris/home/f810/home1-2.jpg"
+      },
+      {
+       "session": "home1-3",
+       "role": "query",
+       "frame": 216,
+       "dist": 0.04,
+       "angle": 1.3,
+       "img": "assets/datasets/openloris/home/f810/home1-3.jpg"
+      }
+     ]
+    }
+   ]
+  },
+  "cafe": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 130,
+     "tiles": [
+      {
+       "session": "cafe1-1",
+       "role": "map",
+       "frame": 130,
+       "img": "assets/datasets/openloris/cafe/f130/cafe1-1.jpg"
+      },
+      {
+       "session": "cafe1-2",
+       "role": "query",
+       "frame": 91,
+       "dist": 0.15,
+       "angle": 1.2,
+       "img": "assets/datasets/openloris/cafe/f130/cafe1-2.jpg"
+      }
+     ]
+    },
+    {
+     "aligned": true,
+     "frame": 250,
+     "tiles": [
+      {
+       "session": "cafe1-1",
+       "role": "map",
+       "frame": 250,
+       "img": "assets/datasets/openloris/cafe/f250/cafe1-1.jpg"
+      },
+      {
+       "session": "cafe1-2",
+       "role": "query",
+       "frame": 189,
+       "dist": 0.38,
+       "angle": 0.5,
+       "img": "assets/datasets/openloris/cafe/f250/cafe1-2.jpg"
+      }
+     ]
+    }
+   ]
+  },
+  "market": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 10,
+     "tiles": [
+      {
+       "session": "market1-1",
+       "role": "map",
+       "frame": 10,
+       "img": "assets/datasets/openloris/market/f10/market1-1.jpg"
+      },
+      {
+       "session": "market1-2",
+       "role": "query",
+       "frame": 2438,
+       "dist": 0.96,
+       "angle": 1.5,
+       "img": "assets/datasets/openloris/market/f10/market1-2.jpg"
+      },
+      {
+       "session": "market1-3",
+       "role": "query",
+       "frame": 2749,
+       "dist": 0.99,
+       "angle": 4.6,
+       "img": "assets/datasets/openloris/market/f10/market1-3.jpg"
+      }
+     ]
+    },
+    {
+     "aligned": true,
+     "frame": 1495,
+     "tiles": [
+      {
+       "session": "market1-1",
+       "role": "map",
+       "frame": 1495,
+       "img": "assets/datasets/openloris/market/f1495/market1-1.jpg"
+      },
+      {
+       "session": "market1-2",
+       "role": "query",
+       "frame": 1989,
+       "dist": 0.66,
+       "angle": 21.0,
+       "img": "assets/datasets/openloris/market/f1495/market1-2.jpg"
+      },
+      {
+       "session": "market1-3",
+       "role": "query",
+       "frame": 2303,
+       "dist": 0.1,
+       "angle": 0.5,
+       "img": "assets/datasets/openloris/market/f1495/market1-3.jpg"
+      }
+     ]
+    },
+    {
+     "aligned": true,
+     "frame": 1960,
+     "tiles": [
+      {
+       "session": "market1-1",
+       "role": "map",
+       "frame": 1960,
+       "img": "assets/datasets/openloris/market/f1960/market1-1.jpg"
+      },
+      {
+       "session": "market1-2",
+       "role": "query",
+       "frame": 2355,
+       "dist": 0.29,
+       "angle": 2.7,
+       "img": "assets/datasets/openloris/market/f1960/market1-2.jpg"
+      },
+      {
+       "session": "market1-3",
+       "role": "query",
+       "frame": 2658,
+       "dist": 0.03,
+       "angle": 5.7,
+       "img": "assets/datasets/openloris/market/f1960/market1-3.jpg"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "rover": {
+  "campus_large": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 3860,
+     "tiles": [
+      {
+       "session": "campus_large_day_2024-09-25",
+       "role": "map",
+       "frame": 3860,
+       "img": "assets/datasets/rover/campus_large/f3860/campus_large_day_2024-09-25.jpg",
+       "label": "day",
+       "note": "2024-09-25, map"
+      },
+      {
+       "session": "campus_large_summer_2023-07-20",
+       "role": "query",
+       "frame": 2464,
+       "dist": 0.18,
+       "angle": 1.1,
+       "img": "assets/datasets/rover/campus_large/f3860/campus_large_summer_2023-07-20.jpg",
+       "label": "summer",
+       "note": "2023-07-20"
+      },
+      {
+       "session": "campus_large_autumn_2023-11-07",
+       "role": "query",
+       "frame": 7666,
+       "dist": 0.03,
+       "angle": 3.9,
+       "img": "assets/datasets/rover/campus_large/f3860/campus_large_autumn_2023-11-07.jpg",
+       "label": "autumn",
+       "note": "2023-11-07"
+      },
+      {
+       "session": "campus_large_winter_2024-01-27",
+       "role": "query",
+       "frame": 4168,
+       "dist": 0.01,
+       "angle": 2.1,
+       "img": "assets/datasets/rover/campus_large/f3860/campus_large_winter_2024-01-27.jpg",
+       "label": "winter",
+       "note": "2024-01-27"
+      },
+      {
+       "session": "campus_large_spring_2024-04-14",
+       "role": "query",
+       "frame": 5230,
+       "dist": 0.04,
+       "angle": 2.9,
+       "img": "assets/datasets/rover/campus_large/f3860/campus_large_spring_2024-04-14.jpg",
+       "label": "spring",
+       "note": "2024-04-14"
+      },
+      {
+       "session": "campus_large_dusk_2024-09-24_2",
+       "role": "query",
+       "frame": 3811,
+       "dist": 0.09,
+       "angle": 1.7,
+       "img": "assets/datasets/rover/campus_large/f3860/campus_large_dusk_2024-09-24_2.jpg",
+       "label": "dusk",
+       "note": "2024-09-24, dusk"
+      },
+      {
+       "session": "campus_large_night_2024-09-24_3",
+       "role": "query",
+       "frame": 3790,
+       "dist": 0.09,
+       "angle": 1.4,
+       "img": "assets/datasets/rover/campus_large/f3860/campus_large_night_2024-09-24_3.jpg",
+       "label": "night",
+       "note": "2024-09-24, night"
+      },
+      {
+       "session": "campus_large_night-light_2024-09-24_4",
+       "role": "query",
+       "frame": 3812,
+       "dist": 0.18,
+       "angle": 0.0,
+       "img": "assets/datasets/rover/campus_large/f3860/campus_large_night-light_2024-09-24_4.jpg",
+       "label": "night-light",
+       "note": "2024-09-24, night, with extra light (the grass in front of the robot is lit)"
+      }
+     ]
+    },
+    {
+     "aligned": true,
+     "frame": 500,
+     "tiles": [
+      {
+       "session": "campus_large_day_2024-09-25",
+       "role": "map",
+       "frame": 500,
+       "img": "assets/datasets/rover/campus_large/f500/campus_large_day_2024-09-25.jpg",
+       "label": "day",
+       "note": "2024-09-25, map"
+      },
+      {
+       "session": "campus_large_summer_2023-07-20",
+       "role": "query",
+       "frame": 523,
+       "dist": 0.11,
+       "angle": 2.1,
+       "img": "assets/datasets/rover/campus_large/f500/campus_large_summer_2023-07-20.jpg",
+       "label": "summer",
+       "note": "2023-07-20"
+      },
+      {
+       "session": "campus_large_autumn_2023-11-07",
+       "role": "query",
+       "frame": 6090,
+       "dist": 0.06,
+       "angle": 0.6,
+       "img": "assets/datasets/rover/campus_large/f500/campus_large_autumn_2023-11-07.jpg",
+       "label": "autumn",
+       "note": "2023-11-07"
+      },
+      {
+       "session": "campus_large_winter_2024-01-27",
+       "role": "query",
+       "frame": 721,
+       "dist": 0.46,
+       "angle": 0.1,
+       "img": "assets/datasets/rover/campus_large/f500/campus_large_winter_2024-01-27.jpg",
+       "label": "winter",
+       "note": "2024-01-27"
+      },
+      {
+       "session": "campus_large_spring_2024-04-14",
+       "role": "query",
+       "frame": 473,
+       "dist": 0.14,
+       "angle": 0.4,
+       "img": "assets/datasets/rover/campus_large/f500/campus_large_spring_2024-04-14.jpg",
+       "label": "spring",
+       "note": "2024-04-14"
+      },
+      {
+       "session": "campus_large_dusk_2024-09-24_2",
+       "role": "query",
+       "frame": 469,
+       "dist": 0.15,
+       "angle": 0.2,
+       "img": "assets/datasets/rover/campus_large/f500/campus_large_dusk_2024-09-24_2.jpg",
+       "label": "dusk",
+       "note": "2024-09-24, dusk"
+      },
+      {
+       "session": "campus_large_night_2024-09-24_3",
+       "role": "query",
+       "frame": 461,
+       "dist": 0.36,
+       "angle": 0.7,
+       "img": "assets/datasets/rover/campus_large/f500/campus_large_night_2024-09-24_3.jpg",
+       "label": "night",
+       "note": "2024-09-24, night"
+      },
+      {
+       "session": "campus_large_night-light_2024-09-24_4",
+       "role": "query",
+       "frame": 473,
+       "dist": 0.1,
+       "angle": 2.8,
+       "img": "assets/datasets/rover/campus_large/f500/campus_large_night-light_2024-09-24_4.jpg",
+       "label": "night-light",
+       "note": "2024-09-24, night, with extra light (the grass in front of the robot is lit)"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "simchange": {
+  "hssd_house": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 885,
+     "tiles": [
+      {
+       "session": "hssd_house/map",
+       "role": "map",
+       "frame": 885,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_map.jpg",
+       "family": "map",
+       "label": "map"
+      },
+      {
+       "session": "hssd_house/rearr_10",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_10.jpg",
+       "changed_px": 0.072,
+       "diff": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_10_diff.jpg",
+       "family": "objects",
+       "label": "10 % rearranged"
+      },
+      {
+       "session": "hssd_house/rearr_25",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_25.jpg",
+       "changed_px": 0.106,
+       "diff": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_25_diff.jpg",
+       "family": "objects",
+       "label": "25 % rearranged"
+      },
+      {
+       "session": "hssd_house/rearr_50",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50.jpg",
+       "changed_px": 0.138,
+       "diff": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50_diff.jpg",
+       "family": "objects",
+       "label": "50 % rearranged"
+      },
+      {
+       "session": "hssd_house/rearr_75",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_75.jpg",
+       "changed_px": 0.132,
+       "diff": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_75_diff.jpg",
+       "family": "objects",
+       "label": "75 % rearranged"
+      },
+      {
+       "session": "hssd_house/rearr_100",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_100.jpg",
+       "changed_px": 0.194,
+       "diff": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_100_diff.jpg",
+       "family": "objects",
+       "label": "100 % rearranged"
+      },
+      {
+       "session": "hssd_house/rearr_50_s1",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50_s1.jpg",
+       "changed_px": 0.125,
+       "diff": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50_s1_diff.jpg",
+       "family": "objects",
+       "label": "50 % rearranged, seed 1"
+      },
+      {
+       "session": "hssd_house/rearr_50_s2",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50_s2.jpg",
+       "changed_px": 0.205,
+       "diff": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50_s2_diff.jpg",
+       "family": "objects",
+       "label": "50 % rearranged, seed 2"
+      },
+      {
+       "session": "hssd_house/rearr_50_remove",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50_remove.jpg",
+       "changed_px": 0.093,
+       "diff": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50_remove_diff.jpg",
+       "family": "objects",
+       "label": "50 % removed"
+      },
+      {
+       "session": "hssd_house/rearr_50_relocate",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50_relocate.jpg",
+       "changed_px": 0.175,
+       "diff": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50_relocate_diff.jpg",
+       "family": "objects",
+       "label": "50 % relocated"
+      },
+      {
+       "session": "hssd_house/light_morning",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_light_morning.jpg",
+       "family": "light",
+       "label": "morning light"
+      },
+      {
+       "session": "hssd_house/light_evening",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_light_evening.jpg",
+       "family": "light",
+       "label": "evening light"
+      },
+      {
+       "session": "hssd_house/light_night",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_light_night.jpg",
+       "family": "light",
+       "label": "night light"
+      },
+      {
+       "session": "hssd_house/light_overcast",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_light_overcast.jpg",
+       "family": "light",
+       "label": "overcast light"
+      },
+      {
+       "session": "hssd_house/offset_1.0",
+       "role": "query",
+       "frame": 832,
+       "dist": 0.33,
+       "angle": 8.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_offset_1.0.jpg",
+       "family": "view",
+       "label": "1.0 m sideways"
+      },
+      {
+       "session": "hssd_house/yaw_45",
+       "role": "query",
+       "frame": 790,
+       "dist": 0.37,
+       "angle": 2.5,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_yaw_45.jpg",
+       "family": "view",
+       "label": "turned 45\u00b0"
+      },
+      {
+       "session": "hssd_house/reverse",
+       "role": "query",
+       "frame": 193,
+       "dist": 0.01,
+       "angle": 165.9,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_reverse.jpg",
+       "family": "route",
+       "label": "opposite direction"
+      },
+      {
+       "session": "hssd_house/half",
+       "role": "query",
+       "frame": 261,
+       "dist": 0.1,
+       "angle": 2.2,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_half.jpg",
+       "family": "route",
+       "label": "second half only"
+      },
+      {
+       "session": "hssd_house/rearr_50+light_night",
+       "role": "query",
+       "frame": 797,
+       "dist": 0.02,
+       "angle": 1.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50+light_night.jpg",
+       "family": "combo",
+       "label": "50 % rearranged + night light"
+      },
+      {
+       "session": "hssd_house/rearr_50+offset_1.0+light_overcast",
+       "role": "query",
+       "frame": 832,
+       "dist": 0.33,
+       "angle": 8.1,
+       "img": "assets/datasets/simchange/hssd_house/f885/hssd_house_rearr_50+offset_1.0+light_overcast.jpg",
+       "family": "combo",
+       "label": "50 % rearranged + 1.0 m sideways + overcast light"
+      }
+     ]
+    }
+   ]
+  },
+  "hssd_restaurant": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 1070,
+     "tiles": [
+      {
+       "session": "hssd_restaurant/map",
+       "role": "map",
+       "frame": 1070,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_map.jpg",
+       "family": "map",
+       "label": "map"
+      },
+      {
+       "session": "hssd_restaurant/rearr_10",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_10.jpg",
+       "changed_px": 0.014,
+       "diff": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_10_diff.jpg",
+       "family": "objects",
+       "label": "10 % rearranged"
+      },
+      {
+       "session": "hssd_restaurant/rearr_25",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_25.jpg",
+       "changed_px": 0.01,
+       "diff": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_25_diff.jpg",
+       "family": "objects",
+       "label": "25 % rearranged"
+      },
+      {
+       "session": "hssd_restaurant/rearr_50",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50.jpg",
+       "changed_px": 0.063,
+       "diff": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50_diff.jpg",
+       "family": "objects",
+       "label": "50 % rearranged"
+      },
+      {
+       "session": "hssd_restaurant/rearr_75",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_75.jpg",
+       "changed_px": 0.087,
+       "diff": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_75_diff.jpg",
+       "family": "objects",
+       "label": "75 % rearranged"
+      },
+      {
+       "session": "hssd_restaurant/rearr_100",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_100.jpg",
+       "changed_px": 0.143,
+       "diff": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_100_diff.jpg",
+       "family": "objects",
+       "label": "100 % rearranged"
+      },
+      {
+       "session": "hssd_restaurant/rearr_50_s1",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50_s1.jpg",
+       "changed_px": 0.027,
+       "diff": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50_s1_diff.jpg",
+       "family": "objects",
+       "label": "50 % rearranged, seed 1"
+      },
+      {
+       "session": "hssd_restaurant/rearr_50_s2",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50_s2.jpg",
+       "changed_px": 0.04,
+       "diff": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50_s2_diff.jpg",
+       "family": "objects",
+       "label": "50 % rearranged, seed 2"
+      },
+      {
+       "session": "hssd_restaurant/rearr_50_remove",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50_remove.jpg",
+       "changed_px": 0.035,
+       "diff": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50_remove_diff.jpg",
+       "family": "objects",
+       "label": "50 % removed"
+      },
+      {
+       "session": "hssd_restaurant/rearr_50_relocate",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50_relocate.jpg",
+       "changed_px": 0.034,
+       "diff": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50_relocate_diff.jpg",
+       "family": "objects",
+       "label": "50 % relocated"
+      },
+      {
+       "session": "hssd_restaurant/light_morning",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_light_morning.jpg",
+       "family": "light",
+       "label": "morning light"
+      },
+      {
+       "session": "hssd_restaurant/light_evening",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_light_evening.jpg",
+       "family": "light",
+       "label": "evening light"
+      },
+      {
+       "session": "hssd_restaurant/light_night",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_light_night.jpg",
+       "family": "light",
+       "label": "night light"
+      },
+      {
+       "session": "hssd_restaurant/light_overcast",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_light_overcast.jpg",
+       "family": "light",
+       "label": "overcast light"
+      },
+      {
+       "session": "hssd_restaurant/offset_1.0",
+       "role": "query",
+       "frame": 1258,
+       "dist": 0.6,
+       "angle": 0.1,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_offset_1.0.jpg",
+       "family": "view",
+       "label": "1.0 m sideways"
+      },
+      {
+       "session": "hssd_restaurant/reverse",
+       "role": "query",
+       "frame": 139,
+       "dist": 0.06,
+       "angle": 178.9,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_reverse.jpg",
+       "family": "route",
+       "label": "opposite direction"
+      },
+      {
+       "session": "hssd_restaurant/half",
+       "role": "query",
+       "frame": 474,
+       "dist": 0.0,
+       "angle": 0.6,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_half.jpg",
+       "family": "route",
+       "label": "second half only"
+      },
+      {
+       "session": "hssd_restaurant/rearr_50+light_night",
+       "role": "query",
+       "frame": 1070,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50+light_night.jpg",
+       "family": "combo",
+       "label": "50 % rearranged + night light"
+      },
+      {
+       "session": "hssd_restaurant/rearr_50+reverse",
+       "role": "query",
+       "frame": 194,
+       "dist": 0.45,
+       "angle": 1.9,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50+reverse.jpg",
+       "family": "combo",
+       "label": "50 % rearranged + opposite direction"
+      },
+      {
+       "session": "hssd_restaurant/rearr_100+light_evening+reverse",
+       "role": "query",
+       "frame": 194,
+       "dist": 0.45,
+       "angle": 1.9,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_100+light_evening+reverse.jpg",
+       "family": "combo",
+       "label": "100 % rearranged + evening light + opposite direction"
+      },
+      {
+       "session": "hssd_restaurant/rearr_50+offset_1.0+light_overcast",
+       "role": "query",
+       "frame": 1258,
+       "dist": 0.6,
+       "angle": 0.1,
+       "img": "assets/datasets/simchange/hssd_restaurant/f1070/hssd_restaurant_rearr_50+offset_1.0+light_overcast.jpg",
+       "family": "combo",
+       "label": "50 % rearranged + 1.0 m sideways + overcast light"
+      }
+     ]
+    }
+   ]
+  },
+  "classroom": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 60,
+     "tiles": [
+      {
+       "session": "classroom/map",
+       "role": "map",
+       "frame": 60,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_map.jpg",
+       "family": "map",
+       "label": "map"
+      },
+      {
+       "session": "classroom/light_morning",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_light_morning.jpg",
+       "family": "light",
+       "label": "morning light"
+      },
+      {
+       "session": "classroom/light_noon",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_light_noon.jpg",
+       "family": "light",
+       "label": "noon light"
+      },
+      {
+       "session": "classroom/light_afternoon",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_light_afternoon.jpg",
+       "family": "light",
+       "label": "afternoon light"
+      },
+      {
+       "session": "classroom/light_evening",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_light_evening.jpg",
+       "family": "light",
+       "label": "evening light"
+      },
+      {
+       "session": "classroom/light_night",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_light_night.jpg",
+       "family": "light",
+       "label": "night light"
+      },
+      {
+       "session": "classroom/light_overcast",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_light_overcast.jpg",
+       "family": "light",
+       "label": "overcast light"
+      },
+      {
+       "session": "classroom/move_25",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_move_25.jpg",
+       "changed_px": 0.043,
+       "diff": "assets/datasets/simchange/classroom/f60/classroom_move_25_diff.jpg",
+       "family": "objects",
+       "label": "25 % moved"
+      },
+      {
+       "session": "classroom/move_50",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_move_50.jpg",
+       "changed_px": 0.011,
+       "diff": "assets/datasets/simchange/classroom/f60/classroom_move_50_diff.jpg",
+       "family": "objects",
+       "label": "50 % moved"
+      },
+      {
+       "session": "classroom/move_100",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_move_100.jpg",
+       "changed_px": 0.016,
+       "diff": "assets/datasets/simchange/classroom/f60/classroom_move_100_diff.jpg",
+       "family": "objects",
+       "label": "100 % moved"
+      },
+      {
+       "session": "classroom/remove_50",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_remove_50.jpg",
+       "changed_px": 0.01,
+       "diff": "assets/datasets/simchange/classroom/f60/classroom_remove_50_diff.jpg",
+       "family": "objects",
+       "label": "50 % removed"
+      },
+      {
+       "session": "classroom/background",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_background.jpg",
+       "family": "background",
+       "label": "other materials"
+      },
+      {
+       "session": "classroom/offset_0.5",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.32,
+       "angle": 3.2,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_offset_0.5.jpg",
+       "family": "view",
+       "label": "0.5 m sideways"
+      },
+      {
+       "session": "classroom/offset_1.0",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.32,
+       "angle": 3.1,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_offset_1.0.jpg",
+       "family": "view",
+       "label": "1.0 m sideways"
+      },
+      {
+       "session": "classroom/height_0.4",
+       "role": "query",
+       "frame": 60,
+       "dist": 0.4,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_height_0.4.jpg",
+       "family": "view",
+       "label": "camera at 0.4 m"
+      },
+      {
+       "session": "classroom/yaw_15",
+       "role": "query",
+       "frame": 63,
+       "dist": 0.3,
+       "angle": 0.3,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_yaw_15.jpg",
+       "family": "view",
+       "label": "turned 15\u00b0"
+      },
+      {
+       "session": "classroom/yaw_30",
+       "role": "query",
+       "frame": 65,
+       "dist": 0.49,
+       "angle": 2.6,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_yaw_30.jpg",
+       "family": "view",
+       "label": "turned 30\u00b0"
+      },
+      {
+       "session": "classroom/yaw_45",
+       "role": "query",
+       "frame": 66,
+       "dist": 0.59,
+       "angle": 2.4,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_yaw_45.jpg",
+       "family": "view",
+       "label": "turned 45\u00b0"
+      },
+      {
+       "session": "classroom/reverse",
+       "role": "query",
+       "frame": 80,
+       "dist": 0.04,
+       "angle": 177.4,
+       "img": "assets/datasets/simchange/classroom/f60/classroom_reverse.jpg",
+       "family": "route",
+       "label": "opposite direction"
+      }
+     ]
+    }
+   ]
+  },
+  "lonemonk": {
+   "places": [
+    {
+     "aligned": true,
+     "frame": 180,
+     "tiles": [
+      {
+       "session": "lonemonk/map",
+       "role": "map",
+       "frame": 180,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_map.jpg",
+       "family": "map",
+       "label": "map"
+      },
+      {
+       "session": "lonemonk/light_morning",
+       "role": "query",
+       "frame": 180,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_light_morning.jpg",
+       "family": "light",
+       "label": "morning light"
+      },
+      {
+       "session": "lonemonk/light_evening",
+       "role": "query",
+       "frame": 180,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_light_evening.jpg",
+       "family": "light",
+       "label": "evening light"
+      },
+      {
+       "session": "lonemonk/light_night",
+       "role": "query",
+       "frame": 180,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_light_night.jpg",
+       "family": "light",
+       "label": "night light"
+      },
+      {
+       "session": "lonemonk/light_overcast",
+       "role": "query",
+       "frame": 180,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_light_overcast.jpg",
+       "family": "light",
+       "label": "overcast light"
+      },
+      {
+       "session": "lonemonk/move_50",
+       "role": "query",
+       "frame": 180,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_move_50.jpg",
+       "changed_px": 0.024,
+       "diff": "assets/datasets/simchange/lonemonk/f180/lonemonk_move_50_diff.jpg",
+       "family": "objects",
+       "label": "50 % moved"
+      },
+      {
+       "session": "lonemonk/background",
+       "role": "query",
+       "frame": 180,
+       "dist": 0.0,
+       "angle": 0.0,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_background.jpg",
+       "family": "background",
+       "label": "other materials"
+      },
+      {
+       "session": "lonemonk/yaw_45",
+       "role": "query",
+       "frame": 559,
+       "dist": 0.6,
+       "angle": 0.6,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_yaw_45.jpg",
+       "family": "view",
+       "label": "turned 45\u00b0"
+      },
+      {
+       "session": "lonemonk/reverse",
+       "role": "query",
+       "frame": 502,
+       "dist": 0.03,
+       "angle": 179.6,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_reverse.jpg",
+       "family": "route",
+       "label": "opposite direction"
+      },
+      {
+       "session": "lonemonk/half",
+       "role": "query",
+       "frame": 237,
+       "dist": 0.32,
+       "angle": 3.3,
+       "img": "assets/datasets/simchange/lonemonk/f180/lonemonk_half.jpg",
+       "family": "route",
+       "label": "second half only"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "kitti": [
+  {
+   "session": "00",
+   "frame": 2270,
+   "img": "assets/datasets/kitti/00.jpg"
+  },
+  {
+   "session": "01",
+   "frame": 550,
+   "img": "assets/datasets/kitti/01.jpg"
+  },
+  {
+   "session": "02",
+   "frame": 2330,
+   "img": "assets/datasets/kitti/02.jpg"
+  },
+  {
+   "session": "04",
+   "frame": 135,
+   "img": "assets/datasets/kitti/04.jpg"
+  },
+  {
+   "session": "05",
+   "frame": 1380,
+   "img": "assets/datasets/kitti/05.jpg"
+  },
+  {
+   "session": "06",
+   "frame": 550,
+   "img": "assets/datasets/kitti/06.jpg"
+  },
+  {
+   "session": "07",
+   "frame": 550,
+   "img": "assets/datasets/kitti/07.jpg"
+  },
+  {
+   "session": "08",
+   "frame": 2035,
+   "img": "assets/datasets/kitti/08.jpg"
+  },
+  {
+   "session": "09",
+   "frame": 795,
+   "img": "assets/datasets/kitti/09.jpg"
+  },
+  {
+   "session": "10",
+   "frame": 600,
+   "img": "assets/datasets/kitti/10.jpg"
+  }
+ ],
+ "simchange_families": [
+  [
+   "map",
+   "Map session",
+   "The reference traversal that the map is built from."
+  ],
+  [
+   "light",
+   "Lighting",
+   "Other light sources (sun position and colour, sky, lamps; not a dimmed copy). Geometry and objects stay the same."
+  ],
+  [
+   "objects",
+   "Object rearrangement",
+   "A share of the movable objects (relocated, pushed, swapped or removed) differs from the map; the percentage is the share of the movable objects in the visited rooms that change."
+  ],
+  [
+   "background",
+   "Background materials",
+   "Wall, floor and furniture materials are swapped; the shapes stay the same."
+  ],
+  [
+   "view",
+   "Viewpoint",
+   "The robot drives a parallel path (offset), turns its camera (yaw) or sits lower (height)."
+  ],
+  [
+   "route",
+   "Traversal",
+   "The route is driven in the opposite direction (reverse) or only its second half is driven (half)."
+  ],
+  [
+   "combo",
+   "Combined changes",
+   "Several factors at once."
+  ]
+ ]
+}

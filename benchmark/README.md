@@ -25,6 +25,7 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 | `jobs.py` | prints the job list of a dataset / set of systems (one `run.py` argument line per job) |
 | `dev.py` | runs the development split and compares two runs ([DEV.md](DEV.md)); `datasets/make_dev.py` writes its clipped sequences |
 | `eval/metrics.py` | ATE, completeness, localization recall, Wilson intervals |
+| `make_dataset_assets.py`, `configs/dataset_samples.yaml` | representative images of the Datasets tab: the same place across the sessions of a scene (`site/assets/datasets/`, `results/dataset_samples.json`); run where the prepared data is |
 | `collect.py`, `make_tables.py`, `build_site.py` | merge results, write RESULTS.md, write the page data (`site/data.js`) |
 | `results/` | merged results (`results.json`) and earlier results obtained with other protocols (`legacy.*`) |
 
@@ -42,6 +43,7 @@ python benchmark/datasets/prepare_rover.py /path/to/rover $BENCH_DATA/rover     
 python benchmark/jobs.py --dataset openloris --systems cross_rgbd cross_stereo orbslam3 rtabmap > queue.txt
 while read -r job; do python benchmark/run.py $job; done < queue.txt     # or distribute the lines over workers
 # 3. tables and page
+python benchmark/make_dataset_assets.py --data $BENCH_DATA     # images of the Datasets tab (optional)
 python benchmark/collect.py $BENCH_RESULTS && python benchmark/make_tables.py && python benchmark/build_site.py
 ```
 

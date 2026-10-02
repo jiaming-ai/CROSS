@@ -1,0 +1,41 @@
+# Representative images of the Datasets tab (benchmark/make_dataset_assets.py).
+#
+# Multi-session datasets: a "place" is a frame of the map session; every query session contributes the frame whose
+# ground-truth pose is nearest to it (position within max_dist metres, viewing direction within max_angle degrees,
+# sessions that never pass the place are left out), so a row of tiles shows one place under every change.
+# places: scene -> frames of the map session (picked by eye among the places most sessions pass through).
+# unaligned: scenes without ground truth: frames at these fractions of every session (not the same place).
+# Single-session KITTI: one frame at `fraction` of every sequence.
+
+openloris:
+  width: 288
+  max_dist: 1.0
+  max_angle: 30
+  places:
+    office:   [260, 80]
+    corridor: [1910, 1075]
+    home:     [575, 810]
+    cafe:     [130, 250]
+    market:   [10, 1495, 1960]
+
+rover:
+  width: 288
+  max_dist: 1.0
+  max_angle: 30
+  places:
+    campus_large: [3860, 500]
+
+simchange:
+  width: 288
+  max_dist: 1.0
+  max_angle: 30
+  diff_dist: 0.05        # variants rendered from the map's own poses get a "changed pixels" overlay (object changes only)
+  places:
+    hssd_house:      [885]
+    hssd_restaurant: [1070]
+    classroom:       [60]
+    lonemonk:        [180]
+
+kitti:
+  width: 420
+  fraction: 0.5

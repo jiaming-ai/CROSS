@@ -174,6 +174,7 @@ def main():
     assets = sorted(str(p.relative_to(SITE)) for p in (SITE / "assets").rglob("*.jpg")) if (SITE / "assets").is_dir() else []
     legacy = ROOT / "benchmark/results/legacy.json"
     dstats = ROOT / "benchmark/results/datasets.json"
+    samples = ROOT / "benchmark/results/dataset_samples.json"       # make_dataset_assets.py
     data = {
         "generated": time.strftime("%Y-%m-%d %H:%M"), "commit": commit, "seed": a.seed,
         "systems": T.sy, "datasets": {k: {kk: vv for kk, vv in v.items() if kk != "scenes"} | {"scenes": list(v["scenes"])}
@@ -182,6 +183,7 @@ def main():
         "failures": failures(results, runs_by_key), "assets": assets,
         "legacy": json.loads(legacy.read_text()) if legacy.is_file() else None,
         "datastats": json.loads(dstats.read_text()) if dstats.is_file() else {},
+        "samples": json.loads(samples.read_text()) if samples.is_file() else {},
         "order": [[k, su] for k, v in T.sy.items() if not v.get("hidden") for su in v["setups"]],
         "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", []), "thresholds": c["thresholds"]}]
                        for sc, v in c["scenes"].items()]

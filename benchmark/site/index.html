@@ -90,6 +90,21 @@ svg text { fill: var(--muted); font-size: 10px; }
 #tip b { font-weight: 650; }
 .empty { color: var(--muted); padding: 12px 0; }
 .fail-ok { color: var(--good-ink); } .fail-bad { color: var(--bad-ink); }
+.samples { margin: 6px 0 14px; }
+.samples h4 { margin: 14px 0 2px; font-size: 14px; font-weight: 650; }
+.samples .fam { margin: 12px 0 0; }
+.samples .fam > .note { margin: 0 0 6px; }
+.imgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
+.imgrid figure { margin: 0; }
+.imgrid figure a { display: block; }
+.imgrid figure img { width: 100%; height: auto; display: block; border-radius: 6px; border: 1px solid var(--ring); background: var(--chip); }
+.imgrid figure.map img { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.imgrid figcaption { font-size: 12.5px; line-height: 1.3; margin-top: 3px; color: var(--ink-2); }
+.imgrid figcaption b { color: var(--ink); font-weight: 600; }
+.imgrid figcaption .s { color: var(--muted); display: block; font-size: 11.5px; }
+.samples details > summary { cursor: pointer; font-weight: 600; margin: 10px 0 4px; }
+.samples label.hl { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); margin: 4px 0; cursor: pointer; }
+@media (max-width: 640px) { .imgrid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); } }
 img.thumb { width: 100%; border-radius: 6px; display: block; }
 @media (max-width: 640px) { header h1 { font-size: 21px; } th, td { padding: 5px 7px; } }
 </style>
@@ -99,7 +114,7 @@ img.thumb { width: 100%; border-radius: 6px; display: block; }
 <header>
   <h1>CROSS benchmark</h1>
   <p id="meta">Mapping accuracy, multi-session localization and relocalization success of CROSS and SLAM baselines.
-    Protocol: <a href="../PROTOCOL.md">PROTOCOL.md</a> · tables: <a href="../RESULTS.md">RESULTS.md</a></p>
+    Protocol: <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/PROTOCOL.md">PROTOCOL.md</a> · tables: <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/RESULTS.md">RESULTS.md</a></p>
 </header>
 <nav class="tabs" role="tablist" id="tabs"></nav>
 <section id="view"></section>
@@ -116,7 +131,7 @@ const SVGNS = "http://www.w3.org/2000/svg";
 const s$ = (t, a = {}) => { const e = document.createElementNS(SVGNS, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); return e; };
 const DS = {all: "All datasets (overall)", kitti: "KITTI", openloris: "OpenLORIS-Scene", rover: "ROVER campus_large", simchange: "SimChange v2"};
 const TRACK = {t1: "T1 · mapping accuracy", t2: "T2 · multi-session localization", t3: "T3 · relocalization success"};
-const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "all"}, sel: null};
+const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "all"}, sel: null, hl: true};
 const tip = document.getElementById("tip");
 function showTip(ev, parts) { tip.replaceChildren(...parts.map(p => Array.isArray(p) ? $("div", {}, $("b", {}, p[0]), " ", p[1]) : $("div", {}, p)));
   tip.style.display = "block"; const x = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = (ev.clientY + 14) + "px"; }
@@ -361,13 +376,79 @@ function renderMetrics(v) {
     sec("Small scenes", "In small rooms (OpenLORIS office spans about 4 m, SimChange classroom about 6 m) even the 1 m threshold is a large fraction of the room; read those cells with the scene size in mind (Datasets tab)."));
 }
 
+// ---------------------------------------------------------------- dataset samples: what each dataset looks like and what changes between sessions
+const SAMPLE_INTRO = {
+  kitti: "Single drives (no repeated sessions, so KITTI is used for T1 only): one frame from the middle of each sequence. Sequence 01 is a highway; the others are town streets and country roads around Karlsruhe, recorded in daylight.",
+  openloris: "Each scene was recorded several times, the later sessions after the scene had changed through human activity and the time of day. Every row is one place of the map session (blue frame) with the frame of each query session that is nearest to it in ground-truth pose, so the differences between the tiles are what changed between the sessions. Sessions that never pass the place are left out.",
+  rover: "The same lawn-edge route on a university campus, driven by a ground robot in eight recordings over fourteen months. The map session is the day recording of 2024-09-25; each row is one place of it with the nearest frame (by ground-truth position) of every other recording. What changes is the season (vegetation, low winter sun, bare lawn), the weather and the time of day: dusk, night, and night with extra light.",
+  simchange: "Rendered scenes in which one factor changes per traversal. Every row shows the same place (the map session's frame, then the frame of each query traversal nearest to it in pose), grouped by what was changed. Use the switch to mark the pixels that differ from the map frame in the object-change traversals (they are rendered from the map's own camera poses).",
+};
+const SCENE_NOTE = {
+  office: "Daylight through the windows and the camera exposure differ between sessions (windows blown out or dark); desks, chairs and equipment are moved or covered, people sit at the desks.",
+  corridor: "From a bright, daylit corridor to a dark one lit by a few lamps; a person walks through the corridor in some sessions.",
+  home: "People, objects such as the bag on the cabinet, the curtains and the daylight through the window differ between sessions.",
+  cafe: "Customers and the light differ between the two sessions (more people and warm light in the map session, fewer people and cooler light in the query session).",
+  market: "A supermarket: shoppers and carts move through the aisles, and the goods on the shelves and display stands differ between sessions.",
+  campus_large: "Season, weather and time of day. The night recordings are almost black except for lamps; in the night-light recording the grass in front of the robot is lit by an extra light.",
+  hssd_house: "A furnished HSSD apartment (about 100 m route, 708 placed objects).",
+  hssd_restaurant: "A restaurant with a sea-view terrace (about 146 m route, 1410 placed objects).",
+  classroom: "A small classroom (17 m route).",
+  lonemonk: "A cloister with arcades and an open courtyard (96 m route; outdoor sky).",
+};
+const imgTile = (t, label, sub, cls = "") => {
+  const img = $("img", {src: t.img, alt: `${label} (${t.session})`, loading: "lazy"});
+  if (t.diff) { img.dataset.plain = t.img; img.dataset.diff = t.diff; if (state.hl) img.src = t.diff; }
+  const title = t.dist != null ? `${t.session}: frame ${t.frame}, ${t.dist} m and ${t.angle}° from the map frame` + (t.changed_px != null ? `, ${(100 * t.changed_px).toFixed(1)} % of the pixels changed` : "") : t.session;
+  return $("figure", {class: cls, title}, $("a", {href: t.img, target: "_blank", rel: "noopener"}, img), $("figcaption", {}, $("b", {}, label), sub ? $("span", {class: "s"}, sub) : ""));
+};
+function renderSamples(d) {
+  const X = (B.samples || {})[d]; if (!X) return null;
+  const box = $("div", {class: "samples"}, $("p", {class: "note"}, SAMPLE_INTRO[d] || ""));
+  if (d === "kitti") {
+    const st = (B.datastats || {}).kitti || {}, g = $("div", {class: "imgrid"});
+    for (const t of X) { const r = ((st[t.session] || {})[t.session] || {}).setups; const path = r ? Math.max(...Object.values(r).map(x => x.path_m)) : null;
+      g.append(imgTile(t, `Sequence ${t.session}`, (t.session === "01" ? "highway · " : "") + (path ? `${(path / 1000).toFixed(1)} km` : ""))); }
+    box.append(g); return box;
+  }
+  if (d === "simchange") {
+    const hl = $("input", {type: "checkbox", onchange: e => { state.hl = e.target.checked; for (const im of box.querySelectorAll("img[data-diff]")) im.src = state.hl ? im.dataset.diff : im.dataset.plain; }});
+    hl.checked = !!state.hl;
+    box.append($("label", {class: "hl"}, hl, "Mark the pixels that differ from the map frame (object changes)"));
+  }
+  let first = true;
+  for (const [sc, E] of Object.entries(X)) {
+    if (!E.places.length) continue;
+    const det = $("details", first ? {open: ""} : {}, $("summary", {}, DSCENE(d, sc))); first = false;
+    det.append($("p", {class: "note"}, SCENE_NOTE[sc] || ""));
+    E.places.forEach((pl, k) => {
+      if (E.places.length > 1 || !pl.aligned) det.append($("h4", {}, pl.aligned ? `Place ${k + 1}` : `Frames at ${["25 %", "60 %"][k] || ""} of each session (no ground truth: not the same place)`));
+      if (d === "simchange") {
+        const fams = B.samples.simchange_families || [];
+        for (const [key, title, desc] of fams) {
+          const ts = pl.tiles.filter(t => t.family === key); if (!ts.length) continue;
+          const g = $("div", {class: "imgrid"});
+          for (const t of ts) g.append(imgTile(t, t.label, key === "map" ? "" : t.session.split("/").pop(), t.role === "map" ? "map" : ""));
+          det.append($("div", {class: "fam"}, $("div", {}, $("b", {}, title), $("span", {class: "note"}, " · " + desc)), g));
+        }
+      } else {
+        const g = $("div", {class: "imgrid"});
+        for (const t of pl.tiles) g.append(imgTile(t, d === "rover" ? t.label : t.session, d === "rover" ? t.note : (t.role === "map" ? "map session" : ""), t.role === "map" ? "map" : ""));
+        det.append(g);
+      }
+    });
+    box.append(det);
+  }
+  return box;
+}
+const DSCENE = (d, sc) => ({hssd_house: "HSSD house", hssd_restaurant: "HSSD restaurant", classroom: "Classroom", lonemonk: "Lone Monk", campus_large: "campus_large"}[sc] || sc[0].toUpperCase() + sc.slice(1));
+
 // ---------------------------------------------------------------- dataset details
 function renderData(v) {
   const S = B.datastats || {}, SP = B.splits || {};
-  v.append($("p", {class: "note"}, "Sessions per scene, as prepared (10 Hz). Frames and path length of each session; T3 trials = number of 100-frame trials (stride 50) of a query session. Rows marked 'not prepared yet' are still downloading or converting."));
+  v.append($("p", {class: "note"}, "Representative images of every dataset, then the sessions per scene, as prepared (10 Hz). Frames and path length of each session; T3 trials = number of 100-frame trials (stride 50) of a query session. Rows marked 'not prepared yet' are still downloading or converting."));
   for (const d of ["kitti", "openloris", "rover", "simchange"]) {
     if (!SP[d]) continue;
-    const card = $("div", {class: "card"}, $("h3", {}, DS[d] || d));
+    const card = $("div", {class: "card"}, $("h3", {}, DS[d] || d), renderSamples(d) || "");
     const t = $("table"); t.append($("thead", {}, $("tr", {}, ...["scene", "sessions", "map session", "query sessions", "query frames", "T3 trials", "thresholds"].map(h => $("th", {}, h)))));
     const tb = $("tbody");
     for (const [sc, sp] of SP[d]) {
