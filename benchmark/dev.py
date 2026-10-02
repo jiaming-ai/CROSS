@@ -33,8 +33,11 @@ def dev_cfg():
 
 
 def scenes(cfg, tier):
-    """(dataset, scene, map, queries) of a tier: quick = the scenes with a `quick` list, and those queries."""
+    """(dataset, scene, map, queries) of a tier: quick = the scenes with a `quick` list, and those queries; full = every
+    scene of the dev entries; val = the entries marked `tier: val` (a larger confirmation set)."""
     for dataset, d in cfg.items():
+        if (d.get("tier") == "val") != (tier == "val"):
+            continue
         for scene, sc in d["scenes"].items():
             if tier == "quick":
                 if "quick" not in sc:
@@ -140,8 +143,12 @@ def load_run(out: Path, run: str, cfg, tier):
             if not side.is_file():
                 side = f.parent / "native" / "map_meta.json"
         if side.is_file():
-            est = json.loads(side.read_text()).get("timing", {}).get("estimate_pose", {})
+            meta = json.loads(side.read_text())
+            est = meta.get("timing", {}).get("estimate_pose", {})
             r["_est"] = (est.get("n", 0), est.get("total_s", 0.0))
+            step = meta.get("timing", {}).get("step", {})       # System.step over all frames (loading excluded)
+            if step.get("n"):
+                r["_step"] = (int(step["n"]), float(step["total_s"]))
         cells[(d, s, r["track"], r.get("sequence") or r.get("query"))] = r
     return cells
 
@@ -256,6 +263,14 @@ def cmd_compare(a):
     est = [[sum(r.get("_est", (0, 0))[i] for r in run.values()) for i in (0, 1)] for run in runs]
     print(f"{'relative pose estimation':<44}{'calls':<12}" + "".join(f"{n:>{w}d}" for n, _ in est))
     print(f"{'':<44}{'ms / call':<12}" + "".join(f"{(t / n * 1e3 if n else 0):>{w}.0f}" for n, t in est))
+    for track in ("t1", "t2", "t3"):        # processing rate: frames / time in System.step, pooled and worst cell
+        cells = []
+        for run in runs:
+            st = [r["_step"] for k, r in run.items() if k[2] == track and "_step" in r]
+            n, t = sum(x[0] for x in st), sum(x[1] for x in st)
+            worst = min((x[0] / x[1] for x in st if x[1] > 0), default=0.0)
+            cells.append(f"{(n / t if t else 0):.1f} ({worst:.1f})")
+        print(f"{'FPS ' + track + ' pooled (worst cell)':<44}{'frames/s':<12}" + "".join(f"{c:>{w}}" for c in cells))
     gpus = [sorted({str(r.get('gpu')) for r in run.values()}) for run in runs]
     if len({tuple(g) for g in gpus}) > 1:
         print("warning: the runs used different GPUs:", dict(zip(a.runs, gpus)))
@@ -266,7 +281,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("run", "compare"):
         p = sub.add_parser(name)
-        p.add_argument("--tier", choices=["quick", "full"], default="quick")
+        p.add_argument("--tier", choices=["quick", "full", "val"], default="quick")
         p.add_argument("--data", default=os.environ.get("BENCH_DATA"))
         p.add_argument("--out", default=os.environ.get("BENCH_DEV_RESULTS"))
     r = sub.choices["run"]

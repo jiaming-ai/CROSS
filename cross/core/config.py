@@ -501,6 +501,14 @@ class FeedForwardConfig:
     image_resolution: int = 512          # longest side fed to the model (multiple of patch size)
     da3_process_res: int = 504
     half_precision_weights: bool = True  # keep the transformer weights in bf16 (halves memory, ~1cm difference)
+    # patch tokens (DINO embedding) of this many images kept on the GPU and reused when an image comes back as a
+    # reference (~1.5-3 MB each; 0 = off).  The embedding is per image, so the result is the same.
+    token_cache: int = 1024
+    # torch.compile the transformer blocks (~25 % faster; a few seconds per process once the kernels are tuned and
+    # cached, ~1 min the first time).  Falls back to eager execution if compilation fails.
+    compile: bool = True
+    # depth head under bf16 autocast (half its time; depth changes by ~0.1 %, the covisibility test allows 15 %)
+    dense_head_bf16: bool = True
     max_refs: int = 6                    # at most this many retrieved references per forward pass
     n_ref_anchors: int = 2               # stored right images of the best references used as extra anchors
     use_curr_anchor: bool = True         # include the current right image (ablation switch)

@@ -135,3 +135,22 @@ dev_kitti:
   scenes:
     "07": {map: "07"}  # T1 only: the shortest KITTI loop (its closure is at the end, so it is not clipped)
   t1: maps
+
+# Confirmation set (dev.py --tier val): every OpenLORIS office / home / cafe query of the benchmark, T2 and T3 only
+# (106 T3 trials).  For a change that passed the dev split, before the full benchmark.
+val_openloris:
+  dev: true
+  tier: val
+  data: openloris
+  environment: indoor
+  r_d: 2.0
+  thresholds: [1.0, 2.0]
+  trial_len: 100
+  trial_stride: 50
+  odometry: wheel
+  setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
+  scenes:
+    office: {map: office1-1, queries: [office1-2, office1-3, office1-4, office1-5, office1-6, office1-7]}
+    home:   {map: home1-1,   queries: [home1-2, home1-3, home1-4, home1-5]}
+    cafe:   {map: cafe1-1,   queries: [cafe1-2]}
+  t1: maps

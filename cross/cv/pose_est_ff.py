@@ -18,6 +18,7 @@ inlier count.
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,7 @@ from loguru import logger
 
 from cross.core.config import FeedForwardConfig, FFBackend
 from cross.cv.stereo_scale import ScaleAnchor, ScaleEstimate, estimate_scale, invert_poses, scale_camera_centers
+from cross.utils.fingerprint import content_keys
 from cross.utils.profile import timeit
 
 
@@ -45,12 +47,50 @@ class FFPrediction:
 
 
 class _Backend:
-    def infer(self, images: torch.Tensor) -> FFPrediction:
+    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None) -> FFPrediction:
+        """n_depth: depth is needed for the first n_depth views only (None: all)."""
         raise NotImplementedError
 
 
+class _PatchEmbedCache(torch.nn.Module):
+    """The aggregator's patch embedding (a DINO ViT-L, a third of the transformer blocks) with a cache.
+
+    The embedding of an image does not depend on the other views of the forward pass, so the tokens of an image seen
+    before (a keyframe that was the current view when it was observed, or a map keyframe retrieved in an earlier pass)
+    are reused.  Images are identified by their content (`fingerprints`), so a cache entry can never be stale."""
+
+    def __init__(self, embed: torch.nn.Module, capacity: int):
+        super().__init__()
+        self.embed = embed
+        self.capacity = capacity
+        self.store: OrderedDict = OrderedDict()
+        self.keys: Optional[list] = None          # fingerprints of the views of the next call
+        self.hits = self.misses = 0
+
+    def forward(self, images: torch.Tensor):
+        keys, self.keys = self.keys, None
+        if keys is None or self.capacity <= 0:
+            return self.embed(images)
+        missing = list(OrderedDict.fromkeys(k for k in keys if k not in self.store))
+        if missing:
+            first = [keys.index(k) for k in missing]
+            new = self.embed(images[first])
+            new = new["x_norm_patchtokens"] if isinstance(new, dict) else new
+            for k, t in zip(missing, new):
+                self.store[k] = t
+        self.hits += len(keys) - len(missing)
+        self.misses += len(missing)
+        out = torch.stack([self.store[k] for k in keys])
+        for k in keys:
+            self.store.move_to_end(k)
+        while len(self.store) > self.capacity:
+            self.store.popitem(last=False)
+        return out
+
+
 class _VGGTOmegaBackend(_Backend):
-    def __init__(self, checkpoint: str, device: str, half_weights: bool = True):
+    def __init__(self, checkpoint: str, device: str, half_weights: bool = True, token_cache: int = 0,
+                 compile_blocks: bool = False, dense_head_bf16: bool = False):
         from vggt_omega.models import VGGTOmega
         from vggt_omega.utils.pose_enc import encoding_to_camera
         self._decode = encoding_to_camera
@@ -71,12 +111,73 @@ class _VGGTOmegaBackend(_Backend):
             # the aggregator already runs under autocast; storing its weights in bf16 halves memory
             self.model.aggregator.to(self.dtype)
         self.model = self.model.to(device)
+        self.token_cache = None
+        if token_cache > 0:
+            self.token_cache = _PatchEmbedCache(self.model.aggregator.patch_embed, token_cache)
+            self.model.aggregator.patch_embed = self.token_cache
+        self.dense_head_bf16 = dense_head_bf16
+        self._compiled = []
+        if compile_blocks:
+            # torch.compile of every transformer block (frame, global and DINO blocks share one graph); dynamic shapes
+            # cover any number of views.  The kernels are tuned once and cached on disk (TORCHINDUCTOR_CACHE_DIR).
+            agg = self.model.aggregator
+            embed = self.token_cache.embed if self.token_cache is not None else agg.patch_embed
+            self._compiled = list(agg.frame_blocks) + list(agg.inter_frame_blocks) + list(getattr(embed, "blocks", []))
+            for block in self._compiled:
+                block.compile(dynamic=True, mode="max-autotune-no-cudagraphs")
+
+    def warmup(self, resolution: int):
+        """Load / tune the compiled kernels now (a few seconds) rather than in the first observation.  The kernels
+        are compiled for dynamic shapes, so one pass of any size serves all later ones."""
+        if not self._compiled:
+            return
+        t0 = time.perf_counter()
+        h = max(16, int(round(resolution * 0.75 / 16)) * 16)
+        for n in (4, 3):        # two sizes: the second call settles the dynamic-shape graphs
+            self.infer(torch.rand(n, 3, h, resolution, device=self.device), n_depth=2)
+        if self.token_cache is not None:
+            self.token_cache.store.clear()
+            self.token_cache.hits = self.token_cache.misses = 0
+        torch.cuda.synchronize()
+        logger.info(f"compiled VGGT-Omega blocks ready in {time.perf_counter() - t0:.1f}s")
+
+    def _eager(self, err: Exception):
+        logger.warning(f"compiled VGGT-Omega blocks failed ({type(err).__name__}: {str(err)[:200]}); running eagerly")
+        for block in self._compiled:
+            block._compiled_call_impl = None
+        self._compiled = []
+
+    def fingerprints(self, images: torch.Tensor) -> list:
+        """Content keys of the views (the same image always gets the same key, whatever the batch)."""
+        return content_keys(images.float())
 
     @torch.inference_mode()
-    def infer(self, images: torch.Tensor) -> FFPrediction:
+    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None) -> FFPrediction:
         images = images.to(self.device)
-        with torch.autocast(device_type="cuda", dtype=self.dtype):
-            pred = self.model(images)
+        m = self.model
+        if self.token_cache is not None:
+            self.token_cache.keys = self.fingerprints(images)
+        x = images[None]
+        keys = self.token_cache.keys if self.token_cache is not None else None
+        try:
+            with torch.autocast(device_type="cuda", dtype=self.dtype):    # VGGTOmega.forward, depth for n_depth views
+                tokens, start = m.aggregator(x)
+        except Exception as err:      # noqa: BLE001  a compiler failure (missing toolchain, unsupported GPU)
+            if not self._compiled:
+                raise
+            self._eager(err)
+            if self.token_cache is not None:
+                self.token_cache.keys = keys
+            with torch.autocast(device_type="cuda", dtype=self.dtype):
+                tokens, start = m.aggregator(x)
+        pred = {}
+        with torch.autocast(device_type="cuda", enabled=False):
+            pred["pose_enc"] = m.camera_head(tokens, patch_token_start=start)
+        k = x.shape[1] if n_depth is None else min(int(n_depth), x.shape[1])
+        sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
+        with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
+            depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
+        pred["depth"], pred["depth_conf"] = depth.float(), conf.float()
         hw = tuple(images.shape[-2:])
         extr, intr = self._decode(pred["pose_enc"], hw)          # (1,S,3,4) w2c, (1,S,3,3)
         w2c = extr[0].float().cpu().numpy().astype(np.float64)
@@ -103,7 +204,7 @@ class _DA3Backend(_Backend):
         self.process_res = process_res
 
     @torch.inference_mode()
-    def infer(self, images: torch.Tensor) -> FFPrediction:
+    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None) -> FFPrediction:
         # DA3 preprocesses from uint8 arrays; keep the first view as the reference.
         arr = (images.clamp(0, 1) * 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
         pred = self.model.inference(
@@ -161,45 +262,46 @@ def covisibility_scores(
     ratio; it is low for wrongly retrieved (non-overlapping) references and for badly
     registered views.
     """
+    if len(src_indices) == 0:
+        return np.zeros(0, dtype=np.float32)
     device = pred.depth.device
     S, H, W = pred.depth.shape
+    B = len(src_indices)
     ys = torch.linspace(0, H - 1, grid, device=device)
     xs = torch.linspace(0, W - 1, grid, device=device)
     gy, gx = torch.meshgrid(ys, xs, indexing="ij")
     gy, gx = gy.reshape(-1), gx.reshape(-1)
-    norm = torch.stack([gx / (W - 1) * 2 - 1, gy / (H - 1) * 2 - 1], dim=-1).view(1, 1, -1, 2)
+    norm = torch.stack([gx / (W - 1) * 2 - 1, gy / (H - 1) * 2 - 1], dim=-1).view(1, 1, -1, 2).expand(B, 1, -1, 2)
 
+    # all source views at once (one device synchronisation for all of them)
+    src = torch.as_tensor(src_indices, device=device)
     c2w = torch.from_numpy(pred.c2w).to(device=device, dtype=torch.float32)
     K = torch.from_numpy(pred.K).to(device=device, dtype=torch.float32)
-    dst_depth = pred.depth[dst_index][None, None]
-    dst_conf = pred.depth_conf[dst_index][None, None] if pred.depth_conf is not None else None
-    scores = []
-    for s in src_indices:
-        d = F.grid_sample(pred.depth[s][None, None], norm, align_corners=True).view(-1)
-        valid = torch.isfinite(d) & (d > 1e-6)
-        if pred.depth_conf is not None:
-            c = F.grid_sample(pred.depth_conf[s][None, None], norm, align_corners=True).view(-1)
-            thr = torch.quantile(pred.depth_conf[s].flatten()[:: max(1, (H * W) // 20000)], min_conf_quantile)
-            valid &= c >= thr
-        if valid.sum() < 16:
-            scores.append(0.0)
-            continue
-        Ks = K[s]
-        x = (gx - Ks[0, 2]) / Ks[0, 0] * d
-        y = (gy - Ks[1, 2]) / Ks[1, 1] * d
-        P = torch.stack([x, y, d, torch.ones_like(d)], dim=-1)          # (N,4) in src cam
-        T = torch.linalg.inv(c2w[dst_index]) @ c2w[s]                    # src cam -> dst cam
-        Pd = (T @ P.T).T[:, :3]
-        z = Pd[:, 2]
-        Kd = K[dst_index]
-        u = Kd[0, 0] * Pd[:, 0] / z.clamp(min=1e-6) + Kd[0, 2]
-        v = Kd[1, 1] * Pd[:, 1] / z.clamp(min=1e-6) + Kd[1, 2]
-        inside = (z > 1e-6) & (u >= 0) & (u <= W - 1) & (v >= 0) & (v <= H - 1)
-        un = torch.stack([u / (W - 1) * 2 - 1, v / (H - 1) * 2 - 1], dim=-1).view(1, 1, -1, 2)
-        zd = F.grid_sample(dst_depth, un, align_corners=True).view(-1)
-        consistent = inside & ((z - zd).abs() <= rel_depth_tol * zd.clamp(min=1e-6))
-        scores.append(float((consistent & valid).sum()) / float(valid.sum()))
-    return np.asarray(scores, dtype=np.float32)
+    d = F.grid_sample(pred.depth[src][:, None], norm, align_corners=True).view(B, -1)
+    valid = torch.isfinite(d) & (d > 1e-6)
+    if pred.depth_conf is not None:
+        conf = pred.depth_conf[src]
+        c = F.grid_sample(conf[:, None], norm, align_corners=True).view(B, -1)
+        thr = torch.quantile(conf.flatten(1)[:, :: max(1, (H * W) // 20000)], min_conf_quantile, dim=1)
+        valid &= c >= thr[:, None]
+    Ks = K[src]
+    x = (gx - Ks[:, 0, 2:3]) / Ks[:, 0, 0:1] * d
+    y = (gy - Ks[:, 1, 2:3]) / Ks[:, 1, 1:2] * d
+    P = torch.stack([x, y, d, torch.ones_like(d)], dim=1)                 # (B,4,N) in the source cameras
+    T = torch.linalg.inv(c2w[dst_index])[None] @ c2w[src]                 # source cam -> destination cam
+    Pd = (T @ P)[:, :3]
+    z = Pd[:, 2]
+    Kd = K[dst_index]
+    u = Kd[0, 0] * Pd[:, 0] / z.clamp(min=1e-6) + Kd[0, 2]
+    v = Kd[1, 1] * Pd[:, 1] / z.clamp(min=1e-6) + Kd[1, 2]
+    inside = (z > 1e-6) & (u >= 0) & (u <= W - 1) & (v >= 0) & (v <= H - 1)
+    un = torch.stack([u / (W - 1) * 2 - 1, v / (H - 1) * 2 - 1], dim=-1).view(B, 1, -1, 2)
+    zd = F.grid_sample(pred.depth[dst_index][None, None].expand(B, 1, H, W), un, align_corners=True).view(B, -1)
+    consistent = inside & ((z - zd).abs() <= rel_depth_tol * zd.clamp(min=1e-6))
+    n_valid = valid.sum(dim=1)
+    n_ok = (consistent & valid).sum(dim=1)
+    scores = torch.where(n_valid >= 16, n_ok.double() / n_valid.clamp(min=1).double(), torch.zeros_like(n_valid, dtype=torch.float64))
+    return scores.cpu().numpy().astype(np.float32)
 
 
 class PoseEstFeedForward:
@@ -211,7 +313,10 @@ class PoseEstFeedForward:
         self.T_right_in_left = None if T_right_in_left is None else np.asarray(T_right_in_left, dtype=np.float64)
         t0 = time.perf_counter()
         if config.backend == FFBackend.VGGT_OMEGA:
-            self.backend = _VGGTOmegaBackend(config.checkpoint, device, half_weights=config.half_precision_weights)
+            self.backend = _VGGTOmegaBackend(config.checkpoint, device, half_weights=config.half_precision_weights,
+                                             token_cache=config.token_cache, compile_blocks=config.compile,
+                                             dense_head_bf16=config.dense_head_bf16)
+            self.backend.warmup(config.image_resolution)
         elif config.backend == FFBackend.DA3:
             self.backend = _DA3Backend(config.checkpoint, device, process_res=config.da3_process_res)
         else:
@@ -299,7 +404,7 @@ class PoseEstFeedForward:
             images = images / 255.0
 
         t_model = time.perf_counter()
-        pred = self.backend.infer(images)
+        pred = self.backend.infer(images, n_depth=1 + B)     # depth is used for the current view and the references
         torch.cuda.synchronize()
         t_model = time.perf_counter() - t_model
 

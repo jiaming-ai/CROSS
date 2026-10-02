@@ -131,6 +131,16 @@ def new_session(args, ds, seed):
                            seed=0 if seed is None else seed)()
 
 
+def step_time_stats(dts) -> dict:
+    """Per-frame processing time: whether the system keeps up with the input rate (10 Hz: 0.1 s per frame)."""
+    dts = np.asarray(dts, dtype=float)
+    if len(dts) == 0:
+        return {}
+    return {"step_time_median_s": float(np.median(dts)), "step_time_mean_s": float(np.mean(dts)),
+            "step_time_p95_s": float(np.percentile(dts, 95)), "step_time_max_s": float(np.max(dts)),
+            "step_frac_over_100ms": float(np.mean(dts > 0.1))}
+
+
 def run_mapping(args, out: Path):
     ds = StereoSequenceLoader(args.map, depth_source=depth_source(args),
                               snr=args.snr, baseline=args.baseline, seed=args.seed, **odom_kwargs(args))
@@ -139,10 +149,13 @@ def run_mapping(args, out: Path):
     t0 = time.time()
     n = 0
     last_kf = None
+    step_times = []
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
+        ts = time.perf_counter()
         system.process(d)
+        step_times.append(time.perf_counter() - ts)
         n += 1
         if system.last_added_kf_id != last_kf and system.last_added_kf_id is not None:
             last_kf = system.last_added_kf_id
@@ -169,7 +182,7 @@ def run_mapping(args, out: Path):
     map_ate = float(np.sqrt(np.mean(np.sum(((T_gt_from_map[:3, :3] @ src.T).T + T_gt_from_map[:3, 3] - dst) ** 2, 1))))
     meta = {
         "kf_gt": kf_gt, "kf_est": kf_est, "T_gt_from_map": T_gt_from_map.tolist(), "map_ate_rmse": map_ate,
-        "n_frames": n, "elapsed": elapsed, "n_keyframes": len(system.hypothesis_manager.nodes), "n_permanent": n_perm,
+        "n_frames": n, "elapsed": elapsed, **step_time_stats(step_times), "n_keyframes": len(system.hypothesis_manager.nodes), "n_permanent": n_perm,
         "timing": _timing_summary(),
         "map_file_bytes": map_file.stat().st_size,
     }
@@ -291,8 +304,7 @@ def run_reloc(args, out: Path, meta: dict):
         "RS": trial_summary["RS"], "RS_1m_5deg": trial_summary["RS_1m_5deg"], "RS_0.5m_5deg": trial_summary["RS_0.5m_5deg"],
         "map_relative": summarize_errors(rows, "c0_rel"),
         "map_relative_best": summarize_errors(rows, "best_rel"),
-        "step_time_median_s": float(np.median([r["dt"] for r in rows])),
-        "step_time_mean_s": float(np.mean([r["dt"] for r in rows])),
+        **step_time_stats([r["dt"] for r in rows]),
         "timing": _timing_summary(),
     }
     (out / "reloc_rows.json").write_text(json.dumps(rows))

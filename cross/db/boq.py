@@ -3,7 +3,7 @@ import torch
 import torchvision.transforms as T
 import numpy as np
 from collections import OrderedDict
-import hashlib
+from cross.utils.fingerprint import content_keys
 
 HUB_REPO = "amaralibey/bag-of-queries"
 HUB_ENTRY = "get_trained_boq"
@@ -87,16 +87,14 @@ class BoQ():
         self.cache_size = cache_size if enable_cache else 0
         self.cache = OrderedDict() if enable_cache else None
 
-    def _get_cache_key(self, img: torch.Tensor) -> str:
+    def _get_cache_key(self, img: torch.Tensor) -> tuple:
         """Generate a unique key for the image tensor using hash.
         Args:
             img: Input image tensor
         Returns:
             str: A unique hash key for the image
         """
-        # Convert tensor to bytes and compute hash
-        img_bytes = img.cpu().numpy().tobytes()
-        return hashlib.md5(img_bytes).hexdigest()
+        return content_keys(img[None])[0]
 
     def _update_cache(self, key: str, value: torch.Tensor):
         """Update the cache with a new key-value pair.
