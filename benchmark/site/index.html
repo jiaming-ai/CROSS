@@ -401,9 +401,9 @@ const SYS_STYLE = {
   "cross_stereo|stereo": ["--c2", ""], "cross_stereo_vo|stereo": ["--c2", "6 4"],
   "cross_mono_odom|mono": ["--c3", ""], "cross_mono|mono": ["--c3", "6 4"],
   "orbslam3|stereo": ["--c4", ""], "orbslam3|rgbd": ["--c4", "6 4"], "orbslam3|mono": ["--c4", "1.5 3"],
-  "rtabmap|stereo": ["--c5", ""], "rtabmap|rgbd": ["--c5", "6 4"],
-  "rtabmap_vo|stereo": ["--c5", "1.5 3"], "rtabmap_vo|rgbd": ["--c5", "8 3 1.5 3"],
-  "mast3r_slam|mono": ["--c6", ""], "vggt_slam|mono": ["--c7", ""]};
+  "rtabmap|stereo": ["--c7", ""], "rtabmap|rgbd": ["--c7", "6 4"],
+  "rtabmap_vo|stereo": ["--c7", "1.5 3"], "rtabmap_vo|rgbd": ["--c7", "8 3 1.5 3"],
+  "mast3r_slam|mono": ["--c6", ""], "vggt_slam|mono": ["--c5", ""]};
 const SETUP = {rgbd: "RGB-D", stereo: "stereo", mono: "mono"};
 const sysKey = r => `${r.system}|${r.setup}`;
 const sysLabel = (system, setup, d) => `${(B.systems[system] || {}).label || system} · ${d === "kitti" && setup === "rgbd" ? "RGB-D*" : SETUP[setup] || setup}`;
@@ -429,7 +429,7 @@ function renderViz(v) {
   const sel = $("select", {"aria-label": "dataset", onchange: e => { vizState.ds = e.target.value; render(); }},
     ...dsets.map(d => { const o = $("option", {value: d}, DS[d] || d); if (d === vizState.ds) o.selected = true; return o; }));
   v.append($("div", {class: "bar"}, $("span", {}, "Dataset"), sel,
-    $("span", {class: "note"}, "Top-down view of every system's final trajectory (T1, aligned to the ground truth) on one session per plot. Hue = system family, line style = setup or odometry (solid: external odometry / stereo; dashed: visual odometry / RGB-D; dotted: mono). Click a legend entry to show or hide it.")));
+    $("span", {class: "note"}, "Top-down view of every system's final trajectory (T1, aligned to the ground truth) on one session per plot. Hue = system family, line style = setup or odometry (solid: external odometry / stereo; dashed: visual odometry / RGB-D; dotted: mono). Click a legend entry to show or hide it; hover an entry or a line to highlight it.")));
   const d = vizState.ds, oi = orderIndex();
   for (const [scene, sp] of B.splits[d]) {
     const seqs = [sp.map].concat(sp.queries);
@@ -459,16 +459,27 @@ function trajOverlay(d, scene, seq, oi) {
   const sc = Math.min((W - 20) / (x1 - x0), (H - 20) / (y1 - y0));
   const ox = (W - sc * (x1 - x0)) / 2, oy = (H - sc * (y1 - y0)) / 2;
   const px = p => [ox + (p[0] - x0) * sc, H - oy - (p[1] - y0) * sc];
+  // poses exist only at keyframes, so a long gap between keyframes is left open rather than bridged by a straight line;
+  // gaps are found on the run's own ground truth (a step over 5x its median step), so the estimate's errors stay visible
+  const pathD = (pts, ref) => { const st = ref.slice(1).map((p, i) => Math.hypot(p[0] - ref[i][0], p[1] - ref[i][1]));
+    const med = [...st].sort((a, b) => a - b)[st.length >> 1] || 0;
+    return pts.map((p, i) => (i === 0 || st[i - 1] > 5 * med + 1e-6 ? "M" : "L") + px(p).join(",")).join(" "); };
   const svg = s$("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `trajectories on ${seq}`});
   const cid = "clip" + Math.random().toString(36).slice(2);
   const defs = s$("defs"); const cp = s$("clipPath", {id: cid}); cp.append(s$("rect", {x: 0, y: 0, width: W, height: H})); defs.append(cp); svg.append(defs);
   const g = s$("g", {"clip-path": `url(#${cid})`}); svg.append(g);
-  g.append(s$("polyline", {points: gt.map(p => px(p).join(",")).join(" "), fill: "none", stroke: "var(--gt)", "stroke-width": 4, opacity: 0.45, "stroke-linejoin": "round"}));
+  g.append(s$("path", {d: pathD(gt, gt), fill: "none", stroke: "var(--gt)", "stroke-width": 4, opacity: 0.45, "stroke-linejoin": "round"}));
   const lines = {};
   for (const r of runs) { if (!r.est2) continue; const k = sysKey(r);
-    const pl = s$("polyline", {points: r.est2.map(p => px(p).join(",")).join(" "), fill: "none", stroke: sysColor(k), "stroke-width": 2,
+    const pl = s$("path", {d: r.gt2.length === r.est2.length ? pathD(r.est2, r.gt2) : pathD(r.est2, r.est2), fill: "none", stroke: sysColor(k), "stroke-width": 2,
       "stroke-dasharray": sysDash(k), "stroke-linejoin": "round", "stroke-linecap": "round"});
     pl.style.display = vizState.hidden[`${d}|${k}`] ? "none" : ""; lines[k] = pl; g.append(pl); }
+  // several hues sit close (no 7-color set separates every pair), so identity never rests on color alone
+  const order = Object.keys(lines);
+  const emphasize = k => { for (const kk of order) { const pl = lines[kk];
+      pl.setAttribute("stroke-width", kk === k ? 3.5 : 2); pl.style.opacity = k && kk !== k ? 0.18 : ""; }
+    for (const kk of order) g.append(lines[kk]);          // restore the draw order, then raise the emphasized line
+    if (k && lines[k]) g.append(lines[k]); };
   const span = Math.max(x1 - x0, y1 - y0);
   const nice = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find(v => v * sc > 60) || span;
   svg.append(s$("line", {x1: W - 14 - nice * sc, x2: W - 14, y1: H - 6, y2: H - 6, stroke: "var(--axis)", "stroke-width": 2}));
@@ -478,9 +489,9 @@ function trajOverlay(d, scene, seq, oi) {
   hit.addEventListener("pointermove", ev => { const bb = svg.getBoundingClientRect(); const mx = (ev.clientX - bb.left) / bb.width * W, my = (ev.clientY - bb.top) / bb.height * H;
     let best = null; for (const r of runs) { if (!r.est2 || vizState.hidden[`${d}|${sysKey(r)}`]) continue;
       for (const p of r.est2) { const [a, b] = px(p); const dd = (a - mx) ** 2 + (b - my) ** 2; if (!best || dd < best[0]) best = [dd, r]; } }
-    if (best && best[0] < 400) { const r = best[1]; showTip(ev, [[r.ate_rmse != null ? `ATE ${r.ate_rmse.toFixed(3)} m` : "failed", ""], sysLabel(r.system, r.setup, d), `completeness ${Math.round(100 * (r.completeness || 0))} %`]); }
-    else hideTip(); });
-  hit.addEventListener("pointerleave", hideTip);
+    if (best && best[0] < 400) { const r = best[1]; emphasize(sysKey(r)); showTip(ev, [[r.ate_rmse != null ? `ATE ${r.ate_rmse.toFixed(3)} m` : "failed", ""], sysLabel(r.system, r.setup, d), `completeness ${Math.round(100 * (r.completeness || 0))} %`]); }
+    else { emphasize(null); hideTip(); } });
+  hit.addEventListener("pointerleave", () => { emphasize(null); hideTip(); });
   // legend chips (toggle)
   const chips = $("div", {class: "chips"});
   chips.append($("span", {class: "chip", "aria-pressed": "true", style: "cursor:default"}, (() => { const sv = s$("svg", {width: 22, height: 8}); sv.append(s$("line", {x1: 1, x2: 21, y1: 4, y2: 4, stroke: "var(--gt)", "stroke-width": 4, opacity: 0.45})); return sv; })(), "ground truth"));
@@ -488,6 +499,7 @@ function trajOverlay(d, scene, seq, oi) {
     const b = $("button", {class: "chip", "aria-pressed": String(!vizState.hidden[hk]), title: sysLabel(r.system, r.setup, d)}, lineKey(k), shortLabel(r.system, r.setup, d),
       $("span", {class: "v"}, r.ate_rmse != null && r.status === "ok" ? `${r.ate_rmse.toFixed(2)} m${r.failed ? " ✗" : ""}` : "✗"));
     b.addEventListener("click", () => { vizState.hidden[hk] = !vizState.hidden[hk]; b.setAttribute("aria-pressed", String(!vizState.hidden[hk])); if (lines[k]) lines[k].style.display = vizState.hidden[hk] ? "none" : ""; });
+    for (const [ev, kk] of [["pointerenter", k], ["focus", k], ["pointerleave", null], ["blur", null]]) b.addEventListener(ev, () => emphasize(kk));
     chips.append(b); }
   const all = $("button", {class: "btn", onclick: () => { for (const r of runs) { const hk = `${d}|${sysKey(r)}`; vizState.hidden[hk] = false; } render(); }}, "show all");
   const sol = $("button", {class: "btn", onclick: () => { for (const r of runs) { const hk = `${d}|${sysKey(r)}`; vizState.hidden[hk] = sysDash(sysKey(r)) !== ""; } render(); }}, "solid only");
