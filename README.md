@@ -21,13 +21,13 @@ National University of Singapore
 
 CROSS builds probabilistic topological maps from RGB-D, stereo or monocular camera streams. It maintains a Gaussian mixture belief over SE(3) poses, tracks multiple hypotheses, detects loop closures, and optimizes pose graphs — enabling robust long-term navigation in indoor environments.
 
-Three sensor modes share one back end (belief, hypotheses, verified loop closure, pose graph, retrieval). Each runs with the dataset's odometry (`--odometry external`) or with DPVO visual odometry (`--odometry visual`):
+Three sensor modes share one back end (belief, hypotheses, verified loop closure, pose graph, retrieval). Each runs with the dataset's odometry (`--odometry external`) or with DPVO visual odometry (`--odometry visual`); the mono mode also with visual-inertial odometry (`--odometry vio`: DPVO with its metric scale from the camera's IMU):
 
 | mode | relative pose estimator | input | install / run |
 |---|---|---|---|
 | **RGB-D** (default) | XFeat + LightGlue + PnP-RANSAC on keyframe depth | RGB-D (or RGB + predicted depth) + odometry | `bash install.sh`, `python run.py <seq>` |
 | **stereo** | feed-forward multi-view model (VGGT-Omega, optionally Depth Anything 3); one forward pass registers the current view against all retrieved keyframes, the known stereo baseline fixes the metric scale | stereo pairs (or monocular + odometry) | `bash install.sh --stereo`, `python run.py <seq> --mode stereo` |
-| **mono** | metric two-view matching on learned (Depth Anything 3) keyframe depth, feed-forward fallback | colour images only | `bash install.sh --mono`, `python run.py <seq> --mode mono` |
+| **mono** | metric two-view matching on learned (Depth Anything 3) keyframe depth, feed-forward fallback; or (`--mono-estimator ff`) the stereo mode's VGGT-Omega estimator with its metric scale from the motion and the map | colour images only (+ IMU with `--odometry vio`) | `bash install.sh --mono`, `python run.py <seq> --mode mono` |
 
 **New here? Start with the [usage guide](docs/USAGE.md)**: modes, configs, multi-session mapping, and running the benchmark.
 
@@ -46,7 +46,7 @@ it is still being extended.
 - **Semantic memory** — Text-conditioned object search across the map using open-vocabulary detectors.
 - **Verified loop closure** — prior, in-pass and posterior consistency tests at one chi-square level, with a noise model calibrated without ground truth from about a minute of the robot's own data.
 - **Stereo and mono modes** — learned multi-view relative poses with stereo scale anchors; colour-only operation with learned metric depth.
-- **Visual odometry** — optional DPVO motion source for every mode, so no odometry input is needed.
+- **Visual odometry** — optional DPVO motion source for every mode, so no odometry input is needed; with an IMU, the mono mode gets its metric scale from it (visual-inertial odometry, `cross/imu/`).
 - **Benchmark** — one protocol (T1 / T2 / T3) over KITTI, OpenLORIS-Scene, ROVER and SimChange, with ORB-SLAM3, RTAB-Map, MASt3R-SLAM and VGGT-SLAM 2.0 baselines.
 - **Multiple dataset formats** — R3D, ROS bags, OpenLORIS, TUM RGB-D, posed RGB-D folders; stereo: KITTI raw, TartanAir V2, Virtual KITTI 2, SimChange.
 
@@ -151,7 +151,8 @@ Options:
 | `--frames N` | Process only the first N frames |
 | `--start N` | Start from frame N |
 | `--mode {rgbd,stereo,mono}` | Sensor mode: PnP on depth (default), the stereo mode (layers `configs/stereo.yaml`), or colour only |
-| `--odometry {external,visual}` | Motion source: the dataset's odometry (default) or DPVO visual odometry |
+| `--odometry {external,visual,vio}` | Motion source: the dataset's odometry (default), DPVO visual odometry, or (mono) DPVO with IMU scale |
+| `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
 | `--config A.yaml B.yaml` | Config layers on top of the defaults, merged left to right |
 | `--loader {r3d,rosbag,loris,tum,posed,stereo}` | Force dataset loader (default: auto-detect) |
 | `--baseline B` | Stereo mode, SimChange sequences: which rendered stereo baseline to use |

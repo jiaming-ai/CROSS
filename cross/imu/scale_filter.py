@@ -90,6 +90,11 @@ class ImuConfig:
     scale_prior_log_std: float = 3.0             # start-up grid: +-this around the learned-depth (or unit) scale
     grid_step: float = 0.2
     iterations: int = 3                          # Gauss-Newton iterations per frame
+    # the scale stays within this factor of the latest learned-depth scale (or, without one, of the first estimate):
+    # when visual odometry stops reporting translation while the IMU says the platform moves, the best fit is an
+    # unbounded scale, which later multiplies DPVO's motion into astronomic distances (OpenLORIS home1-3).  Learned
+    # depth was at most 1.9x off on the benchmark (ROVER).
+    scale_band: float = 2.5
 
 
 @dataclass
@@ -143,6 +148,7 @@ class InertialScaleFilter:
         self._mean_step = None
         self._since_grid = 0
         self._recent_nis = []
+        self.l_ref = None                 # centre of the allowed log-scale band (latest learned-depth scale)
 
     # ------------------------------------------------------------------ LogScaleFilter interface
     @property
@@ -179,6 +185,7 @@ class InertialScaleFilter:
         if not self.config.depth_prior or not getattr(observation, "accepted", False):
             return False
         obs = (float(observation.log_scale), max(float(observation.variance), self.config.depth_prior_std_floor ** 2))
+        self.l_ref = obs[0]
         if not self.started:
             # until the IMU window starts, the learned-depth scale is the estimate (as in the learned-depth mode, so a
             # session starts as early as without the IMU)
@@ -363,7 +370,7 @@ class InertialScaleFilter:
             else:
                 damping *= 10
         v, l, g, b = self._split(x)
-        self.v, self.l, self.g, self.b = v.copy(), l.copy(), g.copy(), b.copy()
+        self.v, self.l, self.g, self.b = v.copy(), self._clamp(l), g.copy(), b.copy()
         e = np.zeros(len(x))
         e[3 * (n + 1) + n] = 1.0
         try:
@@ -378,7 +385,8 @@ class InertialScaleFilter:
         """Solve the window for constant log scales on a grid (linear in the rest up to |g|); start from the best."""
         cfg = self.config
         center = self.prior_log_scale[0] if self.prior_log_scale is not None else 0.0
-        grid = center + np.arange(-cfg.scale_prior_log_std, cfg.scale_prior_log_std + 1e-9, cfg.grid_step)
+        half = cfg.scale_prior_log_std if self.l_ref is None else min(cfg.scale_prior_log_std, np.log(cfg.scale_band))
+        grid = center + np.arange(-half, half + 1e-9, cfg.grid_step)
         a = self._stack(self.intervals)
         n = len(self.intervals)
         x0 = np.concatenate([self.v.reshape(-1), self.l, self.g, self.b])
@@ -397,7 +405,7 @@ class InertialScaleFilter:
             if best is None or c < best[0]:
                 best = (c, x)
         v, l, g, b = self._split(best[1])
-        self.v, self.l, self.g, self.b = v.copy(), l.copy(), g.copy(), b.copy()
+        self.v, self.l, self.g, self.b = v.copy(), self._clamp(l), g.copy(), b.copy()
 
     def _marginalize_oldest(self):
         """Drop v_0, l_0 and interval 0: their factors (prior, IMU, visual, drift) become a Gaussian prior on
@@ -434,6 +442,12 @@ class InertialScaleFilter:
         self.v = self.v[1:]
         self.l = self.l[1:]
 
+    def _clamp(self, l):
+        if self.l_ref is None:
+            return l.copy()
+        band = np.log(self.config.scale_band)
+        return np.clip(l, self.l_ref - band, self.l_ref + band)
+
     def _check_initialized(self):
         """The scale counts as known once its log std is below init_log_std: with a learned-depth prior at once, with
         the IMU alone after at least 10 intervals of the window."""
@@ -441,6 +455,8 @@ class InertialScaleFilter:
             return
         if self.prior_log_scale is not None or len(self.intervals) >= 10:
             self.initialized = True
+            if self.l_ref is None and self.started:
+                self.l_ref = float(self.l[-1])
 
     def _reset(self):
         g_dir = self.g / max(np.linalg.norm(self.g), 1e-9)

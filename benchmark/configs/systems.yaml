@@ -69,8 +69,8 @@ cross_mono:
   outdoor_args: [--mono-args, "--cross-config mapping.loop_closure.noise.odom_k_t=0.06 --cross-config mapping.loop_closure.noise.odom_k_r=0.07 --cross-config mapping.loop_closure.noise.odom_floor_t=0.002 --cross-config mapping.loop_closure.noise.odom_floor_r=0.001"]
 
 # mono mode with the IMU (--odometry vio: DPVO whose metric scale comes from the IMU, cross/imu) and the mono mode with
-# the stereo mode's VGGT-Omega estimator (--mono-estimator ff: metric scale from the motion and the map); hidden until
-# the development split picked the configuration for the tables
+# the stereo mode's VGGT-Omega estimator (--mono-estimator ff: metric scale from the motion and the map).  The DA3 back
+# end with the IMU and VGGT-Omega with DPVO + learned-depth scale were development-split variants (hidden)
 cross_mono_vio:
   label: CROSS (DA3, visual-inertial odometry)
   runner: cross_mono
@@ -85,7 +85,6 @@ cross_mono_vio:
 cross_mono_ff_odom:
   label: CROSS (VGGT-Omega mono, external odometry)
   runner: cross_mono
-  hidden: true
   setups: [mono]
   uses_odometry: true
   map_reuse: save/load
@@ -105,7 +104,6 @@ cross_mono_ff:
 cross_mono_ff_vio:
   label: CROSS (VGGT-Omega mono, visual-inertial odometry)
   runner: cross_mono
-  hidden: true
   setups: [mono]
   uses_odometry: false
   uses_imu: true
