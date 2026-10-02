@@ -515,6 +515,8 @@ input[type="range"]::-moz-range-thumb {
   overflow-x: auto; padding: 18px 20px; margin-bottom: 36px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 14px; font-size: 17px;
 }
+.rep { display: grid; grid-template-columns: 1.15fr 1fr; gap: 28px; align-items: start; margin-bottom: 36px; }
+.rep .step-text p + p { margin-top: 10px; }
 .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
 .step {
   display: flex; align-items: center; gap: 12px; padding: 12px 16px;
@@ -710,7 +712,7 @@ input[type="range"]::-moz-range-thumb {
   .demo-panels { grid-template-columns: 1fr; }
   .viewers { grid-template-columns: 1fr; }
   .two-col { grid-template-columns: 1fr; }
-  .step-panel.on { grid-template-columns: 1fr; gap: 16px; }
+  .step-panel.on, .rep { grid-template-columns: 1fr; gap: 16px; }
   .steps { grid-template-columns: repeat(2, 1fr); }
   .quad { grid-template-columns: 1fr 1fr; }
   .quad-corner { display: none; }
