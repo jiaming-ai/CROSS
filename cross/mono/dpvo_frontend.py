@@ -149,6 +149,7 @@ class DPVOFrontend:
         config.LOOP_CLOSURE = False
         config.CLASSIC_LOOP_CLOSURE = False
         config.PATCHES_PER_FRAME = 96
+        config.BUFFER_SIZE = 16384          # frames kept by the tracker; long sequences (KITTI 02) overflow the default 4096
         with torch.random.fork_rng(devices=[0]):
             torch.manual_seed(self.config.seed)
             self.tracker = DPVO(config, self.config.dpvo_checkpoint, ht=height, wd=width, viz=False)
