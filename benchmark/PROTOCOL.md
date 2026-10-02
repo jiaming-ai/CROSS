@@ -77,7 +77,7 @@ CROSS fuses an odometry stream with its visual observations. Each dataset gives 
 
 Baselines that accept external odometry (RTAB-Map) get the same odometry stream; RTAB-Map also runs with its own visual
 odometry (`rtabmap_vo`). Visual(-inertial) systems (ORB-SLAM3,
-MASt3R-SLAM, VGGT-SLAM, DROID-SLAM) run on images only. The tables mark every system that uses odometry or IMU, so the
+MASt3R-SLAM, VGGT-SLAM 2.0, DROID-SLAM) run on images only. The tables mark every system that uses odometry or IMU, so the
 comparison stays interpretable.
 
 ## 4. Metrics
@@ -117,7 +117,7 @@ The query session is split into independent trials. Each trial loads the stored 
 for a fixed number of frames. **RS@x is the fraction of trials whose final pose estimate lies within x of the ground truth**, position only. There are two
 fixed thresholds per environment: **x = 1 m and 2 m indoors, 3 m and 5 m outdoors**. The larger ones are the CROSS paper's
 radii. RS is the fraction of successful trials. The final estimate is the system's
-latest pose in the trial. It must be at most 1 s older than the trial's last frame, because some systems (MASt3R-SLAM, VGGT-SLAM) report poses only at
+latest pose in the trial. It must be at most 1 s older than the trial's last frame, because some systems (MASt3R-SLAM, VGGT-SLAM 2.0) report poses only at
 keyframes. Monocular systems are aligned with Sim(3) on the map session, so their errors are in metres too.
 - Only trials whose last frame is covered by the map (see T2, Coverage) are counted.
 - Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset. The CROSS paper used
@@ -135,7 +135,7 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
   persistence: the 5 evenly spaced trials they would have run), and in T2 every covered frame counts as not localized, so a
   system that crashes cannot score higher than one that runs and fails. T1 means leave failed sequences out and give their
   count with the same notation.
-- Systems without map persistence (MASt3R-SLAM, VGGT-SLAM, DROID-SLAM) run the map session followed by the trial in one
+- Systems without map persistence (MASt3R-SLAM, VGGT-SLAM 2.0, DROID-SLAM) run the map session followed by the trial in one
   stream. Only the trial frames are scored. Every trial re-runs the whole map session, so these systems are scored on at most
   5 evenly spaced trials per query session. A run that crashes (out of memory) or times out is reported as failed and re-run;
   it is not scored as a relocalization failure. This is marked in the tables because the system keeps the map session's live
@@ -155,7 +155,7 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 | RTAB-Map | RGB-D, stereo | same odometry as CROSS | database, localization mode | [introlab/rtabmap](https://github.com/introlab/rtabmap) + `scripts/baselines/rtabmap_reloc.cc`; every frame processed, `Mem/STMSize 30` (RTAB-Map's KITTI setting) |
 | RTAB-Map (visual odometry) | RGB-D, stereo | none: RTAB-Map's own visual odometry (frame-to-map, reset to the latest pose after a lost frame) | database, localization mode | as above, `rtabmap_reloc --vo` |
 | MASt3R-SLAM | mono | none | concatenated stream | [rmurai0610/MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) |
-| VGGT-SLAM | mono | none | concatenated stream | [MIT-SPARK/VGGT-SLAM](https://github.com/MIT-SPARK/VGGT-SLAM) |
+| VGGT-SLAM 2.0 | mono | none | concatenated stream | [MIT-SPARK/VGGT-SLAM](https://github.com/MIT-SPARK/VGGT-SLAM) |
 | DROID-SLAM | mono, stereo, RGB-D | none | concatenated stream | [princeton-vl/DROID-SLAM](https://github.com/princeton-vl/DROID-SLAM) (planned) |
 
 Baselines run with their published default parameters for the sensor type. The same parameters are used on every dataset, apart

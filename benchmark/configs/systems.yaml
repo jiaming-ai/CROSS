@@ -117,7 +117,7 @@ mast3r_slam:
   sim3_setups: [mono]
 
 vggt_slam:
-  label: VGGT-SLAM
+  label: VGGT-SLAM 2.0
   runner: concat
   setups: [mono]
   uses_odometry: false

@@ -332,7 +332,7 @@ function renderMetrics(v) {
   v.append(
     sec("Sessions, maps and queries",
       "A session is one recorded traversal of a scene. In every scene one session is the map session; all other sessions of the scene are query sessions (see Datasets for the list). All sessions are processed at 10 Hz, every frame in order, without lookahead.",
-      "Systems that store maps (CROSS, ORB-SLAM3, RTAB-Map) map the map session once and save the map; every query run loads it. Systems without map persistence (MASt3R-SLAM, VGGT-SLAM) run the map session followed by the query frames in one stream."),
+      "Systems that store maps (CROSS, ORB-SLAM3, RTAB-Map) map the map session once and save the map; every query run loads it. Systems without map persistence (MASt3R-SLAM, VGGT-SLAM 2.0) run the map session followed by the query frames in one stream."),
     sec("T1 · mapping accuracy (one session at a time)",
       ul("Each session (map and query sessions alike on OpenLORIS and ROVER; each KITTI sequence) is mapped from scratch.",
          "ATE RMSE: position error of the system's final trajectory (after all loop closures) against ground truth, after the best SE(3) alignment (Sim(3) for monocular systems without metric input). Evaluated at the frames the final trajectory contains (CROSS: its map keyframes).",

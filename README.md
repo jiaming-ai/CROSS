@@ -47,7 +47,7 @@ it is still being extended.
 - **Verified loop closure** — prior, in-pass and posterior consistency tests at one chi-square level, with a noise model calibrated without ground truth from about a minute of the robot's own data.
 - **Stereo and mono modes** — learned multi-view relative poses with stereo scale anchors; colour-only operation with learned metric depth.
 - **Visual odometry** — optional DPVO motion source for every mode, so no odometry input is needed.
-- **Benchmark** — one protocol (T1 / T2 / T3) over KITTI, OpenLORIS-Scene, ROVER and SimChange, with ORB-SLAM3, RTAB-Map, MASt3R-SLAM and VGGT-SLAM baselines.
+- **Benchmark** — one protocol (T1 / T2 / T3) over KITTI, OpenLORIS-Scene, ROVER and SimChange, with ORB-SLAM3, RTAB-Map, MASt3R-SLAM and VGGT-SLAM 2.0 baselines.
 - **Multiple dataset formats** — R3D, ROS bags, OpenLORIS, TUM RGB-D, posed RGB-D folders; stereo: KITTI raw, TartanAir V2, Virtual KITTI 2, SimChange.
 
 ## Architecture

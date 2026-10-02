@@ -229,7 +229,7 @@ A *session* is one recorded traversal. In each scene, the map session builds the
 | RTAB-Map (visual odometry) · RGB-D |  | 5.162 (1/22 ✗) | 3.297 (1/8 ✗) | 0.09 / 0.18 | 0.63 / 0.92 (3 pending) | 0.35 / 0.39 | 0.28 / 0.38 | · | 0.49 / 0.56 | · (7 pending) |
 | RTAB-Map (visual odometry) · stereo | 6.294 | 4.509 (1/22 ✗) | 1.302 (1/8 ✗) | 0.24 / 0.32 | · | 0.35 / 0.45 | 0.28 / 0.37 | · | 0.44 / 0.52 | · (7 pending) |
 | MASt3R-SLAM · mono | 10/10 ✗ | 2.257 (7/22 ✗) | 8/8 ✗ | 0.03 / 0.03 | 0.00 / 0.00 (2/7 ✗) | 0.09 / 0.11 (1/76 ✗) | 0.05 / 0.06 | 0.00 / 0.00 (3/7 ✗) | 0.28 / 0.34 (1/76 ✗) | 0.11 / 0.13 (4/100 ✗) |
-| VGGT-SLAM · mono | 60.284 (1/10 ✗) | 5.206 (7/22 ✗) | 8/8 ✗ | 0.13 / 0.20 | 0.09 / 0.15 | 0.10 / 0.21 | 0.30 / 0.37 | 0.11 / 0.18 | 0.25 / 0.42 | 0.22 / 0.32 |
+| VGGT-SLAM 2.0 · mono | 60.284 (1/10 ✗) | 5.206 (7/22 ✗) | 8/8 ✗ | 0.13 / 0.20 | 0.09 / 0.15 | 0.10 / 0.21 | 0.30 / 0.37 | 0.11 / 0.18 | 0.25 / 0.42 | 0.22 / 0.32 |
 
 ## T1 — mapping accuracy (ATE RMSE, m)
 
@@ -250,7 +250,7 @@ Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular 
 | RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 8.222 | 3.401 | 21.718 | 0.327 | 5.993 (98%) | 1.966 | 2.016 (98%) | 5.660 | 7.679 | 3.872 | 6.085 |
 | RTAB-Map (visual odometry) · stereo | 3.314 | 35.376 | 5.638 | 2.732 | 2.110 (98%) | 3.445 | 1.056 (97%) | 4.076 | 3.415 | 1.775 | 6.294 |
 | MASt3R-SLAM · mono | ✗ (6%) | ✗ (19%) | ✗ (8%) | ✗ (25%) | ✗ | ✗ | ✗ (43%) | ✗ (1%) | ✗ (28%) | ✗ (12%) | 10/10 ✗ |
-| VGGT-SLAM · mono | 154.482 (96%) | ✗ (60%) | 113.109 (98%) | 6.655 (92%) | 53.604 (96%) | 32.127 (87%) | 28.725 (88%) | 78.310 (96%) | 34.311 | 41.235 (96%) | 60.284 (1/10 ✗) |
+| VGGT-SLAM 2.0 · mono | 154.482 (96%) | ✗ (60%) | 113.109 (98%) | 6.655 (92%) | 53.604 (96%) | 32.127 (87%) | 28.725 (88%) | 78.310 (96%) | 34.311 | 41.235 (96%) | 60.284 (1/10 ✗) |
 
 ### OpenLORIS-Scene (indoor)
 
@@ -270,7 +270,7 @@ Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular 
 | RTAB-Map (visual odometry) · RGB-D | 0.248 | 20.751 (1/5 ✗) | 2.013 | 1.688 | 3.408 | 5.162 (1/22 ✗) |
 | RTAB-Map (visual odometry) · stereo | 0.072 | 20.137 (1/5 ✗) | 0.805 | 0.317 | 2.996 | 4.509 (1/22 ✗) |
 | MASt3R-SLAM · mono | 0.078 | 1.082 (4/5 ✗) | 1.032 (3/5 ✗) | 0.946 | 9.425 | 2.257 (7/22 ✗) |
-| VGGT-SLAM · mono | 0.244 (3/7 ✗) | 17.084 (1/5 ✗) | 1.512 | 0.606 | 3/3 ✗ | 5.206 (7/22 ✗) |
+| VGGT-SLAM 2.0 · mono | 0.244 (3/7 ✗) | 17.084 (1/5 ✗) | 1.512 | 0.606 | 3/3 ✗ | 5.206 (7/22 ✗) |
 
 ### ROVER campus_large (outdoor)
 
@@ -290,7 +290,7 @@ Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular 
 | RTAB-Map (visual odometry) · RGB-D | 3.297 (1/8 ✗) | 3.297 (1/8 ✗) |
 | RTAB-Map (visual odometry) · stereo | 1.302 (1/8 ✗) | 1.302 (1/8 ✗) |
 | MASt3R-SLAM · mono | 8/8 ✗ | 8/8 ✗ |
-| VGGT-SLAM · mono | 8/8 ✗ | 8/8 ✗ |
+| VGGT-SLAM 2.0 · mono | 8/8 ✗ | 8/8 ✗ |
 
 ## T2 — multi-session localization
 
@@ -316,7 +316,7 @@ Cells: LR@1 m / LR@2 m and MS-ATE (m), pooled over the covered frames of the sce
 | RTAB-Map (visual odometry) · RGB-D | 0.24 / 0.24, 1.12 m | 0.00 / 0.00, 35.04 m | 0.01 / 0.05, 4.39 m | 0.75 / 0.81, 1.55 m | 0.01 / 0.45, 8.82 m | 0.09 / 0.18, 22.40 m |
 | RTAB-Map (visual odometry) · stereo | 0.35 / 0.35, 0.99 m | 0.00 / 0.00, 46.63 m | 0.31 / 0.40, 1.13 m | 1.00 / 1.00, 0.33 m | 0.29 / 0.60, 12.48 m | 0.24 / 0.32, 29.48 m |
 | MASt3R-SLAM · mono | 0.07 / 0.07, 0.09 m | 0.00 / 0.00, 25.41 m | 0.00 / 0.00, · m | 0.23 / 0.27, 0.73 m | 0.00 / 0.00, 283.97 m | 0.03 / 0.03, 219.95 m |
-| VGGT-SLAM · mono | 0.38 / 0.39, 2.73 m | 0.00 / 0.00, 24.58 m | 0.11 / 0.37, 2.82 m | 0.71 / 0.71, 0.44 m | 0.00 / 0.01, 36.39 m | 0.13 / 0.20, 19.49 m |
+| VGGT-SLAM 2.0 · mono | 0.38 / 0.39, 2.73 m | 0.00 / 0.00, 24.58 m | 0.11 / 0.37, 2.82 m | 0.71 / 0.71, 0.44 m | 0.00 / 0.01, 36.39 m | 0.13 / 0.20, 19.49 m |
 
 ### ROVER campus_large
 
@@ -338,7 +338,7 @@ Cells: LR@3 m / LR@5 m and MS-ATE (m), pooled over the covered frames of the sce
 | RTAB-Map (visual odometry) · RGB-D | 0.63 / 0.92, 4.96 m (3 pending) | 0.63 / 0.92, 4.96 m (3 pending) |
 | RTAB-Map (visual odometry) · stereo | · | · |
 | MASt3R-SLAM · mono | 0.00 / 0.00, · m (2/7 ✗) | 0.00 / 0.00, · m (2/7 ✗) |
-| VGGT-SLAM · mono | 0.09 / 0.15, 9.03 m | 0.09 / 0.15, 9.03 m |
+| VGGT-SLAM 2.0 · mono | 0.09 / 0.15, 9.03 m | 0.09 / 0.15, 9.03 m |
 
 ## T3 — relocalization success
 
@@ -364,7 +364,7 @@ Overall = mean over the three datasets of the pooled success at each dataset's s
 | RTAB-Map (visual odometry) · RGB-D | 0.28 / 0.38 | · | 0.49 / 0.56 | · (7 pending) |
 | RTAB-Map (visual odometry) · stereo | 0.28 / 0.37 | · | 0.44 / 0.52 | · (7 pending) |
 | MASt3R-SLAM · mono | 0.05 / 0.06 | 0.00 / 0.00 (3/7 ✗) | 0.28 / 0.34 (1/76 ✗) | 0.11 / 0.13 (4/100 ✗) |
-| VGGT-SLAM · mono | 0.30 / 0.37 | 0.11 / 0.18 | 0.25 / 0.42 | 0.22 / 0.32 |
+| VGGT-SLAM 2.0 · mono | 0.30 / 0.37 | 0.11 / 0.18 | 0.25 / 0.42 | 0.22 / 0.32 |
 
 ### OpenLORIS-Scene
 
@@ -386,7 +386,7 @@ Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m 
 | RTAB-Map (visual odometry) · RGB-D | 0.22 / 0.22 | 0.20 / 0.25 | 0.19 / 0.19 | 0.83 / 0.83 | 0.43 / 0.83 | 0.28 / 0.38 [218, 0.31–0.44] |
 | RTAB-Map (visual odometry) · stereo | 0.31 / 0.31 | 0.16 / 0.17 | 0.27 / 0.31 | 0.58 / 0.58 | 0.40 / 0.80 | 0.28 / 0.37 [216, 0.30–0.43] |
 | MASt3R-SLAM · mono | 0.06 / 0.06 | 0.02 / 0.02 | 0.02 / 0.02 | 0.25 / 0.33 | 0.20 / 0.20 | 0.05 / 0.06 [148, 0.03–0.11] |
-| VGGT-SLAM · mono | 0.64 / 0.72 | 0.03 / 0.08 | 0.29 / 0.40 | 0.92 / 0.92 | 0.00 / 0.00 | 0.30 / 0.37 [169, 0.30–0.45] |
+| VGGT-SLAM 2.0 · mono | 0.64 / 0.72 | 0.03 / 0.08 | 0.29 / 0.40 | 0.92 / 0.92 | 0.00 / 0.00 | 0.30 / 0.37 [169, 0.30–0.45] |
 
 ### ROVER campus_large
 
@@ -408,7 +408,7 @@ Cells: RS@3 m / RS@5 m, the fraction of trials whose final pose lies within 3 m 
 | RTAB-Map (visual odometry) · RGB-D | · | · |
 | RTAB-Map (visual odometry) · stereo | · | · |
 | MASt3R-SLAM · mono | 0.00 / 0.00 (3/7 ✗) | 0.00 / 0.00 [32, 0.00–0.11] (3/7 ✗) |
-| VGGT-SLAM · mono | 0.11 / 0.18 | 0.11 / 0.18 [129, 0.12–0.25] |
+| VGGT-SLAM 2.0 · mono | 0.11 / 0.18 | 0.11 / 0.18 [129, 0.12–0.25] |
 
 ### SimChange v2
 
@@ -430,7 +430,7 @@ Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m 
 | RTAB-Map (visual odometry) · RGB-D | 0.85 / 0.85 | 0.36 / 0.48 | 0.79 / 0.95 | 0.07 / 0.11 | 0.49 / 0.56 [1134, 0.53–0.59] |
 | RTAB-Map (visual odometry) · stereo | 0.84 / 0.85 | 0.26 / 0.39 | 0.64 / 0.92 | 0.07 / 0.10 | 0.44 / 0.52 [1134, 0.49–0.55] |
 | MASt3R-SLAM · mono | 0.17 / 0.18 | 0.23 / 0.29 (1/21 ✗) | 0.51 / 0.82 | 0.47 / 0.47 | 0.28 / 0.34 [361, 0.29–0.39] (1/76 ✗) |
-| VGGT-SLAM · mono | 0.28 / 0.47 | 0.09 / 0.23 | 0.69 / 0.90 | 0.43 / 0.63 | 0.25 / 0.42 [983, 0.39–0.45] |
+| VGGT-SLAM 2.0 · mono | 0.28 / 0.47 | 0.09 / 0.23 | 0.69 / 0.90 | 0.43 / 0.63 | 0.25 / 0.42 [983, 0.39–0.45] |
 
 ## Earlier results (other protocols)
 

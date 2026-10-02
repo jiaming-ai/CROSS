@@ -50,7 +50,7 @@ A job whose input folders are not prepared yet exits with code 3 without writing
 
 Baselines: ORB-SLAM3 and RTAB-Map run through the drivers in `scripts/baselines/` (`orbslam3_reloc.cc`,
 `rtabmap_reloc.cc`, built with `scripts/baselines/CMakeLists.txt` against ORB-SLAM3 and RTAB-Map). MASt3R-SLAM and
-VGGT-SLAM run through `scripts/baselines/run_mast3r_slam.py` and `run_vggt_slam.py`; VGGT-SLAM installs with
+VGGT-SLAM 2.0 run through `scripts/baselines/run_mast3r_slam.py` and `run_vggt_slam.py`; VGGT-SLAM installs with
 `scripts/baselines/install_vggt_slam.sh`.
 
 ## Adding a system
