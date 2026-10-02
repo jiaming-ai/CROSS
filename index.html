@@ -308,7 +308,7 @@
         <p>The robot pose <em>x<sub>t</sub></em> and every keyframe pose <em>c<sub>i</sub></em> are finite Gaussian mixtures on SE(3). Each component is a Gaussian in the tangent space se(3) around its own mean <em>μ</em>: the logarithm map takes a pose into that space and the exponential map brings it back. Writing uncertainty as a residual <em>log(μ<sup>−1</sup>s)</em> keeps it where linearization is valid.</p>
         <p>One component is one pose branch. A mixture can therefore hold several competing answers to “where am I?” at once, such as the true place and a look-alike, and the number of components is capped so the cost stays bounded. The steps below grow, re-weight and prune these branches.</p>
       </div>
-      <div class="step-eq">$$\begin{aligned}p(s_j)&\approx\sum_{k=1}^{K}w^{(k)}_j\\&\qquad\mathcal{N}_{\mathfrak{se}(3)}\!\Big(\log\!\big((\mu^{(k)}_j)^{-1}s_j\big);\,\mathbf{0},\,\Sigma^{(k)}_j\Big)\end{aligned}$$
+      <div class="step-eq">$$p(s_j)\approx\sum_{k=1}^{K}w^{(k)}_j\,\mathcal{N}_{\mathfrak{se}(3)}\!\Big(\log\!\big((\mu^{(k)}_j)^{-1}s_j\big);\,\mathbf{0},\,\Sigma^{(k)}_j\Big)$$
         $$s_j\in\{x_t,\,c_i\},\qquad s_j^{(k)}=\mu^{(k)}_j\exp(\xi),\quad \xi\sim\mathcal{N}\big(0,\Sigma^{(k)}_j\big)$$<span class="eq-note">w: component weight · μ ∈ SE(3): mean pose · Σ: 6×6 covariance in se(3) (rotation and translation)</span></div>
     </div>
 

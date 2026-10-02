@@ -515,7 +515,9 @@ input[type="range"]::-moz-range-thumb {
   overflow-x: auto; padding: 18px 20px; margin-bottom: 36px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 14px; font-size: 17px;
 }
-.rep { display: grid; grid-template-columns: 1.15fr 1fr; gap: 28px; align-items: start; margin-bottom: 36px; }
+.rep { display: grid; grid-template-columns: 1fr; gap: 18px; margin-bottom: 36px; }
+.rep .step-eq { padding: 8px 20px 14px; text-align: center; font-size: 17px; }
+.rep .step-eq .eq-note { text-align: center; }
 .rep .step-text p + p { margin-top: 10px; }
 .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
 .step {
@@ -712,7 +714,7 @@ input[type="range"]::-moz-range-thumb {
   .demo-panels { grid-template-columns: 1fr; }
   .viewers { grid-template-columns: 1fr; }
   .two-col { grid-template-columns: 1fr; }
-  .step-panel.on, .rep { grid-template-columns: 1fr; gap: 16px; }
+  .step-panel.on { grid-template-columns: 1fr; gap: 16px; }
   .steps { grid-template-columns: repeat(2, 1fr); }
   .quad { grid-template-columns: 1fr 1fr; }
   .quad-corner { display: none; }
