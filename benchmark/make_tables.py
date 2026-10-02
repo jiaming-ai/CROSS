@@ -215,12 +215,7 @@ class Tables:
         if missing == n:
             return PENDING
         s = f"{sum(vals) / len(vals):.3f}" if vals else FAIL
-        extra = []
-        if fails:
-            extra.append(f"{fails}{FAIL}")
-        if missing:
-            extra.append(f"{missing} pending")
-        return s + (f" ({', '.join(extra)})" if extra else "")
+        return cell(s, fails, n, missing)
 
     def scene_seqs(self, dataset, scene):
         sc = self.ds[dataset]["scenes"][scene]
@@ -277,18 +272,16 @@ class Tables:
             lines.append("| " + " | ".join(row) + " |")
         return "\n".join(lines)
 
-    def t2_str(self, rs, n, thr):
+    def t2_str(self, rs, n, thr, ms_ate=True):
         if not rs:
             return PENDING
-        ok = [r for r in rs if r.get("status") == "ok"]
-        if not ok:
-            return FAIL
-        a, b, ms = t2_pool(ok, thr)
-        if a is None:
-            return PENDING
-        s = f"{a:.2f} / {b:.2f}, {fmt(ms, 2)} m"
-        miss = n - len([r for r in ok if r.get(f"lr@{thr[1]:g}") is not None])
-        return s + (f" ({miss} pending/failed)" if miss else "")
+        ok = [r for r in rs if r.get("status") == "ok" and all(r.get(f"lr@{t:g}") is not None for t in thr)]
+        a, b, ms = t2_pool(ok, thr) if ok else (None, None, None)
+        s = (f"{a:.2f} / {b:.2f}" + (f", {fmt(ms, 2)} m" if ms_ate else "")) if a is not None else \
+            FAIL if all(r.get("status") != "ok" for r in rs) else PENDING
+        failed = len([r for r in rs if r.get("status") != "ok"])
+        stale = len([r for r in rs if r.get("status") == "ok"]) - len(ok)        # results of an older format: re-score
+        return cell(s, failed, n, n - len(rs) + stale)
 
     # ---------------------------------------------------------------- T3
     def t3_table(self, dataset):
@@ -311,17 +304,21 @@ class Tables:
                 lines.append("| " + " | ".join([row[0], "in development"] + [NA] * len(scenes)) + " |")
                 continue
             for s in scenes:
-                row.append(self.t3_str([r for r in rs_all if r["scene"] == s]))
-            row.append(self.t3_str(rs_all, ci=True))
+                row.append(self.t3_str([r for r in rs_all if r["scene"] == s], self.n_queries(dataset, s)))
+            row.append(self.t3_str(rs_all, self.n_queries(dataset), ci=True))
             lines.append("| " + " | ".join(row) + " |")
         return "\n".join(lines)
 
-    def t3_str(self, rs, ci=False):
+    def t3_str(self, rs, n_queries=None, ci=False):
+        """RS@t1 / RS@t2 pooled over the trials of the successful query runs, then (k/N ✗) for k failed of N queries."""
         ok = [r for r in rs if r.get("status") == "ok" and r.get("n_trials")]
         if not rs:
             return PENDING
+        n_q = n_queries or len(rs)
+        failed = len([r for r in rs if r.get("status") != "ok"])
+        note = fail_note(failed, n_q, max(n_q - len(rs), 0))
         if not ok:
-            return FAIL
+            return cell(FAIL, failed, n_q, max(n_q - len(rs), 0))
         n = sum(r["n_trials"] for r in ok)
         k1 = sum(r["n_s1"] for r in ok)
         k2 = sum(r["n_s2"] for r in ok)
@@ -329,13 +326,69 @@ class Tables:
         if ci:
             lo, hi = wilson(k2, n)
             s += f" [{n}, {lo:.2f}–{hi:.2f}]"
-        return s
+        return s + note
+
+    def t3_rates(self, rs):
+        ok = [r for r in rs if r.get("status") == "ok" and r.get("n_trials")]
+        n = sum(r["n_trials"] for r in ok)
+        return (sum(r["n_s1"] for r in ok) / n, sum(r["n_s2"] for r in ok) / n) if n else None
+
+    def n_queries(self, dataset, scene=None):
+        sc = self.ds[dataset]["scenes"]
+        return sum(len(v.get("queries", [])) for k, v in sc.items() if scene is None or k == scene)
+
+    def t3_overall(self, system, setup):
+        """Overall relocalization success: the mean over the T3 datasets (OpenLORIS, ROVER, SimChange) of the pooled RS at
+        each dataset's smaller / larger threshold, with the failed and pending queries of all of them."""
+        rates, failed, pending, n, dead = [], 0, 0, 0, False
+        for d in T3_DATASETS:
+            if setup not in self.ds[d]["setups"] or f"{d}/{setup}" in self.sy[system].get("skip", []):
+                return None
+            rs = self.idx[("t3", d, system, setup)]
+            nq = self.n_queries(d)
+            n += nq
+            failed += len([r for r in rs if r.get("status") != "ok"])
+            pending += max(nq - len(rs), 0)
+            rates.append(self.t3_rates(rs))
+            dead |= bool(rs) and len(rs) == nq and all(r.get("status") != "ok" for r in rs)
+        return rates, failed, pending, n, dead
+
+    def t3_overall_table(self):
+        head = ["system · setup"] + [f"{DS_NAMES[d]} RS@{self.ds[d]['thresholds'][0]:g}/{self.ds[d]['thresholds'][1]:g} m"
+                                     for d in T3_DATASETS] + ["overall"]
+        lines = ["Overall = mean over the three datasets of the pooled success at each dataset's smaller / larger threshold "
+                 "(a method missing a dataset has no overall value). (k/N ✗): k of the N query sessions failed (crash or "
+                 "timeout after re-runs); their trials are not in the pooled rates.", "",
+                 "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+        for system, sc in self.sy.items():
+            if sc.get("hidden"):
+                continue
+            for setup in sc["setups"]:
+                row = [row_label(self.sy, system, setup)]
+                for d in T3_DATASETS:
+                    ok = setup in self.ds[d]["setups"] and f"{d}/{setup}" not in sc.get("skip", [])
+                    row.append(self.t3_str(self.idx[("t3", d, system, setup)], self.n_queries(d)) if ok else NA)
+                row.append(self.t3_overall_str(system, setup))
+                lines.append("| " + " | ".join(row) + " |")
+        return "\n".join(lines)
+
+    def t3_overall_str(self, system, setup):
+        o = self.t3_overall(system, setup)
+        if o is None:
+            return NA
+        rates, failed, pending, n, dead = o
+        if pending == n:
+            return PENDING
+        if any(x is None for x in rates):            # a dataset without a rate: every query failed there, or pending
+            return cell(FAIL if dead else PENDING, failed, n, pending)
+        return f"{mean([x[0] for x in rates]):.2f} / {mean([x[1] for x in rates]):.2f}" + fail_note(failed, n, pending)
 
     # ---------------------------------------------------------------- summary
     def summary(self):
         cols = [("KITTI ATE (m)", "t1", "kitti"), ("OpenLORIS ATE (m)", "t1", "openloris"), ("ROVER ATE (m)", "t1", "rover"),
                 ("OpenLORIS LR@1/2 m", "t2", "openloris"), ("ROVER LR@3/5 m", "t2", "rover"), ("SimChange LR@1/2 m", "t2", "simchange"),
-                ("OpenLORIS RS@1/2 m", "t3", "openloris"), ("ROVER RS@3/5 m", "t3", "rover"), ("SimChange RS@1/2 m", "t3", "simchange")]
+                ("OpenLORIS RS@1/2 m", "t3", "openloris"), ("ROVER RS@3/5 m", "t3", "rover"), ("SimChange RS@1/2 m", "t3", "simchange"),
+                ("RS overall", "t3", "*")]
         systems = []
         for system, sc in self.sy.items():
             if sc.get("hidden"):
@@ -347,6 +400,9 @@ class Tables:
         for system, setup in systems:
             row = [row_label(self.sy, system, setup)]
             for _, track, dataset in cols:
+                if dataset == "*":
+                    row.append(self.t3_overall_str(system, setup))
+                    continue
                 cfg = self.ds.get(dataset, {})
                 if setup not in cfg.get("setups", {"rgbd": 1, "stereo": 1, "mono": 1}) or \
                         f"{dataset}/{setup}" in self.sy[system].get("skip", []):
@@ -359,20 +415,30 @@ class Tables:
                     v, f, m = self.t1_agg(cells, seqs)
                     row.append(self.t1_agg_str(v, f, m, len(seqs)) if rs else PENDING)
                 elif track == "t2":
-                    ok = [r for r in rs if r.get("status") == "ok"]
-                    a_, b_, _ = t2_pool(ok, cfg["thresholds"]) if ok else (None, None, None)
-                    row.append(f"{a_:.2f} / {b_:.2f}" if a_ is not None else PENDING)
+                    row.append(self.t2_str(rs, self.n_queries(dataset), cfg["thresholds"], ms_ate=False))
                 else:
-                    ok = [r for r in rs if r.get("status") == "ok" and r.get("n_trials")]
-                    if ok:
-                        n = sum(r["n_trials"] for r in ok)
-                        row.append(f"{sum(r['n_s1'] for r in ok) / n:.2f} / {sum(r['n_s2'] for r in ok) / n:.2f}")
-                    else:
-                        row.append(PENDING)
+                    row.append(self.t3_str(rs, self.n_queries(dataset)))
             if self.sy[system]["runner"] == "pending" and all(c in (PENDING, NA) for c in row[1:]):
                 row = [row[0]] + ["in development" if c == PENDING else c for c in row[1:]]
             lines.append("| " + " | ".join(row) + " |")
         return "\n".join(lines)
+
+
+def cell(s, failed, n, pending=0):
+    """A table cell with its failure count: '0.47 (2/8 ✗)', or '8/8 ✗' when every session or query failed."""
+    if s == FAIL and failed:
+        return f"{failed}/{n} {FAIL}" + (f" ({pending} pending)" if pending else "")
+    return s + fail_note(failed, n, pending)
+
+
+def fail_note(failed, n, pending=0):
+    """' (k/N ✗)' for k failed of N sessions or queries, plus pending ones."""
+    parts = ([f"{failed}/{n} {FAIL}"] if failed else []) + ([f"{pending} pending"] if pending else [])
+    return f" ({', '.join(parts)})" if parts else ""
+
+
+T3_DATASETS = ("openloris", "rover", "simchange")
+DS_NAMES = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange": "SimChange"}
 
 
 def main():
@@ -415,6 +481,7 @@ def main():
     parts += ["", "## T3 — relocalization success", "",
               "Independent 10 s trials (100 frames at 10 Hz, stride 50) that start without a pose; success when the final "
               "estimate is within 1 m / 2 m (indoors) or 3 m / 5 m (outdoors) of the pose the map implies."]
+    parts += ["", "### Overall", "", T.t3_overall_table()]
     for d, title in (("openloris", "OpenLORIS-Scene"), ("rover", "ROVER campus_large"), ("simchange", "SimChange v2")):
         parts += ["", f"### {title}", "", T.t3_table(d)]
     if legacy.is_file():

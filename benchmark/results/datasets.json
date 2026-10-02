@@ -25,13 +25,17 @@
       "frames": 299,
       "duration_s": 29.9,
       "path_m": 5.878077813315281,
-      "extent_m": 4.249368945907247
+      "extent_m": 4.249368945907247,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 299,
       "duration_s": 29.9,
       "path_m": 5.932270018877915,
-      "extent_m": 4.287036576644889
+      "extent_m": 4.287036576644889,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 5
@@ -43,13 +47,17 @@
       "frames": 119,
       "duration_s": 11.9,
       "path_m": 0.9045521783331663,
-      "extent_m": 0.7164766541737955
+      "extent_m": 0.7164766541737955,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 119,
       "duration_s": 11.9,
       "path_m": 0.9214535934363086,
-      "extent_m": 0.7277571329133292
+      "extent_m": 0.7277571329133292,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 2
@@ -61,13 +69,17 @@
       "frames": 289,
       "duration_s": 28.9,
       "path_m": 6.4644858643123655,
-      "extent_m": 4.215634226468612
+      "extent_m": 4.215634226468612,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 289,
       "duration_s": 28.9,
       "path_m": 6.534432397419482,
-      "extent_m": 4.247958424552034
+      "extent_m": 4.247958424552034,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 5
@@ -79,13 +91,17 @@
       "frames": 530,
       "duration_s": 53.0,
       "path_m": 11.24898034280914,
-      "extent_m": 4.461717716621883
+      "extent_m": 4.461717716621883,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 529,
       "duration_s": 52.9,
       "path_m": 11.256704776724677,
-      "extent_m": 4.46790216275917
+      "extent_m": 4.46790216275917,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 10
@@ -97,13 +113,17 @@
       "frames": 359,
       "duration_s": 35.9,
       "path_m": 5.568887691065277,
-      "extent_m": 3.999523556978966
+      "extent_m": 3.999523556978966,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 359,
       "duration_s": 35.9,
       "path_m": 5.544671572002936,
-      "extent_m": 3.972637219547872
+      "extent_m": 3.972637219547872,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 7
@@ -115,13 +135,17 @@
       "frames": 380,
       "duration_s": 38.0,
       "path_m": 5.875283444451769,
-      "extent_m": 4.366117385397805
+      "extent_m": 4.366117385397805,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 380,
       "duration_s": 38.0,
       "path_m": 5.920024731322535,
-      "extent_m": 4.399738344495399
+      "extent_m": 4.399738344495399,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 7
@@ -152,13 +176,17 @@
       "frames": 992,
       "duration_s": 99.2,
       "path_m": 31.035286314450047,
-      "extent_m": 9.871169127682144
+      "extent_m": 9.871169127682144,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 993,
       "duration_s": 99.3,
       "path_m": 31.116535219291606,
-      "extent_m": 9.874717478822653
+      "extent_m": 9.874717478822653,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 19
@@ -170,13 +198,27 @@
       "frames": 878,
       "duration_s": 87.8,
       "path_m": 23.130380806543062,
-      "extent_m": 7.896045638384673
+      "extent_m": 7.896045638384673,
+      "covered": 0.8826879271070615,
+      "uncovered": [
+       [
+        497,
+        599
+       ]
+      ]
      },
      "stereo": {
       "frames": 879,
       "duration_s": 87.9,
       "path_m": 23.23188627004795,
-      "extent_m": 7.9080999843866016
+      "extent_m": 7.9080999843866016,
+      "covered": 0.8816837315130831,
+      "uncovered": [
+       [
+        496,
+        599
+       ]
+      ]
      }
     },
     "trials": 17
@@ -188,13 +230,17 @@
       "frames": 709,
       "duration_s": 70.9,
       "path_m": 20.63940063830927,
-      "extent_m": 8.292631819229728
+      "extent_m": 8.292631819229728,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 709,
       "duration_s": 70.9,
       "path_m": 20.72566254753036,
-      "extent_m": 8.298141645860326
+      "extent_m": 8.298141645860326,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 14
@@ -206,13 +252,17 @@
       "frames": 259,
       "duration_s": 25.9,
       "path_m": 5.682493194580618,
-      "extent_m": 3.008141470573268
+      "extent_m": 3.008141470573268,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 259,
       "duration_s": 25.9,
       "path_m": 5.677835382540361,
-      "extent_m": 3.0120347197115054
+      "extent_m": 3.0120347197115054,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 5
@@ -243,16 +293,266 @@
       "frames": 898,
       "duration_s": 89.8,
       "path_m": 37.62253847970237,
-      "extent_m": 14.731674258077836
+      "extent_m": 14.731674258077836,
+      "covered": 0.7193763919821826,
+      "uncovered": [
+       [
+        263,
+        514
+       ]
+      ]
      },
      "stereo": {
       "frames": 900,
       "duration_s": 90.0,
       "path_m": 37.869334317461366,
-      "extent_m": 14.76244220943845
+      "extent_m": 14.76244220943845,
+      "covered": 0.7188888888888889,
+      "uncovered": [
+       [
+        264,
+        516
+       ]
+      ]
      }
     },
     "trials": 17
+   }
+  },
+  "corridor": {
+   "corridor1-1": {
+    "role": "map",
+    "setups": {
+     "rgbd": {
+      "frames": 2723,
+      "duration_s": 272.3,
+      "path_m": 221.90592143338984,
+      "extent_m": 84.21305282278098
+     },
+     "stereo": {
+      "frames": 2724,
+      "duration_s": 272.4,
+      "path_m": 221.39079889480468,
+      "extent_m": 84.21831315874809
+     }
+    }
+   },
+   "corridor1-2": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 1159,
+      "duration_s": 115.9,
+      "path_m": 140.2255615194901,
+      "extent_m": 63.58726831434548,
+      "covered": 1.0,
+      "uncovered": []
+     },
+     "stereo": {
+      "frames": 1160,
+      "duration_s": 116.0,
+      "path_m": 140.27021727568246,
+      "extent_m": 63.57800043582588,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 23
+   },
+   "corridor1-3": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 699,
+      "duration_s": 69.9,
+      "path_m": 73.41916258904952,
+      "extent_m": 52.137192937625706,
+      "covered": 1.0,
+      "uncovered": []
+     },
+     "stereo": {
+      "frames": 700,
+      "duration_s": 70.0,
+      "path_m": 72.84976893857302,
+      "extent_m": 52.12048492386988,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 13
+   },
+   "corridor1-4": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 628,
+      "duration_s": 62.8,
+      "path_m": 62.146964374706,
+      "extent_m": 49.65670445023604,
+      "covered": 0.9315286624203821,
+      "uncovered": [
+       [
+        585,
+        627
+       ]
+      ]
+     },
+     "stereo": {
+      "frames": 629,
+      "duration_s": 62.9,
+      "path_m": 62.44240776624955,
+      "extent_m": 49.65771853014084,
+      "covered": 0.931637519872814,
+      "uncovered": [
+       [
+        586,
+        628
+       ]
+      ]
+     }
+    },
+    "trials": 12
+   },
+   "corridor1-5": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 1459,
+      "duration_s": 145.9,
+      "path_m": 123.82540181649456,
+      "extent_m": 65.17929640287558,
+      "covered": 1.0,
+      "uncovered": []
+     },
+     "stereo": {
+      "frames": 1459,
+      "duration_s": 145.9,
+      "path_m": 123.9157152927528,
+      "extent_m": 65.18326110963525,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 29
+   }
+  },
+  "market": {
+   "market1-1": {
+    "role": "map",
+    "setups": {
+     "rgbd": {
+      "frames": 2047,
+      "duration_s": 204.7,
+      "path_m": 146.57029709935313,
+      "extent_m": 64.64258795926087
+     },
+     "stereo": {
+      "frames": 2049,
+      "duration_s": 204.9,
+      "path_m": 150.28997306401928,
+      "extent_m": 65.02224646315776
+     }
+    }
+   },
+   "market1-2": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 2553,
+      "duration_s": 255.3,
+      "path_m": 215.32997572776,
+      "extent_m": 95.4855163774247,
+      "covered": 0.29063846455150805,
+      "uncovered": [
+       [
+        0,
+        488
+       ],
+       [
+        624,
+        1945
+       ]
+      ]
+     },
+     "stereo": {
+      "frames": 2553,
+      "duration_s": 255.3,
+      "path_m": 217.27868550026363,
+      "extent_m": 95.81880227663896,
+      "covered": 0.2957305131218175,
+      "uncovered": [
+       [
+        0,
+        484
+       ],
+       [
+        622,
+        1934
+       ]
+      ]
+     }
+    },
+    "trials": 51
+   },
+   "market1-3": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 2937,
+      "duration_s": 293.7,
+      "path_m": 225.7726789070183,
+      "extent_m": 72.95542470681457,
+      "covered": 0.40687776642832824,
+      "uncovered": [
+       [
+        0,
+        1089
+       ],
+       [
+        1558,
+        1771
+       ],
+       [
+        1846,
+        2210
+       ],
+       [
+        2727,
+        2729
+       ],
+       [
+        2867,
+        2936
+       ]
+      ]
+     },
+     "stereo": {
+      "frames": 2938,
+      "duration_s": 293.8,
+      "path_m": 233.88991626463144,
+      "extent_m": 73.42677266604596,
+      "covered": 0.3805309734513274,
+      "uncovered": [
+       [
+        0,
+        1081
+       ],
+       [
+        1543,
+        2204
+       ],
+       [
+        2728,
+        2730
+       ],
+       [
+        2865,
+        2937
+       ]
+      ]
+     }
+    },
+    "trials": 58
    }
   }
  },
@@ -321,6 +621,71 @@
      }
     }
    }
+  },
+  "04": {
+   "04": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 271,
+      "duration_s": 27.1,
+      "path_m": 393.6452395417399,
+      "extent_m": 393.6343535611363
+     }
+    }
+   }
+  },
+  "09": {
+   "09": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 1591,
+      "duration_s": 159.1,
+      "path_m": 1705.4118012361423,
+      "extent_m": 734.9229717997945
+     }
+    }
+   }
+  },
+  "10": {
+   "10": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 1201,
+      "duration_s": 120.1,
+      "path_m": 919.7489911377825,
+      "extent_m": 694.3279348373741
+     }
+    }
+   }
+  },
+  "08": {
+   "08": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 4071,
+      "duration_s": 407.1,
+      "path_m": 3223.1722996973267,
+      "extent_m": 898.5454745225871
+     }
+    }
+   }
+  },
+  "02": {
+   "02": {
+    "role": "map",
+    "setups": {
+     "stereo": {
+      "frames": 4661,
+      "duration_s": 466.1,
+      "path_m": 5067.554539621266,
+      "extent_m": 1120.6018433075133
+     }
+    }
+   }
   }
  },
  "simchange": {
@@ -335,6 +700,300 @@
       "extent_m": 29.666856280944945
      }
     }
+   },
+   "hssd_house/rearr_10": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_25": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_75": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_50_s1": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_50_s2": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_50_remove": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_50_relocate": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/light_morning": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/light_evening": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/light_night": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/light_overcast": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/offset_1.0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1183,
+      "duration_s": 118.3,
+      "path_m": 100.1128699098877,
+      "extent_m": 30.326436969471594,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 23
+   },
+   "hssd_house/yaw_45": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1000,
+      "duration_s": 100.0,
+      "path_m": 97.45179798919422,
+      "extent_m": 29.666423133406493,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/half": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 455,
+      "duration_s": 45.5,
+      "path_m": 48.70880679325233,
+      "extent_m": 26.42055239037109,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 9
+   },
+   "hssd_house/rearr_50+light_night": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_50+reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1000,
+      "duration_s": 100.0,
+      "path_m": 97.45179798919422,
+      "extent_m": 29.666423133406493,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_100+light_evening+reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1000,
+      "duration_s": 100.0,
+      "path_m": 97.45179798919422,
+      "extent_m": 29.666423133406493,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr_50+offset_1.0+light_overcast": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1183,
+      "duration_s": 118.3,
+      "path_m": 100.1128699098877,
+      "extent_m": 30.326436969471594,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 23
    }
   },
   "hssd_restaurant": {
@@ -349,6 +1008,272 @@
      }
     }
    },
+   "hssd_restaurant/rearr_10": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_25": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_75": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_50_s1": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_50_s2": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_50_remove": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_50_relocate": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/light_morning": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/light_evening": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/light_night": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/light_overcast": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/offset_1.0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1406,
+      "duration_s": 140.6,
+      "path_m": 139.41457904791343,
+      "extent_m": 34.04146307353214,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 28
+   },
+   "hssd_restaurant/yaw_45": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1204,
+      "duration_s": 120.4,
+      "path_m": 134.0191136726617,
+      "extent_m": 34.48469300812412,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/half": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 614,
+      "duration_s": 61.4,
+      "path_m": 67.00390857231852,
+      "extent_m": 31.850025157096546,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 12
+   },
+   "hssd_restaurant/rearr_50+light_night": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr_50+reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1204,
+      "duration_s": 120.4,
+      "path_m": 134.0191136726617,
+      "extent_m": 34.48469300812412,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 24
+   },
    "hssd_restaurant/rearr_100+light_evening+reverse": {
     "role": "query",
     "setups": {
@@ -356,7 +1281,9 @@
       "frames": 1204,
       "duration_s": 120.4,
       "path_m": 134.0191136726617,
-      "extent_m": 34.48469300812412
+      "extent_m": 34.48469300812412,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 24
@@ -368,7 +1295,9 @@
       "frames": 1406,
       "duration_s": 140.6,
       "path_m": 139.41457904791343,
-      "extent_m": 34.04146307353214
+      "extent_m": 34.04146307353214,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 28
@@ -385,6 +1314,286 @@
       "extent_m": 6.189742797430518
      }
     }
+   },
+   "classroom/light_morning": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/light_noon": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/light_afternoon": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/light_evening": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/light_night": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/light_overcast": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/move_25": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/move_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/move_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/remove_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/background": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/offset_0.5": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 14.141048937802363,
+      "extent_m": 5.872336779988569,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/offset_1.0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 14.141881927544635,
+      "extent_m": 5.872565099079723,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/height_0.4": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/yaw_15": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/yaw_30": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/yaw_45": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159530275494522,
+      "extent_m": 6.189742797430518,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159540089048722,
+      "extent_m": 6.1900540854560635,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
+   },
+   "classroom/half": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 75,
+      "duration_s": 7.5,
+      "path_m": 7.5611445295994955,
+      "extent_m": 5.262631475872979,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 1
+   },
+   "classroom/combo": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 140,
+      "duration_s": 14.0,
+      "path_m": 15.159540089048722,
+      "extent_m": 6.1900540854560635,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 2
    }
   },
   "lonemonk": {
@@ -406,7 +1615,9 @@
       "frames": 682,
       "duration_s": 68.2,
       "path_m": 91.91262269170583,
-      "extent_m": 25.228371504464093
+      "extent_m": 25.228371504464093,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 13
@@ -418,7 +1629,9 @@
       "frames": 682,
       "duration_s": 68.2,
       "path_m": 91.91262269170583,
-      "extent_m": 25.228371504464093
+      "extent_m": 25.228371504464093,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 13
@@ -430,7 +1643,9 @@
       "frames": 682,
       "duration_s": 68.2,
       "path_m": 91.91262269170583,
-      "extent_m": 25.228371504464093
+      "extent_m": 25.228371504464093,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 13
@@ -442,7 +1657,9 @@
       "frames": 682,
       "duration_s": 68.2,
       "path_m": 91.91262269170583,
-      "extent_m": 25.228371504464093
+      "extent_m": 25.228371504464093,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 13
@@ -454,7 +1671,9 @@
       "frames": 682,
       "duration_s": 68.2,
       "path_m": 91.91262269170583,
-      "extent_m": 25.228371504464093
+      "extent_m": 25.228371504464093,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 13
@@ -466,7 +1685,9 @@
       "frames": 682,
       "duration_s": 68.2,
       "path_m": 91.91262269170583,
-      "extent_m": 25.228371504464093
+      "extent_m": 25.228371504464093,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 13
@@ -478,7 +1699,9 @@
       "frames": 806,
       "duration_s": 80.6,
       "path_m": 95.70354415460324,
-      "extent_m": 26.355978245666044
+      "extent_m": 26.355978245666044,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 16
@@ -490,7 +1713,74 @@
       "frames": 1057,
       "duration_s": 105.7,
       "path_m": 101.75770020842654,
-      "extent_m": 26.409509338326355
+      "extent_m": 26.409509338326355,
+      "covered": 0.9640491958372753,
+      "uncovered": [
+       [
+        495,
+        498
+       ],
+       [
+        517,
+        519
+       ],
+       [
+        530,
+        533
+       ],
+       [
+        536,
+        536
+       ],
+       [
+        538,
+        538
+       ],
+       [
+        541,
+        541
+       ],
+       [
+        543,
+        544
+       ],
+       [
+        546,
+        546
+       ],
+       [
+        548,
+        551
+       ],
+       [
+        575,
+        579
+       ],
+       [
+        581,
+        582
+       ],
+       [
+        584,
+        585
+       ],
+       [
+        588,
+        588
+       ],
+       [
+        590,
+        590
+       ],
+       [
+        605,
+        605
+       ],
+       [
+        627,
+        631
+       ]
+      ]
      }
     },
     "trials": 21
@@ -502,7 +1792,9 @@
       "frames": 682,
       "duration_s": 68.2,
       "path_m": 91.91262269170583,
-      "extent_m": 25.228371504464093
+      "extent_m": 25.228371504464093,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 13
@@ -514,7 +1806,9 @@
       "frames": 684,
       "duration_s": 68.4,
       "path_m": 91.91288586049076,
-      "extent_m": 25.228539162963244
+      "extent_m": 25.228539162963244,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 13
@@ -526,7 +1820,9 @@
       "frames": 352,
       "duration_s": 35.2,
       "path_m": 45.937440537052424,
-      "extent_m": 23.85517605236774
+      "extent_m": 23.85517605236774,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 7
@@ -538,7 +1834,9 @@
       "frames": 983,
       "duration_s": 98.3,
       "path_m": 93.50471247664137,
-      "extent_m": 25.971987904828797
+      "extent_m": 25.971987904828797,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 19
@@ -550,7 +1848,9 @@
       "frames": 684,
       "duration_s": 68.4,
       "path_m": 91.91288586049076,
-      "extent_m": 25.228539162963244
+      "extent_m": 25.228539162963244,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 13
@@ -562,7 +1862,9 @@
       "frames": 983,
       "duration_s": 98.3,
       "path_m": 93.50471247664137,
-      "extent_m": 25.971987904828797
+      "extent_m": 25.971987904828797,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 19
@@ -594,14 +1896,44 @@
      "rgbd": {
       "frames": 10320,
       "duration_s": 1032.0,
-      "path_m": 396.9676004996917,
-      "extent_m": 50.896883865319985
+      "path_m": 396.9676005162439,
+      "extent_m": 49.11124104982569,
+      "covered": 0.7536821705426356,
+      "uncovered": [
+       [
+        745,
+        1729
+       ],
+       [
+        4442,
+        5307
+       ],
+       [
+        7859,
+        8549
+       ]
+      ]
      },
      "stereo": {
       "frames": 9206,
       "duration_s": 920.6,
-      "path_m": 397.3851904175257,
-      "extent_m": 50.913909231466576
+      "path_m": 397.3851904103704,
+      "extent_m": 49.15090394896905,
+      "covered": 0.7575494242885075,
+      "uncovered": [
+       [
+        631,
+        1442
+       ],
+       [
+        3783,
+        4531
+       ],
+       [
+        6720,
+        7390
+       ]
+      ]
      }
     },
     "trials": 184
@@ -612,17 +1944,125 @@
      "rgbd": {
       "frames": 9660,
       "duration_s": 966.0,
-      "path_m": 385.60272151035946,
-      "extent_m": 53.73484462447783
+      "path_m": 385.6027215171647,
+      "extent_m": 47.73293214256274,
+      "covered": 0.7477225672877846,
+      "uncovered": [
+       [
+        0,
+        723
+       ],
+       [
+        3160,
+        3886
+       ],
+       [
+        6298,
+        6994
+       ],
+       [
+        9371,
+        9659
+       ]
+      ]
      },
      "stereo": {
       "frames": 9930,
       "duration_s": 993.0,
-      "path_m": 387.999866977408,
-      "extent_m": 54.24290206988853
+      "path_m": 387.9998669716952,
+      "extent_m": 48.0711015160836,
+      "covered": 0.7512588116817724,
+      "uncovered": [
+       [
+        0,
+        716
+       ],
+       [
+        3248,
+        3973
+       ],
+       [
+        6447,
+        7147
+       ],
+       [
+        9604,
+        9929
+       ]
+      ]
      }
     },
     "trials": 193
+   },
+   "campus_large_winter_2024-01-27": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 7557,
+      "duration_s": 755.7,
+      "path_m": 291.68749425669193,
+      "extent_m": 38.36778754322151,
+      "covered": 1.0,
+      "uncovered": []
+     },
+     "stereo": {
+      "frames": 7558,
+      "duration_s": 755.8,
+      "path_m": 294.65263710706165,
+      "extent_m": 38.75969942317794,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 151
+   },
+   "campus_large_spring_2024-04-14": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 9439,
+      "duration_s": 943.9,
+      "path_m": 369.3008963809042,
+      "extent_m": 47.12024342184566,
+      "covered": 0.8343044814069287,
+      "uncovered": [
+       [
+        677,
+        1220
+       ],
+       [
+        3845,
+        4373
+       ],
+       [
+        6963,
+        7453
+       ]
+      ]
+     },
+     "stereo": {
+      "frames": 9440,
+      "duration_s": 944.0,
+      "path_m": 372.6079947302436,
+      "extent_m": 47.63217252182339,
+      "covered": 0.8364406779661017,
+      "uncovered": [
+       [
+        682,
+        1220
+       ],
+       [
+        3852,
+        4373
+       ],
+       [
+        6969,
+        7451
+       ]
+      ]
+     }
+    },
+    "trials": 188
    },
    "campus_large_dusk_2024-09-24_2": {
     "role": "query",
@@ -630,17 +2070,65 @@
      "rgbd": {
       "frames": 7093,
       "duration_s": 709.3,
-      "path_m": 277.9240849428129,
-      "extent_m": 34.58775596849535
+      "path_m": 277.9240849469819,
+      "extent_m": 35.51555915584469,
+      "covered": 1.0,
+      "uncovered": []
      },
      "stereo": {
       "frames": 7094,
       "duration_s": 709.4,
-      "path_m": 281.3614678222451,
-      "extent_m": 35.18537569243702
+      "path_m": 281.36146782269293,
+      "extent_m": 36.04456814089777,
+      "covered": 1.0,
+      "uncovered": []
      }
     },
     "trials": 141
+   },
+   "campus_large_night_2024-09-24_3": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 7032,
+      "duration_s": 703.2,
+      "path_m": 276.6860593661066,
+      "extent_m": 35.87515262571338,
+      "covered": 1.0,
+      "uncovered": []
+     },
+     "stereo": {
+      "frames": 7032,
+      "duration_s": 703.2,
+      "path_m": 280.27619652282397,
+      "extent_m": 36.284044435835135,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 140
+   },
+   "campus_large_night-light_2024-09-24_4": {
+    "role": "query",
+    "setups": {
+     "rgbd": {
+      "frames": 7015,
+      "duration_s": 701.5,
+      "path_m": 272.87117929040375,
+      "extent_m": 35.088034428250864,
+      "covered": 1.0,
+      "uncovered": []
+     },
+     "stereo": {
+      "frames": 7013,
+      "duration_s": 701.3,
+      "path_m": 276.7905103262014,
+      "extent_m": 35.76189747275542,
+      "covered": 1.0,
+      "uncovered": []
+     }
+    },
+    "trials": 140
    }
   }
  }

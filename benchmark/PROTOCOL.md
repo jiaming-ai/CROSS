@@ -75,7 +75,8 @@ CROSS fuses an odometry stream with its visual observations. Each dataset gives 
   perturbed with SNR 10 noise, seeded, as in the CROSS paper's noise study and in SimChange. It is marked *sim-odom* in the tables.
 - **SimChange**: simulated, SNR 10, seed 0 for the map session and seed 1 for queries.
 
-Baselines that accept external odometry (RTAB-Map) get the same odometry stream. Visual(-inertial) systems (ORB-SLAM3,
+Baselines that accept external odometry (RTAB-Map) get the same odometry stream; RTAB-Map also runs with its own visual
+odometry (`rtabmap_vo`). Visual(-inertial) systems (ORB-SLAM3,
 MASt3R-SLAM, VGGT-SLAM, DROID-SLAM) run on images only. The tables mark every system that uses odometry or IMU, so the
 comparison stays interpretable.
 
@@ -127,6 +128,10 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
   nearest map keyframe in the map is composed with its ground-truth offset to the query frame, so map drift does not count as a
   relocalization error. The absolute variant (map-session alignment, as in T2) is stored as well.
 - Also reported: the median final error of the failed trials, and 95 % Wilson intervals.
+- **Overall RS** of a system: the mean over OpenLORIS, ROVER and SimChange of its pooled RS at each dataset's smaller and
+  larger threshold (each dataset weighs the same, whatever its number of trials).
+- **Failed query sessions** (a crash or timeout that persists after re-runs) are shown as *k/N* ✗ (k of the N query sessions
+  failed); their trials are not in the pooled rates. The same notation counts failed sequences in the T1 means.
 - Systems without map persistence (MASt3R-SLAM, VGGT-SLAM, DROID-SLAM) run the map session followed by the trial in one
   stream. Only the trial frames are scored. Every trial re-runs the whole map session, so these systems are scored on at most
   5 evenly spaced trials per query session. A run that crashes (out of memory) or times out is reported as failed and re-run;
@@ -145,6 +150,7 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 | CROSS (Depth Anything 3) | mono | visual odometry (DPVO + learned metric scale) | save / load map | `--mode mono --odometry visual` |
 | ORB-SLAM3 | mono, stereo, RGB-D | none (visual) | atlas save / load, multi-map merge | [UZ-SLAMLab/ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) + `scripts/baselines/orbslam3_reloc.cc` |
 | RTAB-Map | RGB-D, stereo | same odometry as CROSS | database, localization mode | [introlab/rtabmap](https://github.com/introlab/rtabmap) + `scripts/baselines/rtabmap_reloc.cc`; every frame processed, `Mem/STMSize 30` (RTAB-Map's KITTI setting) |
+| RTAB-Map (visual odometry) | RGB-D, stereo | none: RTAB-Map's own visual odometry (frame-to-map, reset to the latest pose after a lost frame) | database, localization mode | as above, `rtabmap_reloc --vo` |
 | MASt3R-SLAM | mono | none | concatenated stream | [rmurai0610/MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) |
 | VGGT-SLAM | mono | none | concatenated stream | [MIT-SPARK/VGGT-SLAM](https://github.com/MIT-SPARK/VGGT-SLAM) |
 | DROID-SLAM | mono, stereo, RGB-D | none | concatenated stream | [princeton-vl/DROID-SLAM](https://github.com/princeton-vl/DROID-SLAM) (planned) |

@@ -97,17 +97,32 @@ def table_models(T: mt.Tables, runs_by_key):
             for system, setup in mt.rows_for(ds, sy, dataset):
                 rs = T.idx[(track, dataset, system, setup)]
                 cells = []
-                for s in scenes:
-                    sub = [r for r in rs if r["scene"] == s]
-                    if track == "t2":
-                        n = len(cfg["scenes"].get(s, {}).get("queries", [])) or len(sub)
-                        text = T.t2_str(sub, n, cfg["thresholds"])
-                    else:
-                        text = T.t3_str(sub)
-                    cells.append({"text": text, "runs": [runs_by_key[id(r)] for r in sub]})
+                for s in scenes + [None]:                    # None: all scenes of the dataset
+                    sub = [r for r in rs if s is None or r["scene"] == s]
+                    n = T.n_queries(dataset, s) or len(sub)
+                    text = T.t2_str(sub, n, cfg["thresholds"]) if track == "t2" else T.t3_str(sub, n)
+                    cells.append({"text": text, "runs": [runs_by_key[id(r)] for r in sub] if s is not None else []})
                 rows.append({"label": mt.row_label(sy, system, setup, dataset), "system": system, "setup": setup,
                              "pending": sy[system]["runner"] == "pending" and not rs, "cells": cells})
-            out[track][dataset] = {"cols": scenes, "rows": rows, "thresholds": cfg["thresholds"]}
+            out[track][dataset] = {"cols": scenes + ["all scenes"], "rows": rows, "thresholds": cfg["thresholds"]}
+    # T3 overall: every method's pooled success per dataset and the mean over the datasets
+    rows = []
+    for system, sc in sy.items():
+        if sc.get("hidden"):
+            continue
+        for setup in sc["setups"]:
+            cells = []
+            for d in mt.T3_DATASETS:
+                if setup not in ds[d]["setups"] or f"{d}/{setup}" in sc.get("skip", []):
+                    cells.append({"text": mt.NA, "runs": []})
+                    continue
+                cells.append({"text": T.t3_str(T.idx[("t3", d, system, setup)], T.n_queries(d)), "runs": []})
+            cells.append({"text": T.t3_overall_str(system, setup), "runs": []})
+            rows.append({"label": mt.row_label(sy, system, setup), "system": system, "setup": setup,
+                         "pending": sc["runner"] == "pending", "cells": cells})
+    out["t3"] = {"all": {"cols": [mt.DS_NAMES.get(d, d) + (" (1 / 2 m)" if ds[d]["environment"] == "indoor" else " (3 / 5 m)")
+                                  for d in mt.T3_DATASETS] + ["overall (mean of the datasets)"],
+                         "rows": rows, "thresholds": None}, **out["t3"]}
     return out
 
 

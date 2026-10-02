@@ -13,6 +13,7 @@
   --good-ink: #006300; --bad-ink: #b02a2a; --chip: #f0efec; --accent: #2a78d6;
   --c1: #2a78d6; --c2: #eb6834; --c3: #1baf7a; --c4: #eda100; --c5: #e87ba4; --c6: #008300; --c7: #4a3aa7;
   --s-hi: #184f95; --s-lo: #86b6ef; --hatch: #e1e0d9;
+  --row-hover: #ecebe6; --rank1: rgba(42,120,214,0.30); --rank2: rgba(42,120,214,0.17); --rank3: rgba(42,120,214,0.08);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -22,6 +23,7 @@
     --est: #3987e5; --gt: #898781; --good-ink: #0ca30c; --bad-ink: #e66767; --chip: #262624; --accent: #3987e5;
     --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500; --c5: #d55181; --c6: #008300; --c7: #9085e9;
     --s-hi: #5598e7; --s-lo: #1c5cab; --hatch: #2c2c2a;
+    --row-hover: #2a2a28; --rank1: rgba(57,135,229,0.42); --rank2: rgba(57,135,229,0.25); --rank3: rgba(57,135,229,0.12);
   }
 }
 :root[data-theme="dark"] {
@@ -31,6 +33,7 @@
   --est: #3987e5; --gt: #898781; --good-ink: #0ca30c; --bad-ink: #e66767; --chip: #262624; --accent: #3987e5;
     --c1: #3987e5; --c2: #d95926; --c3: #199e70; --c4: #c98500; --c5: #d55181; --c6: #008300; --c7: #9085e9;
     --s-hi: #5598e7; --s-lo: #1c5cab; --hatch: #2c2c2a;
+    --row-hover: #2a2a28; --rank1: rgba(57,135,229,0.42); --rank2: rgba(57,135,229,0.25); --rank3: rgba(57,135,229,0.12);
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -51,6 +54,13 @@ table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nu
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
 th { color: var(--ink-2); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
 td.lab { font-weight: 550; }
+.scroll th:first-child, .scroll td.lab { position: sticky; left: 0; z-index: 1; background-color: var(--surface); box-shadow: inset -1px 0 0 var(--grid); }
+.scroll th:first-child { z-index: 2; }
+tbody tr:hover td, tbody tr:hover td.lab { background-color: var(--row-hover); }
+td.rank1 { background-image: linear-gradient(var(--rank1), var(--rank1)); font-weight: 700; }
+td.rank2 { background-image: linear-gradient(var(--rank2), var(--rank2)); }
+td.rank3 { background-image: linear-gradient(var(--rank3), var(--rank3)); }
+.rankkey { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -1px; margin: 0 3px 0 8px; }
 td.cell { cursor: pointer; }
 td.cell:hover, td.cell:focus { background: var(--chip); outline: none; }
 td.cell.sel { box-shadow: inset 0 0 0 2px var(--accent); }
@@ -104,9 +114,9 @@ const $ = (t, a = {}, ...kids) => { const e = document.createElement(t); for (co
   for (const k of kids) e.append(k instanceof Node ? k : document.createTextNode(k ?? "")); return e; };
 const SVGNS = "http://www.w3.org/2000/svg";
 const s$ = (t, a = {}) => { const e = document.createElementNS(SVGNS, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); return e; };
-const DS = {kitti: "KITTI", openloris: "OpenLORIS-Scene", rover: "ROVER campus_large", simchange: "SimChange v2"};
+const DS = {all: "All datasets (overall)", kitti: "KITTI", openloris: "OpenLORIS-Scene", rover: "ROVER campus_large", simchange: "SimChange v2"};
 const TRACK = {t1: "T1 · mapping accuracy", t2: "T2 · multi-session localization", t3: "T3 · relocalization success"};
-const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "openloris"}, sel: null};
+const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "all"}, sel: null};
 const tip = document.getElementById("tip");
 function showTip(ev, parts) { tip.replaceChildren(...parts.map(p => Array.isArray(p) ? $("div", {}, $("b", {}, p[0]), " ", p[1]) : $("div", {}, p)));
   tip.style.display = "block"; const x = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = (ev.clientY + 14) + "px"; }
@@ -146,10 +156,32 @@ function mdTable(md) {
     else tr.append(...c.slice(1).map(x => $("td", {class: x === "·" || x === "" ? "dim" : ""}, x || "n/a")));
     tb.append(tr); } t.append(tb); return $("div", {class: "scroll"}, t);
 }
+// ---------------------------------------------------------------- column ranking: shade the three best complete cells per column
+// A cell is ranked by its first number; cells with failed or pending sessions (✗, pending, ·) are not ranked, as their
+// value covers only part of the sessions.  lowerBetter(ci) gives the direction of column ci.
+function rankColumns(tbody, lowerBetter) {
+  const rows = [...tbody.querySelectorAll("tr")].map(tr => [...tr.querySelectorAll("td")].slice(1));
+  const ncol = Math.max(0, ...rows.map(r => r.length));
+  for (let ci = 0; ci < ncol; ci++) {
+    const vals = [];
+    for (const r of rows) { const td = r[ci]; if (!td || td.colSpan > 1) continue;
+      const t = td.textContent.trim(), m = t.match(/^-?\d+(\.\d+)?/);
+      if (m && !/✗|pending|·/.test(t)) vals.push([parseFloat(m[0]), td]); }
+    const uniq = [...new Set(vals.map(x => x[0]))].sort((a, b) => lowerBetter(ci) ? a - b : b - a);
+    if (uniq.length < 2) continue;
+    for (const [x, td] of vals) { const k = uniq.indexOf(x); if (k < 3) td.classList.add(`rank${k + 1}`); }
+  }
+}
+const rankNote = () => $("span", {class: "note"}, " Shading:", $("span", {class: "rankkey", style: "background: var(--rank1)"}), "best (bold)",
+  $("span", {class: "rankkey", style: "background: var(--rank2)"}), "2nd", $("span", {class: "rankkey", style: "background: var(--rank3)"}), "3rd per column, by the first number;",
+  " cells with failed or pending sessions are not ranked. k/N ✗: k of the N sessions or queries failed.");
+
 function renderSummary(v) {
   v.append($("div", {class: "card"}, $("h3", {}, "Headline numbers"),
-    $("p", {class: "note"}, "ATE: mean over the dataset's sequences (m, lower is better). LR: localization recall of whole query sessions against a stored map (higher is better). RS: relocalization success over 10 s trials (higher is better). ⁽ᵒ⁾ uses the dataset's odometry. · not run yet, ✗ failed. Click the T1–T3 tabs for per-scene tables and plots."),
-    mdTable(B.summary)));
+    $("p", {class: "note"}, "ATE: mean over the dataset's sequences (m, lower is better). LR: localization recall of whole query sessions against a stored map (higher is better). RS: relocalization success over 10 s trials (higher is better); RS overall = mean over OpenLORIS, ROVER and SimChange. ⁽ᵒ⁾ uses the dataset's odometry. · not run yet; k/N ✗: k of the dataset's N sequences (ATE) or query sessions (LR, RS) failed, and the value covers the others. Click the T1–T3 tabs for per-scene tables and plots."),
+    mdTable(B.summary), rankNote()));
+  const t = v.querySelector("table"); if (t) { const heads = [...t.querySelectorAll("th")].slice(1).map(h => h.textContent);
+    rankColumns(t.querySelector("tbody"), ci => /ATE/.test(heads[ci] || "")); }
 }
 
 // ---------------------------------------------------------------- track tables
@@ -161,10 +193,11 @@ function renderTrack(v, track) {
   v.append($("div", {class: "bar"}, $("span", {}, "Dataset"), sel,
     $("span", {class: "note"}, track === "t1" ? "ATE RMSE (m) of the final trajectory; scene cells average the scene's sequences." :
       track === "t2" ? "LR@1 m / LR@2 m indoors (LR@3 m / LR@5 m outdoors), MS-ATE (m). Query sessions run once against the stored map." :
+      state.ds[track] === "all" ? "Overall relocalization success of every method: pooled RS per dataset and the mean over the three datasets (RS@1 / 2 m indoors, RS@3 / 5 m outdoors)." :
       "RS@1 m / RS@2 m indoors (RS@3 m / RS@5 m outdoors), pooled over the scene's trials.")));
   const m = B.tables[track][state.ds[track]];
   if (!m) { v.append($("div", {class: "empty"}, "No results.")); return; }
-  if (track === "t3") renderT3Plots(v, state.ds[track]);
+  if (track === "t3" && state.ds[track] !== "all") renderT3Plots(v, state.ds[track]);
   const t = $("table");
   t.append($("thead", {}, $("tr", {}, $("th", {}, "system · setup"), ...m.cols.map(c => $("th", {}, c)))));
   const tb = $("tbody");
@@ -173,13 +206,14 @@ function renderTrack(v, track) {
     if (r.pending) { tr.append($("td", {class: "dim", colspan: m.cols.length}, "in development")); tb.append(tr); return; }
     r.cells.forEach((c, ci) => {
       const has = c.runs.length > 0;
-      const td = $("td", {class: (has ? "cell" : "dim") + (state.sel && state.sel.r === ri && state.sel.c === ci ? " sel" : ""), tabindex: has ? "0" : "-1"}, c.text);
+      const td = $("td", {class: (has ? "cell" : c.text === "·" || c.text === "" ? "dim" : "") + (state.sel && state.sel.r === ri && state.sel.c === ci ? " sel" : ""), tabindex: has ? "0" : "-1"}, c.text);
       if (has) { const go = () => { state.sel = {r: ri, c: ci}; render(); document.getElementById("detail").scrollIntoView({behavior: "smooth", block: "nearest"}); };
         td.addEventListener("click", go); td.addEventListener("keydown", e => { if (e.key === "Enter") go(); }); }
       tr.append(td); });
     tb.append(tr); });
   t.append(tb);
-  v.append($("div", {class: "card scroll"}, t));
+  rankColumns(tb, () => track === "t1");
+  v.append($("div", {class: "card"}, $("div", {class: "scroll"}, t), rankNote()));
   const d = $("div", {id: "detail"}); v.append(d);
   if (state.sel && !((m.rows[state.sel.r] || {}).cells || [])[state.sel.c]?.runs?.length) state.sel = null;
   if (state.sel) { const r = m.rows[state.sel.r], c = r.cells[state.sel.c];
