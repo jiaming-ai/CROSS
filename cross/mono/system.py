@@ -159,7 +159,7 @@ class MonocularSystem(Pipeline):
         self.mapper.save_map(str(path))
 
     def load_map(self, path):
-        if self.initialized:
+        if self.initialized or getattr(self.frontend, "index", 0):    # images processed (even if never initialized)
             raise RuntimeError("Load a map before processing images of a new session")
         self.mapper.load_map(str(path))
 
