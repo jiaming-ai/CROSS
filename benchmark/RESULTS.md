@@ -213,23 +213,71 @@ A *session* is one recorded traversal. In each scene, the map session builds the
 
 ## Summary
 
-| system · setup | KITTI ATE (m) | OpenLORIS ATE (m) | ROVER ATE (m) | OpenLORIS LR@1/2 m | ROVER LR@3/5 m | SimChange LR@1/2 m | OpenLORIS RS@1/2 m | ROVER RS@3/5 m | SimChange RS@1/2 m | RS overall |
-|---|---|---|---|---|---|---|---|---|---|---|
-| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | 9.619 | 1.981 | 1.907 | 0.39 / 0.42 | 0.90 / 0.93 | 0.92 / 0.93 | 0.58 / 0.65 | 0.69 / 0.70 | 0.93 / 0.93 | 0.73 / 0.76 |
-| CROSS (PnP, visual odometry) · RGB-D | 12.269 | 2.979 | 1.878 | 0.28 / 0.38 | 0.94 / 0.95 | 0.92 / 0.93 | 0.53 / 0.61 | 0.66 / 0.68 | 0.92 / 0.92 | 0.70 / 0.74 |
-| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 11.579 | 0.669 | 0.755 | 0.64 / 0.81 | 0.94 / 0.95 | 0.96 / 0.97 | 0.78 / 0.83 | 0.83 / 0.84 | 0.96 / 0.97 | 0.86 / 0.88 |
-| CROSS (VGGT-Omega, visual odometry) · stereo | 13.781 | 0.746 | 0.552 | 0.64 / 0.84 | 0.99 / 0.99 | 0.55 / 0.56 | 0.69 / 0.83 | 0.78 / 0.82 | 0.90 / 0.92 | 0.79 / 0.86 |
-| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | 6.777 | 1.684 | 0.551 | 0.45 / 0.51 | 0.90 / 0.96 | 0.91 / 0.93 | 0.59 / 0.67 | 0.67 / 0.68 | 0.93 / 0.94 | 0.73 / 0.76 |
-| CROSS (DA3, visual odometry) · mono | 17.921 | 3.228 | 47.427 | 0.41 / 0.49 | 0.01 / 0.11 | 0.35 / 0.84 | 0.50 / 0.60 | 0.65 / 0.69 (5 pending) | 0.82 / 0.86 | 0.66 / 0.72 (5 pending) |
-| ORB-SLAM3 · RGB-D |  | 0.470 (9/22 ✗) | 0.953 (3/8 ✗) | 0.20 / 0.27 | 0.38 / 0.41 | 0.82 / 0.84 | 0.17 / 0.23 | 0.05 / 0.05 | 0.66 / 0.66 | 0.29 / 0.32 |
-| ORB-SLAM3 · stereo | 3.585 | 0.588 (8/22 ✗) | 1.268 (2/8 ✗) | 0.22 / 0.36 | 0.46 / 0.47 | 0.80 / 0.82 | 0.20 / 0.27 | 0.15 / 0.16 | 0.54 / 0.54 | 0.30 / 0.32 |
-| ORB-SLAM3 · mono | 94.343 | 5.732 (11/22 ✗) | 12.717 (6/8 ✗) | 0.05 / 0.06 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.11 / 0.12 (21/76 ✗) | 0.04 / 0.08 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.08 / 0.09 (21/76 ✗) | 0.04 / 0.06 (37/100 ✗) |
-| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ |  | 1.412 | 5.236 | 0.23 / 0.29 | 0.02 / 0.03 (5/7 ✗) | 0.70 / 0.90 (1/76 ✗) | 0.27 / 0.34 | 0.01 / 0.01 (6/7 ✗) | 0.63 / 0.72 (1/76 ✗) | 0.30 / 0.36 (7/100 ✗) |
-| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 6.085 | 1.615 | 4.912 | 0.24 / 0.27 | 0.02 / 0.04 (4/7 ✗) | 0.50 / 0.81 | 0.27 / 0.32 | 0.03 / 0.04 (5/7 ✗) | 0.58 / 0.64 | 0.29 / 0.33 (5/100 ✗) |
-| RTAB-Map (visual odometry) · RGB-D |  | 5.162 (1/22 ✗) | 3.297 (1/8 ✗) | 0.09 / 0.18 | 0.63 / 0.92 (3 pending) | 0.35 / 0.39 | 0.28 / 0.38 | · | 0.49 / 0.56 | · (7 pending) |
-| RTAB-Map (visual odometry) · stereo | 6.294 | 4.509 (1/22 ✗) | 1.302 (1/8 ✗) | 0.24 / 0.32 | · | 0.35 / 0.45 | 0.28 / 0.37 | · | 0.44 / 0.52 | · (7 pending) |
-| MASt3R-SLAM · mono | 10/10 ✗ | 2.257 (7/22 ✗) | 8/8 ✗ | 0.03 / 0.03 | 0.00 / 0.00 (2/7 ✗) | 0.09 / 0.11 (1/76 ✗) | 0.05 / 0.06 | 0.00 / 0.00 (3/7 ✗) | 0.28 / 0.34 (1/76 ✗) | 0.11 / 0.13 (4/100 ✗) |
-| VGGT-SLAM 2.0 · mono | 60.284 (1/10 ✗) | 5.206 (7/22 ✗) | 8/8 ✗ | 0.13 / 0.20 | 0.09 / 0.15 | 0.10 / 0.21 | 0.30 / 0.37 | 0.11 / 0.18 | 0.25 / 0.42 | 0.22 / 0.32 |
+### Mapping accuracy (T1): ATE RMSE (m), lower is better
+
+Cells: mean ATE over the dataset's sequences. Overall: ATE / ground-truth path length, averaged over each dataset's sequences, then over the three datasets (a method missing a dataset has no overall value).
+
+| system · setup | KITTI (m) | OpenLORIS (m) | ROVER (m) | overall (% of path) |
+|---|---|---|---|---|
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | 9.619 | 1.981 | 1.907 | 0.98 % |
+| CROSS (PnP, visual odometry) · RGB-D | 12.269 | 2.979 | 1.878 | 1.62 % |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 11.579 | 0.669 | 0.755 | 0.55 % |
+| CROSS (VGGT-Omega, visual odometry) · stereo | 13.781 | 0.746 | 0.552 | 0.63 % |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | 6.777 | 1.684 | 0.551 | 0.87 % |
+| CROSS (DA3, visual odometry) · mono | 17.921 | 3.228 | 47.427 | 7.19 % |
+| ORB-SLAM3 · RGB-D |  | 0.470 (9/22 ✗) | 0.953 (3/8 ✗) |  |
+| ORB-SLAM3 · stereo | 3.585 | 0.588 (8/22 ✗) | 1.268 (2/8 ✗) | 0.53 % (10/40 ✗) |
+| ORB-SLAM3 · mono | 94.343 | 5.732 (11/22 ✗) | 12.717 (6/8 ✗) | 5.55 % (17/40 ✗) |
+| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ |  | 1.412 | 5.236 |  |
+| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 6.085 | 1.615 | 4.912 | 1.08 % |
+| RTAB-Map (visual odometry) · RGB-D |  | 5.162 (1/22 ✗) | 3.297 (1/8 ✗) |  |
+| RTAB-Map (visual odometry) · stereo | 6.294 | 4.509 (1/22 ✗) | 1.302 (1/8 ✗) | 1.49 % (2/40 ✗) |
+| MASt3R-SLAM · mono | 10/10 ✗ | 2.257 (7/22 ✗) | 8/8 ✗ | 25/40 ✗ |
+| VGGT-SLAM 2.0 · mono | 60.284 (1/10 ✗) | 5.206 (7/22 ✗) | 8/8 ✗ | 16/40 ✗ |
+
+### Multi-session localization (T2): localization recall, higher is better
+
+Overall: mean over the three datasets of the pooled recall at each dataset's smaller / larger threshold.
+
+| system · setup | OpenLORIS LR@1/2 m | ROVER LR@3/5 m | SimChange LR@1/2 m | overall |
+|---|---|---|---|---|
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | 0.39 / 0.42 | 0.90 / 0.93 | 0.92 / 0.93 | 0.74 / 0.76 |
+| CROSS (PnP, visual odometry) · RGB-D | 0.28 / 0.38 | 0.94 / 0.95 | 0.92 / 0.93 | 0.71 / 0.75 |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 0.64 / 0.81 | 0.94 / 0.95 | 0.96 / 0.97 | 0.85 / 0.91 |
+| CROSS (VGGT-Omega, visual odometry) · stereo | 0.64 / 0.84 | 0.99 / 0.99 | 0.55 / 0.56 | 0.73 / 0.80 |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | 0.45 / 0.51 | 0.90 / 0.96 | 0.91 / 0.93 | 0.75 / 0.80 |
+| CROSS (DA3, visual odometry) · mono | 0.41 / 0.49 | 0.01 / 0.11 | 0.35 / 0.84 | 0.25 / 0.48 |
+| ORB-SLAM3 · RGB-D | 0.20 / 0.27 | 0.38 / 0.41 | 0.82 / 0.84 | 0.47 / 0.51 |
+| ORB-SLAM3 · stereo | 0.22 / 0.36 | 0.46 / 0.47 | 0.80 / 0.82 | 0.49 / 0.55 |
+| ORB-SLAM3 · mono | 0.05 / 0.06 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.11 / 0.12 (21/76 ✗) | 0.05 / 0.06 (37/100 ✗) |
+| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.23 / 0.29 | 0.02 / 0.03 (5/7 ✗) | 0.70 / 0.90 (1/76 ✗) | 0.31 / 0.40 (6/100 ✗) |
+| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 0.24 / 0.27 | 0.02 / 0.04 (4/7 ✗) | 0.50 / 0.81 | 0.25 / 0.37 (4/100 ✗) |
+| RTAB-Map (visual odometry) · RGB-D | 0.09 / 0.18 | 0.63 / 0.92 (3 pending) | 0.35 / 0.39 | 0.36 / 0.49 (3 pending) |
+| RTAB-Map (visual odometry) · stereo | 0.24 / 0.32 | · | 0.35 / 0.45 | · (7 pending) |
+| MASt3R-SLAM · mono | 0.03 / 0.03 | 0.00 / 0.00 (2/7 ✗) | 0.09 / 0.11 (1/76 ✗) | 0.04 / 0.05 (3/100 ✗) |
+| VGGT-SLAM 2.0 · mono | 0.13 / 0.20 | 0.09 / 0.15 | 0.10 / 0.21 | 0.11 / 0.19 |
+
+### Relocalization (T3): relocalization success, higher is better
+
+Overall: mean over the three datasets of the pooled success at each dataset's smaller / larger threshold.
+
+| system · setup | OpenLORIS RS@1/2 m | ROVER RS@3/5 m | SimChange RS@1/2 m | overall |
+|---|---|---|---|---|
+| CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾ | 0.58 / 0.65 | 0.69 / 0.70 | 0.93 / 0.93 | 0.73 / 0.76 |
+| CROSS (PnP, visual odometry) · RGB-D | 0.53 / 0.61 | 0.66 / 0.68 | 0.92 / 0.92 | 0.70 / 0.74 |
+| CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 0.78 / 0.83 | 0.83 / 0.84 | 0.96 / 0.97 | 0.86 / 0.88 |
+| CROSS (VGGT-Omega, visual odometry) · stereo | 0.69 / 0.83 | 0.78 / 0.82 | 0.90 / 0.92 | 0.79 / 0.86 |
+| CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | 0.59 / 0.67 | 0.67 / 0.68 | 0.93 / 0.94 | 0.73 / 0.76 |
+| CROSS (DA3, visual odometry) · mono | 0.50 / 0.60 | 0.65 / 0.69 (5 pending) | 0.82 / 0.86 | 0.66 / 0.72 (5 pending) |
+| ORB-SLAM3 · RGB-D | 0.17 / 0.23 | 0.05 / 0.05 | 0.66 / 0.66 | 0.29 / 0.32 |
+| ORB-SLAM3 · stereo | 0.20 / 0.27 | 0.15 / 0.16 | 0.54 / 0.54 | 0.30 / 0.32 |
+| ORB-SLAM3 · mono | 0.04 / 0.08 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.08 / 0.09 (21/76 ✗) | 0.04 / 0.06 (37/100 ✗) |
+| RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾ | 0.27 / 0.34 | 0.01 / 0.01 (6/7 ✗) | 0.63 / 0.72 (1/76 ✗) | 0.30 / 0.36 (7/100 ✗) |
+| RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 0.27 / 0.32 | 0.03 / 0.04 (5/7 ✗) | 0.58 / 0.64 | 0.29 / 0.33 (5/100 ✗) |
+| RTAB-Map (visual odometry) · RGB-D | 0.28 / 0.38 | · | 0.49 / 0.56 | · (7 pending) |
+| RTAB-Map (visual odometry) · stereo | 0.28 / 0.37 | · | 0.44 / 0.52 | · (7 pending) |
+| MASt3R-SLAM · mono | 0.05 / 0.06 | 0.00 / 0.00 (3/7 ✗) | 0.28 / 0.34 (1/76 ✗) | 0.11 / 0.13 (4/100 ✗) |
+| VGGT-SLAM 2.0 · mono | 0.30 / 0.37 | 0.11 / 0.18 | 0.25 / 0.42 | 0.22 / 0.32 |
 
 ## T1 — mapping accuracy (ATE RMSE, m)
 

@@ -178,11 +178,15 @@ const rankNote = () => $("span", {class: "note"}, " Shading:", $("span", {class:
   " cells with pending sessions, and ATE cells with failed sequences, are not ranked. k/N ✗: k of the N sequences or query sessions failed (LR, RS: their frames / trials count as failures).");
 
 function renderSummary(v) {
-  v.append($("div", {class: "card"}, $("h3", {}, "Headline numbers"),
-    $("p", {class: "note"}, "ATE: mean over the dataset's sequences (m, lower is better). LR: localization recall of whole query sessions against a stored map (higher is better). RS: relocalization success over 10 s trials (higher is better); RS overall = mean over OpenLORIS, ROVER and SimChange. ⁽ᵒ⁾ uses the dataset's odometry. · not run yet; k/N ✗: k of the dataset's N sequences (ATE: the mean covers the others) or query sessions (LR, RS: their frames / trials count as failures) failed. Click the T1–T3 tabs for per-scene tables and plots."),
-    mdTable(B.summary), rankNote()));
-  const t = v.querySelector("table"); if (t) { const heads = [...t.querySelectorAll("th")].slice(1).map(h => h.textContent);
-    rankColumns(t.querySelector("tbody"), ci => /ATE/.test(heads[ci] || "")); }
+  v.append($("p", {class: "note"}, "⁽ᵒ⁾ uses the dataset's odometry. · not run yet; k/N ✗: k of the dataset's N sequences (ATE: the mean covers the others) or query sessions (LR, RS: their frames / trials count as failures) failed. Click the T1–T3 tabs for per-scene tables and plots."));
+  const tables = Array.isArray(B.summary) ? B.summary : [["all", "Headline numbers", "", B.summary]];
+  for (const [key, title, note, md] of tables) {
+    const card = $("div", {class: "card"}, $("h3", {}, title), note ? $("p", {class: "note"}, note) : "", mdTable(md), rankNote());
+    v.append(card);
+    const t = card.querySelector("table"); if (!t) continue;
+    const heads = [...t.querySelectorAll("th")].slice(1).map(h => h.textContent);
+    rankColumns(t.querySelector("tbody"), ci => key === "ate" || /ATE/.test(heads[ci] || ""));
+  }
 }
 
 // ---------------------------------------------------------------- track tables

@@ -231,6 +231,8 @@ def scored(r):
 class Tables:
     def __init__(self, results, seed):
         self.ds, self.sy = load()
+        f = ROOT / "benchmark/results/datasets.json"
+        self.dstats = json.loads(f.read_text()) if f.is_file() else {}
         self.idx = defaultdict(list)
         for r in count_failed_queries(rescore_t3(results, self.ds), self.ds, self.sy):
             if r.get("seed", 0) != seed:
@@ -264,6 +266,15 @@ class Tables:
             else:
                 vals.append(r["ate_rmse"])
         return vals, fails, missing
+
+    def path_m(self, dataset, sequence, setup):
+        """Ground-truth path length (m) of a sequence, from benchmark/results/datasets.json."""
+        for sc in self.dstats.get(dataset, {}).values():
+            st = sc.get(sequence, {}).get("setups", {})
+            for k in (self.ds[dataset]["setups"].get(setup), setup, *st):
+                if k in st and st[k].get("path_m"):
+                    return st[k]["path_m"]
+        return None
 
     def t1_agg_str(self, vals, fails, missing, n):
         if missing == n:
@@ -393,6 +404,66 @@ class Tables:
         sc = self.ds[dataset]["scenes"]
         return sum(len(v.get("queries", [])) for k, v in sc.items() if scene is None or k == scene)
 
+    def has(self, dataset, system, setup):
+        return setup in self.ds[dataset]["setups"] and f"{dataset}/{setup}" not in self.sy[system].get("skip", [])
+
+    def t1_overall(self, system, setup):
+        """Overall mapping error: relative ATE (ATE RMSE / ground-truth path length, %) averaged over each T1 dataset's
+        finished sequences, then over the datasets (KITTI, OpenLORIS, ROVER), so that each dataset weighs the same
+        whatever its scale; with the failed and pending sequences of all of them."""
+        rates, failed, pending, n = [], 0, 0, 0
+        for d in T1_DATASETS:
+            if not self.has(d, system, setup):
+                return None
+            cells = self.t1_cells(d, system, setup)
+            seqs = [q for sc in self.ds[d]["scenes"] for q in self.scene_seqs(d, sc)]
+            rel = []
+            for q in seqs:
+                r = cells.get(q)
+                if r is None:
+                    pending += 1
+                elif r.get("status") != "ok" or r.get("ate_rmse") is None or r.get("failed"):
+                    failed += 1
+                elif self.path_m(d, q, setup):
+                    rel.append(100 * r["ate_rmse"] / self.path_m(d, q, setup))
+            n += len(seqs)
+            rates.append(mean(rel) if rel else None)
+        return rates, failed, pending, n
+
+    def t1_overall_str(self, system, setup):
+        o = self.t1_overall(system, setup)
+        if o is None:
+            return NA
+        rates, failed, pending, n = o
+        if pending == n:
+            return PENDING
+        if any(x is None for x in rates):            # a dataset without a value: every sequence failed there, or pending
+            return cell(FAIL if failed else PENDING, failed, n, pending)
+        return f"{mean(rates):.2f} %" + fail_note(failed, n, pending)
+
+    def t2_overall_str(self, system, setup):
+        """Overall localization recall: the mean over the T2 datasets (OpenLORIS, ROVER, SimChange) of the pooled LR at
+        each dataset's smaller / larger threshold, with the failed and pending queries of all of them."""
+        rates, failed, pending, n, dead = [], 0, 0, 0, False
+        for d in T3_DATASETS:
+            if not self.has(d, system, setup):
+                return NA
+            thr = self.ds[d]["thresholds"]
+            rs = self.idx[("t2", d, system, setup)]
+            nq = self.n_queries(d)
+            ok = [r for r in rs if scored(r) and all(r.get(f"lr@{t:g}") is not None for t in thr)]
+            n += nq
+            failed += len([r for r in rs if r.get("status") != "ok"])
+            pending += max(nq - len(rs), 0) + len([r for r in rs if scored(r)]) - len(ok)
+            a, b, _ = t2_pool(ok, thr) if ok else (None, None, None)
+            rates.append(None if a is None else (a, b))
+            dead |= bool(rs) and len(rs) == nq and all(r.get("status") != "ok" for r in rs)
+        if pending == n:
+            return PENDING
+        if any(x is None for x in rates):
+            return cell(FAIL if dead else PENDING, failed, n, pending)
+        return f"{mean([x[0] for x in rates]):.2f} / {mean([x[1] for x in rates]):.2f}" + fail_note(failed, n, pending)
+
     def t3_overall(self, system, setup):
         """Overall relocalization success: the mean over the T3 datasets (OpenLORIS, ROVER, SimChange) of the pooled RS at
         each dataset's smaller / larger threshold, with the failed and pending queries of all of them."""
@@ -440,28 +511,39 @@ class Tables:
         return f"{mean([x[0] for x in rates]):.2f} / {mean([x[1] for x in rates]):.2f}" + fail_note(failed, n, pending)
 
     # ---------------------------------------------------------------- summary
+    SUMMARY = (
+        ("ate", "Mapping accuracy (T1): ATE RMSE (m), lower is better",
+         [("KITTI (m)", "t1", "kitti"), ("OpenLORIS (m)", "t1", "openloris"), ("ROVER (m)", "t1", "rover"),
+          ("overall (% of path)", "t1", "*")],
+         "Cells: mean ATE over the dataset's sequences. Overall: ATE / ground-truth path length, averaged over each "
+         "dataset's sequences, then over the three datasets (a method missing a dataset has no overall value)."),
+        ("lr", "Multi-session localization (T2): localization recall, higher is better",
+         [("OpenLORIS LR@1/2 m", "t2", "openloris"), ("ROVER LR@3/5 m", "t2", "rover"),
+          ("SimChange LR@1/2 m", "t2", "simchange"), ("overall", "t2", "*")],
+         "Overall: mean over the three datasets of the pooled recall at each dataset's smaller / larger threshold."),
+        ("rs", "Relocalization (T3): relocalization success, higher is better",
+         [("OpenLORIS RS@1/2 m", "t3", "openloris"), ("ROVER RS@3/5 m", "t3", "rover"),
+          ("SimChange RS@1/2 m", "t3", "simchange"), ("overall", "t3", "*")],
+         "Overall: mean over the three datasets of the pooled success at each dataset's smaller / larger threshold."),
+    )
+
     def summary(self):
-        cols = [("KITTI ATE (m)", "t1", "kitti"), ("OpenLORIS ATE (m)", "t1", "openloris"), ("ROVER ATE (m)", "t1", "rover"),
-                ("OpenLORIS LR@1/2 m", "t2", "openloris"), ("ROVER LR@3/5 m", "t2", "rover"), ("SimChange LR@1/2 m", "t2", "simchange"),
-                ("OpenLORIS RS@1/2 m", "t3", "openloris"), ("ROVER RS@3/5 m", "t3", "rover"), ("SimChange RS@1/2 m", "t3", "simchange"),
-                ("RS overall", "t3", "*")]
-        systems = []
-        for system, sc in self.sy.items():
-            if sc.get("hidden"):
-                continue
-            for setup in sc["setups"]:
-                systems.append((system, setup))
+        """[(key, title, note, markdown table)] for the three summary tables (ATE, LR, RS)."""
+        return [(key, title, note, self.summary_table(cols)) for key, title, cols, note in self.SUMMARY]
+
+    def summary_table(self, cols):
+        systems = [(system, setup) for system, sc in self.sy.items() if not sc.get("hidden") for setup in sc["setups"]]
         head = ["system · setup"] + [c[0] for c in cols]
         lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
+        overall = {"t1": self.t1_overall_str, "t2": self.t2_overall_str, "t3": self.t3_overall_str}
         for system, setup in systems:
             row = [row_label(self.sy, system, setup)]
             for _, track, dataset in cols:
                 if dataset == "*":
-                    row.append(self.t3_overall_str(system, setup))
+                    row.append(overall[track](system, setup))
                     continue
-                cfg = self.ds.get(dataset, {})
-                if setup not in cfg.get("setups", {"rgbd": 1, "stereo": 1, "mono": 1}) or \
-                        f"{dataset}/{setup}" in self.sy[system].get("skip", []):
+                cfg = self.ds[dataset]
+                if not self.has(dataset, system, setup):
                     row.append(NA)
                     continue
                 rs = self.idx[(track, dataset, system, setup)]
@@ -493,6 +575,7 @@ def fail_note(failed, n, pending=0):
     return f" ({', '.join(parts)})" if parts else ""
 
 
+T1_DATASETS = ("kitti", "openloris", "rover")
 T3_DATASETS = ("openloris", "rover", "simchange")
 DS_NAMES = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange": "SimChange"}
 
@@ -521,7 +604,7 @@ def main():
         "",
         "## Summary",
         "",
-        T.summary(),
+        "\n\n".join(f"### {title}\n\n{note}\n\n{md}" for _, title, note, md in T.summary()),
         "",
         "## T1 — mapping accuracy (ATE RMSE, m)",
         "",

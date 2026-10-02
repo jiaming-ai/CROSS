@@ -91,6 +91,9 @@ comparison stays interpretable.
   trajectory has a pose at that frame or at a keyframe no more than 1 s away in the same map. When a system splits the run into several maps (ORB-SLAM3
   atlas), only the largest map is evaluated. **A run with completeness below 80 % counts as a tracking failure**: its ATE is shown in
   grey with its completeness, and it is excluded from means.
+- **Overall ATE** of a system (%): its ATE divided by the sequence's ground-truth path length, averaged over each dataset's
+  finished sequences, then over KITTI, OpenLORIS and ROVER. Dividing by the path length puts the kilometre-scale KITTI
+  drives and the room-scale OpenLORIS sessions on one scale, so each dataset weighs the same.
 - Secondary: **online ATE**, the causal per-frame estimate (CROSS: the mean of hypothesis 0 at each step), with the same alignment.
   Also mapping FPS, peak GPU memory, and map size on disk.
 
@@ -110,6 +113,8 @@ is penalized.
   recordings drive a longer route than the September 2024 map session. Coverage fractions are listed per session.
 - **Aggregation**: LR and MS-ATE are computed per query session. Scene and dataset cells pool the frames of all query
   sessions (localized frames / all frames), so each session counts in proportion to its length, as T3 pools trials.
+- **Overall LR** of a system: the mean over OpenLORIS, ROVER and SimChange of its pooled LR at each dataset's smaller and
+  larger threshold, as for the overall RS (T3).
 - **Time to localize**: the first frame after which the error stays below 1 m (indoor) or 5 m (outdoor) for 5 consecutive frames.
 
 ### T3 — relocalization success (CROSS paper, §5.1)
