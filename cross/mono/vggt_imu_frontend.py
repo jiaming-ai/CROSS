@@ -85,6 +85,8 @@ class VggtImuFrontend:
         self.rotation_gate_deg_graph = 2.0       # deg: a pass whose rotation disagrees with the gyro's is not used
         # adaptive measurement times: (min frames, max frames, min translation m, min rotation deg), or None
         self.adaptive = None
+        # measurements aligned with the back end's observations (pipeline): (min frames, frames before an own pass)
+        self.align = None
         # optional tracked features (graph mode, vgio_klt): corners detected on each measured frame and tracked frame
         # to frame (pyramidal Lucas-Kanade, forward-backward check); at the next measurement their essential matrix
         # with the calibrated intrinsics gives the rotation between the two frames, a factor when it has enough
@@ -180,7 +182,7 @@ class VggtImuFrontend:
                                    depth_bias_std=ic.vgio_depth_bias_std, rot_rel=ic.vgio_rot_rel,
                                    accel_bias_std=ic.accel_bias_std, accel_bias_walk=ic.accel_bias_walk,
                                    gyro_dt_noise=ic.vgio_gyro_dt_noise, accel_dt_noise=ic.vgio_accel_dt_noise,
-                                   rot_scale=ic.vgio_rot_scale)
+                                   rot_scale=ic.vgio_rot_scale, rot_scale_std=ic.vgio_rot_scale_std)
                 self.graph = VgiGraph(gcfg, c.T_cam_imu, c.gyro_noise_density, c.accel_noise_density)
                 self.scale_filter = _GraphEstimate(self.graph)
             else:
@@ -190,6 +192,8 @@ class VggtImuFrontend:
                 self.scale_filter = InertialScaleFilter(imu_cfg, c.T_cam_imu, c.gyro_noise_density,
                                                         c.accel_noise_density)
         ic = self.config.imu
+        if ic.vgio_align and self.align is None and not self.standalone:
+            self.align = (ic.vgio_align_min, ic.vgio_align_max)
         self.klt = bool(ic.vgio_klt and self.use_graph)
         if self.klt:
             t0 = perf_counter()
@@ -285,11 +289,17 @@ class VggtImuFrontend:
         the back end; the back end may still skip the pass (its observation cadence)."""
         if not observing or self.m is None or self._frame is None:
             return None
-        if not self._due(self._frame[0]):
+        k = self._frame[0] - self.m["index"]
+        if self.align is not None and self.scale_filter is not None:
+            if k < self.align[0]:
+                return None                      # too soon after the last measurement
+        elif not self._due(self._frame[0]):
             return None                          # no measurement due: the pass need not carry the anchor
         self._token += 1
         T = self._relative(self._m_pose(), self.m["R_out"], self._internal_pose(), self.R_out)
         self.pending = {"token": self._token, "rgb": self.m["rgb"], "T_prev_curr": T, "metric": bool(self.output_valid)}
+        if self.keyframe_age > 0 and self.kf is not None and self.kf["index"] != self.m["index"]:
+            self.pending["extra_rgb"] = [self.kf["rgb"]]       # the keyframe rides along (its pairs in the graph)
         return self.pending
 
     def after_backend(self, observed):
@@ -298,7 +308,11 @@ class VggtImuFrontend:
         if self._frame is None:
             return
         index = self._frame[0]
-        due = self._due(index)
+        if self.align is not None and not self.standalone and self.m is not None:
+            # aligned with the back end: measure on its passes; a pass of our own only after align[1] frames without
+            due = index - self.m["index"] >= self.align[1]
+        else:
+            due = self._due(index)
         t0 = perf_counter()
         if self.m is not None and observed is not None and self.pending is not None \
                 and observed.get("token") == self.pending["token"] and index > self.m["index"]:

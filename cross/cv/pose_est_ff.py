@@ -499,7 +499,7 @@ class PoseEstFeedForward:
         # temporal (odometry) anchor.  A frontend's anchor (vgio: its last measured frame) is always in the pass, the
         # frontend reads its relative pose and depths (last_frontend_obs); it is a scale anchor once its motion is metric
         frontend_anchor = odom_anchor is not None and bool(odom_anchor.get("frontend"))
-        prev_idx = None
+        prev_idx = kf_idx = None
         if odom_anchor is not None and (cfg.use_odom_anchor or frontend_anchor):
             T_pc = np.asarray(odom_anchor["T_prev_curr"], dtype=np.float64)
             long_enough = np.linalg.norm(T_pc[:3, 3]) >= cfg.odom_anchor_min_translation
@@ -507,6 +507,11 @@ class PoseEstFeedForward:
                 views.append(odom_anchor["image"])
                 view_tags.append("prev_L")
                 prev_idx = len(views) - 1
+                kf_idx = None
+                if frontend_anchor and odom_anchor.get("extra_images"):
+                    views.append(odom_anchor["extra_images"][0])       # the frontend's keyframe
+                    view_tags.append("kf_L")
+                    kf_idx = len(views) - 1
                 if long_enough and cfg.use_odom_anchor and odom_anchor.get("metric", True):
                     anchors.append(ScaleAnchor(idx_a=prev_idx, idx_b=0, T_ab=T_pc, kind="odom",
                                                weight=cfg.odom_anchor_weight))
@@ -549,6 +554,9 @@ class PoseEstFeedForward:
                 "token": odom_anchor.get("token"), "c2w_curr": pred.c2w[0], "c2w_prev": pred.c2w[prev_idx],
                 "depth_curr": pred.depth[0], "depth_prev": pred.depth[prev_idx],
                 "conf_curr": None if conf is None else conf[0], "conf_prev": None if conf is None else conf[prev_idx]}
+            if kf_idx is not None:
+                self.last_frontend_obs.update(c2w_kf=pred.c2w[kf_idx], depth_kf=pred.depth[kf_idx],
+                                              conf_kf=None if conf is None else conf[kf_idx])
 
         # ---- metric scale ----
         scale_est = estimate_scale(

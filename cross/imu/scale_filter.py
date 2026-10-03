@@ -119,7 +119,13 @@ class ImuConfig:
     vgio_rot_rel: float = 0.05                   # graph: rotation noise also grows with the angle (fraction)
     # adaptive measurement times (vgio_adaptive): after the camera moved / turned this much, within these frame counts
     vgio_rot_scale: bool = True                  # graph: calibrate the rotation scale of the passes against the gyro
+    vgio_rot_scale_std: float = 0.05             # its prior std (log)
     vgio_klt: bool = True                        # graph: rotation factors from tracked corners (optional, gated)
+    # pipeline: measure on the back end's forward passes (at least vgio_align_min frames apart); a pass of the
+    # frontend's own only after vgio_align_max frames without one
+    vgio_align: bool = True
+    vgio_align_min: int = 2
+    vgio_align_max: int = 4
     vgio_gyro_dt_noise: float = 0.0              # graph: preintegration noise growing with the IMU sampling interval
     vgio_accel_dt_noise: float = 0.0
     vgio_adaptive: bool = False
