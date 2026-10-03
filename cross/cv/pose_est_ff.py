@@ -453,7 +453,8 @@ class PoseEstFeedForward:
         for i in range(0, len(images), batch):
             x = self._as_model_input(images[i:i + batch])
             agg = backend.model.aggregator
-            cache.gather((x - agg._resnet_mean[0]) / agg._resnet_std[0], backend.fingerprints(x))
+            with torch.autocast(device_type="cuda", dtype=backend.dtype):     # as inside Aggregator.forward
+                cache.gather((x - agg._resnet_mean[0]) / agg._resnet_std[0], backend.fingerprints(x))
         torch.cuda.synchronize()
         logger.info(f"token cache: {cache.misses - n0} map images embedded in {time.perf_counter() - t0:.1f}s")
 

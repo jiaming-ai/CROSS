@@ -47,6 +47,28 @@ cross_stereo_vo:
          --odometry, visual]
   outdoor_config: [configs/outdoor.yaml]
 
+cross_stereo_fast:
+  label: CROSS (VGGT-Omega fast, external odometry)
+  runner: cross_ff
+  hidden: true              # rows appear once the system has been run on the benchmark
+  # --fast: configs/stereo_fast.yaml, 6 images per pass (current pair + 4 references) instead of 10
+  setups: [stereo]
+  uses_odometry: true
+  map_reuse: save/load
+  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3", --fast]
+  outdoor_config: [configs/outdoor.yaml]
+
+cross_stereo_vo_fast:
+  label: CROSS (VGGT-Omega fast, visual odometry)
+  runner: cross_ff
+  hidden: true
+  setups: [stereo]
+  uses_odometry: false
+  map_reuse: save/load
+  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3",
+         --odometry, visual, --fast]
+  outdoor_config: [configs/outdoor.yaml]
+
 cross_mono_odom:
   label: CROSS (DA3, external odometry)
   runner: cross_mono
