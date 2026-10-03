@@ -111,6 +111,19 @@ cross_mono_ff_vio:
   args: [--mode, mono, --mono-estimator, ff, --odometry, vio]
   outdoor_config: [configs/outdoor.yaml]
 
+# no DPVO: the IMU carries the pose, VGGT-Omega's relative poses (the back end's forward passes, two-image passes
+# in between) correct it (development)
+cross_mono_ff_vgio:
+  label: CROSS (VGGT-Omega mono, VGGT-inertial odometry)
+  runner: cross_mono
+  setups: [mono]
+  uses_odometry: false
+  uses_imu: true
+  hidden: true
+  map_reuse: save/load
+  args: [--mode, mono, --mono-estimator, ff, --odometry, vgio]
+  outdoor_config: [configs/outdoor.yaml]
+
 cross_rgbd_monoreloc:
   label: CROSS (RGB-D, PnP, relocalization options from CROSS-mono)
   runner: cross_rgbd

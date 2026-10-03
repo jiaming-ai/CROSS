@@ -324,6 +324,7 @@ class PoseEstFeedForward:
         logger.info(f"Loaded {config.backend.value} from {config.checkpoint} in {time.perf_counter() - t0:.1f}s")
         self.last_info: dict = {}
         self.last_scale: Optional[ScaleEstimate] = None
+        self.last_frontend_obs: Optional[dict] = None   # raw output for a frontend's anchor (vgio)
 
     def set_stereo_calibration(self, T_right_in_left: np.ndarray):
         self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
@@ -365,14 +366,20 @@ class PoseEstFeedForward:
         view_tags = ["curr_L"] + [f"ref{i}_L" for i in range(B)]
         anchors: List[ScaleAnchor] = []
 
-        # temporal (odometry) anchor
-        if odom_anchor is not None and cfg.use_odom_anchor:
+        # temporal (odometry) anchor.  A frontend's anchor (vgio: its last measured frame) is always in the pass, the
+        # frontend reads its relative pose and depths (last_frontend_obs); it is a scale anchor once its motion is metric
+        frontend_anchor = odom_anchor is not None and bool(odom_anchor.get("frontend"))
+        prev_idx = None
+        if odom_anchor is not None and (cfg.use_odom_anchor or frontend_anchor):
             T_pc = np.asarray(odom_anchor["T_prev_curr"], dtype=np.float64)
-            if np.linalg.norm(T_pc[:3, 3]) >= cfg.odom_anchor_min_translation:
+            long_enough = np.linalg.norm(T_pc[:3, 3]) >= cfg.odom_anchor_min_translation
+            if long_enough or frontend_anchor:
                 views.append(odom_anchor["image"])
                 view_tags.append("prev_L")
-                anchors.append(ScaleAnchor(idx_a=len(views) - 1, idx_b=0, T_ab=T_pc, kind="odom",
-                                           weight=cfg.odom_anchor_weight))
+                prev_idx = len(views) - 1
+                if long_enough and cfg.use_odom_anchor and odom_anchor.get("metric", True):
+                    anchors.append(ScaleAnchor(idx_a=prev_idx, idx_b=0, T_ab=T_pc, kind="odom",
+                                               weight=cfg.odom_anchor_weight))
 
         # stereo anchors: current pair first, then stored right images of the best references
         if self.T_right_in_left is not None:
@@ -404,9 +411,16 @@ class PoseEstFeedForward:
             images = images / 255.0
 
         t_model = time.perf_counter()
-        pred = self.backend.infer(images, n_depth=1 + B)     # depth is used for the current view and the references
+        # depth is used for the current view and the references (and the frontend's anchor view)
+        pred = self.backend.infer(images, n_depth=None if frontend_anchor and prev_idx is not None else 1 + B)
         torch.cuda.synchronize()
         t_model = time.perf_counter() - t_model
+        if frontend_anchor and prev_idx is not None:
+            conf = pred.depth_conf
+            self.last_frontend_obs = {
+                "token": odom_anchor.get("token"), "c2w_curr": pred.c2w[0], "c2w_prev": pred.c2w[prev_idx],
+                "depth_curr": pred.depth[0], "depth_prev": pred.depth[prev_idx],
+                "conf_curr": None if conf is None else conf[0], "conf_prev": None if conf is None else conf[prev_idx]}
 
         # ---- metric scale ----
         scale_est = estimate_scale(

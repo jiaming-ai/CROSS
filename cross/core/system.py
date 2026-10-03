@@ -880,6 +880,7 @@ class System:
             last_obs = self._cur_obs_queue.popleft()
 
         rgb_image = last_obs["rgb"]
+        self._frontend_anchor = last_obs.get("frontend_anchor")
         depth_image = last_obs.get("depth", None)
         confidence_map = last_obs.get("conf", None)
         rgb_right = last_obs.get("rgb_right", None)
@@ -1012,6 +1013,12 @@ class System:
             T_prev_curr, _ = self.odom_accumulator.get_since_last_reading("since_last_obs", reset=True, return_std=False)
             if self._last_obs_rgb is not None and T_prev_curr is not None:
                 odom_anchor = {"image": self._last_obs_rgb, "T_prev_curr": T_prev_curr.matrix().cpu().numpy()}
+        fa = getattr(self, "_frontend_anchor", None)
+        if fa is not None:
+            # the frontend's anchor (vgio): its last measured frame and its motion since then replace the previous
+            # observation as the temporal anchor (cross.pipeline.Pipeline.advance)
+            odom_anchor = {"image": self.rgb_transform(fa["rgb"]), "T_prev_curr": np.asarray(fa["T_prev_curr"]),
+                           "frontend": True, "metric": bool(fa.get("metric")), "token": fa.get("token")}
         self._steps_since_obs = 0
         self._last_obs_rgb = rgb_image
 

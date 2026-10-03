@@ -95,6 +95,36 @@ class ImuConfig:
     # unbounded scale, which later multiplies DPVO's motion into astronomic distances (OpenLORIS home1-3).  Learned
     # depth was at most 1.9x off on the benchmark (ROVER).
     scale_band: float = 2.5
+    # learned-depth bias as a state (log scale; prior std, drift per sqrt(s)): learned depth then measures l + bias, so
+    # its observations follow the changes of the visual scale while the IMU sets the level (off: they measure l)
+    depth_bias_state: bool = False
+    depth_bias_std: float = 0.4
+    depth_bias_drift: float = 0.005
+    # vgio (VGGT-Omega + IMU, cross/mono/vggt_imu_frontend): frames between visual measurements, frames between
+    # learned-depth observations (0: the DPVO frontend's metric interval), and the visual noise of a VGGT-Omega
+    # displacement (in place of visual_std_rel / _depth)
+    visual_interval: int = 3
+    depth_every: int = 3
+    vgio_visual_std_rel: float = 0.03
+    vgio_visual_std_depth: float = 0.003
+    vgio_scale_drift: float = 0.04               # chained VGGT-Omega gauges drift faster than DPVO's
+    vgio_context: int = 2                        # measured frames besides the current one in a pass of the frontend
+    vgio_keyframe_age: float = 2.0               # s; > 0: passes also contain a keyframe this old (graph: its pairs)
+    vgio_visual_rotation: bool = False           # report VGGT-Omega's orientation (from the keyframe), not the gyro's
+    vgio_graph: bool = True                      # local pose graph (cross.imu.vgi_graph) instead of this filter
+    vgio_graph_window: int = 20                  # nodes
+    vgio_depth_bias: bool = True                 # the graph estimates the learned-depth bias
+    vgio_rot_std: float = 0.0087                 # rad, relative rotation of a pass in the graph (0.5 deg)
+    vgio_depth_bias_std: float = 0.1             # prior std of the learned-depth log bias in the graph
+    vgio_rot_rel: float = 0.05                   # graph: rotation noise also grows with the angle (fraction)
+    # adaptive measurement times (vgio_adaptive): after the camera moved / turned this much, within these frame counts
+    vgio_gyro_dt_noise: float = 0.0              # graph: preintegration noise growing with the IMU sampling interval
+    vgio_accel_dt_noise: float = 0.0
+    vgio_adaptive: bool = False
+    vgio_min_interval: int = 2
+    vgio_max_interval: int = 4
+    vgio_min_translation: float = 0.5
+    vgio_min_rotation_deg: float = 3.0
 
 
 @dataclass
@@ -134,7 +164,9 @@ class InertialScaleFilter:
         self.g = np.zeros(3)
         self.g0 = np.zeros(3)
         self.b = np.zeros(3)
-        # marginalization prior on (v_0, l_0, g, b): cost |L^T (d + shift)|^2 / 2, d = x - x_lin
+        self.beta = 0.0                     # learned-depth log bias (depth_bias_state)
+        self.nb = 1 if config.depth_bias_state else 0
+        # marginalization prior on (v_0, l_0, g, b[, beta]): cost |L^T (d + shift)|^2 / 2, d = x - x_lin
         self.prior = None
         self.started = False
         self.initialized = False
@@ -248,7 +280,7 @@ class InertialScaleFilter:
         self._check_initialized()
         return {"nis": info["nis"], "scale": self.scale, "log_std": self._log_std,
                 "speed": float(np.linalg.norm(self.v[-1])), "gravity_norm": float(np.linalg.norm(self.g)),
-                "accel_bias": self.b.round(4).tolist(), "window": len(self.intervals)}
+                "accel_bias": self.b.round(4).tolist(), "window": len(self.intervals), "depth_bias": float(self.beta)}
 
     # ------------------------------------------------------------------ the least-squares problem
     def _stack(self, its):
@@ -263,7 +295,7 @@ class InertialScaleFilter:
             a["obs"][:, 1] *= max(int(a["has_obs"].sum()), 1)    # all observations of the window weigh as one
         return a
 
-    def _local(self, a, v0, v1, l0, l1, g, b, fixed_scale=False):
+    def _local(self, a, v0, v1, l0, l1, g, b, fixed_scale=False, beta=None):
         """Whitened residuals (n, 8) and Jacobians (n, 8, 14) of every interval over its local variables
         (v_k, l_k, v_k+1, l_k+1, g, b); rows: IMU (3), visual (3, Huber-weighted), drift, learned depth (0 if none).
         Also returns the visual errors in sigmas."""
@@ -272,7 +304,7 @@ class InertialScaleFilter:
         dt = a["dt"]
         I3 = np.eye(3)
         r = np.zeros((n, 8))
-        J = np.zeros((n, 8, 14))
+        J = np.zeros((n, 8, 14 + self.nb))
         Rb = a["R"]
         imu = v1 - v0 - g[None] * dt[:, None] - np.einsum("nij,nj->ni", Rb, a["dv"] - np.einsum("nij,j->ni", a["J_v"], b))
         W = a["W_v"]
@@ -302,8 +334,11 @@ class InertialScaleFilter:
             J[:, 6, 7], J[:, 6, 3] = 1 / sd, -1 / sd
             so = np.sqrt(a["obs"][:, 1])
             m = a["has_obs"].astype(float)
-            r[:, 7] = m * (l1 - a["obs"][:, 0]) / so
+            bias = beta if (self.nb and beta is not None) else 0.0
+            r[:, 7] = m * (l1 + bias - a["obs"][:, 0]) / so
             J[:, 7, 7] = m / so
+            if self.nb:
+                J[:, 7, 14] = m / so
         return r, J, e
 
     def _prior_rows(self, x_prior, fixed_scale=False):
@@ -315,22 +350,27 @@ class InertialScaleFilter:
             if fixed_scale:
                 J[:, 3] = 0.0
             return L.T @ (x_prior - x_lin + shift), J
-        J = np.zeros((6, 10))
+        J = np.zeros((6 + self.nb, 10 + self.nb))
         J[:3, 4:7] = np.eye(3) / cfg.gravity_std
-        J[3:, 7:10] = np.eye(3) / cfg.accel_bias_std
-        return np.concatenate([(x_prior[4:7] - self.g0) / cfg.gravity_std, x_prior[7:10] / cfg.accel_bias_std]), J
+        J[3:6, 7:10] = np.eye(3) / cfg.accel_bias_std
+        r = [(x_prior[4:7] - self.g0) / cfg.gravity_std, x_prior[7:10] / cfg.accel_bias_std]
+        if self.nb:
+            J[6, 10] = 1.0 / cfg.depth_bias_std
+            r.append([x_prior[10] / cfg.depth_bias_std])
+        return np.concatenate(r), J
 
-    def _normal(self, a, v, l, g, b, fixed_scale=False):
-        """Normal equations (H, gradient), cost and visual errors of the window (columns: v_0..v_n, l_0..l_n, g, b)."""
+    def _normal(self, a, v, l, g, b, beta=None, fixed_scale=False):
+        """Normal equations (H, gradient), cost and visual errors of the window (columns: v_0..v_n, l_0..l_n, g, b
+        [, beta])."""
         cfg = self.config
         n = len(a["dt"])
-        m = 4 * (n + 1) + 6
-        ig, ib = 4 * (n + 1), 4 * (n + 1) + 3
-        r, J, e = self._local(a, v[:-1], v[1:], l[:-1], l[1:], g, b, fixed_scale)
+        m = 4 * (n + 1) + 6 + self.nb
+        ig, ib, iq = 4 * (n + 1), 4 * (n + 1) + 3, 4 * (n + 1) + 6
+        r, J, e = self._local(a, v[:-1], v[1:], l[:-1], l[1:], g, b, fixed_scale, beta)
         k = np.arange(n)
         idx = np.stack([3 * k, 3 * k + 1, 3 * k + 2, 3 * (n + 1) + k, 3 * k + 3, 3 * k + 4, 3 * k + 5,
                         3 * (n + 1) + k + 1] + [np.full(n, ig + j) for j in range(3)]
-                       + [np.full(n, ib + j) for j in range(3)], axis=1)              # (n, 14)
+                       + [np.full(n, ib + j) for j in range(3)] + [np.full(n, iq)] * self.nb, axis=1)  # (n, 14 [+1])
         H = np.zeros((m, m))
         np.add.at(H, (idx[:, :, None], idx[:, None, :]), np.einsum("nri,nrj->nij", J, J))
         grad = np.zeros(m)
@@ -342,8 +382,8 @@ class InertialScaleFilter:
         H[ig:ig + 3, ig:ig + 3] += np.outer(jg, jg)
         grad[ig:ig + 3] += jg * rg
         cost += rg ** 2
-        cols = np.r_[0:3, 3 * (n + 1), ig:ig + 3, ib:ib + 3]
-        rp, Jp = self._prior_rows(np.concatenate([v[0], [l[0]], g, b]), fixed_scale)
+        cols = np.r_[0:3, 3 * (n + 1), ig:ig + 3, ib:ib + 3, iq:iq + self.nb]
+        rp, Jp = self._prior_rows(np.concatenate([v[0], [l[0]], g, b, [beta] if self.nb else []]), fixed_scale)
         H[np.ix_(cols, cols)] += Jp.T @ Jp
         grad[cols] += Jp.T @ rp
         cost += float(rp @ rp)
@@ -351,12 +391,22 @@ class InertialScaleFilter:
 
     def _split(self, x):
         n = len(self.intervals)
+        beta = float(x[4 * (n + 1) + 6]) if self.nb else None
         return (x[:3 * (n + 1)].reshape(-1, 3), x[3 * (n + 1):4 * (n + 1)], x[4 * (n + 1):4 * (n + 1) + 3],
-                x[4 * (n + 1) + 3:4 * (n + 1) + 6])
+                x[4 * (n + 1) + 3:4 * (n + 1) + 6], beta)
+
+    def _x(self):
+        return np.concatenate([self.v.reshape(-1), self.l, self.g, self.b, [self.beta] if self.nb else []])
+
+    def _set(self, x):
+        v, l, g, b, beta = self._split(x)
+        self.v, self.l, self.g, self.b = v.copy(), self._clamp(l), g.copy(), b.copy()
+        if self.nb:
+            self.beta = beta
 
     def _solve(self, iterations):
         a = self._stack(self.intervals)
-        x = np.concatenate([self.v.reshape(-1), self.l, self.g, self.b])
+        x = self._x()
         n = len(self.intervals)
         damping = 1e-6
         H, grad, cost, vis = self._normal(a, *self._split(x))
@@ -369,8 +419,7 @@ class InertialScaleFilter:
                 damping = max(damping / 10, 1e-9)
             else:
                 damping *= 10
-        v, l, g, b = self._split(x)
-        self.v, self.l, self.g, self.b = v.copy(), self._clamp(l), g.copy(), b.copy()
+        self._set(x)
         e = np.zeros(len(x))
         e[3 * (n + 1) + n] = 1.0
         try:
@@ -389,8 +438,8 @@ class InertialScaleFilter:
         grid = center + np.arange(-half, half + 1e-9, cfg.grid_step)
         a = self._stack(self.intervals)
         n = len(self.intervals)
-        x0 = np.concatenate([self.v.reshape(-1), self.l, self.g, self.b])
-        keep = np.r_[0:3 * (n + 1), 4 * (n + 1):4 * (n + 1) + 6]
+        x0 = self._x()
+        keep = np.r_[0:3 * (n + 1), 4 * (n + 1):4 * (n + 1) + 6]      # (beta stays: no learned depth in these solves)
         best = None
         for lg in grid:
             x = x0.copy()
@@ -401,11 +450,11 @@ class InertialScaleFilter:
                 x[keep] += np.linalg.solve(Hk + 1e-9 * np.eye(len(keep)), -grad[keep])
             _, _, c, _ = self._normal(a, *self._split(x), fixed_scale=True)
             n_obs = 1 if cfg.depth_prior_independent else max(sum(it.obs is not None for it in self.intervals), 1)
-            c += sum((lg - it.obs[0]) ** 2 / (it.obs[1] * n_obs) for it in self.intervals if it.obs is not None)
+            bias = self.beta if self.nb else 0.0
+            c += sum((lg + bias - it.obs[0]) ** 2 / (it.obs[1] * n_obs) for it in self.intervals if it.obs is not None)
             if best is None or c < best[0]:
                 best = (c, x)
-        v, l, g, b = self._split(best[1])
-        self.v, self.l, self.g, self.b = v.copy(), self._clamp(l), g.copy(), b.copy()
+        self._set(best[1])
 
     def _marginalize_oldest(self):
         """Drop v_0, l_0 and interval 0: their factors (prior, IMU, visual, drift) become a Gaussian prior on
@@ -415,29 +464,33 @@ class InertialScaleFilter:
         a = self._stack(self.intervals[:1])
         if not cfg.depth_prior_independent:
             a["has_obs"][:] = False                              # the learned-depth prior is not carried on
-        r, J, _ = self._local(a, self.v[0:1], self.v[1:2], self.l[0:1], self.l[1:2], self.g, self.b)
+        r, J, _ = self._local(a, self.v[0:1], self.v[1:2], self.l[0:1], self.l[1:2], self.g, self.b, beta=self.beta)
         r, J = r[0], J[0]
-        x_lin = np.concatenate([self.v[0], [self.l[0]], self.v[1], [self.l[1]], self.g, self.b])
-        sel = np.r_[0:4, 8:14]                                  # (v0, l0, g, b) among the 14 columns
+        nc = 14 + self.nb
+        x_lin = np.concatenate([self.v[0], [self.l[0]], self.v[1], [self.l[1]], self.g, self.b,
+                                [self.beta] if self.nb else []])
+        sel = np.r_[0:4, 8:nc]                                  # (v0, l0, g, b[, beta]) among the local columns
         rp, Jp = self._prior_rows(x_lin[sel])
-        full = np.zeros((len(rp), 14))
+        full = np.zeros((len(rp), nc))
         full[:, sel] = Jp
         r, J = np.concatenate([r, rp]), np.vstack([J, full])
         H, c = J.T @ J, J.T @ r
-        mi, ri = np.r_[0:4], np.r_[4:14]
+        mi, ri = np.r_[0:4], np.r_[4:nc]
         K = H[np.ix_(ri, mi)] @ np.linalg.inv(H[np.ix_(mi, mi)] + 1e-9 * np.eye(4))
         Hp = H[np.ix_(ri, ri)] - K @ H[np.ix_(mi, ri)]
         cp = c[ri] - K @ c[mi]
-        Hp = 0.5 * (Hp + Hp.T) + 1e-9 * np.eye(10)
+        Hp = 0.5 * (Hp + Hp.T) + 1e-9 * np.eye(len(ri))
         # cost 1/2 d^T Hp d + cp^T d: a Gaussian with mean x_lin - Hp^-1 cp; gravity and bias random walks over the
         # interval are added to its covariance (variables v1 l1 g b: g at 4:7, b at 7:10)
         mean = x_lin[ri] - np.linalg.solve(Hp, cp)
         cov = np.linalg.inv(Hp)
         cov[4:7, 4:7] += np.eye(3) * cfg.gravity_drift ** 2 * it.dt
         cov[7:10, 7:10] += np.eye(3) * cfg.accel_bias_walk ** 2 * it.dt
+        if self.nb:
+            cov[10, 10] += cfg.depth_bias_drift ** 2 * it.dt
         Hp = np.linalg.inv(0.5 * (cov + cov.T))
         L = np.linalg.cholesky(0.5 * (Hp + Hp.T))
-        self.prior = (L, np.zeros(10), mean)
+        self.prior = (L, np.zeros(len(ri)), mean)
         self.intervals.pop(0)
         self.v = self.v[1:]
         self.l = self.l[1:]

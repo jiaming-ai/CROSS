@@ -113,7 +113,24 @@ def _any_baseline(seq: Path):
     return float(next(iter(dirs))) if dirs and not (seq / "right").exists() else None
 
 
-def orb_yaml(seq: Path, path: Path, load_atlas=None, save_atlas=None, fps=10.0, n_features=None, ini_fast=None, min_fast=None, th_depth=40.0, baseline=None):
+def orb_imu_lines(seq: Path, noise_scale: float = 1.0) -> list:
+    """The IMU.* settings of a sequence from its imu.json (x_cam = T_cam_imu x_imu; ORB-SLAM3's IMU.T_b_c1 is the
+    camera pose in the IMU (body) frame; continuous-time noise densities and random walks, as Kalibr reports them)."""
+    cal = json.loads((seq / "imu.json").read_text())
+    T_bc = np.linalg.inv(np.asarray(cal["T_cam_imu"], dtype=np.float64))
+    return [
+        "IMU.T_b_c1: !!opencv-matrix", "  rows: 4", "  cols: 4", "  dt: f",
+        "  data: [" + ",".join(f"{v:.9f}" for v in T_bc.reshape(-1)) + "]",
+        "IMU.InsertKFsWhenLost: 0",
+        f"IMU.NoiseGyro: {noise_scale * cal['gyro_noise_density']:.6e}",
+        f"IMU.NoiseAcc: {noise_scale * cal['accel_noise_density']:.6e}",
+        f"IMU.GyroWalk: {noise_scale * cal['gyro_random_walk']:.6e}",
+        f"IMU.AccWalk: {noise_scale * cal['accel_random_walk']:.6e}",
+        f"IMU.Frequency: {float(cal['rate_hz']):.3f}",
+    ]
+
+
+def orb_yaml(seq: Path, path: Path, load_atlas=None, save_atlas=None, fps=10.0, n_features=None, ini_fast=None, min_fast=None, th_depth=40.0, baseline=None, imu=False, imu_noise_scale=1.0):
     import os
     n_features = n_features or int(os.environ.get('ORB_NFEAT', 2000))
     ini_fast = ini_fast or int(os.environ.get('ORB_INI_FAST', 12))
@@ -145,6 +162,8 @@ def orb_yaml(seq: Path, path: Path, load_atlas=None, save_atlas=None, fps=10.0, 
         "Viewer.CameraSize: 0.08", "Viewer.CameraLineWidth: 3.0", "Viewer.ViewpointX: 0.0", "Viewer.ViewpointY: -0.7",
         "Viewer.ViewpointZ: -1.8", "Viewer.ViewpointF: 500.0",
     ]
+    if imu:
+        lines += orb_imu_lines(seq, imu_noise_scale)
     path.write_text("\n".join(lines) + "\n")
 
 
