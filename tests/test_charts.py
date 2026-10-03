@@ -56,6 +56,7 @@ def test_global_message_preserves_equal_coordinate_modes_in_two_charts():
     from cross.core.system import System
     system = System.__new__(System)
     system.device, system.config = "cpu", SystemConfig()
+    system.state_device, system.place_projection = "cpu", None
     system.hypothesis_manager = manager()
     frames = [node(10, 4), node(20, 9)]
     ret = dict(convolved_mus=torch.stack([k.pose_mu for k in frames]),
@@ -97,6 +98,7 @@ def test_one_chart_recovers_the_inherited_global_message_and_filter():
     for enabled in (False,True):
         system=System.__new__(System)
         system.device,system.config='cpu',SystemConfig()
+        system.state_device,system.place_projection='cpu',None
         system.hypothesis_manager=hm=manager()
         hm.chart_aware=enabled
         mu,std,weights,confidence,edges=system._merge_and_align_components(ret)

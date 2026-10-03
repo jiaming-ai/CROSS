@@ -92,16 +92,20 @@ def rt_to_pypose(s: np.ndarray) -> np.ndarray:
 P90_3DOF = math.sqrt(_chi2.ppf(0.90, 3))   # 90th percentile of |e| for an isotropic 3-dof Gaussian = 2.5 sigma
 
 
-def informative(cov: np.ndarray, sv: np.ndarray, rotation: bool = False) -> bool:
+def informative(cov: np.ndarray, sv: np.ndarray, rotation: bool = False, margin: float = 1.0) -> bool:
     """Information criterion: a measurement constrains the graph if the graph's own (un-inflated) prediction of the
-    relative pose is less certain than the measurement in translation (covariance traces; gtsam order r, t).
+    relative pose is less certain than the measurement in translation by `margin` (standard deviations; covariance
+    traces, gtsam order r, t).  `sv`: the measurement's sigmas (6) or covariance (6, 6).
     `rotation=True` also admits measurements whose rotation is better known than the chain's: tested offline and
     rejected, because the calibrated rotation floor of the estimator (a few hundredths of a degree) is below the
     chain's rotation noise on nearly every edge, so the criterion degenerates to "all edges" (KITTI-07: 5.5 m map
     ATE against 0.7 m; Lone Monk seeds 1 / 2: 0.17 / 0.27 m against 0.14 / 0.44 m)."""
-    if float(np.trace(cov[3:, 3:])) > float(np.sum(sv[3:] ** 2)):
+    sv = np.asarray(sv, dtype=np.float64)
+    var = np.diag(sv) if sv.ndim == 2 else sv ** 2
+    m2 = float(margin) ** 2
+    if float(np.trace(cov[3:, 3:])) > m2 * float(np.sum(var[3:])):
         return True
-    return bool(rotation and float(np.trace(cov[:3, :3])) > float(np.sum(sv[:3] ** 2)))
+    return bool(rotation and float(np.trace(cov[:3, :3])) > m2 * float(np.sum(var[:3])))
 
 
 # ----------------------------------------------------------------------------- noise model
@@ -127,6 +131,50 @@ class NoiseModel:
         c = self.cfg
         n = max(int(n or 1), 1)
         return self._iso(c.odom_k_r * theta / math.sqrt(n) + c.odom_floor_r, c.odom_k_t * L / math.sqrt(n) + c.odom_floor_t)
+
+    @staticmethod
+    def split_cov(sr: float, st_along: float, st_cross: float, T) -> np.ndarray:
+        """Covariance (gtsam order r, t; right perturbation at the measurement's end b) whose translation part is
+        st_along along the measured bearing and st_cross across it (the bearing expressed in frame b)."""
+        T = to_gtsam(T)
+        t = np.asarray(T.translation(), dtype=np.float64)
+        d = float(np.linalg.norm(t))
+        C = np.zeros((6, 6))
+        C[:3, :3] = np.eye(3) * sr ** 2
+        C[3:, 3:] = np.eye(3) * st_cross ** 2
+        if d > 1e-9:
+            u = np.asarray(T.rotation().matrix()).T @ (t / d)
+            C[3:, 3:] += (st_along ** 2 - st_cross ** 2) * np.outer(u, u)
+        return C
+
+    def visual_cov(self, T, scale: float = 1.0, scale_along: Optional[float] = None, scale_rot: Optional[float] = None) -> np.ndarray:
+        """Visual measurement covariance: `scale` across the bearing, `scale_along` along it, `scale_rot` on the rotation
+        (None: `scale`; scale_along None: the isotropic model)."""
+        T = to_gtsam(T)
+        s = self.visual(float(np.linalg.norm(T.translation())))
+        sa = scale if scale_along is None else scale_along
+        sr = scale if scale_rot is None else scale_rot
+        return self.split_cov(s[0] * sr, s[3] * sa, s[3] * scale, T)
+
+    def pair_cov(self, T, scale: float = 1.0, scale_along: Optional[float] = None, scale_rot: Optional[float] = None) -> np.ndarray:
+        T = to_gtsam(T)
+        s = self.pair(float(np.linalg.norm(T.translation())))
+        sa = scale if scale_along is None else scale_along
+        sr = scale if scale_rot is None else scale_rot
+        return self.split_cov(s[0] * sr, s[3] * sa, s[3] * scale, T)
+
+    def visual_cov_from_factor(self, f) -> np.ndarray:
+        """Covariance of a stored visual factor with the noise scales it was measured under."""
+        sc = float(getattr(f, "noise_scale", 1.0) or 1.0)
+        sa = getattr(f, "noise_scale_along", None)
+        sr = getattr(f, "noise_scale_rot", None)
+        return self.visual_cov(f, sc, None if sa is None else float(sa), None if sr is None else float(sr))
+
+    def factor_cov_gtsam(self, f) -> Optional[np.ndarray]:
+        """Full covariance for the pose-graph optimisation (gtsam order) of an anisotropic visual factor, else None."""
+        if f.type == EdgeType.VISUAL and getattr(f, "noise_scale_along", None) is not None:
+            return self.visual_cov_from_factor(f)
+        return None
 
     def pair(self, dist: float) -> np.ndarray:
         c = self.cfg
@@ -315,8 +363,11 @@ class LoopClosureVerifier:
         self.system = system
         self.cfg = cfg
         self.noise = NoiseModel(cfg.noise)
-        self.translation_only = getattr(cfg, "test_dof", "translation") == "translation"
-        self.thr = chi2_threshold(cfg.confidence, 3 if self.translation_only else 6)
+        self.test_dof = getattr(cfg, "test_dof", "translation")
+        self.translation_only = self.test_dof == "translation"
+        # "split": the translation and the rotation residual are tested separately (3 dof each, same level); the
+        # statistic is the larger of the two
+        self.thr = chi2_threshold(cfg.confidence, 6 if self.test_dof == "full" else 3)
         self.chain = ChainPredictor(system.hypothesis_manager, self.noise)
         self.anchor: Optional[dict] = None       # {"map_kf", "kf", "T" (map_kf -> kf), "sigma"} of the latest verified session->map edge
         self.stats = {"inpass_rejected": 0, "prior_rejected": 0, "prior_tested": 0, "posterior_rejected": 0, "pgo": 0, "h0_loop_edges": 0}
@@ -327,6 +378,18 @@ class LoopClosureVerifier:
                        "map": collections.deque(maxlen=int(getattr(cfg, "adaptive_window", 150)))}
         self.scales = {"sess": 1.0, "map": 1.0}
         self.scale = 1.0                # scale of the last reference type handled (kept for logging / stamping)
+        # anisotropic model (cfg.anisotropic): `scales` act across the bearing, `scales_along` along it, `scales_rot` on
+        # the rotation; their statistics are the across / along / rotation components of the innovation
+        self.anisotropic = bool(getattr(cfg, "anisotropic", False))
+        self.margin = float(getattr(cfg, "informative_margin", 1.0) or 1.0)
+        self.scales_along = {"sess": 1.0, "map": 1.0}
+        self.scales_rot = {"sess": 1.0, "map": 1.0}
+        self._innov_r = {"sess": collections.deque(maxlen=int(getattr(cfg, "adaptive_window", 150))),
+                         "map": collections.deque(maxlen=int(getattr(cfg, "adaptive_window", 150)))}
+        self._innov_a = {"sess": collections.deque(maxlen=int(getattr(cfg, "adaptive_window", 150))),
+                         "map": collections.deque(maxlen=int(getattr(cfg, "adaptive_window", 150)))}
+        self._innov_c = {"sess": collections.deque(maxlen=int(getattr(cfg, "adaptive_window", 150))),
+                         "map": collections.deque(maxlen=int(getattr(cfg, "adaptive_window", 150)))}
         # online metric scale of the estimator: median ratio of the raw measured translation to the odometry-chain
         # translation over short chains (<= 5 edges, >= scale_min_span_m, 1 m by default) of the last `adaptive_window` measurements; the
         # estimator's translations are divided by it (the odometry is metric, the feed-forward scale comes from the
@@ -340,13 +403,17 @@ class LoopClosureVerifier:
         self.anchor = None
         self.chain = ChainPredictor(self.system.hypothesis_manager, self.noise)
         self.stats = {k: 0 for k in self.stats}
-        for q in self._innov.values():
+        for q in list(self._innov.values()) + list(self._innov_a.values()) + list(self._innov_c.values()) + list(self._innov_r.values()):
             q.clear()
         self._ratio.clear()
         self.scales = {"sess": 1.0, "map": 1.0}
+        self.scales_along = {"sess": 1.0, "map": 1.0}
+        self.scales_rot = {"sess": 1.0, "map": 1.0}
         self.scale = 1.0
 
     MEDIAN_3DOF = 1.5382     # median of |e| for an isotropic 3-dof Gaussian, in units of sigma
+    MEDIAN_1DOF = 0.6745     # median of |e| for a 1-dof Gaussian (along the bearing)
+    MEDIAN_2DOF = 1.1774     # median of |e| for an isotropic 2-dof Gaussian (across the bearing)
     SCALE_MAX = 5.0          # sanity bound of the adaptation (a broken estimator is not a noisier one)
 
     def _update_scale(self):
@@ -354,6 +421,9 @@ class LoopClosureVerifier:
         based, robust to the wrong-place references that the tests reject): 1 when the calibration holds, > 1 when
         the measurements against the map are noisier than on the calibration data (appearance change).  Needs a
         minimum of 20 samples; never below 1, never above SCALE_MAX."""
+        if self.anisotropic:
+            self._update_scale_split()
+            return
         for kind, q in self._innov.items():
             if not getattr(self.cfg, "adaptive_scale", True) or len(q) < 20:
                 self.scales[kind] = 1.0
@@ -370,15 +440,65 @@ class LoopClosureVerifier:
                 q.clear()
                 self.scales[kind] = 1.0
 
+    def _update_scale_split(self):
+        """Anisotropic model: the scales across the bearing, along it and of the rotation, from the medians of the
+        across / along / rotation innovation components (each normalised with the base model plus the un-inflated chain
+        variance in that direction); same bounds as the isotropic scale.  The anchor self-check of a relocalization
+        session uses the across-track statistic: a wrong anchor shows in the direction, a far-away scene in the length."""
+        for kind in ("sess", "map"):
+            qa, qc, qr = self._innov_a[kind], self._innov_c[kind], self._innov_r[kind]
+            if not getattr(self.cfg, "adaptive_scale", True) or len(qc) < 20:
+                self.scales[kind] = self.scales_along[kind] = self.scales_rot[kind] = 1.0
+                continue
+            med_c = float(np.median(np.asarray(qc))) / self.MEDIAN_2DOF
+            med_a = float(np.median(np.asarray(qa))) / self.MEDIAN_1DOF
+            med_r = float(np.median(np.asarray(qr))) / self.MEDIAN_3DOF
+            self.scales[kind] = float(min(max(1.0, med_c), self.SCALE_MAX))
+            self.scales_along[kind] = float(min(max(1.0, med_a), self.SCALE_MAX))
+            self.scales_rot[kind] = float(min(max(1.0, med_r), self.SCALE_MAX))
+            if kind == "map" and med_c > self.SCALE_MAX and self.anchor is not None:
+                self.stats["anchor_dropped"] = self.stats.get("anchor_dropped", 0) + 1
+                logger.info(f"prior inconsistent with the map measurements (median normalised across-track innovation {med_c:.1f}): session anchor dropped")
+                self.anchor = None
+                qa.clear(); qc.clear(); qr.clear()
+                self.scales[kind] = self.scales_along[kind] = self.scales_rot[kind] = 1.0
+
     def scale_for(self, kf_id: int) -> float:
         return self.scales["map"] if self._is_map_kf(int(kf_id)) else self.scales["sess"]
 
+    def scale_along_for(self, kf_id: int) -> Optional[float]:
+        """Along-track scale of the anisotropic model (None: isotropic model)."""
+        if not self.anisotropic:
+            return None
+        return self.scales_along["map"] if self._is_map_kf(int(kf_id)) else self.scales_along["sess"]
+
+    def scale_rot_for(self, kf_id: int) -> Optional[float]:
+        """Rotation scale of the anisotropic model (None: isotropic model, the rotation uses `scale_for`)."""
+        if not self.anisotropic:
+            return None
+        return self.scales_rot["map"] if self._is_map_kf(int(kf_id)) else self.scales_rot["sess"]
+
+    def meas_cov(self, kf_id: int, T, unscaled: bool = False) -> np.ndarray:
+        """Covariance of a visual measurement to keyframe kf_id under the current online scales."""
+        if unscaled:
+            return self.noise.visual_cov(T, 1.0, 1.0 if self.anisotropic else None)
+        return self.noise.visual_cov(T, self.scale_for(kf_id), self.scale_along_for(kf_id), self.scale_rot_for(kf_id))
+
     # ------------------------------------------------------------------ helpers
-    def chi2(self, r: np.ndarray, cov: np.ndarray) -> float:
-        """Test statistic: translation-only (3 dof) or full (6 dof) Mahalanobis distance."""
-        if self.translation_only:
+    def chi2(self, r: np.ndarray, cov: np.ndarray, rotation: bool = False) -> float:
+        """Test statistic: translation-only (3 dof), full (6 dof), or split: the translation marginal (3 dof), and with
+        `rotation` (loop measurements between keyframes of the current session) the larger of it and the rotation
+        marginal (3 dof).  Edges to a stored map and in-pass pairs keep the translation test: their predictions are
+        short, so the estimator's rotation noise (4x the base model on OpenLORIS before the online scale adapts, and a
+        relocalization trial is short) would decide the test."""
+        if self.translation_only or (self.test_dof == "split" and not rotation):
             return chi2_of(r[3:], cov[3:, 3:])
+        if self.test_dof == "split":
+            return max(chi2_of(r[3:], cov[3:, 3:]), chi2_of(r[:3], cov[:3, :3]))
         return chi2_of(r, cov)
+
+    def _both_session(self, a: int, b: int) -> bool:
+        return not self._is_map_kf(int(a)) and not self._is_map_kf(int(b))
 
     def _session_start(self) -> int:
         return int(getattr(self.system, "_session_start_kf_id", 0))
@@ -430,7 +550,12 @@ class LoopClosureVerifier:
             d = float(np.linalg.norm(Pij.translation()))
             r = residual(Pij, M)
             sc = max(self.scale_for(int(refs[i].id)), self.scale_for(int(refs[j].id)))
-            c2 = self.chi2(r, np.diag((self.noise.pair(d) * sc) ** 2) + cov_m)
+            if self.anisotropic:
+                sa = max(self.scale_along_for(int(refs[i].id)), self.scale_along_for(int(refs[j].id)))
+                sr = max(self.scale_rot_for(int(refs[i].id)), self.scale_rot_for(int(refs[j].id)))
+                c2 = self.chi2(r, self.noise.pair_cov(Pij, sc, sa, sr) + cov_m)
+            else:
+                c2 = self.chi2(r, np.diag((self.noise.pair(d) * sc) ** 2) + cov_m)
             ok[(i, j)] = c2 <= self.thr
             n_tested += 1
         if n_tested == 0 or all(ok.values()):
@@ -490,7 +615,7 @@ class LoopClosureVerifier:
         # T_pred = T_map (+) T_anc (+) T_chain (+) T_since ; transport every term to the end
         rest = T_anc.compose(T_chain).compose(T_since)
         cov = transport(np.diag(self.noise.map_rel(d_map) ** 2), rest)
-        cov += transport(np.diag(self.anchor["sigma"] ** 2), T_chain.compose(T_since))
+        cov += transport(self.anchor["cov"] if "cov" in self.anchor else np.diag(self.anchor["sigma"] ** 2), T_chain.compose(T_since))
         cov += transport(cov_chain, T_since) + cov_since
         return T_map.compose(rest), cov
 
@@ -514,24 +639,48 @@ class LoopClosureVerifier:
             d = float(np.linalg.norm(Tm.translation()))
             r = residual(Tm, T_pred)
             kind = "map" if self._is_map_kf(int(kf.id)) else "sess"
+            short = kind == "map"
             if kind == "sess":
                 ia, ib = self.chain._idx.get(int(kf.id)), self.chain._idx.get(int(last_kf_id))
                 L = float(np.linalg.norm(T_pred.translation()))
-                if ia is not None and ib is not None and ia[0] == ib[0] and abs(ia[1] - ib[1]) <= 5 and L >= float(getattr(self.cfg, "scale_min_span_m", 1.0)):
+                short = ia is not None and ib is not None and ia[0] == ib[0] and abs(ia[1] - ib[1]) <= 5
+                if short and L >= float(getattr(self.cfg, "scale_min_span_m", 1.0)):
                     self._ratio.append(d * self.metric_correction / L)
                     if len(self._ratio) >= 20:
                         self.scale_ratio = float(np.median(self._ratio))
                         self.stats["scale_ratio"] = round(self.scale_ratio, 4)
             self.scale = self.scales[kind]
-            sv = self.noise.visual(d, self.scale)
-            # loop candidate: the prediction (un-inflated chain) is less certain than the measurement
-            loops.append(informative(cov / max(self.cfg.noise.gate_inflation, 1e-6) ** 2, sv, rotation=False))
-            # innovation statistic: the translation residual of this very test, normalised by the un-scaled
-            # covariance (prediction + calibrated measurement noise); its median over the recent observations is 1.54
-            # when the calibration holds and grows when the measurements (against the map or the session) get noisier
-            S0 = cov + np.diag(self.noise.visual(d) ** 2)
-            self._innov[kind].append(float(np.linalg.norm(r[3:])) / math.sqrt(max(float(np.trace(S0[3:, 3:])) / 3.0, 1e-12)))
-            c2 = self.chi2(r, cov + np.diag(self.noise.visual(d, self.scale) ** 2))
+            cov0 = cov / max(self.cfg.noise.gate_inflation, 1e-6) ** 2      # un-inflated chain covariance
+            if self.anisotropic:
+                Sv = self.noise.visual_cov(Tm, self.scale, self.scales_along[kind], self.scales_rot[kind])
+                # loop candidate: the prediction (un-inflated chain) is less certain than the measurement by the margin
+                # (measurements of the session's own keyframes; edges to a stored map keep the plain criterion)
+                loops.append(informative(cov0, Sv, rotation=False, margin=self.margin if kind == "sess" else 1.0))
+                # innovation statistics along / across the measured bearing (frame b), each normalised by the base model
+                # and the un-inflated chain variance in that direction: medians 0.674 / 1.177 when the model holds
+                if short and d > 1e-6:
+                    u = np.asarray(Tm.rotation().matrix()).T @ (np.asarray(Tm.translation(), dtype=np.float64) / d)
+                    rt = r[3:]
+                    ra = float(rt @ u)
+                    rc = float(np.linalg.norm(rt - ra * u))
+                    va = float(u @ cov0[3:, 3:] @ u)
+                    vc = max(float(np.trace(cov0[3:, 3:])) - va, 0.0)
+                    sg = self.noise.visual(d)
+                    base, base_r = float(sg[3]), float(sg[0])
+                    self._innov_a[kind].append(abs(ra) / math.sqrt(base ** 2 + va))
+                    self._innov_c[kind].append(rc / math.sqrt(base ** 2 + vc / 2.0))
+                    self._innov_r[kind].append(float(np.linalg.norm(r[:3])) / math.sqrt(base_r ** 2 + float(np.trace(cov0[:3, :3])) / 3.0))
+                c2 = self.chi2(r, cov + Sv, rotation=kind == "sess")
+            else:
+                sv = self.noise.visual(d, self.scale)
+                # loop candidate: the prediction (un-inflated chain) is less certain than the measurement
+                loops.append(informative(cov0, sv, rotation=False, margin=self.margin if kind == "sess" else 1.0))
+                # innovation statistic: the translation residual of this very test, normalised by the un-scaled
+                # covariance (prediction + calibrated measurement noise); its median over the recent observations is 1.54
+                # when the calibration holds and grows when the measurements (against the map or the session) get noisier
+                S0 = cov + np.diag(self.noise.visual(d) ** 2)
+                self._innov[kind].append(float(np.linalg.norm(r[3:])) / math.sqrt(max(float(np.trace(S0[3:, 3:])) / 3.0, 1e-12)))
+                c2 = self.chi2(r, cov + np.diag(self.noise.visual(d, self.scale) ** 2))
             self.stats["prior_tested"] += 1
             if c2 > self.thr:
                 self.stats["prior_rejected"] += 1
@@ -548,8 +697,11 @@ class LoopClosureVerifier:
 
     def make_anchor(self, map_kf_id: int, kf_id: int, T_meas) -> dict:
         Tm = to_gtsam(T_meas)
-        return {"map_kf": int(map_kf_id), "kf": int(kf_id), "T": Tm,
-                "sigma": self.noise.visual(float(np.linalg.norm(Tm.translation())), self.scales["map"])}
+        out = {"map_kf": int(map_kf_id), "kf": int(kf_id), "T": Tm,
+               "sigma": self.noise.visual(float(np.linalg.norm(Tm.translation())), self.scales["map"])}
+        if self.anisotropic:
+            out["cov"] = self.noise.visual_cov(Tm, self.scales["map"], self.scales_along["map"], self.scales_rot["map"])
+        return out
 
     def update_anchor(self, map_kf_id: int, kf_id: int, T_meas) -> None:
         self.anchor = self.make_anchor(map_kf_id, kf_id, T_meas)
@@ -570,14 +722,19 @@ class LoopClosureVerifier:
             return None
         Tm = to_gtsam(T_meas)
         d = float(np.linalg.norm(Tm.translation()))
+        if self.anisotropic:
+            return self.chi2(residual(Tm, T_pred), cov + self.noise.visual_cov(Tm, self.scales["map"], self.scales_along["map"], self.scales_rot["map"]))
         return self.chi2(residual(Tm, T_pred), cov + np.diag(self.noise.visual(d, self.scales["map"]) ** 2))
 
     # ------------------------------------------------------------------ 3. residuals against the graph / posterior
     def edge_cov(self, a: int, b: int, factor) -> np.ndarray:
         """Covariance of a stored visual measurement for residual tests against the graph: the measurement noise,
         plus the stored map's own inconsistency when the edge ties a session keyframe to a (fixed) map keyframe."""
-        s = self.noise.visual_from_factor(factor)
-        cov = np.diag(s ** 2)
+        if getattr(factor, "noise_scale_along", None) is not None:
+            cov = self.noise.visual_cov_from_factor(factor)
+        else:
+            s = self.noise.visual_from_factor(factor)
+            cov = np.diag(s ** 2)
         if self._is_map_kf(a) != self._is_map_kf(b):
             d = float(np.linalg.norm((factor.mean_np if hasattr(factor, "mean_np") else factor.mean.tensor().detach().cpu().numpy())[:3]))
             cov = cov + np.diag(self.noise.map_rel(d) ** 2)
@@ -590,7 +747,7 @@ class LoopClosureVerifier:
             return None
         pred = to_gtsam(hm.nodes[a].pose_mu[0]).between(to_gtsam(hm.nodes[b].pose_mu[0]))
         Tm = to_gtsam(factor)
-        return self.chi2(residual(Tm, pred), self.edge_cov(a, b, factor))
+        return self.chi2(residual(Tm, pred), self.edge_cov(a, b, factor), rotation=self._both_session(a, b))
 
     def posterior_outliers(self, pg, only_keys: Optional[set] = None, informative_only: bool = False) -> list:
         """Visual factors of an optimised pose graph whose residual at the optimised poses exceeds the threshold.
@@ -609,7 +766,7 @@ class LoopClosureVerifier:
             for f in factors:
                 if f.type != EdgeType.VISUAL or (informative_only and getattr(f, "informative", True) is False):
                     continue
-                c2 = self.chi2(residual(to_gtsam(f), pred), self.edge_cov(a, b, f))
+                c2 = self.chi2(residual(to_gtsam(f), pred), self.edge_cov(a, b, f), rotation=self._both_session(a, b))
                 if c2 > self.thr:
                     out.append((a, b, f, c2))
         return out
@@ -634,7 +791,7 @@ class LoopClosureVerifier:
                 # session keyframes to map keyframes, so the map term applies
                 ka = a if a in hm.nodes else vm[a].original_kf_id
                 kb = b if b in hm.nodes else vm[b].original_kf_id
-                c2 = self.chi2(residual(to_gtsam(f), pred), self.edge_cov(ka, kb, f))
+                c2 = self.chi2(residual(to_gtsam(f), pred), self.edge_cov(ka, kb, f), rotation=self._both_session(ka, kb))
                 n += 1
                 n_out += int(c2 > self.thr)
         return (n_out / n if n else 0.0), n

@@ -48,3 +48,15 @@ def test_covisibility_overlap_vs_none():
     s = covisibility_scores(pred, [1, 2], 0, grid=32)
     assert s[0] > 0.8          # small lateral shift of a plane: nearly all points consistent
     assert s[1] < 0.05         # camera behind the plane: nothing projects consistently
+
+
+def test_principal_point_rotation():
+    from cross.cv.pose_est_ff import principal_point_rotation
+    K_centred = np.array([[320.0, 0, 319.5], [0, 320.0, 239.5], [0, 0, 1]])
+    assert np.allclose(principal_point_rotation(K_centred, 640, 480), np.eye(3))
+    K = np.array([[718.856, 0, 607.1928], [0, 718.856, 185.2157], [0, 0, 1]])        # KITTI 00-02
+    R = principal_point_rotation(K, 1241, 376)
+    ray = np.array([(620.0 - 607.1928) / 718.856, (187.5 - 185.2157) / 718.856, 1.0])
+    assert np.allclose(R @ [0, 0, 1.0], ray / np.linalg.norm(ray))           # model optical axis -> image-centre ray
+    assert abs(np.degrees(np.arccos((np.trace(R) - 1) / 2)) - 1.04) < 0.01
+    assert np.allclose(R @ R.T, np.eye(3))

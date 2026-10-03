@@ -67,8 +67,9 @@ class PoseGraph:
             k_hop: Visual edge expansion hops
             device: Device for tensor operations
             uncertainty_scales: Optional scaling factors for edge uncertainties by type
-            noise_fn: optional callable factor -> sigmas (pypose order, 6) replacing the factor's own std
-                      (calibrated noise model of the verified loop closure); None keeps the stored std
+            noise_fn: optional callable factor -> sigmas (pypose order, 6) or a covariance (6, 6, gtsam order r, t)
+                      replacing the factor's own std (calibrated noise model of the verified loop closure); None keeps
+                      the stored std
             skip_fn: optional callable factor -> bool; True excludes the factor from the optimisation (visual
                      measurements that the odometry chain already explains better: the information criterion of
                      the verified loop closure)
@@ -111,12 +112,15 @@ class PoseGraph:
         self.optimized_poses: Dict[int, pp.LieTensor] = {}
         self.optimization_cost: float = 0.0
     
-    def _make_between_noise_model(self, factor, gtsam_sigmas: np.ndarray) -> 'gtsam.noiseModel.Base':
+    def _make_between_noise_model(self, factor, gtsam_sigmas: np.ndarray, gtsam_cov: Optional[np.ndarray] = None) -> 'gtsam.noiseModel.Base':
         """
-        Create a GTSAM noise model for a between factor, optionally wrapping visual
-        factors in a robust kernel to downweight outliers.
+        Create a GTSAM noise model for a between factor (diagonal sigmas, or a full covariance in gtsam order),
+        optionally wrapping visual factors in a robust kernel to downweight outliers.
         """
-        base_noise = gtsam.noiseModel.Diagonal.Sigmas(gtsam_sigmas)
+        if gtsam_cov is not None:
+            base_noise = gtsam.noiseModel.Gaussian.Covariance(np.asarray(gtsam_cov, dtype=np.float64))
+        else:
+            base_noise = gtsam.noiseModel.Diagonal.Sigmas(gtsam_sigmas)
 
         # Only visual edges get robust kernels; others remain Gaussian.
         if factor.type != EdgeType.VISUAL or not self.visual_robust_enabled:
@@ -767,10 +771,26 @@ class PoseGraph:
                     
                     # Convert diagonal std from pypose to gtsam noise model (calibrated model if available)
                     pypose_stds = None
+                    gtsam_cov = None
                     if self.noise_fn is not None:
                         s = self.noise_fn(factor)
                         if s is not None:
-                            pypose_stds = np.asarray(s, dtype=np.float64).copy()
+                            s = np.asarray(s, dtype=np.float64)
+                            if s.ndim == 2:
+                                gtsam_cov = s.copy()
+                            else:
+                                pypose_stds = s.copy()
+                    if gtsam_cov is not None:
+                        k = float(self.uncertainty_scales.get(factor.type, 1.0))
+                        if factor.type == EdgeType.VISUAL and num_visual_edges > 0 and getattr(self, "scale_by_multiplicity", True):
+                            k *= num_visual_edges
+                        gtsam_cov = gtsam_cov * k ** 2 + np.eye(6) * 1e-18
+                        noise_model = self._make_between_noise_model(factor, None, gtsam_cov)
+                        nonlinear = gtsam.BetweenFactorPose3(id1, id2, measurement_gtsam, noise_model)
+                        graph.add(nonlinear)
+                        if hasattr(self,'conditional_belief'):
+                            conditional_factors.append((nonlinear,factor))
+                        continue
                     if pypose_stds is None:
                         pypose_stds = (factor.std_np if hasattr(factor, "std_np") else factor.std.tensor().cpu().numpy().flatten()).astype(np.float64).copy()
 

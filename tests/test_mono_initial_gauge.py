@@ -45,7 +45,7 @@ def mapper(conditional=False):
     value = System.__new__(System)
     value.config = SystemConfig()
     value.config.mapping.hypothesis.conditional_sources = conditional
-    value.device = value.storage_device = 'cpu'
+    value.device = value.storage_device = value.state_device = 'cpu'
     value.topo_map = None
     value.kf_gmm_n_components = 2
     value._processed_frame_num = 0

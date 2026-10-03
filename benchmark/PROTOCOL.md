@@ -22,7 +22,7 @@ one ground-truth frame, which T2 and T3 need.
 
 | dataset | environment | sensors used | odometry given to systems that take odometry | ground truth | T1 sequences | T2 / T3 map → queries |
 |---|---|---|---|---|---|---|
-| [KITTI odometry](https://www.cvlibs.net/datasets/kitti/eval_odometry.php) (raw drives) | outdoor, car, 0.4–5 km | stereo colour (cam 2/3, 0.54 m), mono (cam 2) | dead reckoning of the OXTS velocities and angular rates (no GPS) | KITTI odometry poses (RTK/INS) | 00, 01, 02, 04–10 (03 has no raw drive) | none (single session per route) |
+| [KITTI odometry](https://www.cvlibs.net/datasets/kitti/eval_odometry.php) (raw drives) | outdoor, car, 0.4–5 km | stereo colour (cam 2/3, 0.54 m), mono (cam 2) | dead reckoning of the OXTS level-frame velocities and yaw rate, INS roll / pitch (no GPS position) | KITTI odometry poses (RTK/INS) | 00, 01, 02, 04–10 (03 has no raw drive) | none (single session per route) |
 | [OpenLORIS-Scene](https://lifelong-robotic-vision.github.io/dataset/scene.html) | indoor, wheeled robot; office, corridor, home, cafe, market | RGB-D (D435i colour + aligned depth), stereo (T265 fisheye pair, rectified), mono (D435i colour) | robot wheel odometry | motion capture (office), 2D LiDAR SLAM (others) | all 22 sequences | office1-1 → 1-2…1-7; corridor1-1 → 1-2…1-5; home1-1 → 1-2…1-5; cafe1-1 → 1-2; market1-1 → 1-2, 1-3 (17 queries) |
 | [ROVER](https://iis-esslingen.github.io/rover/) campus_large | outdoor, ground robot, multi-season | RGB-D (D435i), stereo (T265, rectified), mono (D435i colour) | see §3 | total station (mm) | all 8 recordings | day (2024-09-25) → summer, autumn, winter, spring, dusk, night, night-light (7 queries) |
 | [SimChange](https://github.com/jiaming-ai/SimChange) v2 | indoor (HSSD house, restaurant, classroom, Lone Monk) | rendered RGB-D, stereo (0.1/0.3/0.5 m), mono | ground truth + SNR 10 noise (seeded) | exact | – | map → all change variants of the scene (lighting, rearrangement, viewpoint, reverse, combinations) |
@@ -72,8 +72,13 @@ shipped defaults.
 CROSS fuses an odometry stream with its visual observations. Each dataset gives it the most realistic odometry it has:
 
 - **OpenLORIS**: the robot's wheel odometry (`odom.txt`), untouched.
-- **KITTI**: dead reckoning of the OXTS forward/left/up velocities and body angular rates at 10 Hz. It drifts about 1–2 % of
-  the distance. The GPS positions are *not* used, because the ground truth is derived from them.
+- **KITTI**: dead reckoning of the OXTS unit at 10 Hz. Its forward / left / up velocities are given in the level frame
+  (parallel to the earth surface), so the positions integrate them turned by the heading, which integrates the yaw rate
+  about the up axis; the orientation is that heading with the INS roll and pitch (gravity-referenced). The GPS positions are
+  *not* used, because the ground truth is derived from them. The odometry ATE over 00–10 is 0.3–29 m (4.9 m mean).
+  Before 2026-10-03 the velocities were integrated as body-frame velocities together with the body angular rates, so the
+  direction of travel disagreed with the orientation by the vehicle's pitch / roll relative to the level (0.5–2.3°;
+  odometry ATE 9.3 m mean); every KITTI result with external odometry from before that date used it.
 - **ROVER**: the platform records no wheel odometry, only IMUs. The benchmark uses simulated odometry: ground-truth increments
   perturbed with SNR 10 noise, seeded, as in the CROSS paper's noise study and in SimChange. It is marked *sim-odom* in the tables.
 - **SimChange**: simulated, SNR 10, seed 0 for the map session and seed 1 for queries.
@@ -212,6 +217,11 @@ python benchmark/datasets/prepare_openloris.py $DATA/openloris $DATA/bench/openl
 python benchmark/run.py --track t1 t2 t3 --dataset openloris --system cross_rgbd --out $RESULTS
 python benchmark/collect.py $RESULTS && python benchmark/make_tables.py && python benchmark/build_site.py
 ```
+
+Every run records the code version it ran (`commit`: the `COMMIT` file of a copied code snapshot, which should hold
+the commit hash, else `git rev-parse --short HEAD`, with `+dirty` for uncommitted changes). `collect.py` keeps every
+run in `results/history.json` (`--backfill-git` rebuilds it from the committed versions of `results.json`), and the
+page's History tab shows the tables once per code version, so a regression can be traced to the commit that made it.
 
 A new system is added by writing a runner that produces the same `result.json` (`benchmark/eval/`), plus a row in
 `benchmark/configs/systems.yaml`.

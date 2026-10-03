@@ -287,6 +287,8 @@ class System:
             self.rgb_transform, self.depth_transform = get_transforms_target_max(camera)
         # Expose the (possibly resized/cropped) camera intrinsics used for all downstream geometry.
         self.camera = camera
+        if self.pose_est_type == PoseEstType.FF and hasattr(self.pose_est, "set_camera"):
+            self.pose_est.set_camera(camera.K, camera.frame_width, camera.frame_height)
 
         ################ visualization ################
         if visualizer is not None:
@@ -1114,9 +1116,13 @@ class System:
         # behind the robot): fusing them as independent evidence re-applies the estimator's bias at every observation
         # (their keyframe poses came from the same belief) and drifts the map; they still weigh the hypotheses and
         # become graph edges
+        variance_update_mask = None
         if self.config.mapping.hypothesis.h0_informative_only and self.hypothesis_manager.comp0_informative is False:
             pose_update_mask[0] = False
             ret["h0_pose_update_skipped"] = True
+            if getattr(self.config.mapping.hypothesis, "h0_skip_keeps_variance", False) and self._session_start_kf_id == 0:
+                variance_update_mask = torch.zeros_like(pose_update_mask)
+                variance_update_mask[0] = True
 
         self.hypothesis_manager.gmm_filtering(
             proposal_gmm_mu,
@@ -1124,6 +1130,7 @@ class System:
             proposal_gmm_weights,
             proposal_gmm_confidence,
             pose_update_mask=pose_update_mask,
+            variance_update_mask=variance_update_mask,
             **(dict(source_factors={i:m.factor for i,m in self.hypothesis_manager.aligned_conditional_models.items()},
                     source_covariances={i:m.geometry_covariance for i,m in self.hypothesis_manager.aligned_conditional_models.items()})
                if self.hypothesis_manager.source_states is not None else {}),
@@ -1200,7 +1207,7 @@ class System:
         evidence. Detection reads history and never accumulates it a second time.
         """
         manager = self.hypothesis_manager
-        lc_result = manager.detect_loop_closure(ret)
+        lc_result = self._mapping_merge_gate(manager.detect_loop_closure(ret))
         branches_before = set(manager.hypotheses)
         new_kf = self._add_new_kf(rgb_image, depth_image, ret=ret, edge_mapping=edge_mapping,
                                 timestamp=timestamp, force_permanent=False, force_add=lc_result["loop_closure"],
@@ -1209,11 +1216,25 @@ class System:
                    and not lc_result["loop_closure"] and new_kf is not None
                    and bool(set(manager.hypotheses) - branches_before))
         if recheck:
-            lc_result = manager.detect_loop_closure(ret)
+            lc_result = self._mapping_merge_gate(manager.detect_loop_closure(ret))
         self.last_step_diagnostics.update(loop_closure_detected=bool(lc_result["loop_closure"]),
                                          commitment_audit=manager.last_loop_audit,
                                          commitment_rechecked_after_realization=recheck)
         return new_kf, lc_result
+
+    def _mapping_merge_gate(self, lc_result: dict) -> dict:
+        """In a session without a loaded map, another hypothesis is not merged into hypothesis 0 (unless
+        hypothesis.merge_in_mapping_session): hypothesis 0 is the odometry chain the map is built on and never lost, a
+        revisit consistent with it is closed by the verified loop closure, and a hypothesis exists only because its
+        measurements were inconsistent with that chain (aliased places)."""
+        cfg = getattr(getattr(getattr(self, "config", None), "mapping", None), "hypothesis", None)
+        if (lc_result.get("loop_closure") and int(getattr(self, "_session_start_kf_id", 0)) == 0
+                and not getattr(cfg, "merge_in_mapping_session", True)):
+            logger.debug(f"merge of hypothesis {lc_result.get('loop_closure_hypo_id')} not applied in a mapping session")
+            if getattr(self, "_lc_verifier", None) is not None:
+                self._lc_verifier.stats["mapping_merges_skipped"] = self._lc_verifier.stats.get("mapping_merges_skipped", 0) + 1
+            return dict(lc_result, loop_closure=False)
+        return lc_result
 
     def _verify_references(self, valid_keyframes, valid_poses, keyframes, valid_masks, ret):
         """Tests 2 and 1 of the verified loop closure on the references of the current forward pass.
@@ -1783,6 +1804,9 @@ class System:
                     conditional_pose=ret.get('relative_conditional_poses',[None]*len(valid_keyframes))[i],
                     meta={"conf": float(confs[i]) if confs is not None else None,
                           "noise_scale": float(self._lc_verifier.scale_for(kf_i.id)) if self._lc_verifier is not None else 1.0,
+                          # anisotropic noise model: the scale along the measured bearing (None: isotropic model)
+                          "noise_scale_along": self._lc_verifier.scale_along_for(kf_i.id) if self._lc_verifier is not None else None,
+                          "noise_scale_rot": self._lc_verifier.scale_rot_for(kf_i.id) if self._lc_verifier is not None else None,
                           # information criterion: the measurement constrains the graph only if the odometry chain
                           # did not already know the relative pose better (loop candidates, session->map edges)
                           "informative": (bool(loop_flags[i]) if (loop_flags is not None and i < len(loop_flags)) else True)
@@ -1949,6 +1973,23 @@ class System:
         if gate > 0:
             labels = split_clusters_by_vertical(labels, self.vertical_offsets(samples_se3).cpu().numpy(),
                                                 flat_scores.detach().cpu().numpy(), gate)
+        # a reference the prior test found inconsistent with hypothesis 0 never shares a proposal with consistent ones:
+        # a mixed cluster counted as consistent (any member) and informative (any member), so the inconsistent member's
+        # edge was filed under hypothesis 0 as a loop edge (OpenLORIS corridor1-1, RGB-D: 289 of 290 hypothesis-0 loop
+        # edges joined keyframes 35-75 m apart and bent the map by 23 deg)
+        h0_ok_all = ret.get("h0_ok")
+        if h0_ok_all is not None and getattr(self.config.mapping.loop_closure, "pure_verdict_clusters", False):
+            labels = np.asarray(labels).copy()
+            flat_b = valid_indices_tuple[0].tolist()
+            bad = np.array([h0_ok_all[int(b)] is False for b in flat_b], dtype=bool)
+            next_label = int(labels.max()) + 1 if len(labels) else 0
+            for lab in sorted(set(labels.tolist())):
+                if lab == -1:
+                    continue
+                m = labels == lab
+                if bad[m].any() and (~bad[m]).any():
+                    labels[m & bad] = next_label
+                    next_label += 1
         unique_labels = sorted(set(labels))
         
         hypotheses = []
@@ -2377,6 +2418,20 @@ class System:
                     logger.debug("No valid keyframes after the consistency tests.")
                     return ret
         ret["h0_ok"] = h0_ok
+        # one forward pass registers the current view once: its loop measurements to several (consecutive) keyframes of
+        # the session share that registration's error and also carry the model's geometry between those keyframes, so
+        # only the nearest loop candidate(s) of a pass (the smallest measured distance: the least noisy measurement under
+        # the noise model) constrain the graph
+        n_per_pass = int(getattr(self.config.mapping.loop_closure, "loop_edges_per_pass", 0) or 0)
+        loop_flags = ret.get("h0_loop")
+        if n_per_pass > 0 and loop_flags is not None and len(loop_flags) == len(valid_keyframes):
+            cand = [i for i, kf in enumerate(valid_keyframes)
+                    if loop_flags[i] and kf.id >= self._session_start_kf_id and (h0_ok is None or h0_ok[i] is not False)]
+            if len(cand) > n_per_pass:
+                dist = torch.norm(valid_poses.tensor()[:, :3], dim=1).detach().cpu().numpy()
+                order = sorted(cand, key=lambda i: float(dist[i]))
+                keep = set(order[:n_per_pass])
+                ret["h0_loop"] = [bool(f) and (i not in cand or i in keep) for i, f in enumerate(loop_flags)]
 
         # valid retrieval weights
         retrieval_weights = torch.tensor([w for w, m in zip(retrieval_scores, valid_masks) if m])

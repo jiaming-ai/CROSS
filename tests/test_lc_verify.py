@@ -351,3 +351,80 @@ def test_corroborate_anchor_needs_a_separated_earlier_map_edge():
 
     assert run(0.0) == [True]
     assert run(1000.0) == [None]
+
+
+def _chain_system(n=120, session_start=0):
+    hm = FakeHM()
+    gt, hm.odom_edges = make_chain(n=n)
+    for i, g in enumerate(gt):
+        kf = Keyframe(pose_mu=_lie(g).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+        kf.id = i
+        kf.step_created = i
+        hm.nodes[i] = kf
+    return hm, gt
+
+
+def test_split_covariance_is_along_the_bearing():
+    noise = NoiseModel(NoiseModelConfig())
+    T = gtsam.Pose3(gtsam.Rot3.Ypr(0.3, 0.0, 0.0), gtsam.Point3(4.0, 1.0, 0.0))
+    C = noise.split_cov(0.01, 0.5, 0.05, T)
+    u = np.asarray(T.rotation().matrix()).T @ (np.asarray(T.translation()) / np.linalg.norm(T.translation()))
+    assert math.isclose(float(u @ C[3:, 3:] @ u), 0.25, rel_tol=1e-9)
+    w = np.cross(u, [0, 0, 1.0]); w /= np.linalg.norm(w)
+    assert math.isclose(float(w @ C[3:, 3:] @ w), 0.0025, rel_tol=1e-9)
+    assert np.allclose(C[:3, :3], np.eye(3) * 1e-4) and np.allclose(C[:3, 3:], 0)
+    # isotropic when both scales agree: equals the diagonal model
+    s = noise.visual(float(np.linalg.norm(T.translation())))
+    assert np.allclose(noise.visual_cov(T, 1.0, 1.0), np.diag(s ** 2))
+
+
+def test_margin_keeps_neighbours_out_and_loops_in():
+    """Information criterion with a margin: a measurement of a keyframe one edge back is not informative, one of a
+    keyframe 100 edges back (a revisit after drift) is."""
+    hm, gt = _chain_system()
+    cfg = LoopClosureConfig()
+    assert cfg.informative_margin == 2.0 and cfg.anisotropic
+    v = LoopClosureVerifier(FakeSystem(hm), cfg)
+    last = 119
+    refs = [hm.nodes[118], hm.nodes[19]]
+    meas = [_lie(gt[r.id].between(gt[last])) for r in refs]
+    ok, _ = v.prior_gate(refs, meas, last, gtsam.Pose3(), 1)
+    assert ok == [True, True]
+    assert v.last_loop_flags == [False, True]
+    # without the margin and with the base model, the neighbour of a 0.25 m odometry step would also count
+    cfg1 = LoopClosureConfig(); cfg1.informative_margin = 1.0
+    v1 = LoopClosureVerifier(FakeSystem(hm), cfg1)
+    v1.prior_gate(refs, meas, last, gtsam.Pose3(), 1)
+    assert v1.last_loop_flags[1] is True
+
+
+def test_anisotropic_scales_follow_the_innovation():
+    """Measurements whose length is 20 % off (direction exact) inflate the along-track scale, not the across one."""
+    hm, gt = _chain_system(n=200)
+    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    rng = np.random.default_rng(1)
+    for last in range(30, 199):
+        refs = [hm.nodes[last - 3]]
+        T = gt[last - 3].between(gt[last])
+        T = gtsam.Pose3(T.rotation(), gtsam.Point3(*(np.asarray(T.translation()) * (1 + 0.2 * rng.standard_normal()))))
+        v.prior_gate(refs, [_lie(T)], last, gtsam.Pose3(), 1)
+    assert v.scales_along["sess"] > 1.5, v.scales_along
+    assert v.scales["sess"] < 1.2, v.scales
+
+
+def test_split_test_rejects_a_reversed_view():
+    """A loop measurement with a plausible translation but the view reversed (180 deg) passes a translation-only test
+    after a long chain and fails the split test; the true measurement passes both."""
+    hm, gt = _chain_system()
+    last = 119
+    ref = hm.nodes[10]
+    T_true = gt[10].between(gt[last])
+    flip = gtsam.Pose3(gtsam.Rot3.Ypr(math.pi, 0.0, 0.0), gtsam.Point3(0.0, 0.0, 0.0))
+    T_flip = gtsam.Pose3(T_true.rotation().compose(flip.rotation()), T_true.translation())
+    cfg_t = LoopClosureConfig(); cfg_t.test_dof = "translation"
+    ok_t, _ = LoopClosureVerifier(FakeSystem(hm), cfg_t).prior_gate([ref, ref], [_lie(T_true), _lie(T_flip)], last, gtsam.Pose3(), 1)
+    assert ok_t == [True, True]
+    cfg_s = LoopClosureConfig()
+    assert cfg_s.test_dof == "split"
+    ok_s, _ = LoopClosureVerifier(FakeSystem(hm), cfg_s).prior_gate([ref, ref], [_lie(T_true), _lie(T_flip)], last, gtsam.Pose3(), 1)
+    assert ok_s == [True, False]

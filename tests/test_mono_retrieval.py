@@ -177,6 +177,7 @@ def test_newly_realized_branch_is_checked_after_edges_without_reusing_evidence(s
     system = System.__new__(System)
     system.config = SystemConfig()
     system.config.mapping.hypothesis.lc_recheck_after_realization = True
+    system.config.mapping.hypothesis.merge_in_mapping_session = True     # the monocular mode's setting
     manager = HypothesisManager(SimpleNamespace(device="cpu", topo_map=None), 2,
                                 HypothesisConfig(session_recovery=True, reset_evidence_on_slot_reuse=True))
     system.hypothesis_manager, system.last_step_diagnostics = manager, {}

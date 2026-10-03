@@ -82,9 +82,25 @@ class MonocularSystem(Pipeline):
         # CROSS-mono ran with these two core behaviours always on (flag-gated in the merged core)
         cfg.mapping.hypothesis.reset_evidence_on_slot_reuse = True
         cfg.mapping.hypothesis.lc_recheck_after_realization = True
-        # and with hypothesis 0 updated by every observation (the base default became informative-only; override with
-        # --cross-config mapping.hypothesis.h0_informative_only=true)
-        cfg.mapping.hypothesis.h0_informative_only = False
+        if external_odometry:
+            # with the dataset's odometry the mono mode uses the back end of the rgbd / stereo modes: hypothesis 0 is
+            # updated by informative (loop) measurements only, and the loop-closure options of 2026-10-03 (information
+            # margin, anisotropic visual noise, split tests, whole-session optimisation, one loop edge per pass, no
+            # adoption / merge in a mapping session) apply.  KITTI 00-10 (level odometry), map ATE mean 6.09 -> 1.5 m
+            # (04: 5.43 -> 0.32, 10: 8.49 -> 0.81, 00: 6.11 -> 2.5); development split T1 better or equal, T2 / T3 unchanged
+            cfg.mapping.hypothesis.h0_informative_only = True
+        else:
+            # visual odometry (DPVO) and the IMU modes: hypothesis 0 updated by every observation (the base default became
+            # informative-only; override with --cross-config mapping.hypothesis.h0_informative_only=true), and the
+            # earlier loop-closure behaviour: DPVO loses tracking and drifts in scale, session recovery re-joins its
+            # charts through merges / adoption, and the new options did not improve its development split
+            cfg.mapping.hypothesis.h0_informative_only = False
+            lc = cfg.mapping.loop_closure
+            lc.informative_margin, lc.anisotropic, lc.test_dof, lc.full_session_pgo = 1.0, False, "translation", False
+            lc.pure_verdict_clusters = False
+            lc.loop_edges_per_pass = 0
+            cfg.mapping.hypothesis.adopt_in_mapping_session = True
+            cfg.mapping.hypothesis.merge_in_mapping_session = True
         if self.config.session_recovery:
             cfg.mapping.hypothesis.session_recovery = True
         cfg.mapping.hypothesis.chart_aware = self.config.chart_aware

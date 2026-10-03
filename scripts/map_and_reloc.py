@@ -150,6 +150,10 @@ def run_mapping(args, out: Path):
     ds = StereoSequenceLoader(args.map, depth_source=depth_source(args),
                               snr=args.snr, baseline=args.baseline, seed=args.seed, **odom_kwargs(args))
     system = new_session(args, ds, args.seed)
+    recorder = None
+    if getattr(args, "dump_obs", False):          # every observation of the mapping run (offline back-end studies)
+        from lc.obs_recorder import ObsRecorder
+        recorder = ObsRecorder(system.mapper, out / "obs.jsonl")
     kf_gt = {}
     t0 = time.time()
     n = 0
@@ -171,6 +175,8 @@ def run_mapping(args, out: Path):
                 f"{len(system.hypothesis_manager.nodes)} keyframes ({n_perm} permanent)")
     map_file = out / "map.pkl"
     system.save_map(map_file)
+    if recorder is not None:
+        recorder.close()
     # map -> GT alignment from permanent keyframes (component 0 mean)
     ids, src, dst = [], [], []
     kf_est = {}
@@ -357,6 +363,7 @@ def main():
     ap.add_argument("--lc-confidence", type=float, default=None, help="chi-square confidence of the verified loop closure (default 0.999)")
     ap.add_argument("--noise-config", default=None, help="YAML from scripts/lc/calibrate_noise.py (calibrated noise model)")
     ap.add_argument("--set", nargs="*", default=[], help="config overrides section.sub.key=value (YAML-parsed values)")
+    ap.add_argument("--dump-obs", action="store_true", help="write every observation of the mapping run to obs.jsonl (scripts/lc/obs_recorder.py)")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (e.g. 0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift of the odometry (deg per metre)")
     ap.add_argument("--ff-meas-std", type=float, nargs=6, default=None, help="base measurement std [tx ty tz rx ry rz] of the FF estimator")
