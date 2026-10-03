@@ -126,10 +126,15 @@ class ImuConfig:
                                                  # calibration)
     vgio_time_offset_std: float = 0.05           # its prior std (s)
     vgio_pp_correction: bool = True              # the passes' camera poses corrected for the principal point offset
+    vgio_noise_hat: bool = False                 # rotation noise of gyro, corners and passes from their disagreements
+    vgio_calib_gyro_walk: bool = False           # graph: the gyro bias random walk of the sensor's calibration (else 1e-4)
     vgio_klt: bool = True                        # graph: rotation factors from tracked corners (optional, gated)
     # pipeline: measure on the back end's forward passes (at least vgio_align_min frames apart); a pass of the
-    # frontend's own only after vgio_align_max frames without one
-    vgio_align: bool = True
+    # frontend's own only after vgio_align_max frames without one.  Off: every visual_interval frames, on the back
+    # end's pass when it observes at that frame, else a pass of its own (3 views).  Off is better: the back end's
+    # passes carry map references, and measured on them alone the indoor scale came out 6 % short (development maps,
+    # 5090: office 0.11 -> 0.06 m, KITTI 07 2.76 -> 1.79, home 0.46 -> 0.36, cafe 0.24 -> 0.17; time +0-14 %)
+    vgio_align: bool = False
     vgio_align_min: int = 2
     vgio_align_max: int = 4
     vgio_gyro_dt_noise: float = 0.0              # graph: preintegration noise growing with the IMU sampling interval

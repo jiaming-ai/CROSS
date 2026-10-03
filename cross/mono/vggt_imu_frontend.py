@@ -34,6 +34,10 @@ def _so3_log(R):
     return Rotation.from_matrix(R).as_rotvec()
 
 
+def _exp_rot(rotvec):
+    return Rotation.from_rotvec(rotvec).as_matrix()
+
+
 def _ortho(R):
     """The nearest rotation (products of preintegrated rotations drift off SO(3) by ~1e-6 per frame)."""
     U, _, Vt = np.linalg.svd(R)
@@ -185,7 +189,8 @@ class VggtImuFrontend:
                                    accel_bias_std=ic.accel_bias_std, accel_bias_walk=ic.accel_bias_walk,
                                    gyro_dt_noise=ic.vgio_gyro_dt_noise, accel_dt_noise=ic.vgio_accel_dt_noise,
                                    rot_scale=ic.vgio_rot_scale, rot_scale_std=ic.vgio_rot_scale_std,
-                                   time_offset=ic.vgio_graph_time_offset, time_offset_std=ic.vgio_time_offset_std)
+                                   time_offset=ic.vgio_graph_time_offset, time_offset_std=ic.vgio_time_offset_std,
+                                   gyro_bias_walk=c.gyro_random_walk if ic.vgio_calib_gyro_walk else GraphConfig.gyro_bias_walk)
                 self.graph = VgiGraph(gcfg, c.T_cam_imu, c.gyro_noise_density, c.accel_noise_density)
                 self.graph.td = self.graph.td_init = self.time_offset
                 if ic.vgio_graph_time_offset:
@@ -410,6 +415,7 @@ class VggtImuFrontend:
         if diff > 1.0:
             self.stats["klt_rejected"] = self.stats.get("klt_rejected", 0) + 1
             return None
+        self.klt_last = (R_mb, inliers)
         # the noise of these rotations, online: the median disagreement with the gyro (good to ~0.1 deg over 0.3 s)
         # over the last 100 accepted ones; the norm of a 3-D error has its median at 1.54 sigma per axis.  KITTI 07:
         # ~0.12 deg against ground truth, OpenLORIS home ~0.5 deg (low parallax, slow robot)
@@ -418,6 +424,37 @@ class VggtImuFrontend:
         self.stats["klt_used"] = self.stats.get("klt_used", 0) + 1
         self.stats["klt_sigma_deg"] = round(sigma, 3)
         return R_mb, np.radians(sigma) * np.sqrt(100.0 / max(inliers, 30))
+
+    def _noise_hat(self, gyro_mb, vggt_mb, klt, dt):
+        """The rotation noise of the gyro, the tracked corners and the passes from their disagreements over the same
+        intervals ("three-cornered hat"): with independent errors the variance of each pair's difference is the sum of
+        their variances, so var_a = (s_ab^2 + s_ac^2 - s_bc^2) / 2 (s: robust per-axis std, the median of the angle
+        norm / 1.538).  Sets the gyro's noise density for the next IMU factors; returns the corners' factor (R, std), or
+        None before 20 triplets."""
+        if vggt_mb is None or self.klt_last is None:
+            return None
+        G = self.graph
+        R_k, inliers = self.klt_last
+        R_v = vggt_mb
+        if G.cfg.rot_scale:
+            R_v = _exp_rot(_so3_log(vggt_mb) * np.exp(-G.kappa))
+        hat = self.hat = (getattr(self, "hat", []) + [(_angle_deg(gyro_mb.T @ R_k), _angle_deg(gyro_mb.T @ R_v),
+                                                         _angle_deg(R_k.T @ R_v), inliers, dt)])[-100:]
+        if len(hat) < 20:
+            return None
+        h = np.array(hat)
+        s2 = (np.median(h[:, :3], axis=0) / 1.538) ** 2                     # gk, gv, kv
+        floor = 0.02 ** 2
+        var_g = max((s2[0] + s2[1] - s2[2]) / 2, floor)
+        var_k = max((s2[0] + s2[2] - s2[1]) / 2, floor)
+        var_v = max((s2[1] + s2[2] - s2[0]) / 2, floor)
+        nominal = float(self.imu_calib.gyro_noise_density)
+        G.gyro_noise = float(np.clip(np.radians(np.sqrt(var_g)) / np.sqrt(np.mean(h[:, 4])), nominal / 10, nominal * 3))
+        # the passes keep their std: the hat measures them over one interval (0.3 s), and the same std would weight
+        # their keyframe pairs (2 s), which are several times worse (setting it: worse on 5 of 8 sequences)
+        n_med = float(np.median(h[:, 3]))
+        self.stats["hat_deg"] = [round(float(np.sqrt(v)), 3) for v in (var_g, var_k, var_v)]
+        return klt[0], float(np.radians(np.sqrt(var_k)) * np.sqrt(n_med / max(inliers, 30)))
 
     def _learned_depth(self, rgb, pass_depth, index):
         """Learned metric depth of this frame against a depth map of it (same pixels): a scale observation, at most
@@ -491,7 +528,10 @@ class VggtImuFrontend:
         link_ok = bool(np.isfinite(ratio) and spread < 0.25)
         lam_init = G.lam[m_node] + (np.log(ratio) if link_ok else 0.0)
         j = G.add_node(pre, jac, lam_init, timestamp)
+        self.klt_last = None
         klt = self._klt_rotation(gyro_mb) if self.klt else None
+        if klt is not None and self.config.imu.vgio_noise_hat:
+            klt = self._noise_hat(gyro_mb, T_mb[:3, :3] if pass_ok else None, klt, a1 - a0) or klt
         if klt is not None:
             G.add_rotation(m_node, j, *klt)
         if pass_ok:
