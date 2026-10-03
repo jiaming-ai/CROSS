@@ -456,12 +456,36 @@ class TopoConfig:
 
 
 @dataclass
+class ProjectionConfig:
+    """Place coordinates of poses for proposal clustering (DBSCAN, radius cluster_eps) and for matching proposals to
+    hypotheses (alignment_threshold): two horizontal axes, an optional weighted vertical, and the heading."""
+    # vertical of the map frame (the first camera frame of the map session): "y" (forward-looking camera on a ground
+    # robot; with vertical_weight 0 this is the original (x, z, yaw) projection), "z" (down-looking camera, e.g. an AUV
+    # survey camera), "x", or a 3-vector (e.g. gravity in the first camera frame from an IMU)
+    vertical: object = "y"
+    # replace `vertical` by the axis the keyframes turn about (cross/utils/lie_tensor.py:estimate_vertical) once the
+    # turns determine it: corrects a tilted camera and finds the vertical of an unknown mounting; a relocalization
+    # session uses the loaded map's keyframes
+    estimate_vertical: bool = False
+    # weight of the vertical position in the place coordinates (1 = like a horizontal metre, 0 = ignored).  0 suits
+    # planar motion (ground robots, an AUV at constant altitude: vertical spread between proposals is estimation error,
+    # and scale errors of a down-looking camera show up as vertical error); about 0.5-1 suits 3D terrain where places
+    # are stacked vertically (canyon walls, multi-floor buildings)
+    vertical_weight: float = 0.0
+    # metres; > 0 splits a proposal cluster into groups whose vertical positions are within the gate of the group's
+    # best-scoring member, and forbids matching a proposal to a hypothesis more than the gate away vertically
+    # (separates scale blow-ups and stacked places without making the vertical a clustering coordinate)
+    vertical_gate: float = 0.0
+
+
+@dataclass
 class MappingConfig:
     kf_gmm_n_components: int = 5
     kf_retrieval_threshold_new_kf: float = 0.75
     kf_match_threshold_new_kf: int = 50
     new_component_weight_threshold: float = 0.2
-    cluster_eps: float = 1.0             # DBSCAN radius (x, z, yaw) for proposal clustering
+    cluster_eps: float = 1.0             # DBSCAN radius in the place coordinates (`projection`) for proposal clustering
+    projection: ProjectionConfig = field(default_factory=ProjectionConfig)
     loop_closure: LoopClosureConfig = field(default_factory=LoopClosureConfig)
     local_smoothing: LocalSmoothingConfig = field(default_factory=LocalSmoothingConfig)
     cluster_std: ClusterStdConfig = field(default_factory=ClusterStdConfig)

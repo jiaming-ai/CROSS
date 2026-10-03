@@ -58,6 +58,17 @@ Override one value with `--set section.key=value` (the `scripts/` runners; `run.
 YAML file and pass it with `--config`. Some options (charts, session recovery, historical retrieval slots, ...) are off by default and are
 enabled by the mono profiles.
 
+**Camera mounting and the vertical.** Relocalization proposals are clustered, and matched to hypotheses, in place
+coordinates: position on the horizontal plane plus heading (`mapping.projection`). The default assumes a
+forward-looking camera on a ground robot, so the vertical is the camera's y axis in the first frame and height is
+ignored. For other robots:
+- tilted camera or unknown mounting: `mapping.projection.estimate_vertical=true` estimates the vertical from the axis
+  the keyframes turn about.
+- down-looking camera (e.g. an AUV survey camera): `mapping.projection.vertical=z`.
+- places stacked vertically (multi-floor buildings, 3D terrain): `vertical_weight` (0–1) adds the weighted height to
+  the clustering coordinates, and `vertical_gate` (metres) keeps proposals apart when their heights differ by more than
+  the gate.
+
 **Noise calibration for a new robot** (optional, no ground truth needed; the defaults suit wheeled indoor robots):
 
 ```bash

@@ -3,7 +3,8 @@ import numpy as np
 from typing import Tuple, Union
 from collections import deque
 from cross.core.atlas import new_atlas_center
-from cross.utils.lie_tensor import normalize_se3, project_SE3, rotation_angle_from_quat
+from cross.utils.lie_tensor import (normalize_se3, project_SE3, rotation_angle_from_quat, SE3Projection, estimate_vertical,
+                                    split_clusters_by_vertical, vertical_vector)
 from cross.utils.profile import timeit
 from cross.utils.fps import fps_monitor, start_fps_monitoring, stop_fps_monitoring
 from cross.core.hypothesis import HypothesisManager
@@ -209,6 +210,13 @@ class System:
             n_components=self.kf_gmm_n_components,
             config=self.config.mapping.hypothesis,
         )
+
+        # place coordinates for proposal clustering and proposal-to-hypothesis matching (None: the original (x, z, yaw)
+        # projection); with estimate_vertical the vertical is re-estimated from the keyframes as they are added
+        pcfg = self.config.mapping.projection
+        self._projection_prior = vertical_vector(pcfg.vertical)
+        self._projection_n_nodes = -1
+        self.place_projection = self._make_place_projection(self._projection_prior)
 
         # Topological map (odometry + proximity) used for lightweight planning
         topo_cfg = SimpleTopoConfig(
@@ -759,6 +767,7 @@ class System:
         self.loaded_node_ids = frozenset(self.hypothesis_manager.nodes)
         self.hypothesis_manager.reference_support.start(self.loaded_node_ids)
         self._session_start_kf_id = Keyframe._next_id
+        self._projection_n_nodes = -1                  # re-estimate the vertical from the loaded map
         self._anchor_pending.clear()
         self._contra_pending.clear()
         self._last_retrieved_results = None
@@ -1812,6 +1821,39 @@ class System:
 
         return keyframe
 
+    def _make_place_projection(self, vertical):
+        """SE3Projection for a vertical, or None for the original projection (vertical y, no vertical coordinate)."""
+        pcfg = self.config.mapping.projection
+        is_y = bool(torch.equal(vertical, vertical_vector("y")))
+        if is_y and not pcfg.estimate_vertical and pcfg.vertical_weight <= 0:
+            return None
+        return SE3Projection(vertical, pcfg.vertical_weight)
+
+    def _update_place_projection(self):
+        """Re-estimate the vertical from the keyframe orientations (every 10 new keyframes; the loaded map's keyframes
+        in a relocalization session)."""
+        if not self.config.mapping.projection.estimate_vertical:
+            return
+        nodes = self.hypothesis_manager.nodes
+        ids = list(getattr(self, "loaded_node_ids", None) or nodes.keys())
+        if self._projection_n_nodes >= 0 and len(ids) - self._projection_n_nodes < 10:
+            return
+        self._projection_n_nodes = len(ids)
+        poses = [nodes[i].pose_mu[0].tensor().detach().reshape(-1).cpu() for i in ids if i in nodes]
+        if len(poses) < 3:
+            return
+        R = pp.SE3(torch.stack(poses)).rotation().matrix()
+        v, estimated = estimate_vertical(R, self._projection_prior)
+        self.place_projection = SE3Projection(v, self.config.mapping.projection.vertical_weight)
+        logger.debug(f"place projection from {len(poses)} keyframes ({'estimated' if estimated else 'prior'}): "
+                     f"{self.place_projection}")
+
+    def vertical_offsets(self, T: pp.LieTensor) -> torch.Tensor:
+        """Vertical position of a batch of poses along the place projection's vertical (camera y by default)."""
+        if self.place_projection is not None:
+            return self.place_projection.vertical_offset(T)
+        return T.tensor()[:, 1]
+
     @timeit
     def _merge_and_align_components(
         self,
@@ -1879,9 +1921,10 @@ class System:
         source_indices_map[:, 0] = kf_ids[source_indices_map[:, 0]]
         
 
-        # --- 1. Project to Clustering Space (x, z, yaw) ---
+        # --- 1. Project to Clustering Space (place coordinates: horizontal position, [vertical], heading) ---
         samples_se3 = pp.SE3(flat_mus)
-        projected_data = project_SE3(samples_se3)
+        self._update_place_projection()
+        projected_data = project_SE3(samples_se3, projection=self.place_projection)
         clustering_data = projected_data.cpu().numpy()
 
         
@@ -1894,6 +1937,10 @@ class System:
         else:
             db = DBSCAN(eps=dbscan_eps, min_samples=dbscan_min_samples).fit(clustering_data)
             labels = db.labels_
+        gate = self.config.mapping.projection.vertical_gate
+        if gate > 0:
+            labels = split_clusters_by_vertical(labels, self.vertical_offsets(samples_se3).cpu().numpy(),
+                                                flat_scores.detach().cpu().numpy(), gate)
         unique_labels = sorted(set(labels))
         
         hypotheses = []
