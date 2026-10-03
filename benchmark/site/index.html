@@ -131,7 +131,7 @@ const SVGNS = "http://www.w3.org/2000/svg";
 const s$ = (t, a = {}) => { const e = document.createElementNS(SVGNS, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); return e; };
 const DS = {all: "All datasets (overall)", kitti: "KITTI", openloris: "OpenLORIS-Scene", rover: "ROVER campus_large", simchange: "SimChange v2"};
 const TRACK = {t1: "T1 · mapping accuracy", t2: "T2 · multi-session localization", t3: "T3 · relocalization success"};
-const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "all"}, sel: null, hl: true};
+const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "all"}, sel: null, hl: true, hist: {track: "t1", ds: "kitti", sys: null}};
 const tip = document.getElementById("tip");
 function showTip(ev, parts) { tip.replaceChildren(...parts.map(p => Array.isArray(p) ? $("div", {}, $("b", {}, p[0]), " ", p[1]) : $("div", {}, p)));
   tip.style.display = "block"; const x = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = (ev.clientY + 14) + "px"; }
@@ -142,7 +142,7 @@ document.getElementById("meta").append($("br"), $("span", {class: "note"},
   `Generated ${B.generated || "–"} from commit ${B.commit || "–"}, seed ${B.seed ?? 0}; ${Object.keys(B.runs).length} runs.`));
 
 const TABS = [["summary", "Summary"], ["metrics", "Metrics"], ["data", "Datasets"], ["t1", "T1 Mapping"], ["t2", "T2 Multi-session"],
-              ["t3", "T3 Relocalization"], ["viz", "Trajectories"], ["fail", "Failure cases"], ["legacy", "Earlier results"]];
+              ["t3", "T3 Relocalization"], ["viz", "Trajectories"], ["fail", "Failure cases"], ["hist", "History"], ["legacy", "Earlier results"]];
 const tabs = document.getElementById("tabs");
 for (const [k, lab] of TABS) tabs.append($("button", {role: "tab", "aria-selected": String(state.tab === k), onclick: () => { state.tab = k; state.sel = null; render(); }}, lab));
 
@@ -155,6 +155,7 @@ let render = function () {
   if (state.tab === "data") return renderData(v);
   if (state.tab === "viz") return renderViz(v);
   if (state.tab === "legacy") return renderLegacy(v);
+  if (state.tab === "hist") return renderHistory(v);
   renderTrack(v, state.tab);
 };
 
@@ -661,6 +662,50 @@ function rsHeatmap(d, s, runs, keys, thr) {
   const scale = $("div", {class: "legend", style: "align-items:center"}, $("span", {}, "0 %"),
     $("span", {style: `display:inline-block;width:120px;height:10px;border-radius:3px;background:linear-gradient(90deg,${RAMP.join(",")})`}), $("span", {}, `100 %  (RS@${thr[1]} m)`));
   return $("div", {}, t, scale);
+}
+
+// ---------------------------------------------------------------- history: the tables per code version (commit)
+function renderHistory(v) {
+  const H = B.history;
+  if (!H || !H.tables || !Object.keys(H.tables).length) { v.append($("div", {class: "empty"}, "No history yet.")); return; }
+  const hs = state.hist, tracks = Object.keys(H.tables);
+  if (!tracks.includes(hs.track)) hs.track = tracks[0];
+  const dss = Object.keys(H.tables[hs.track]);
+  if (!dss.includes(hs.ds)) hs.ds = dss.includes("kitti") ? "kitti" : dss[0];
+  const m = H.tables[hs.track][hs.ds];
+  const methods = [...new Map(m.rows.map(r => [r.system + "|" + r.setup, r.label])).entries()];
+  if (hs.sys !== "*" && !methods.some(([k]) => k === hs.sys))
+    hs.sys = (methods.find(([k]) => k.startsWith("cross_stereo|")) || methods.find(([k]) => k.startsWith("cross")) || methods[0] || ["*"])[0];
+  const pick = (label, opts, cur, set) => $("select", {"aria-label": label, onchange: e => { set(e.target.value); render(); }},
+    ...opts.map(([val, txt]) => { const o = $("option", {value: val}, txt); if (val === cur) o.selected = true; return o; }));
+  v.append($("div", {class: "bar"},
+    $("span", {}, "Track"), pick("track", tracks.map(t => [t, TRACK[t] || t]), hs.track, x => { hs.track = x; }),
+    $("span", {}, "Dataset"), pick("dataset", dss.map(d => [d, DS[d] || d]), hs.ds, x => { hs.ds = x; }),
+    $("span", {}, "Method"), pick("method", [["*", "all methods"], ...methods], hs.sys, x => { hs.sys = x; })));
+  v.append($("p", {class: "note"}, "One row per code version that ran the method on this dataset: the commit the runs recorded " +
+    "(\u201cunrecorded\u201d: runs from before commits were recorded), with the aggregation of the T1\u2013T3 tabs; \u00b7 = not run with that version. " +
+    "\u2605 marks the version shown in the T1\u2013T3 tabs. Shading ranks the rows per column. Versions are comparable on the same data only: " +
+    "the KITTI odometry was rebuilt on 2026-10-02 (level-frame dead reckoning) and the ROVER ground truth made right-handed on 2026-10-02 (bf530bf); " +
+    "the tooltip of a version gives its run dates."));
+  const rows = m.rows.filter(r => hs.sys === "*" || r.system + "|" + r.setup === hs.sys)
+    .sort((a, b) => (a.label === b.label ? 0 : hs.sys === "*" ? a.label.localeCompare(b.label) : 0) ||
+                    (H.commits[b.commit]?.date || "").localeCompare(H.commits[a.commit]?.date || ""));
+  const t = $("table");
+  t.append($("thead", {}, $("tr", {}, $("th", {}, (hs.sys === "*" ? "method \u00b7 " : "") + "code version"), ...m.cols.map(c => $("th", {}, c)))));
+  const tb = $("tbody");
+  for (const r of rows) {
+    const ci = H.commits[r.commit] || {};
+    const tags = (ci.tags || []).length ? ` [${ci.tags.join(", ")}]` : "";
+    const tipText = `${r.commit}${tags} \u00b7 committed ${ci.date || "\u2013"}\n${ci.subject || ""}\nruns ${ci.first || "\u2013"} \u2013 ${ci.last || "\u2013"} (${ci.runs || 0} runs of this version)`;
+    const lab = $("td", {class: "lab", title: tipText}, hs.sys === "*" ? r.label + " \u00b7 " : "", $("code", {}, r.commit.length > 12 ? r.commit.slice(0, 12) + "\u2026" : r.commit),
+      r.current ? " \u2605" : "", " ", $("span", {class: "note"}, (ci.date || "").slice(0, 10) + tags));
+    const tr = $("tr", {class: r.system.startsWith("cross") ? "cross" : ""}, lab);
+    for (const x of r.cells) tr.append($("td", {class: x === "\u00b7" || x === "" ? "dim" : ""}, x || "n/a"));
+    tb.append(tr);
+  }
+  t.append(tb);
+  rankColumns(tb, () => hs.track === "t1");
+  v.append($("div", {class: "card"}, $("div", {class: "scroll"}, t), rankNote()));
 }
 
 // ---------------------------------------------------------------- earlier results (different protocol)

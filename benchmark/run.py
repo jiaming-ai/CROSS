@@ -56,9 +56,25 @@ def env_info():
         info["gpu"] = gpu
       except Exception:
         info["gpu"] = None
-    commit = ROOT / "COMMIT"
-    info["commit"] = commit.read_text().strip() if commit.is_file() else None
+    info["commit"] = code_version()
     return info
+
+
+def code_version():
+    """Commit of the code that runs: the COMMIT file of a copied snapshot (its commit hash), else the git checkout's
+    short hash, with "+dirty" when tracked files differ from it (the results page groups runs by this label)."""
+    commit = ROOT / "COMMIT"
+    if commit.is_file():
+        return commit.read_text().strip() or None
+    try:
+        h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=20)
+        if h.returncode != 0 or not h.stdout.strip():
+            return None
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True,
+                               text=True, timeout=20).stdout.strip()
+        return h.stdout.strip() + ("+dirty" if dirty else "")
+    except Exception:       # noqa: BLE001
+        return None
 
 
 def sh(cmd, log: Path, timeout=None, alloc_conf=False):

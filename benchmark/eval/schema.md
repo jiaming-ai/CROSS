@@ -16,7 +16,7 @@ are written as `null`.
 | `status` | `ok` or `failed` (crash, timeout, missing output, or the map it needed failed) |
 | `rc`, `error` | return code and error message of a failed run |
 | `wall_s` | wall-clock seconds of the run |
-| `host`, `gpu`, `time`, `commit` | where, on what (`cpu` for CPU-only runs), when and with which code the run was made |
+| `host`, `gpu`, `time`, `commit` | where, on what (`cpu` for CPU-only runs), when and with which code the run was made (`commit`: short hash, `+dirty` with uncommitted changes) |
 
 ## T1: single-session mapping (`sequence`)
 

@@ -218,6 +218,11 @@ python benchmark/run.py --track t1 t2 t3 --dataset openloris --system cross_rgbd
 python benchmark/collect.py $RESULTS && python benchmark/make_tables.py && python benchmark/build_site.py
 ```
 
+Every run records the code version it ran (`commit`: the `COMMIT` file of a copied code snapshot, which should hold
+the commit hash, else `git rev-parse --short HEAD`, with `+dirty` for uncommitted changes). `collect.py` keeps every
+run in `results/history.json` (`--backfill-git` rebuilds it from the committed versions of `results.json`), and the
+page's History tab shows the tables once per code version, so a regression can be traced to the commit that made it.
+
 A new system is added by writing a runner that produces the same `result.json` (`benchmark/eval/`), plus a row in
 `benchmark/configs/systems.yaml`.
 

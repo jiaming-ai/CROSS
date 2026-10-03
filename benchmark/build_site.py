@@ -7,13 +7,17 @@ benchmark/results/results.json.
 The page is static: open benchmark/site/index.html from the file system or serve the folder (GitHub Pages).
 Tables reuse the aggregation of make_tables.py; every table cell lists the runs behind it, whose trajectories,
 error curves and trial outcomes the page plots.  Failure cases are selected here (see `failures`).
+The History tab shows the same tables per code version (the `commit` of the runs, from benchmark/results/history.json
+written by collect.py), one row per commit that has results, so a change can be traced back to the commit that made it.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import time
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -126,6 +130,78 @@ def table_models(T: mt.Tables, runs_by_key):
     return out
 
 
+def prepare(results, ds_cfg, sy, seed):
+    """Runs of one seed, T3 re-scored at the dataset thresholds and failed queries counted (as the tables expect)."""
+    results = mt.count_failed_queries(mt.rescore_t3([r for r in results if r.get("seed", 0) == seed], ds_cfg), ds_cfg, sy)
+    for r in results:                      # the dataset's two thresholds travel with every run (page labels)
+        r["thresholds"] = ds_cfg[r["dataset"]]["thresholds"]
+    return results
+
+
+def commit_id(r):
+    """Code version of a run: the short hash when `commit` is one, else the label as recorded ('unrecorded' if none)."""
+    c = (r.get("commit") or "").strip()
+    if not c:
+        return "unrecorded"
+    return c[:7] if re.fullmatch(r"[0-9a-f]{7,40}", c) else c
+
+
+def commit_info(ids, runs_by_commit):
+    """{id: {date, subject, tags, runs, first, last}}: commit date and subject from git (hash ids), run times."""
+    out = {}
+    for c in ids:
+        times = sorted(r.get("time") or "" for r in runs_by_commit[c].values())
+        info = {"runs": len(runs_by_commit[c]), "first": times[0][:16] if times else "", "last": times[-1][:16] if times else ""}
+        if re.fullmatch(r"[0-9a-f]{7}", c):
+            g = subprocess.run(["git", "show", "-s", "--format=%ad%x00%s%x00%D", "--date=format:%Y-%m-%d %H:%M", c],
+                               cwd=ROOT, capture_output=True, text=True)
+            if g.returncode == 0 and g.stdout:
+                date, subject, refs = (g.stdout.strip().split("\x00") + ["", ""])[:3]
+                info.update(date=date, subject=subject,
+                            tags=[x.strip()[5:] for x in refs.split(",") if x.strip().startswith("tag: ")])
+        info.setdefault("date", info["first"])
+        info.setdefault("subject", "" if re.fullmatch(r"[0-9a-f]{7}", c) else c)
+        out[c] = info
+    return out
+
+
+class _NoIds(dict):
+    def __missing__(self, k):
+        return ""
+
+
+def history_models(hist, current, ds_cfg, sy, seed):
+    """The tables of table_models once per code version: {"commits": {...}, "tables": {track: {dataset: {"cols",
+    "rows": [{system, setup, label, commit, current, cells: [text]}]}}}}; a row per commit that ran the system on the
+    dataset; `current`: the version (one of the versions) behind the method's cells in the T1-T3 tabs."""
+    shown = defaultdict(set)
+    for r in current:
+        shown[(r["track"], r["dataset"], r["system"], r["setup"])].add(commit_id(r))
+    by_commit = defaultdict(dict)
+    for r in hist:
+        if r.get("seed", 0) != seed:
+            continue
+        c, k = commit_id(r), run_id(r)
+        if k not in by_commit[c] or (r.get("time") or "") >= (by_commit[c][k].get("time") or ""):
+            by_commit[c][k] = r
+    tables = {}
+    for c, cells in by_commit.items():
+        T = mt.Tables(prepare([dict(r) for r in cells.values()], ds_cfg, sy, seed), seed)
+        for track, per_ds in table_models(T, _NoIds()).items():
+            for dataset, m in per_ds.items():
+                dst = tables.setdefault(track, {}).setdefault(dataset, {"cols": m["cols"], "rows": []})
+                for row in m["rows"]:
+                    texts = [x["text"] for x in row["cells"]]
+                    if row["pending"] or all(t in (mt.PENDING, mt.NA, "") for t in texts):
+                        continue                   # not run with this code version
+                    cur = any(c in shown[(t, d, row["system"], row["setup"])]
+                              for t in ("t1", "t2", "t3") if t == track
+                              for d in ([dataset] if dataset != "all" else ("openloris", "rover", "simchange")))
+                    dst["rows"].append({"system": row["system"], "setup": row["setup"], "label": row["label"],
+                                        "commit": c, "current": cur, "cells": texts})
+    return {"commits": commit_info(list(by_commit), by_commit), "tables": tables}
+
+
 def failures(results, runs_by_key, per_system=4):
     """Failure cases per system · setup: crashed / incomplete maps (T1), the worst-localized query sessions (T2) and
     failed relocalization trials (T3), worst first."""
@@ -155,12 +231,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default=str(ROOT / "benchmark/results/results.json"))
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--history", default=str(ROOT / "benchmark/results/history.json"))
     a = ap.parse_args()
     results = json.loads(Path(a.results).read_text())["results"] if Path(a.results).is_file() else []
-    ds_cfg = mt.load()[0]
-    results = mt.count_failed_queries(mt.rescore_t3([r for r in results if r.get("seed", 0) == a.seed], ds_cfg), ds_cfg, mt.load()[1])
-    for r in results:                      # the dataset's two thresholds travel with every run (page labels)
-        r["thresholds"] = ds_cfg[r["dataset"]]["thresholds"]
+    ds_cfg, sy_cfg = mt.load()
+    results = prepare(results, ds_cfg, sy_cfg, a.seed)
     runs, runs_by_key = {}, {}
     for r in results:
         rid = run_id(r)
@@ -188,6 +263,8 @@ def main():
         "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", []), "thresholds": c["thresholds"]}]
                        for sc, v in c["scenes"].items()]
                    for d, c in T.ds.items()},
+        "history": history_models(json.loads(Path(a.history).read_text())["runs"], results, ds_cfg, sy_cfg, a.seed)
+                   if Path(a.history).is_file() else None,
     }
     SITE.mkdir(parents=True, exist_ok=True)
     (SITE / "data.js").write_text("window.BENCH = " + json.dumps(data, separators=(",", ":")) + ";\n")

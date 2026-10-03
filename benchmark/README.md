@@ -27,7 +27,7 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 | `eval/metrics.py` | ATE, completeness, localization recall, Wilson intervals |
 | `make_dataset_assets.py`, `configs/dataset_samples.yaml` | representative images of the Datasets tab: the same place across the sessions of a scene (`site/assets/datasets/`, `results/dataset_samples.json`); run where the prepared data is |
 | `collect.py`, `make_tables.py`, `build_site.py` | merge results, write RESULTS.md, write the page data (`site/data.js`) |
-| `results/` | merged results (`results.json`) and earlier results obtained with other protocols (`legacy.*`) |
+| `results/` | merged results (`results.json`: the newest run of every cell), every run of every code version (`history.json`), and earlier results obtained with other protocols (`legacy.*`) |
 
 ## Running
 
