@@ -22,8 +22,9 @@ Factors:
     learned depth  lam_i + beta = log(learned metric depth / pass depth) of node i's frame
     priors         |g|; start-up priors on the first node (gauge) and the biases; the marginalization prior
 
-Gauss-Newton on the stacked tangent-space increment; Jacobians by forward-mode automatic differentiation (torch, CPU,
-float64).  The oldest node is marginalized by the Schur complement into a prior on the next node and the globals (its
+Gauss-Newton on the stacked tangent-space increment (right perturbations of the rotations); each factor's Jacobian is
+analytic over its own variables (numpy, batched over the factors of a type) and scattered into the window's normal
+equations.  The oldest node is marginalized by the Schur complement into a prior on the next node and the globals (its
 relative-pose factors with later nodes are dropped)."""
 
 from __future__ import annotations
@@ -31,7 +32,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-import torch
 from scipy.spatial.transform import Rotation
 
 from .preintegration import preintegrate
@@ -70,38 +70,6 @@ class GraphConfig:
     iterations: int = 3
 
 
-def _skew_t(v):
-    z = torch.zeros_like(v[..., 0])
-    return torch.stack([torch.stack([z, -v[..., 2], v[..., 1]], -1),
-                        torch.stack([v[..., 2], z, -v[..., 0]], -1),
-                        torch.stack([-v[..., 1], v[..., 0], z], -1)], -2)
-
-
-def _exp_t(phi):
-    """SO(3) exponential (batched), differentiable at 0."""
-    t2 = (phi * phi).sum(-1)[..., None, None]
-    small = t2 < 1e-6
-    t2s = torch.where(small, torch.ones_like(t2), t2)
-    t = torch.sqrt(t2s)
-    A = torch.where(small, 1 - t2 / 6 + t2 * t2 / 120, torch.sin(t) / t)
-    B = torch.where(small, 0.5 - t2 / 24 + t2 * t2 / 720, (1 - torch.cos(t)) / t2s)
-    K = _skew_t(phi)
-    eye = torch.eye(3, dtype=phi.dtype).expand(K.shape)
-    return eye + A * K + B * (K @ K)
-
-
-def _log_t(R):
-    """SO(3) logarithm (batched), differentiable near the identity."""
-    s = 0.5 * torch.stack([R[..., 2, 1] - R[..., 1, 2], R[..., 0, 2] - R[..., 2, 0], R[..., 1, 0] - R[..., 0, 1]], -1)
-    c = 0.5 * (R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2] - 1)
-    sn2 = (s * s).sum(-1)
-    small = sn2 < 1e-8
-    sn2s = torch.where(small, torch.ones_like(sn2), sn2)
-    sn = torch.sqrt(sn2s)
-    f = torch.where(small, 1 + sn2 / 6, torch.atan2(sn, c) / sn)
-    return f[..., None] * s
-
-
 def _exp(phi):
     return Rotation.from_rotvec(phi).as_matrix()
 
@@ -109,6 +77,170 @@ def _exp(phi):
 def _log(R):
     return Rotation.from_matrix(R).as_rotvec()
 
+
+def _skew(v):
+    """Batched skew matrices of (..., 3) vectors."""
+    z = np.zeros(v.shape[:-1])
+    return np.stack([np.stack([z, -v[..., 2], v[..., 1]], -1),
+                     np.stack([v[..., 2], z, -v[..., 0]], -1),
+                     np.stack([-v[..., 1], v[..., 0], z], -1)], -2)
+
+
+def _exp_b(phi):
+    """Batched SO(3) exponential of (..., 3) rotation vectors."""
+    t2 = (phi * phi).sum(-1)[..., None, None]
+    small = t2 < 1e-6
+    t2s = np.where(small, 1.0, t2)
+    t = np.sqrt(t2s)
+    A = np.where(small, 1 - t2 / 6 + t2 * t2 / 120, np.sin(t) / t)
+    B = np.where(small, 0.5 - t2 / 24 + t2 * t2 / 720, (1 - np.cos(t)) / t2s)
+    K = _skew(phi)
+    return np.eye(3) + A * K + B * (K @ K)
+
+
+def _log_b(R):
+    """Batched SO(3) logarithm (rotations away from pi)."""
+    s = 0.5 * np.stack([R[..., 2, 1] - R[..., 1, 2], R[..., 0, 2] - R[..., 2, 0], R[..., 1, 0] - R[..., 0, 1]], -1)
+    c = 0.5 * (R[..., 0, 0] + R[..., 1, 1] + R[..., 2, 2] - 1)
+    sn2 = (s * s).sum(-1)
+    small = sn2 < 1e-8
+    sn = np.sqrt(np.where(small, 1.0, sn2))
+    f = np.where(small, 1 + sn2 / 6, np.arctan2(sn, c) / sn)
+    return f[..., None] * s
+
+
+def _jr(phi):
+    """Batched right Jacobian of SO(3): Exp(phi + d) = Exp(phi) Exp(Jr(phi) d) to first order."""
+    t2 = (phi * phi).sum(-1)[..., None, None]
+    small = t2 < 1e-6
+    t2s = np.where(small, 1.0, t2)
+    t = np.sqrt(t2s)
+    A = np.where(small, 0.5 - t2 / 24, (1 - np.cos(t)) / t2s)
+    B = np.where(small, 1.0 / 6 - t2 / 120, (t - np.sin(t)) / (t2s * t))
+    K = _skew(phi)
+    return np.eye(3) - A * K + B * (K @ K)
+
+
+def _jr_inv(phi):
+    """Batched inverse right Jacobian: Log(Exp(phi) Exp(d)) = phi + Jr^-1(phi) d to first order."""
+    t2 = (phi * phi).sum(-1)[..., None, None]
+    small = t2 < 1e-6
+    t2s = np.where(small, 1.0, t2)
+    t = np.sqrt(t2s)
+    C = np.where(small, 1.0 / 12 + t2 / 720, 1.0 / t2s - (1 + np.cos(t)) / (2 * t * np.sin(np.where(small, 1.0, t))))
+    K = _skew(phi)
+    return np.eye(3) + 0.5 * K + C * (K @ K)
+
+
+def _T(M):
+    return np.swapaxes(M, -1, -2)
+
+
+def _mv(M, x):
+    return np.einsum("...ij,...j->...i", M, x)
+
+
+def _imu_block(Ri, pi, vi, Rj, pj, vj, q, g, bg, ba, Rcb, tcb, jac):
+    """IMU factors (batched): whitened residuals (n, 9) and Jacobians (n, 9, 27) over (rotation, position, velocity of
+    nodes i and j, gravity, gyro bias, accelerometer bias)."""
+    dt = q["dt"]
+    dbg = bg[None] - q["bgpre"]
+    psi = _mv(q["JRg"], dbg)
+    dRc = q["dR"] @ _exp_b(psi)
+    dv = q["dv"] + _mv(q["Jv"], np.broadcast_to(ba, dbg.shape)) + _mv(q["Jvg"], dbg)
+    dp = q["dp"] + _mv(q["Jp"], np.broadcast_to(ba, dbg.shape)) + _mv(q["Jpg"], dbg)
+    Rbi, Rbj = Ri @ Rcb, Rj @ Rcb
+    pbi, pbj = pi + _mv(Ri, np.broadcast_to(tcb, pi.shape)), pj + _mv(Rj, np.broadcast_to(tcb, pj.shape))
+    E = _T(dRc) @ _T(Rbi) @ Rbj                                  # the rotation residual's rotation
+    rR = _log_b(E)
+    w = vj - vi - g[None] * dt[:, None]
+    yv = _mv(_T(Rbi), w)
+    rv = yv - dv
+    yp = _mv(_T(Rbi), pbj - pbi - vi * dt[:, None] - 0.5 * g[None] * dt[:, None] ** 2)
+    rp = yp - dp
+    r9 = np.concatenate([rR, rv, rp], 1)
+    r = _mv(q["W"], r9)
+    if not jac:
+        return r, None
+    n = len(dt)
+    Ji = _jr_inv(rR)
+    RcbT = Rcb.T
+    J9 = np.zeros((n, 9, 27))
+    # rotation residual: theta_i, theta_j, gyro bias
+    J9[:, 0:3, 0:3] = -Ji @ _T(Rbj) @ Rbi @ RcbT
+    J9[:, 0:3, 9:12] = Ji @ RcbT
+    J9[:, 0:3, 21:24] = -Ji @ _T(E) @ _jr(psi) @ q["JRg"]
+    # velocity residual
+    RbiT = _T(Rbi)
+    J9[:, 3:6, 0:3] = _skew(yv) @ RcbT
+    J9[:, 3:6, 6:9] = -RbiT
+    J9[:, 3:6, 15:18] = RbiT
+    J9[:, 3:6, 18:21] = -RbiT * dt[:, None, None]
+    J9[:, 3:6, 21:24] = -q["Jvg"]
+    J9[:, 3:6, 24:27] = -q["Jv"]
+    # position residual (the IMU's position: the camera's plus the rotated lever arm)
+    J9[:, 6:9, 0:3] = _skew(yp) @ RcbT + RcbT @ _skew(np.broadcast_to(tcb, (n, 3)))
+    J9[:, 6:9, 3:6] = -RbiT
+    J9[:, 6:9, 6:9] = -RbiT * dt[:, None, None]
+    J9[:, 6:9, 9:12] = -RbiT @ Rj @ _skew(np.broadcast_to(tcb, (n, 3)))
+    J9[:, 6:9, 12:15] = RbiT
+    J9[:, 6:9, 18:21] = -0.5 * RbiT * (dt ** 2)[:, None, None]
+    J9[:, 6:9, 21:24] = -q["Jpg"]
+    J9[:, 6:9, 24:27] = -q["Jp"]
+    return r, q["W"] @ J9
+
+
+def _rel_block(Ra, pa, Rb, pb, lam_s, q, sig, kappa, jac):
+    """Relative poses of the passes (batched): residuals (n, 6) and Jacobians (n, 6, 13 or 14) over (rotation and
+    position of a, rotation and position of b, the pass's log scale[, the log rotation scale]).  The translation
+    residual is in the pass's units (errors in variables)."""
+    n = len(lam_s)
+    M = _T(Ra) @ Rb
+    if kappa is None:
+        Rm = q["Rm"]
+    else:
+        sc = np.exp(-kappa)
+        Rm = _exp_b(sc * q["rvm"])
+    E = _T(Rm) @ M
+    phi = _log_b(E)
+    rs = q["rot_sig"][:, None]
+    u = _mv(_T(Ra), pb - pa)
+    el = np.exp(-lam_s)
+    rt = (el[:, None] * u - q["tm"]) / sig[:, None]
+    r = np.concatenate([phi / rs, rt], 1)
+    if not jac:
+        return r, None
+    Ji = _jr_inv(phi)
+    J = np.zeros((n, 6, 13 if kappa is None else 14))
+    J[:, 0:3, 0:3] = -Ji @ _T(Rb) @ Ra / rs[:, :, None]
+    J[:, 0:3, 6:9] = Ji / rs[:, :, None]
+    k = (el / sig)[:, None, None]
+    J[:, 3:6, 0:3] = k * _skew(u)
+    J[:, 3:6, 3:6] = -k * _T(Ra)
+    J[:, 3:6, 9:12] = k * _T(Ra)
+    J[:, 3:6, 12] = -(el / sig)[:, None] * u
+    if kappa is not None:
+        J[:, 0:3, 13] = sc * _mv(Ji @ _T(M), q["rvm"]) / rs
+    return r, J
+
+
+def _rot_block(Ra, Rb, q, jac):
+    """Rotation-only measurements (batched): residuals (n, 3) and Jacobians (n, 3, 6) over the rotations of a, b."""
+    E = _T(q["Rm"]) @ _T(Ra) @ Rb
+    phi = _log_b(E)
+    sd = q["std"][:, None]
+    r = phi / sd
+    if not jac:
+        return r, None
+    Ji = _jr_inv(phi)
+    J = np.concatenate([-Ji @ _T(Rb) @ Ra, Ji], 2) / sd[:, :, None]
+    return r, J
+
+
+def _prior_rotation(R_ref, R, std):
+    """log(R_ref^T R Exp(d)) / std at d = 0 and its Jacobian (3 x 3)."""
+    phi = _log_b(R_ref.T @ R)
+    return phi / std, _jr_inv(phi) / std
 
 @dataclass
 class _Imu:
@@ -273,141 +405,195 @@ class VgiGraph:
             self.depth[i] = (float(log_obs), max(float(std), self.cfg.depth_std_floor))
 
     # ------------------------------------------------------------------ the problem
-    def _residuals(self, delta, weights=None):
-        """Stacked whitened residuals at the current estimate perturbed by delta (torch, float64)."""
+    # The normal equations are assembled factor type by factor type: each factor's residual is a function of its own
+    # few variables (an IMU factor: two nodes' rotation, position, velocity and the gravity and biases; a pass's
+    # relative pose: two nodes' rotation and position, the scale of the pass and the rotation scale), its Jacobian is
+    # analytic over those variables only (batched over the factors of the type), and J^T J and J^T r are scattered into
+    # the dense system of the window.  The factors' constant data are stacked once per solve.
+
+    def _prepare(self):
+        """The factors' constant data as tensors, and their global columns (fixed during one solve).  Columns: node k at
+        10 k (rotation 0:3, position 3:6, velocity 6:9, log scale 9), the globals at G = 10 n (gravity, gyro bias,
+        accelerometer bias, then beta and kappa when estimated)."""
         cfg = self.cfg
-        ids = self.ids
-        n = len(ids)
-        col = {i: k for k, i in enumerate(ids)}
-        d = delta
-        dn = d[:10 * n].reshape(n, 10)
+        col = {i: k for k, i in enumerate(self.ids)}
+        n = len(self.ids)
         G = 10 * n
-        dg, dbg, dba = d[G:G + 3], d[G + 3:G + 6], d[G + 6:G + 9]
-        dbeta = d[G + 9] if cfg.depth_bias else None
-        dkappa = d[G + self.i_kappa] if cfg.rot_scale else None
-        T = lambda x: torch.as_tensor(np.asarray(x), dtype=torch.float64)
-        R0 = T(np.stack([self.R[i] for i in ids]))
-        R = R0 @ _exp_t(dn[:, 0:3])
-        p = T(np.stack([self.p[i] for i in ids])) + dn[:, 3:6]
-        v = T(np.stack([self.v[i] for i in ids])) + dn[:, 6:9]
-        lam = T(np.array([self.lam[i] for i in ids])) + dn[:, 9]
-        g = T(self.g) + dg
-        bg = T(self.bg) + dbg
-        ba = T(self.ba) + dba
-        beta = (self.beta + dbeta) if cfg.depth_bias else None
-        kappa = (self.kappa + dkappa) if cfg.rot_scale else None
-        Rcb, tcb = T(self.R_cb), T(self.t_cb)
-        out = []
-        # IMU
+        T = np.asarray
+        P = {"col": col, "n": n, "G": G, "D": G + self.n_global}
+        g9 = np.arange(G, G + 9)
         if self.imu:
-            ii = torch.as_tensor([col[f.i] for f in self.imu])
-            jj = ii + 1
-            dt = T([f.dt for f in self.imu])[:, None]
-            Rbi, Rbj = R[ii] @ Rcb, R[jj] @ Rcb
-            pbi = p[ii] + (R[ii] @ tcb)
-            pbj = p[jj] + (R[jj] @ tcb)
-            dbg_i = bg[None] - T(np.stack([f.bg0 for f in self.imu]))
-            dR = T(np.stack([f.dR for f in self.imu])) @ _exp_t((T(np.stack([f.JR_g for f in self.imu])) @ dbg_i[..., None])[..., 0])
-            dv = (T(np.stack([f.dv for f in self.imu])) + (T(np.stack([f.J_v for f in self.imu])) @ ba)
-                  + (T(np.stack([f.Jv_g for f in self.imu])) @ dbg_i[..., None])[..., 0])
-            dp = (T(np.stack([f.dp for f in self.imu])) + (T(np.stack([f.J_p for f in self.imu])) @ ba)
-                  + (T(np.stack([f.Jp_g for f in self.imu])) @ dbg_i[..., None])[..., 0])
-            rR = _log_t(dR.transpose(-1, -2) @ Rbi.transpose(-1, -2) @ Rbj)
-            rv = (Rbi.transpose(-1, -2) @ (v[jj] - v[ii] - g * dt)[..., None])[..., 0] - dv
-            rp = (Rbi.transpose(-1, -2) @ (pbj - pbi - v[ii] * dt - 0.5 * g * dt ** 2)[..., None])[..., 0] - dp
-            r9 = torch.cat([rR, rv, rp], -1)
-            W = T(np.stack([f.W for f in self.imu]))
-            out.append((W @ r9[..., None])[..., 0].reshape(-1))
-        # relative poses
+            fs = self.imu
+            ii = np.array([col[f.i] for f in fs])
+            P["imu"] = dict(
+                ii=ii, jj=ii + 1,
+                dt=np.array([f.dt for f in fs]), dR=T(np.stack([f.dR for f in fs])), dv=T(np.stack([f.dv for f in fs])),
+                dp=T(np.stack([f.dp for f in fs])), Jv=T(np.stack([f.J_v for f in fs])),
+                Jp=T(np.stack([f.J_p for f in fs])), JRg=T(np.stack([f.JR_g for f in fs])),
+                Jvg=T(np.stack([f.Jv_g for f in fs])), Jpg=T(np.stack([f.Jp_g for f in fs])),
+                bgpre=T(np.stack([f.bg0 for f in fs])), W=T(np.stack([f.W for f in fs])),
+                cols=np.concatenate([10 * ii[:, None] + np.arange(9)[None], 10 * (ii + 1)[:, None] + np.arange(9)[None],
+                                     np.broadcast_to(g9, (len(fs), 9))], axis=1))
         if self.rel:
-            aa = torch.as_tensor([col[f.a] for f in self.rel])
-            bb = torch.as_tensor([col[f.b] for f in self.rel])
-            ss = torch.as_tensor([col[f.s] for f in self.rel])
-            if kappa is not None:
-                Rm = _exp_t(torch.exp(-kappa) * T(np.stack([_log(f.R) for f in self.rel])))
-            else:
-                Rm = T(np.stack([f.R for f in self.rel]))
-            tm = T(np.stack([f.t for f in self.rel]))
-            ang = T(np.array([np.linalg.norm(_log(f.R)) for f in self.rel]))[:, None]
-            rot_sig = torch.sqrt(cfg.rot_std ** 2 + (cfg.rot_rel * ang) ** 2)
-            rr = _log_t(Rm.transpose(-1, -2) @ R[aa].transpose(-1, -2) @ R[bb]) / rot_sig
-            # in the pass's units, where its noise is: the metric displacement over the pass's metres per unit (a
-            # residual in metres would shrink the scale with the noise, errors in variables)
-            rel_t = (R[aa].transpose(-1, -2) @ (p[bb] - p[aa])[..., None])[..., 0]
-            sig = T(self._trans_sigma())[:, None]
-            rt = (torch.exp(-lam[ss])[:, None] * rel_t - tm) / sig
-            w = T(weights if weights is not None else np.ones(len(self.rel)))[:, None]
-            out.append((w * torch.cat([rr, rt], -1)).reshape(-1))
-        # rotation-only measurements (Huber: a weight per factor from the current residual, as for the passes)
+            fs = self.rel
+            aa = np.array([col[f.a] for f in fs])
+            bb = np.array([col[f.b] for f in fs])
+            ss = np.array([col[f.s] for f in fs])
+            cols = [10 * aa[:, None] + np.arange(6)[None], 10 * bb[:, None] + np.arange(6)[None], (10 * ss + 9)[:, None]]
+            if cfg.rot_scale:
+                cols.append(np.full((len(fs), 1), G + self.i_kappa))
+            Rm = np.stack([f.R for f in fs])
+            rvm = _log_b(Rm)
+            ang = np.linalg.norm(rvm, axis=1)
+            P["rel"] = dict(
+                aa=aa, bb=bb, ss=ss, Rm=Rm, rvm=rvm if cfg.rot_scale else None,
+                tm=T(np.stack([f.t for f in fs])), tnorm=np.array([np.linalg.norm(f.t) for f in fs]),
+                rot_sig=np.sqrt(cfg.rot_std ** 2 + (cfg.rot_rel * ang) ** 2),
+                cols=np.concatenate(cols, axis=1))
         if self.rots:
-            aa = torch.as_tensor([col[f.a] for f in self.rots])
-            bb = torch.as_tensor([col[f.b] for f in self.rots])
-            Rm = T(np.stack([f.R for f in self.rots]))
-            sd = T([f.std for f in self.rots])[:, None]
-            rr = _log_t(Rm.transpose(-1, -2) @ R[aa].transpose(-1, -2) @ R[bb]) / sd
-            wr = T(self._rot_w if getattr(self, "_rot_w", None) is not None and len(self._rot_w) == len(self.rots)
-                   else np.ones(len(self.rots)))[:, None]
-            out.append((wr * rr).reshape(-1))
-        # gauge links
+            fs = self.rots
+            aa = np.array([col[f.a] for f in fs])
+            bb = np.array([col[f.b] for f in fs])
+            P["rots"] = dict(aa=aa, bb=bb, Rm=T(np.stack([f.R for f in fs])), std=np.array([f.std for f in fs]),
+                             cols=np.concatenate([10 * aa[:, None] + np.arange(3)[None],
+                                                  10 * bb[:, None] + np.arange(3)[None]], axis=1))
         if self.links:
-            jj = torch.as_tensor([col[l[0]] for l in self.links])
-            kk = torch.as_tensor([col[l[1]] for l in self.links])
-            out.append((lam[jj] - lam[kk] - T([l[2] for l in self.links])) / T([l[3] for l in self.links]))
-        # learned depth
+            P["links"] = dict(jj=np.array([col[l[0]] for l in self.links]), kk=np.array([col[l[1]] for l in self.links]),
+                              obs=np.array([l[2] for l in self.links]), std=np.array([l[3] for l in self.links]))
         dk = [i for i in self.depth if i in col]
         if dk:
-            idx = torch.as_tensor([col[i] for i in dk])
-            o = T([self.depth[i][0] for i in dk])
-            sd = T([self.depth[i][1] for i in dk])
-            out.append((lam[idx] + (beta if beta is not None else 0.0) - o) / sd)
-        # gravity norm
-        out.append(((torch.linalg.norm(g) - GRAVITY) / cfg.gravity_norm_std)[None])
+            P["depth"] = dict(kk=np.array([col[i] for i in dk]), obs=np.array([self.depth[i][0] for i in dk]),
+                              std=np.array([self.depth[i][1] for i in dk]))
+        return P
+
+    def _blocks(self, P, jac=True):
+        """Every factor type at the current estimate: (columns (n, k), unweighted residuals (n, m), Jacobians (n, m, k)
+        or None, kind).  The Huber weights are applied by the caller."""
+        cfg = self.cfg
+        ids = self.ids
+        R = np.stack([self.R[i] for i in ids])
+        p = np.stack([self.p[i] for i in ids])
+        v = np.stack([self.v[i] for i in ids])
+        lam = np.array([self.lam[i] for i in ids])
+        out = []
+        if "imu" in P:
+            q = P["imu"]
+            ii, jj = q["ii"], q["jj"]
+            r, J = _imu_block(R[ii], p[ii], v[ii], R[jj], p[jj], v[jj], q, self.g, self.bg, self.ba, self.R_cb, self.t_cb,
+                              jac)
+            out.append((q["cols"], r, J, "imu"))
+        if "rel" in P:
+            q = P["rel"]
+            aa, bb, ss = q["aa"], q["bb"], q["ss"]
+            # translation noise in the pass's units, from the current scale (constant in the derivative, as before)
+            sig = np.sqrt((cfg.trans_rel * q["tnorm"]) ** 2 + (cfg.trans_floor * np.exp(-lam[ss])) ** 2)
+            r, J = _rel_block(R[aa], p[aa], R[bb], p[bb], lam[ss], q, sig, self.kappa if cfg.rot_scale else None, jac)
+            out.append((q["cols"], r, J, "rel"))
+        if "rots" in P:
+            q = P["rots"]
+            r, J = _rot_block(R[q["aa"]], R[q["bb"]], q, jac)
+            out.append((q["cols"], r, J, "rots"))
+        if "links" in P:
+            q = P["links"]
+            r = ((lam[q["jj"]] - lam[q["kk"]] - q["obs"]) / q["std"])[:, None]
+            J = np.stack([1.0 / q["std"], -1.0 / q["std"]], axis=1)[:, None, :]
+            out.append((np.stack([10 * q["jj"] + 9, 10 * q["kk"] + 9], axis=1), r, J, "links"))
+        G = P["G"]
+        if "depth" in P:
+            q = P["depth"]
+            r = ((lam[q["kk"]] + (self.beta if cfg.depth_bias else 0.0) - q["obs"]) / q["std"])[:, None]
+            cols, Js = [10 * q["kk"] + 9], [1.0 / q["std"]]
+            if cfg.depth_bias:
+                cols.append(np.full(len(q["kk"]), G + 9))
+                Js.append(1.0 / q["std"])
+            out.append((np.stack(cols, axis=1), r, np.stack(Js, axis=1)[:, None, :], "depth"))
+        # |g|
+        gn = float(np.linalg.norm(self.g))
+        out.append((np.arange(G, G + 3)[None], np.array([[(gn - GRAVITY) / cfg.gravity_norm_std]]),
+                    (self.g / gn / cfg.gravity_norm_std)[None, None, :], "gnorm"))
         # priors
+        nb, nk = int(cfg.depth_bias), int(cfg.rot_scale)
         if self.prior is None:
-            k0 = 0
-            out.append(_log_t(T(self.gauge[0]).T @ R[k0]) / 1e-3)
-            out.append((p[k0] - T(self.gauge[1])) / 1e-3)
-            out.append((g - T(self.g0)) / cfg.gravity_std)
-            out.append((bg - T(self.bg0)) / cfg.gyro_bias_std)
-            out.append(ba / cfg.accel_bias_std)
-            if beta is not None:
-                out.append((beta / cfg.depth_bias_std)[None])
-            if kappa is not None:
-                out.append((kappa / cfg.rot_scale_std)[None])
+            i0 = ids[0]
+            r_rot, J_rot = _prior_rotation(self.gauge[0], self.R[i0], 1e-3)
+            rows = [r_rot, (self.p[i0] - self.gauge[1]) / 1e-3, (self.g - self.g0) / cfg.gravity_std,
+                    (self.bg - self.bg0) / cfg.gyro_bias_std, self.ba / cfg.accel_bias_std]
+            J = np.zeros((15 + nb + nk, 15 + nb + nk))
+            J[0:3, 0:3] = J_rot
+            J[3:6, 3:6] = np.eye(3) / 1e-3
+            J[6:9, 6:9] = np.eye(3) / cfg.gravity_std
+            J[9:12, 9:12] = np.eye(3) / cfg.gyro_bias_std
+            J[12:15, 12:15] = np.eye(3) / cfg.accel_bias_std
+            cols = list(range(10 * P["col"][i0], 10 * P["col"][i0] + 6)) + list(range(G, G + 9))
+            if nb:
+                rows.append([self.beta / cfg.depth_bias_std])
+                J[15, 15] = 1.0 / cfg.depth_bias_std
+                cols.append(G + 9)
+            if nk:
+                rows.append([self.kappa / cfg.rot_scale_std])
+                J[15 + nb, 15 + nb] = 1.0 / cfg.rot_scale_std
+                cols.append(G + self.i_kappa)
+            out.append((np.array(cols)[None], np.concatenate(rows)[None], J[None], "prior"))
         else:
             L, i0, xl = self.prior
-            k0 = col[i0]
-            parts = [_log_t(T(xl["R"]).T @ R[k0]), p[k0] - T(xl["p"]), v[k0] - T(xl["v"]), (lam[k0] - xl["lam"])[None],
-                     g - T(xl["g"]), bg - T(xl["bg"]), ba - T(xl["ba"])]
-            if beta is not None:
-                parts.append((beta - xl["beta"])[None])
-            if kappa is not None:
-                parts.append((kappa - xl["kappa"])[None])
-            out.append(T(L).T @ torch.cat(parts))
-        return torch.cat(out)
+            k0 = P["col"][i0]
+            r_rot, J_rot = _prior_rotation(xl["R"], self.R[i0], 1.0)
+            parts = [r_rot, self.p[i0] - xl["p"], self.v[i0] - xl["v"], [self.lam[i0] - xl["lam"]],
+                     self.g - xl["g"], self.bg - xl["bg"], self.ba - xl["ba"]]
+            if nb:
+                parts.append([self.beta - xl["beta"]])
+            if nk:
+                parts.append([self.kappa - xl["kappa"]])
+            d = np.concatenate(parts)
+            Jd = np.eye(len(d))
+            Jd[0:3, 0:3] = J_rot
+            cols = list(range(10 * k0, 10 * k0 + 10)) + list(range(G, G + self.n_global))
+            out.append((np.array(cols)[None], (L.T @ d)[None], (L.T @ Jd)[None], "prior"))
+        return out
 
-    def _trans_sigma(self):
-        """Translation noise of each pass in its units: relative, with a floor of trans_floor metres."""
-        cfg = self.cfg
-        return np.array([np.hypot(cfg.trans_rel * np.linalg.norm(f.t), cfg.trans_floor * np.exp(-self.lam[f.s]))
-                         for f in self.rel])
+    def _huber(self, blocks):
+        """Huber weights of the relative-pose and the rotation-only factors from their unweighted residuals."""
+        h = self.cfg.huber
+        w = {}
+        for _, r, _, kind in blocks:
+            if kind in ("rel", "rots"):
+                e = np.linalg.norm(r, axis=1) / np.sqrt(r.shape[1])
+                w[kind] = np.where(e <= h, 1.0, np.sqrt(h / np.maximum(e, 1e-12)))
+        return w
 
-    def _rel_weights(self):
-        """Huber weights of the relative-pose factors (and of the rotation-only factors, kept in _rot_w) at the
-        current estimate."""
-        self._rot_w = None
-        if self.rots:
-            e = np.array([np.linalg.norm(_log(f.R.T @ self.R[f.a].T @ self.R[f.b])) / f.std for f in self.rots]) / np.sqrt(3)
-            self._rot_w = np.where(e <= self.cfg.huber, 1.0, np.sqrt(self.cfg.huber / np.maximum(e, 1e-12)))
-        if not self.rel:
-            return None
-        with torch.no_grad():
-            zero = torch.zeros(10 * len(self.ids) + self.n_global, dtype=torch.float64)
-            r = self._residuals(zero)
-        n_imu = 9 * len(self.imu)
-        rr = r[n_imu:n_imu + 6 * len(self.rel)].reshape(-1, 6).numpy()
-        e = np.linalg.norm(rr, axis=1) / np.sqrt(6)
-        return np.where(e <= self.cfg.huber, 1.0, np.sqrt(self.cfg.huber / np.maximum(e, 1e-12)))
+    @staticmethod
+    def _weighted(blocks, w):
+        out = []
+        for cols, r, J, kind in blocks:
+            if kind in w:
+                r = r * w[kind][:, None]
+                J = None if J is None else J * w[kind][:, None, None]
+            out.append((cols, r, J, kind))
+        return out
+
+    @staticmethod
+    def _assemble(blocks, D):
+        H = np.zeros((D, D))
+        grad = np.zeros(D)
+        cost, n_res = 0.0, 0
+        Hf = H.reshape(-1)
+        for cols, r, J, _ in blocks:
+            cost += float((r * r).sum())
+            n_res += r.size
+            np.add.at(Hf, (cols[:, :, None] * D + cols[:, None, :]).reshape(-1),
+                      np.einsum("nrk,nrl->nkl", J, J).reshape(-1))
+            np.add.at(grad, cols.reshape(-1), np.einsum("nrk,nr->nk", J, r).reshape(-1))
+        return H, grad, cost, n_res
+
+    def _system(self, P):
+        """(H, gradient, cost, number of residuals, Huber weights) at the current estimate."""
+        blocks = self._blocks(P, jac=True)
+        w = self._huber(blocks)
+        H, grad, cost, n_res = self._assemble(self._weighted(blocks, w), P["D"])
+        return H, grad, cost, n_res, w
+
+    def _cost(self, P, w):
+        return float(sum((r * r).sum() for _, r, _, _ in self._weighted(self._blocks(P, jac=False), w)))
 
     def _apply(self, d):
         n = len(self.ids)
@@ -426,40 +612,25 @@ class VgiGraph:
         if self.cfg.rot_scale:
             self.kappa = self.kappa + d[G + self.i_kappa]
 
-    def _system(self, weights):
-        D = 10 * len(self.ids) + self.n_global
-        zero = torch.zeros(D, dtype=torch.float64)
-        f = lambda x: self._residuals(x, weights)
-        J = torch.func.jacfwd(f)(zero).numpy()
-        r = f(zero).detach().numpy()
-        return J, r
-
-    def _cost(self, weights):
-        with torch.no_grad():
-            r = self._residuals(torch.zeros(10 * len(self.ids) + self.n_global, dtype=torch.float64), weights)
-        return float((r * r).sum())
-
     def solve(self, iterations=None, need_std=True):
         """Gauss-Newton (Levenberg damping); need_std: the marginal std of the newest node's log scale."""
         damping = 1e-6
         info = {}
         H = None
+        P = self._prepare()
         for _ in range(iterations or self.cfg.iterations):
-            w = self._rel_weights()
-            J, r = self._system(w)
-            H, gr = J.T @ J, J.T @ r
-            cost = float(r @ r)
+            H, gr, cost, n_res, w = self._system(P)
             step = np.linalg.solve(H + damping * np.diag(np.diag(H) + 1e-9), -gr)
             saved = self._save()
             self._apply(step)
-            c_new = self._cost(w)
+            c_new = self._cost(P, w)
             if c_new <= cost:
                 damping = max(damping / 10, 1e-9)
-                info = {"cost": c_new, "residuals": len(r)}
+                info = {"cost": c_new, "residuals": n_res}
             else:
                 self._restore(saved)
                 damping *= 10
-                info = {"cost": cost, "residuals": len(r)}
+                info = {"cost": cost, "residuals": n_res}
         info["lam_std"] = float("nan")
         if need_std and H is not None:
             try:
@@ -506,9 +677,7 @@ class VgiGraph:
         self.rots = mar_rots
         self.links = mar_links
         self.depth = {i: o for i, o in full[4].items() if i == i0}
-        w = self._rel_weights()
-        J, r = self._system(w)
-        H, c = J.T @ J, J.T @ r
+        H, c, _, _, _ = self._system(self._prepare())
         mi = np.arange(10)
         ri = np.arange(10, 20 + self.n_global)
         K = H[np.ix_(ri, mi)] @ np.linalg.inv(H[np.ix_(mi, mi)] + 1e-9 * np.eye(10))
