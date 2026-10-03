@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from .geometry import inverse
+from cross.utils.hub import hub_load
 
 
 class XFeatRefiner:
@@ -20,8 +21,8 @@ class XFeatRefiner:
             from .learned_matching import load_superpoint_lightglue
             self.extractor, self.learned_matcher = load_superpoint_lightglue(device, keypoints)
         else:
-            self.extractor = torch.hub.load("verlab/accelerated_features", "XFeat", pretrained=True,
-                                           top_k=keypoints, detection_threshold=0.03, trust_repo=True)
+            self.extractor = hub_load("verlab/accelerated_features", "XFeat", pretrained=True,
+                                      top_k=keypoints, detection_threshold=0.03)
             self.extractor.net.to(device).eval()
             self.extractor.dev = torch.device(device)
             if matcher == "lighterglue":

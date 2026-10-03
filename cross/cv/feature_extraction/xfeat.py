@@ -7,6 +7,7 @@ from .extractor import FeatureExtractor
 import cv2
 import numpy as np
 from cross.utils.profile import timeit
+from cross.utils.hub import hub_load
 
 
 
@@ -20,7 +21,7 @@ class XfeatExtractor(FeatureExtractor):
             
 
         # self.xfeat = XFeat(top_k = max_num_keypoints, detection_threshold=detection_threshold)
-        self.xfeat = torch.hub.load(
+        self.xfeat = hub_load(
             'verlab/accelerated_features', 
             'XFeat', 
             pretrained = True, 
