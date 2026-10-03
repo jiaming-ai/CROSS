@@ -195,13 +195,43 @@ class LoopClosureConfig:
     # degrees of freedom of the consistency tests: "translation" (3 dof: the marginal test on the translation
     # residual, whose covariance includes the rotation-induced position uncertainty; wrong-place references are a
     # translation phenomenon and the rotation noise of the estimator is the least well calibrated quantity) or
-    # "full" (6 dof)
-    test_dof: str = "translation"
+    # "full" (6 dof), or "split": the translation and the rotation marginals tested separately (3 dof each, the same
+    # level).  A wrong place can come with a plausible translation and a wrong rotation: in OpenLORIS corridor1-1 VGGT
+    # registered the corridor seen in the opposite direction (rotation error 180 deg, translation within the chain's
+    # +-5 m after 175 m) and aliased segments 15 m away with 30-60 deg rotation errors; the rotation test rejects 51 of
+    # those 52 measurements and keeps every true loop measurement of KITTI 05 / 07 (2199) and of the corridor.  The
+    # rotation noise of the estimator has its own online scale (anisotropic model).
+    test_dof: str = "split"
     # online adaptation of the visual noise scale: the normalised innovation of measurements to keyframes a few
     # steps back (same statistic as the calibration) is tracked in a sliding window; under appearance change the
     # estimator gets noisier and the model is inflated accordingly (never deflated below the calibration)
     adaptive_scale: bool = True
     adaptive_window: int = 150
+    # the visual noise is split along / across the measured bearing, each with its own online scale (innovations of
+    # measurements to keyframes <= 5 odometry edges back, normalised with the un-inflated chain covariance).  The metric
+    # scale of the feed-forward estimator comes from the stereo baseline and is its weak part far away: on KITTI the
+    # along-track error is ~7 % of the distance, the across-track error ~1.5 %, the rotation error ~0.1 deg.  False: one
+    # isotropic scale (statistic normalised with the gate-inflated chain covariance, the behaviour before 2026-10-03)
+    anisotropic: bool = True
+    # information criterion: a visual measurement constrains the graph (and may trigger an optimisation) only when the
+    # odometry chain's prediction of the relative pose is more uncertain than the measurement by this factor (standard
+    # deviations, translation).  Neither noise model is exact (the odometry constants are defaults, the estimator's are
+    # adapted online); a revisit after drift is 10-100x more uncertain than its measurement, the keyframes just behind
+    # the robot within 1-2x.  With 1, 36 % (KITTI 07) and 85 % (KITTI 04) of the visual edges constrained the graph and
+    # the maps were 1.2-10x worse than the odometry alone; with 2, only the loop edges do.  Applies to measurements of the
+    # session's own keyframes; edges to a stored map (relocalization) keep the plain criterion (margin 1).
+    informative_margin: float = 2.0
+    # references with a negative prior verdict form proposals of their own (never merged with consistent references into
+    # one hypothesis-0 proposal); False: the clusters of the pose proposals ignore the verdicts (before 2026-10-03)
+    pure_verdict_clusters: bool = True
+    # loop measurements of one forward pass that constrain the graph (the nearest ones; 0: all).  The pass registers
+    # the current view once, so its edges to several keyframes of an earlier visit share that registration's error, and
+    # together they impose the model's geometry between those keyframes, which is worse than the odometry's.  KITTI 06
+    # (level odometry, 1462 correct loop measurements, ~5 per pass): all 2.51 m, the nearest one per pass 0.51 m (the most
+    # covisible one 0.60 m, two per pass 1.16 m; odometry alone 0.59 m); KITTI 05 1.64 -> 1.79 m, 07 0.37 -> 0.35 m
+    # (offline re-optimisation; online KITTI 06 with the most covisible one: 2.36 -> 0.56 m).
+    # Measurements of keyframes of the current session only; edges to a stored map are unchanged.
+    loop_edges_per_pass: int = 1
     # minimum odometry-chain length (m) of a span used for the online metric-scale ratio (measured / odometry
     # translation over chains of <= 5 edges); 1 m for driving / indoor scenes, less for slow platforms
     scale_min_span_m: float = 1.0
@@ -230,6 +260,11 @@ class LoopClosureConfig:
     # (False: the neighbourhood of the latest keyframe, earlier sessions fixed), so a merged multi-session map is made
     # consistent before the next session registers to it
     global_final_opt: bool = False
+    # in a session without a loaded map, a loop-closure optimisation covers every keyframe of the session (False: the
+    # 1000 keyframes before the latest one, plus their visual neighbours, the rest fixed).  A loop back to the start of a
+    # long drive (KITTI 00 at step 2403: 1108 of 2340 keyframes in the graph) otherwise bends only the latest part and
+    # leaves a jump where the optimised window meets the frozen one.
+    full_session_pgo: bool = True
     # relocalization sessions: a map edge of hypothesis 0 anchors the session to the map (prior test of the following
     # map references) when it passes the prior test through an earlier, still unanchored map edge of hypothesis 0 from
     # another observation (within anchor_corroborate_window steps) to another map keyframe.  Without it a session
@@ -316,6 +351,12 @@ class HypothesisConfig:
     # relocalization unchanged.  Known weakness: abrupt on-the-spot turns with noisy odometry (Lone Monk, 23 deg per
     # frame): the lagging hypothesis 0 is out-scored and replaced repeatedly.
     h0_informative_only: bool = True
+    # with h0_informative_only, a skipped pose update still takes the fused variance: the measurement is consistent with
+    # hypothesis 0 (it is explained by the odometry chain), only its mean is not re-applied.  Without it the belief
+    # std grows with every frame (0.1 m and 0.1 rad per step from the tracking odometry model; 20 m after 200 steps on
+    # OpenLORIS cafe1-2, RGB-D) until any aliased hypothesis out-scores hypothesis 0.  Sessions without a loaded map only
+    # (in a relocalization session an unsupported hypothesis 0 must be able to lose to the map hypotheses)
+    h0_skip_keeps_variance: bool = True
     # measurements to keyframes of previous sessions (the loaded map) count as informative pose-graph constraints (they are
     # independent of the session's odometry drift); for the pose update of hypothesis 0: "always", or "belief" = only while hypothesis 0 is less certain
     # than the measurement (translation), "off" / False = the loop-candidate test alone
@@ -340,6 +381,18 @@ class HypothesisConfig:
     # observation steps without a loop closure, that hypothesis becomes hypothesis 0 (otherwise a map built
     # on a loop-free trajectory can end with its belief in a component that is not persisted / not used by PGO)
     adopt_dominant_steps: int = 20
+    # adoption is a relocalization mechanism: in a session without a loaded map, hypothesis 0 is the odometry chain the map
+    # is built on, and another hypothesis may only replace it through the verified merge (pose-graph optimisation and
+    # posterior test).  Unverified adoptions of aliased places teleported parts of OpenLORIS maps (corridor1-1 23.9 m,
+    # cafe1-2 5.0 m map ATE, RGB-D).  True: also adopt in mapping sessions (the behaviour before 2026-10-03)
+    adopt_in_mapping_session: bool = False
+    # likewise for merges: in a session without a loaded map a realized hypothesis is not merged into hypothesis 0.  Its
+    # measurements failed the prior test against the odometry chain (true revisits pass it and are closed by the verified
+    # loop closure: all 4061 / 2061 / 131 loop measurements of KITTI 00 / 05 / 07 did), and the merge's own check (at most
+    # half of its edges outliers after the optimisation) passes once the optimisation has bent the map onto the aliased
+    # chain (OpenLORIS corridor1-1, RGB-D: merges at steps 710 and 2331, map ATE 23.6 m).  True: the behaviour before
+    # 2026-10-03.
+    merge_in_mapping_session: bool = False
     # a dominant hypothesis within adopt_close_dist of hypothesis 0 is the same place with a better pose: the
     # loop-closure detector refuses to merge it (proximity veto), so it is adopted after adopt_close_steps steps
     # instead of adopt_dominant_steps (a swap between two poses of the same place cannot produce a gross error)
@@ -551,6 +604,9 @@ class FeedForwardConfig:
     odom_anchor_min_translation: float = 0.15
     odom_anchor_weight: float = 0.5
     scale_method: str = "adaptive"       # adaptive | huber_log | median | mean | norm_ls
+    # the model predicts cameras with the principal point at the image centre; the relative poses are rotated into the
+    # calibrated camera frame (KITTI: 13 px off centre = 1.06 deg of yaw in every measured translation direction)
+    principal_point_correction: bool = True
     # map-consistency anchors: pairs of retrieved keyframes whose metric relative pose is known from the map act as
     # long-baseline scale anchors in the same forward pass (the stereo pair alone has a baseline that is tiny
     # relative to large scenes, which biases the recovered scale by several percent)

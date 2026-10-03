@@ -503,7 +503,13 @@ class HypothesisManager:
     def pgo_noise_fn(self):
         """Calibrated noise model of the verified loop closure for the pose-graph optimisation (None: stored stds)."""
         v = getattr(self.system, "_lc_verifier", None)
-        return v.noise.factor_sigmas_pypose if v is not None else None
+        if v is None:
+            return None
+
+        def noise(f):
+            cov = v.noise.factor_cov_gtsam(f)          # anisotropic visual factor: full covariance (gtsam order)
+            return cov if cov is not None else v.noise.factor_sigmas_pypose(f)
+        return noise
 
     def pgo_skip_fn(self):
         """Information criterion of the verified loop closure: visual measurements that the odometry chain already
@@ -1107,6 +1113,7 @@ class HypothesisManager:
         pose_update_mask: Optional[torch.Tensor] = None, # K bool mask; True means apply retrieval update
         source_factors=None,
         source_covariances=None,
+        variance_update_mask: Optional[torch.Tensor] = None,  # K bool: components whose skipped update keeps the fused variance
     ):
         """
         Computes the final distribution p = alpha * (p_proposal * p_prior) + (1 - alpha) * p_proposal.
@@ -1463,7 +1470,10 @@ class HypothesisManager:
             if (~final_update_mask).any():
                 revert_mask = ~final_update_mask
                 prod_mu[revert_mask] = prior_mu[revert_mask]
-                prod_var_diag[revert_mask] = prior_var_diag_noQ[revert_mask]
+                var_revert = revert_mask
+                if variance_update_mask is not None and source_factors is None:
+                    var_revert = revert_mask & ~variance_update_mask.to(device=revert_mask.device, dtype=torch.bool)
+                prod_var_diag[var_revert] = prior_var_diag_noQ[var_revert]
                 if pending_sources is not None:
                     for component in torch.where(revert_mask)[0].tolist():
                         retained = self.source_states[component]
@@ -1680,10 +1690,14 @@ class HypothesisManager:
             logger.info(f"Handling loop closure: merging hypothesis {hypo_id} with hypothesis 0")
 
         # Step 1: Construct the pose graph for loop closure (under graph lock)
+        # global: every keyframe of every session; a session without a loaded map: every keyframe of the session
+        lc_cfg = getattr(getattr(getattr(self.system, "config", None), "mapping", None), "loop_closure", None)
+        full = global_opt or (bool(getattr(lc_cfg, "full_session_pgo", False))
+                              and int(getattr(self.system, "_session_start_kf_id", 0)) == 0)
         with self.graph_lock:
             pg = PoseGraph(
                 self,
-                depth=(10 ** 7 if global_opt else 1000),   # global: every keyframe of every session
+                depth=(10 ** 7 if full else 1000),
                 k_hop=2,
                 device=self.device,
                 noise_fn=self.pgo_noise_fn(),
@@ -2094,6 +2108,9 @@ class HypothesisManager:
         weights = self.dist[2]
         if weights.numel() < 2:
             return False
+        if not getattr(self.cfg, "adopt_in_mapping_session", True) and int(getattr(self.system, "_session_start_kf_id", 0)) == 0:
+            self._adopt_counter = (None, 0)     # mapping session: only the verified merge may replace hypothesis 0
+            return False
         k = int(torch.argmax(weights).item())
         cfg_steps = getattr(self.cfg, "adopt_dominant_steps", 20)
         w0_max = getattr(self.cfg, "adopt_w0_max", 0.05)
@@ -2179,6 +2196,8 @@ class HypothesisManager:
                         "conditional_pose": edge.conditional_pose.record() if edge.conditional_pose is not None else None,
                         "conf": getattr(edge, "conf", None),
                         "noise_scale": getattr(edge, "noise_scale", None),
+                        "noise_scale_along": getattr(edge, "noise_scale_along", None),
+                        "noise_scale_rot": getattr(edge, "noise_scale_rot", None),
                         "informative": getattr(edge, "informative", None),
                     }
                     for edge in edge_list
@@ -2279,6 +2298,8 @@ class HypothesisManager:
                     )
                     edge.conf = edge_data.get("conf")
                     edge.noise_scale = edge_data.get("noise_scale")
+                    edge.noise_scale_along = edge_data.get("noise_scale_along")
+                    edge.noise_scale_rot = edge_data.get("noise_scale_rot")
                     edge.informative = edge_data.get("informative")
                     hypothesis.visual_edges.setdefault(edge_key, []).append(edge)
                     if edge_data.get('conditional_pose') is not None:

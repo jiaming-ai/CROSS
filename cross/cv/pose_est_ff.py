@@ -406,6 +406,21 @@ def covisibility_scores(
     return scores.cpu().numpy().astype(np.float32)
 
 
+def principal_point_rotation(K: np.ndarray, width: int, height: int) -> np.ndarray:
+    """Rotation R (3x3) from the camera frame of a model that places the principal point at the image centre to the
+    calibrated camera frame: R maps the model's optical axis onto the ray through the image centre.  Relative poses
+    transform as T_calibrated = R T_model R^T (exact to first order in the offset; pixel centres at integers)."""
+    K = np.asarray(K, dtype=np.float64)
+    ray = np.array([((width - 1) / 2.0 - K[0, 2]) / K[0, 0], ((height - 1) / 2.0 - K[1, 2]) / K[1, 1], 1.0])
+    ray /= np.linalg.norm(ray)
+    v = np.cross([0.0, 0.0, 1.0], ray)
+    s, c = float(np.linalg.norm(v)), float(ray[2])
+    if s < 1e-12:
+        return np.eye(3)
+    Vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + Vx + Vx @ Vx * ((1 - c) / s ** 2)
+
+
 class PoseEstFeedForward:
     """Relative pose estimation with a feed-forward geometry model and stereo scale anchors."""
 
@@ -428,6 +443,7 @@ class PoseEstFeedForward:
         self.last_info: dict = {}
         self.last_scale: Optional[ScaleEstimate] = None
         self.last_frontend_obs: Optional[dict] = None   # raw output for a frontend's anchor (vgio)
+        self._R_model_to_cam: Optional[np.ndarray] = None    # (4, 4) right-multiplied onto model camera poses
 
     def set_stereo_calibration(self, T_right_in_left: np.ndarray):
         self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
@@ -458,6 +474,17 @@ class PoseEstFeedForward:
                 cache.gather((x - agg._resnet_mean[0]) / agg._resnet_std[0], backend.fingerprints(x))
         torch.cuda.synchronize()
         logger.info(f"token cache: {cache.misses - n0} map images embedded in {time.perf_counter() - t0:.1f}s")
+
+    def set_camera(self, K: np.ndarray, width: int, height: int):
+        """Intrinsics of the images given to the model (after its crop / resize): the principal-point correction."""
+        if not getattr(self.config, "principal_point_correction", True):
+            self._R_model_to_cam = None
+            return
+        R = principal_point_rotation(K, width, height)
+        M = np.eye(4)
+        M[:3, :3] = R.T            # c2w_cam = c2w_model @ [R^T 0; 0 1]
+        self._R_model_to_cam = M
+        logger.info(f"FF principal-point correction: {np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))):.2f} deg")
 
     # ------------------------------------------------------------------ #
     @timeit
@@ -565,6 +592,8 @@ class PoseEstFeedForward:
 
         # calibrated metric-scale correction (the estimator's translations divided by their measured/true ratio)
         c2w_metric = scale_camera_centers(pred.c2w, scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0), origin_index=0)
+        if self._R_model_to_cam is not None:
+            c2w_metric = c2w_metric @ self._R_model_to_cam
 
         # ---- per-reference confidence (covisibility / geometric consistency) ----
         ref_idx = list(range(1, 1 + B))
