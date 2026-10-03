@@ -428,3 +428,28 @@ def test_split_test_rejects_a_reversed_view():
     assert cfg_s.test_dof == "split"
     ok_s, _ = LoopClosureVerifier(FakeSystem(hm), cfg_s).prior_gate([ref, ref], [_lie(T_true), _lie(T_flip)], last, gtsam.Pose3(), 1)
     assert ok_s == [True, False]
+
+
+def test_loop_closure_skips_a_graph_that_cannot_be_built(monkeypatch):
+    """A proposal whose pose graph cannot be built (construct_for_loop_closure raises ValueError, e.g. a chart-aware
+    graph that does not reach the proposed reference chart) is skipped (success False), not raised to the session."""
+    import threading
+    import cross.core.hypothesis as hyp
+
+    class _Graph:
+        def __init__(self, *a, **kw):
+            self.vertices, self.edges = [], []
+
+        def construct_for_loop_closure(self, **kw):
+            raise ValueError("Graph does not connect to its proposed reference chart")
+
+    monkeypatch.setattr(hyp, "PoseGraph", _Graph)
+    hm = hyp.HypothesisManager.__new__(hyp.HypothesisManager)
+    hm.hypotheses, hm.nodes, hm.no_pgo_for_lc = {0: object(), 1: object()}, {0: object(), 1: object()}, False
+    hm.graph_lock, hm.device = threading.RLock(), "cpu"
+    hm.system = types.SimpleNamespace(config=types.SimpleNamespace(mapping=types.SimpleNamespace(loop_closure=LoopClosureConfig())),
+                                      _session_start_kf_id=0)
+    hm.pgo_noise_fn = lambda: None
+    hm.pgo_skip_fn = lambda: None
+    res = hm.handle_loop_closure(1)
+    assert res["success"] is False and "reference chart" in res["message"]

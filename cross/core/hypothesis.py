@@ -1703,10 +1703,18 @@ class HypothesisManager:
                 noise_fn=self.pgo_noise_fn(),
                 skip_fn=self.pgo_skip_fn(),
             )
-            pg.construct_for_loop_closure(
-                target_node_id=target_node_id,
-                other_hypothesis_id=hypo_id,
-            )
+            try:
+                pg.construct_for_loop_closure(
+                    target_node_id=target_node_id,
+                    other_hypothesis_id=hypo_id,
+                )
+            except ValueError as ex:
+                # an inconsistent proposal (a chart-aware graph that does not reach the proposed reference chart, seen
+                # once in a ROVER relocalization of the mono mode) skips this loop closure instead of ending the session
+                message = f"Loop closure graph not built ({ex}), skipping"
+                logger.warning(message)
+                result["message"] = message
+                return result
 
         if len(pg.vertices) < 10 or len(pg.edges) < 10:
             message = "Too few vertices or edges for loop closure, skipping"
