@@ -6,6 +6,7 @@ from loguru import logger
 import kornia.feature as KF
 from cross.utils.profile import timeit
 from collections import namedtuple
+from cross.utils.hub import hub_load
 
 DetectionResult = namedtuple("DetectionResult", ["keypoints", "descriptors"])
 
@@ -73,7 +74,7 @@ class KpDetXfeat(KpDet):
     def __init__(self, device: str, config: Dict):
         super().__init__(device, config)
 
-        self.xfeat = torch.hub.load(
+        self.xfeat = hub_load(
             'verlab/accelerated_features', 
             'XFeat', 
             pretrained = True, 

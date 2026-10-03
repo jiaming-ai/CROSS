@@ -456,12 +456,36 @@ class TopoConfig:
 
 
 @dataclass
+class ProjectionConfig:
+    """Place coordinates of poses for proposal clustering (DBSCAN, radius cluster_eps) and for matching proposals to
+    hypotheses (alignment_threshold): two horizontal axes, an optional weighted vertical, and the heading."""
+    # vertical of the map frame (the first camera frame of the map session): "y" (forward-looking camera on a ground
+    # robot; with vertical_weight 0 this is the original (x, z, yaw) projection), "z" (down-looking camera, e.g. an AUV
+    # survey camera), "x", or a 3-vector (e.g. gravity in the first camera frame from an IMU)
+    vertical: object = "y"
+    # replace `vertical` by the axis the keyframes turn about (cross/utils/lie_tensor.py:estimate_vertical) once the
+    # turns determine it: corrects a tilted camera and finds the vertical of an unknown mounting; a relocalization
+    # session uses the loaded map's keyframes
+    estimate_vertical: bool = False
+    # weight of the vertical position in the place coordinates (1 = like a horizontal metre, 0 = ignored).  0 suits
+    # planar motion (ground robots, an AUV at constant altitude: vertical spread between proposals is estimation error,
+    # and scale errors of a down-looking camera show up as vertical error); about 0.5-1 suits 3D terrain where places
+    # are stacked vertically (canyon walls, multi-floor buildings)
+    vertical_weight: float = 0.0
+    # metres; > 0 splits a proposal cluster into groups whose vertical positions are within the gate of the group's
+    # best-scoring member, and forbids matching a proposal to a hypothesis more than the gate away vertically
+    # (separates scale blow-ups and stacked places without making the vertical a clustering coordinate)
+    vertical_gate: float = 0.0
+
+
+@dataclass
 class MappingConfig:
     kf_gmm_n_components: int = 5
     kf_retrieval_threshold_new_kf: float = 0.75
     kf_match_threshold_new_kf: int = 50
     new_component_weight_threshold: float = 0.2
-    cluster_eps: float = 1.0             # DBSCAN radius (x, z, yaw) for proposal clustering
+    cluster_eps: float = 1.0             # DBSCAN radius in the place coordinates (`projection`) for proposal clustering
+    projection: ProjectionConfig = field(default_factory=ProjectionConfig)
     loop_closure: LoopClosureConfig = field(default_factory=LoopClosureConfig)
     local_smoothing: LocalSmoothingConfig = field(default_factory=LocalSmoothingConfig)
     cluster_std: ClusterStdConfig = field(default_factory=ClusterStdConfig)
@@ -507,8 +531,18 @@ class FeedForwardConfig:
     # torch.compile the transformer blocks (~25 % faster; a few seconds per process once the kernels are tuned and
     # cached, ~1 min the first time).  Falls back to eager execution if compilation fails.
     compile: bool = True
+    # torch.compile mode of the blocks.  "default" is deterministic (two runs give identical results);
+    # "max-autotune-no-cudagraphs" is ~4 % faster but picks kernels by timing them, so runs differ in rounding.
+    compile_mode: str = "default"
     # depth head under bf16 autocast (half its time; depth changes by ~0.1 %, the covisibility test allows 15 %)
     dense_head_bf16: bool = True
+    # run each pass as CUDA graphs (one per input shape, captured on first use, ~0.3 s each): removes the kernel-launch
+    # and Python overhead of a pass; the kernels and results are the same.  Needs token_cache.
+    cuda_graphs: bool = True
+    # round the current images to 8 bits (as keyframes are stored, <= 0.2 % per pixel): a keyframe's tokens are then
+    # reused when it is retrieved later.  Off: this small input change alone moved the OpenLORIS home1-1 map from 1 to 4
+    # verified loop closures (map ATE 0.109 -> 0.237 m), and it saves only one embedding per new keyframe.
+    quantize_input: bool = False
     max_refs: int = 6                    # at most this many retrieved references per forward pass
     n_ref_anchors: int = 2               # stored right images of the best references used as extra anchors
     use_curr_anchor: bool = True         # include the current right image (ablation switch)
@@ -597,6 +631,10 @@ class VisualizationConfig:
 class SystemConfig:
     """Root configuration for the CROSS system."""
     async_update: bool = False
+    # device of the filter state (hypotheses, odometry, keyframe poses, pose graph); None: the compute device.  The
+    # state is a few dozen numbers per hypothesis: on the CPU each operation costs microseconds instead of a GPU kernel
+    # launch and a synchronisation (an observation step makes ~180 of them).  Images and networks stay on the GPU.
+    state_device: Optional[str] = "cpu"
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     tracking: TrackingConfig = field(default_factory=TrackingConfig)
     mapping: MappingConfig = field(default_factory=MappingConfig)

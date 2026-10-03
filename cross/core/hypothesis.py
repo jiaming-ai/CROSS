@@ -165,7 +165,7 @@ class HypothesisManager:
         self.odom_edges: Dict[Tuple[int, int], Edge] = {}  # odom edges are always from previous kf to current kf
         self.hypotheses: Dict[int, Hypothesis] = {}
         self.system = system
-        self.device = getattr(system, "device", "cuda")
+        self.device = getattr(system, "state_device", None) or getattr(system, "device", "cuda")
         self.disappearance_counts = collections.defaultdict(int)
         # Graph-lock to guard structural reads/writes across threads (nodes/edges/adjacency)
         # Use re-entrant lock since some operations call other locked methods.
@@ -877,13 +877,21 @@ class HypothesisManager:
 
         proposal_mu = torch.stack([h['pose'] for h in proposal_hypotheses])
         
-        # Project poses to tangent space to calculate meaningful distances.
-        current_mu_proj = project_SE3(current_mu[active_comps_mask])
-        proposal_mu_proj = project_SE3(proposal_mu)
+        # Project poses to the place coordinates of the proposal clustering to calculate meaningful distances.
+        projection = getattr(self.system, "place_projection", None)
+        current_mu_proj = project_SE3(current_mu[active_comps_mask], projection=projection)
+        proposal_mu_proj = project_SE3(proposal_mu, projection=projection)
 
         # --- Step 2: Greedy Best-First Matching ---
         # Calculate the pairwise distance between every active component and every proposal.
         dist_matrix = torch.cdist(current_mu_proj, proposal_mu_proj)
+        pcfg = getattr(getattr(self.system, "config", None), "mapping", None)
+        gate = pcfg.projection.vertical_gate if pcfg is not None else 0.0
+        if gate > 0:
+            # a proposal more than the gate away vertically is another place (or a scale blow-up), not this hypothesis
+            dv = (self.system.vertical_offsets(current_mu[active_comps_mask])[:, None]
+                  - self.system.vertical_offsets(proposal_mu)[None, :])
+            dist_matrix.masked_fill_(dv.abs().to(dist_matrix.device) > gate, float("inf"))
         if self.chart_aware:
             proposal_charts = torch.tensor([h['chart_id'] for h in proposal_hypotheses],
                                            device=self.device, dtype=torch.long)

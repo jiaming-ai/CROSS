@@ -40,7 +40,7 @@ from cross.core.system import System
 from cross.core.types import Camera
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
-from cross.pipeline import add_session_args, session_factory
+from cross.pipeline import FAST_STEREO_PRESET, add_session_args, session_factory
 
 
 def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
@@ -58,7 +58,10 @@ def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
 
 
 def make_config(args) -> SystemConfig:
-    cfg = load_config(*args.config) if args.config else SystemConfig()
+    configs = list(args.config or [])
+    if getattr(args, "fast", False) and args.estimator == "ff":
+        configs.append(FAST_STEREO_PRESET)                   # explicit --max-refs / --n-ref-anchors still win
+    cfg = load_config(*configs) if configs else SystemConfig()
     cfg.async_update = False
     cfg.mapping.loop_closure.intra_enabled = not getattr(args, "no_intra_lc", False)
     lc = cfg.mapping.loop_closure
@@ -73,8 +76,10 @@ def make_config(args) -> SystemConfig:
         ff.backend = FFBackend(args.backend)
         ff.checkpoint = args.checkpoint or (
             "models/VGGT-Omega/vggt_omega_1b_512.pt" if args.backend == "vggt_omega" else "models/DA3-LARGE-1.1")
-        ff.max_refs = args.max_refs
-        ff.n_ref_anchors = args.n_ref_anchors
+        if args.max_refs is not None:
+            ff.max_refs = args.max_refs
+        if args.n_ref_anchors is not None:
+            ff.n_ref_anchors = args.n_ref_anchors
         ff.use_curr_anchor = not args.no_curr_anchor
         ff.use_odom_anchor = args.odom_anchor
         cfg.pose_est.obs_min_translation = args.obs_min_translation   # observation gating (generic option, set for the stereo estimator as before)
@@ -335,8 +340,8 @@ def main():
     ap.add_argument("--query-start", type=int, default=0)
     ap.add_argument("--query-end", type=int, default=None)
     ap.add_argument("--top-k", type=int, default=10)
-    ap.add_argument("--max-refs", type=int, default=6)
-    ap.add_argument("--n-ref-anchors", type=int, default=2)
+    ap.add_argument("--max-refs", type=int, default=None, help="references per forward pass (default: config, 6)")
+    ap.add_argument("--n-ref-anchors", type=int, default=None, help="reference right images per pass (default: config, 2)")
     ap.add_argument("--odom-anchor", action="store_true")
     ap.add_argument("--no-curr-anchor", action="store_true", help="ablation: drop the current stereo pair as scale anchor")
     ap.add_argument("--scale-method", default="adaptive")

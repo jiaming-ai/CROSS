@@ -122,15 +122,131 @@ def SE3_Adj(T: pp.LieTensor) -> torch.Tensor:
     return Adj
 
 
-def project_SE3(T: pp.LieTensor, use_heights: bool = False) -> torch.Tensor:
-    """Project a batch of SE3 objects to (x, z, yaw).
-    
+_AXES = {"x": 0, "y": 1, "z": 2}
+
+
+def vertical_vector(vertical) -> torch.Tensor:
+    """Unit vector of a vertical given as a map-frame axis name ("x", "y", "z") or as a 3-vector."""
+    if isinstance(vertical, str):
+        v = torch.zeros(3, dtype=torch.float64)
+        v[_AXES[vertical.lower()]] = 1.0
+        return v
+    v = torch.as_tensor(vertical, dtype=torch.float64).reshape(3)
+    return v / torch.linalg.vector_norm(v).clamp_min(1e-12)
+
+
+def estimate_vertical(rotations: torch.Tensor, prior: torch.Tensor, min_turn_var: float = 0.01,
+                      max_tilt_ratio: float = 0.2):
+    """Vertical of the map frame from the camera orientations of a trajectory: the axis the camera turns about.
+
+    Under rotations about one axis v, every camera axis moves on a circle around v, so the scatter of the three axis
+    directions has no spread along v. The vertical is the eigenvector of the smallest eigenvalue of that scatter,
+    accepted when the turns are large enough (second eigenvalue >= min_turn_var; 0.01 is a heading spread of about
+    +-10 deg) and the motion is close to planar (smallest / second eigenvalue <= max_tilt_ratio). Otherwise the prior
+    is returned. Uses only the estimated poses (no ground truth); the sign is aligned with the prior.
+
     Args:
-        T (pp.SE3): A pypose.SE3 tensor of shape (B, K) or any other shape.
-        
+        rotations: (N, 3, 3) camera-to-map rotation matrices.
+        prior: (3,) unit vector returned when the trajectory does not determine the vertical.
+
     Returns:
-        torch.Tensor: The projected 3D points, shape (..., 3)
+        (vertical (3,) float64 unit vector, True if estimated / False if the prior was kept)
     """
+    prior = prior.to(torch.float64)
+    R = rotations.detach().to("cpu", torch.float64)
+    if R.shape[0] < 3:
+        return prior, False
+    axes = R.transpose(1, 2).reshape(-1, 3, 3)                 # [n, i] = direction of camera axis i in the map
+    d = axes - axes.mean(dim=0, keepdim=True)
+    scatter = torch.einsum("nij,nik->jk", d, d) / R.shape[0]
+    evals, evecs = torch.linalg.eigh(scatter)                  # ascending
+    if evals[1] < min_turn_var or evals[0] > max_tilt_ratio * evals[1]:
+        return prior, False
+    v = evecs[:, 0]
+    return (v if float(v @ prior) >= 0 else -v), True
+
+
+class SE3Projection:
+    """Place coordinates of poses for proposal clustering and proposal-to-hypothesis matching.
+
+    (h1, h2, w * v, cos psi, sin psi): position along two horizontal axes of the map frame, the vertical position
+    weighted by w (w = 0 drops it), and the heading psi of the camera's most horizontal axis about the vertical.
+    With the vertical along y and w = 0 the distances are those of the original (x, z, yaw) projection.
+    """
+
+    def __init__(self, vertical, vertical_weight: float = 0.0):
+        self.vertical = vertical_vector(vertical)
+        self.vertical_weight = float(vertical_weight)
+        v = self.vertical
+        # heading reference: a camera axis of the first frame (= map frame) within 45 deg of horizontal, the optical
+        # axis (z) if it is, else x (a down-looking camera), else y
+        self.ref_axis = next(i for i in (2, 0, 1) if abs(float(v[i])) < math.sqrt(0.5) or i == 1)
+        e = torch.zeros(3, dtype=torch.float64)
+        e[self.ref_axis] = 1.0
+        h1 = e - (e @ v) * v
+        self.h1 = h1 / torch.linalg.vector_norm(h1)
+        self.h2 = torch.linalg.cross(v, self.h1)
+
+    def vertical_offset(self, T: pp.LieTensor) -> torch.Tensor:
+        """Vertical position (metres along the vertical) of a batch of poses, shape (N,)."""
+        t = T.tensor()[:, :3]
+        return t @ self.vertical.to(t.device, t.dtype)
+
+    def __call__(self, T: pp.LieTensor) -> torch.Tensor:
+        t = T.tensor()[:, :3]
+        dev, dt = t.device, t.dtype
+        v, h1, h2 = (a.to(dev, dt) for a in (self.vertical, self.h1, self.h2))
+        r = pp.SE3(T.tensor()).rotation().matrix()[:, :, self.ref_axis]
+        psi = torch.atan2(r @ h2, r @ h1)
+        cols = [t @ h1, t @ h2]
+        if self.vertical_weight > 0:
+            cols.append(self.vertical_weight * (t @ v))
+        return torch.stack(cols + [torch.cos(psi), torch.sin(psi)], dim=1)
+
+    def __repr__(self):
+        v = [round(float(a), 4) for a in self.vertical]
+        return f"SE3Projection(vertical={v}, weight={self.vertical_weight}, heading axis={'xyz'[self.ref_axis]})"
+
+
+def split_clusters_by_vertical(labels, vertical, scores, gate: float):
+    """Split each cluster (label >= 0) into groups whose vertical positions are within `gate` of the group's best-scoring
+    member, taking members by decreasing score; the best group keeps the label, the others get new labels.
+
+    Args:
+        labels: (N,) int cluster labels (-1 = noise, left as is).
+        vertical: (N,) vertical positions.
+        scores: (N,) member scores.
+    """
+    import numpy as np
+    labels = np.asarray(labels)
+    out = labels.copy()
+    next_label = int(labels.max()) + 1 if labels.size else 0
+    for k in sorted(set(labels.tolist()) - {-1}):
+        idx = np.where(labels == k)[0]
+        remaining = idx[np.argsort(-np.asarray(scores)[idx], kind="stable")]
+        first = True
+        while remaining.size:
+            near = np.abs(vertical[remaining] - vertical[remaining[0]]) <= gate
+            if not first:
+                out[remaining[near]] = next_label
+                next_label += 1
+            first = False
+            remaining = remaining[~near]
+    return out
+
+
+def project_SE3(T: pp.LieTensor, use_heights: bool = False, projection: "SE3Projection" = None) -> torch.Tensor:
+    """Project a batch of SE3 objects to (x, z, cos yaw, sin yaw), or to the place coordinates of `projection`.
+
+    Args:
+        T (pp.SE3): A pypose.SE3 tensor of shape (N, 7).
+        projection: an SE3Projection; None keeps the original ground-robot projection (camera y vertical).
+
+    Returns:
+        torch.Tensor: The projected poses, shape (N, 4) (N, 5 with a weighted vertical coordinate)
+    """
+    if projection is not None:
+        return projection(T)
     if use_heights:
         euler_angles = quaternion_to_euler_torch(T.tensor()[:, 3:])
         yaw = euler_angles[:, :1]

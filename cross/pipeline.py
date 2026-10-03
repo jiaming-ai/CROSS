@@ -27,6 +27,7 @@ frames go to System.step unchanged (the behaviour before the pipeline existed).
 from __future__ import annotations
 
 import copy
+import os
 
 import numpy as np
 
@@ -433,6 +434,12 @@ def add_session_args(ap):
                     help="mono mode: extra cross.mono.run arguments after the profile's (one quoted string), e.g. "
                          "'--cross-config mapping.loop_closure.noise.odom_k_t=0.06'")
     ap.add_argument("--vo-mask-people", action="store_true", help="visual odometry: exclude detected people from DPVO patches")
+    ap.add_argument("--fast", action="store_true",
+                    help="stereo mode: faster preset (configs/stereo_fast.yaml: 6 images per pass instead of 10, ~35 %% "
+                         "less time per observation; relocalization within noise on OpenLORIS, maps slightly less accurate)")
+
+
+FAST_STEREO_PRESET = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "stereo_fast.yaml")
 
 
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):

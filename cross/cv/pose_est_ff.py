@@ -65,32 +65,46 @@ class _PatchEmbedCache(torch.nn.Module):
         self.capacity = capacity
         self.store: OrderedDict = OrderedDict()
         self.keys: Optional[list] = None          # fingerprints of the views of the next call
+        self.override: Optional[torch.Tensor] = None   # tokens to return as they are (the CUDA-graph pass)
+        self.embed_missing = None                 # callable (normalized images) -> tokens; None: self.embed
         self.hits = self.misses = 0
 
-    def forward(self, images: torch.Tensor):
-        keys, self.keys = self.keys, None
-        if keys is None or self.capacity <= 0:
-            return self.embed(images)
+    def _embed(self, images: torch.Tensor) -> torch.Tensor:
+        if self.embed_missing is not None:
+            return self.embed_missing(images)
+        new = self.embed(images)
+        return new["x_norm_patchtokens"] if isinstance(new, dict) else new
+
+    def gather(self, images: torch.Tensor, keys: list, out: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Tokens of the normalized `images` (S, 3, H, W): cached ones reused, the others embedded and stored."""
         missing = list(OrderedDict.fromkeys(k for k in keys if k not in self.store))
         if missing:
             first = [keys.index(k) for k in missing]
-            new = self.embed(images[first])
-            new = new["x_norm_patchtokens"] if isinstance(new, dict) else new
+            new = self._embed(images[first])
             for k, t in zip(missing, new):
-                self.store[k] = t
+                self.store[k] = t.clone() if self.embed_missing is not None else t   # graph outputs are reused
         self.hits += len(keys) - len(missing)
         self.misses += len(missing)
-        out = torch.stack([self.store[k] for k in keys])
+        tokens = torch.stack([self.store[k] for k in keys], out=out)
         for k in keys:
             self.store.move_to_end(k)
         while len(self.store) > self.capacity:
             self.store.popitem(last=False)
-        return out
+        return tokens
+
+    def forward(self, images: torch.Tensor):
+        if self.override is not None:
+            return self.override
+        keys, self.keys = self.keys, None
+        if keys is None or self.capacity <= 0:
+            return self.embed(images)
+        return self.gather(images, keys)
 
 
 class _VGGTOmegaBackend(_Backend):
     def __init__(self, checkpoint: str, device: str, half_weights: bool = True, token_cache: int = 0,
-                 compile_blocks: bool = False, dense_head_bf16: bool = False):
+                 compile_blocks: bool = False, dense_head_bf16: bool = False,
+                 compile_mode: str = "default", cuda_graphs: bool = False):
         from vggt_omega.models import VGGTOmega
         from vggt_omega.utils.pose_enc import encoding_to_camera
         self._decode = encoding_to_camera
@@ -116,6 +130,13 @@ class _VGGTOmegaBackend(_Backend):
             self.token_cache = _PatchEmbedCache(self.model.aggregator.patch_embed, token_cache)
             self.model.aggregator.patch_embed = self.token_cache
         self.dense_head_bf16 = dense_head_bf16
+        self._head_stream = None
+        self.cuda_graphs = bool(cuda_graphs) and self.token_cache is not None
+        self._graphs: dict = {}
+        self._dino_graphs: dict = {}
+        self._graph_pool = None
+        if self.cuda_graphs:
+            self.token_cache.embed_missing = self._embed_graphed
         self._compiled = []
         if compile_blocks:
             # torch.compile of every transformer block (frame, global and DINO blocks share one graph); dynamic shapes
@@ -124,12 +145,12 @@ class _VGGTOmegaBackend(_Backend):
             embed = self.token_cache.embed if self.token_cache is not None else agg.patch_embed
             self._compiled = list(agg.frame_blocks) + list(agg.inter_frame_blocks) + list(getattr(embed, "blocks", []))
             for block in self._compiled:
-                block.compile(dynamic=True, mode="max-autotune-no-cudagraphs")
+                block.compile(dynamic=True, mode=None if compile_mode == "default" else compile_mode)
 
     def warmup(self, resolution: int):
         """Load / tune the compiled kernels now (a few seconds) rather than in the first observation.  The kernels
         are compiled for dynamic shapes, so one pass of any size serves all later ones."""
-        if not self._compiled:
+        if not self._compiled and not self.cuda_graphs:
             return
         t0 = time.perf_counter()
         h = max(16, int(round(resolution * 0.75 / 16)) * 16)
@@ -151,45 +172,126 @@ class _VGGTOmegaBackend(_Backend):
         """Content keys of the views (the same image always gets the same key, whatever the batch)."""
         return content_keys(images.float())
 
-    @torch.inference_mode()
-    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None) -> FFPrediction:
-        images = images.to(self.device)
+    def _heads(self, x: torch.Tensor, tokens: list, start: int, k: int):
+        """Camera head (all views) and depth head (first k views); the camera head runs on a side stream, concurrently
+        with the depth head (both only read the tokens)."""
         m = self.model
-        if self.token_cache is not None:
-            self.token_cache.keys = self.fingerprints(images)
-        x = images[None]
-        keys = self.token_cache.keys if self.token_cache is not None else None
-        try:
-            with torch.autocast(device_type="cuda", dtype=self.dtype):    # VGGTOmega.forward, depth for n_depth views
-                tokens, start = m.aggregator(x)
-        except Exception as err:      # noqa: BLE001  a compiler failure (missing toolchain, unsupported GPU)
-            if not self._compiled:
-                raise
-            self._eager(err)
-            if self.token_cache is not None:
-                self.token_cache.keys = keys
-            with torch.autocast(device_type="cuda", dtype=self.dtype):
-                tokens, start = m.aggregator(x)
-        pred = {}
-        with torch.autocast(device_type="cuda", enabled=False):
-            pred["pose_enc"] = m.camera_head(tokens, patch_token_start=start)
-        k = x.shape[1] if n_depth is None else min(int(n_depth), x.shape[1])
+        main = torch.cuda.current_stream()
+        if self._head_stream is None:
+            self._head_stream = torch.cuda.Stream(device=x.device)
+        self._head_stream.wait_stream(main)
+        with torch.cuda.stream(self._head_stream), torch.autocast(device_type="cuda", enabled=False):
+            pose_enc = m.camera_head(tokens, patch_token_start=start)
         sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
         with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
             depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
-        pred["depth"], pred["depth_conf"] = depth.float(), conf.float()
+        main.wait_stream(self._head_stream)
+        return pose_enc, depth.float(), conf.float()
+
+    def _forward(self, x: torch.Tensor, k: int, patch_tokens: Optional[torch.Tensor] = None):
+        """VGGTOmega.forward (aggregator, camera head, depth head for the first k views).  patch_tokens: the views'
+        DINO tokens, computed beforehand (the aggregator then skips its patch embedding)."""
+        if patch_tokens is not None:
+            self.token_cache.override = patch_tokens
+        try:
+            with torch.autocast(device_type="cuda", dtype=self.dtype):
+                tokens, start = self.model.aggregator(x)
+        finally:
+            if patch_tokens is not None:
+                self.token_cache.override = None
+        return self._heads(x, tokens, start, k)
+
+    def _capture(self, fn):
+        """CUDA graph of fn() (after two warm-up calls on a side stream); all graphs share one memory pool."""
+        side = torch.cuda.Stream(device=self.device)
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            for _ in range(2):
+                fn()
+        torch.cuda.current_stream().wait_stream(side)
+        if self._graph_pool is None:
+            self._graph_pool = torch.cuda.graph_pool_handle()
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, pool=self._graph_pool):
+            out = fn()
+        return graph, out
+
+    def _embed_graphed(self, normalized: torch.Tensor) -> torch.Tensor:
+        """DINO tokens of normalized images through a CUDA graph per batch shape (outputs are overwritten by the next
+        replay; the token cache stores copies)."""
+        key = tuple(normalized.shape)
+        entry = self._dino_graphs.get(key)
+        if entry is None:
+            x_in = normalized.clone()
+            embed = self.token_cache.embed
+
+            def fn():
+                with torch.autocast(device_type="cuda", dtype=self.dtype):
+                    out = embed(x_in)
+                return out["x_norm_patchtokens"] if isinstance(out, dict) else out
+            graph, out = self._capture(fn)
+            entry = self._dino_graphs[key] = (graph, x_in, out)
+        graph, x_in, out = entry
+        x_in.copy_(normalized)
+        graph.replay()
+        return out
+
+    def _forward_graphed(self, x: torch.Tensor, keys: list, k: int):
+        """The whole pass as CUDA graphs: one per input shape (views, image size, depth views) for the aggregator and
+        heads, and one per batch size for the DINO embedding of the images not cached.  One launch replaces the
+        thousands of kernel launches (and Python / guard overhead) of a pass; the kernels are the same."""
+        agg = self.model.aggregator
+        normalized = (x[0] - agg._resnet_mean[0]) / agg._resnet_std[0]     # as Aggregator.forward does
+        tokens = self.token_cache.gather(normalized, keys)
+        key = (tuple(x.shape), tuple(tokens.shape), tokens.dtype, k)
+        entry = self._graphs.get(key)
+        if entry is None:
+            x_in, t_in = x.clone(), tokens.clone()
+            graph, out = self._capture(lambda: self._forward(x_in, k, patch_tokens=t_in))
+            entry = self._graphs[key] = (graph, x_in, t_in, out)
+        graph, x_in, t_in, out = entry
+        x_in.copy_(x)
+        t_in.copy_(tokens)
+        graph.replay()
+        return tuple(o.clone() for o in out)
+
+    @torch.inference_mode()
+    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None) -> FFPrediction:
+        images = images.to(self.device)
+        x = images[None]
+        k = x.shape[1] if n_depth is None else min(int(n_depth), x.shape[1])
+        keys = self.fingerprints(images) if self.token_cache is not None else None
+        out = None
+        if self.cuda_graphs and self.token_cache is not None and self.token_cache.capacity > 0:
+            try:
+                out = self._forward_graphed(x, keys, k)
+            except Exception as err:      # noqa: BLE001  capture not supported here: run without graphs
+                logger.warning(f"CUDA graphs of VGGT-Omega failed ({type(err).__name__}: {str(err)[:200]}); running without")
+                self.cuda_graphs = False
+                self.token_cache.embed_missing = None
+        if out is None:
+            if self.token_cache is not None:
+                self.token_cache.keys = keys
+            try:
+                out = self._forward(x, k)
+            except Exception as err:      # noqa: BLE001  a compiler failure (missing toolchain, unsupported GPU)
+                if not self._compiled:
+                    raise
+                self._eager(err)
+                if self.token_cache is not None:
+                    self.token_cache.keys = keys
+                out = self._forward(x, k)
+        pose_enc, depth, conf = out
         hw = tuple(images.shape[-2:])
-        extr, intr = self._decode(pred["pose_enc"], hw)          # (1,S,3,4) w2c, (1,S,3,3)
+        extr, intr = self._decode(pose_enc, hw)                  # (1,S,3,4) w2c, (1,S,3,3)
         w2c = extr[0].float().cpu().numpy().astype(np.float64)
         c2w = invert_poses(_to_h(w2c))
-        depth = pred["depth"][0].float()                         # (S,H,W,1) or (S,H,W)
+        depth = depth[0]                                         # (k,H,W,1) or (k,H,W)
         if depth.dim() == 4:
             depth = depth[..., 0]
-        conf = pred.get("depth_conf")
-        if conf is not None:
-            conf = conf[0].float()
-            if conf.dim() == 4:
-                conf = conf[..., 0]
+        conf = conf[0]
+        if conf.dim() == 4:
+            conf = conf[..., 0]
         return FFPrediction(c2w=c2w, K=intr[0].float().cpu().numpy(), depth=depth, depth_conf=conf, hw=hw)
 
 
@@ -315,7 +417,8 @@ class PoseEstFeedForward:
         if config.backend == FFBackend.VGGT_OMEGA:
             self.backend = _VGGTOmegaBackend(config.checkpoint, device, half_weights=config.half_precision_weights,
                                              token_cache=config.token_cache, compile_blocks=config.compile,
-                                             dense_head_bf16=config.dense_head_bf16)
+                                             dense_head_bf16=config.dense_head_bf16, compile_mode=config.compile_mode,
+                                             cuda_graphs=config.cuda_graphs)
             self.backend.warmup(config.image_resolution)
         elif config.backend == FFBackend.DA3:
             self.backend = _DA3Backend(config.checkpoint, device, process_res=config.da3_process_res)
@@ -328,6 +431,33 @@ class PoseEstFeedForward:
 
     def set_stereo_calibration(self, T_right_in_left: np.ndarray):
         self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
+
+    def _as_model_input(self, views: List[torch.Tensor]) -> torch.Tensor:
+        images = torch.stack([v.to(self.device) for v in views], dim=0).float()
+        if images.max() > 1.5:
+            images = images / 255.0
+        if self.config.quantize_input:
+            # the 8-bit grid keyframes are stored on (cross.db.db.to_uint8_image): a keyframe made from this image then
+            # comes back as a reference with the same pixels, and its tokens are found in the token cache
+            images = (images.clamp(0, 1) * 255.0).round() / 255.0
+        return images
+
+    @torch.inference_mode()
+    def precompute(self, images: List[torch.Tensor], batch: int = 8):
+        """Patch tokens of images that will be references (the keyframes of a loaded map), into the token cache."""
+        backend = self.backend
+        cache = getattr(backend, "token_cache", None)
+        if cache is None or cache.capacity <= 0 or not images:
+            return
+        t0, n0 = time.perf_counter(), cache.misses
+        images = images[: cache.capacity]
+        for i in range(0, len(images), batch):
+            x = self._as_model_input(images[i:i + batch])
+            agg = backend.model.aggregator
+            with torch.autocast(device_type="cuda", dtype=backend.dtype):     # as inside Aggregator.forward
+                cache.gather((x - agg._resnet_mean[0]) / agg._resnet_std[0], backend.fingerprints(x))
+        torch.cuda.synchronize()
+        logger.info(f"token cache: {cache.misses - n0} map images embedded in {time.perf_counter() - t0:.1f}s")
 
     # ------------------------------------------------------------------ #
     @timeit
@@ -406,9 +536,7 @@ class PoseEstFeedForward:
                     anchors.append(ScaleAnchor(idx_a=1 + i, idx_b=1 + j, T_ab=np.asarray(T_ij, dtype=np.float64),
                                                kind="map", weight=cfg.map_anchor_weight))
 
-        images = torch.stack([v.to(self.device) for v in views], dim=0).float()
-        if images.max() > 1.5:
-            images = images / 255.0
+        images = self._as_model_input(views)
 
         t_model = time.perf_counter()
         # depth is used for the current view and the references (and the frontend's anchor view)
