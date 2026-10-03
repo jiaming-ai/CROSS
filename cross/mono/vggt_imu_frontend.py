@@ -17,6 +17,7 @@ rotation, wide translation covariance)."""
 from dataclasses import replace
 from time import perf_counter
 
+import cv2
 import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
@@ -84,6 +85,14 @@ class VggtImuFrontend:
         self.rotation_gate_deg_graph = 2.0       # deg: a pass whose rotation disagrees with the gyro's is not used
         # adaptive measurement times: (min frames, max frames, min translation m, min rotation deg), or None
         self.adaptive = None
+        # optional tracked features (graph mode, vgio_klt): corners detected on each measured frame and tracked frame
+        # to frame (pyramidal Lucas-Kanade, forward-backward check); at the next measurement their essential matrix
+        # with the calibrated intrinsics gives the rotation between the two frames, a factor when it has enough
+        # inliers and agrees with the gyro.  Without texture there is no factor and the graph is unchanged
+        self.klt = False
+        self.klt_gray = None
+        self.klt_m = None                        # corners on the last measured frame
+        self.klt_cur = None                      # their tracked positions in the current frame
         self.standalone = True                   # no back end: every measurement is a forward pass of its own
         self.continuous_start = False
         self.imu_calib = None
@@ -170,7 +179,8 @@ class VggtImuFrontend:
                                    depth_std_floor=ic.depth_prior_std_floor, huber=ic.huber, rot_std=ic.vgio_rot_std,
                                    depth_bias_std=ic.vgio_depth_bias_std, rot_rel=ic.vgio_rot_rel,
                                    accel_bias_std=ic.accel_bias_std, accel_bias_walk=ic.accel_bias_walk,
-                                   gyro_dt_noise=ic.vgio_gyro_dt_noise, accel_dt_noise=ic.vgio_accel_dt_noise)
+                                   gyro_dt_noise=ic.vgio_gyro_dt_noise, accel_dt_noise=ic.vgio_accel_dt_noise,
+                                   rot_scale=ic.vgio_rot_scale)
                 self.graph = VgiGraph(gcfg, c.T_cam_imu, c.gyro_noise_density, c.accel_noise_density)
                 self.scale_filter = _GraphEstimate(self.graph)
             else:
@@ -180,6 +190,11 @@ class VggtImuFrontend:
                 self.scale_filter = InertialScaleFilter(imu_cfg, c.T_cam_imu, c.gyro_noise_density,
                                                         c.accel_noise_density)
         ic = self.config.imu
+        self.klt = bool(ic.vgio_klt and self.use_graph)
+        if self.klt:
+            t0 = perf_counter()
+            self._klt_track(rgb)
+            self.stats["t_klt"] = self.stats.get("t_klt", 0.0) + perf_counter() - t0
         if ic.vgio_adaptive and self.adaptive is None:
             self.adaptive = (ic.vgio_min_interval, ic.vgio_max_interval, ic.vgio_min_translation, ic.vgio_min_rotation_deg)
         self._add_imu(frame)
@@ -239,6 +254,8 @@ class VggtImuFrontend:
         if self.standalone:
             self.after_backend(None)
         diagnostics["frontend_seconds"] = perf_counter() - start
+        self.stats["t_track"] = self.stats.get("t_track", 0.0) + diagnostics["frontend_seconds"]
+        self.stats["frames"] = self.stats.get("frames", 0) + 1
         self.last_timestamp = timestamp
         self.index += 1
         return MonoEstimate(float(frame["timestamp"]), self.metric_pose.copy(), delta, covariance, None, diagnostics)
@@ -282,12 +299,15 @@ class VggtImuFrontend:
             return
         index = self._frame[0]
         due = self._due(index)
+        t0 = perf_counter()
         if self.m is not None and observed is not None and self.pending is not None \
                 and observed.get("token") == self.pending["token"] and index > self.m["index"]:
             self.stats["backend_measurements"] += 1
             self._measure(observed)              # the back end's pass carries the anchor (offered only when due)
         elif due:
             self._measure(self._own_pass())
+        if due or observed is not None:
+            self.stats["t_measure"] = self.stats.get("t_measure", 0.0) + perf_counter() - t0
         self.pending = None
 
     def _due(self, index):
@@ -338,6 +358,40 @@ class VggtImuFrontend:
         return out
 
     # ------------------------------------------------------------------ the visual measurement
+    def _klt_track(self, rgb):
+        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+        if self.klt_gray is not None and self.klt_cur is not None and len(self.klt_cur) >= 8:
+            lk = dict(winSize=(21, 21), maxLevel=3, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
+            p1, st, _ = cv2.calcOpticalFlowPyrLK(self.klt_gray, gray, self.klt_cur, None, **lk)
+            p0, st2, _ = cv2.calcOpticalFlowPyrLK(gray, self.klt_gray, p1, None, **lk)
+            ok = (st[:, 0] == 1) & (st2[:, 0] == 1) & (np.linalg.norm((p0 - self.klt_cur)[:, 0], axis=1) < 1.0)
+            self.klt_cur, self.klt_m = p1[ok], self.klt_m[ok]
+        self.klt_gray = gray
+
+    def _klt_detect(self):
+        pts = cv2.goodFeaturesToTrack(self.klt_gray, maxCorners=300, qualityLevel=0.01, minDistance=8)
+        self.klt_m = None if pts is None else pts.astype(np.float32)
+        self.klt_cur = None if pts is None else pts.astype(np.float32).copy()
+
+    def _klt_rotation(self, gyro_mb):
+        """(R of the current camera in the last measured frame's camera, std) from the tracked corners, or None."""
+        if self.klt_m is None or self.klt_cur is None or len(self.klt_cur) < 30:
+            return None
+        a, b = self.klt_m[:, 0].astype(np.float64), self.klt_cur[:, 0].astype(np.float64)
+        E, mask = cv2.findEssentialMat(a, b, self.K, method=cv2.RANSAC, prob=0.999, threshold=1.0)
+        if E is None or E.shape != (3, 3):
+            return None
+        n, R, t, mask2 = cv2.recoverPose(E, a, b, self.K, mask=mask)
+        inliers = int((mask2 > 0).sum()) if mask2 is not None else 0
+        if inliers < 30 or inliers < 0.5 * len(a):
+            return None
+        R_mb = R.T                                # x_b = R x_m + t: camera b's orientation in camera m
+        if _angle_deg(gyro_mb.T @ R_mb) > 1.0:
+            self.stats["klt_rejected"] = self.stats.get("klt_rejected", 0) + 1
+            return None
+        self.stats["klt_used"] = self.stats.get("klt_used", 0) + 1
+        return R_mb, np.radians(0.15) * np.sqrt(100.0 / max(inliers, 30))
+
     def _learned_depth(self, rgb, pass_depth, index):
         """Learned metric depth of this frame against a depth map of it (same pixels): a scale observation, at most
         every depth_every frames."""
@@ -345,7 +399,9 @@ class VggtImuFrontend:
         if self.metric is None or not self.config.imu.depth_prior or index - self.last_depth_index < every:
             return None
         self.last_depth_index = index
+        t0 = perf_counter()
         metric = self.metric.predict_metric(rgb, self.K, rgb.shape[:2])
+        self.stats["t_da3"] = self.stats.get("t_da3", 0.0) + perf_counter() - t0
         metric_v = self.depth_transform(torch.from_numpy(np.asarray(metric, dtype=np.float32))[None])[0].numpy()
         source = pass_depth.float().cpu().numpy()
         if metric_v.shape != source.shape:
@@ -374,6 +430,8 @@ class VggtImuFrontend:
             if da3 is not None:
                 G.add_depth(node, *da3)
             self._set_m(index, timestamp, rgb, None, conf_curr, node=node, pass_depth=depth_curr)
+            if self.klt:
+                self._klt_detect()
             T0 = np.eye(4)
             T0[:3, :3], T0[:3, 3] = G.R[node], G.p[node]
             self.m["rep"] = T0
@@ -399,6 +457,9 @@ class VggtImuFrontend:
         link_ok = bool(np.isfinite(ratio) and spread < 0.25)
         lam_init = G.lam[m_node] + (np.log(ratio) if link_ok else 0.0)
         j = G.add_node(pre, jac, lam_init, timestamp)
+        klt = self._klt_rotation(gyro_mb) if self.klt else None
+        if klt is not None:
+            G.add_rotation(m_node, j, *klt)
         if pass_ok:
             G.add_relative(m_node, j, j, T_mb[:3, :3], T_mb[:3, 3])
             if link_ok:
@@ -422,8 +483,10 @@ class VggtImuFrontend:
         if da3 is not None:
             G.add_depth(j, *da3)
         est = self.scale_filter
+        t0 = perf_counter()
         info = G.solve(need_std=not est.initialized)
         G.marginalize()
+        self.stats["t_graph"] = self.stats.get("t_graph", 0.0) + perf_counter() - t0
         if np.isfinite(info.get("lam_std", float("nan"))):
             est.lam_std = info["lam_std"]
         if not est.initialized and len(G.ids) >= 4 and est.lam_std < self.config.imu.init_log_std:
@@ -448,12 +511,15 @@ class VggtImuFrontend:
         self.stats["measurements"] += 1
         self.last_info = {"measured": True, "nodes": len(G.ids), "lam": float(lam), "lam_std": est.lam_std,
                           "gyro_bias": G.bg.round(5).tolist(), "accel_bias": G.ba.round(4).tolist(),
-                          "depth_bias": float(np.exp(G.beta)), "gravity_norm": float(np.linalg.norm(G.g)),
+                          "depth_bias": float(np.exp(G.beta)), "rot_scale": float(np.exp(G.kappa)),
+                          "gravity_norm": float(np.linalg.norm(G.g)),
                           "speed": float(np.linalg.norm(v)), "link_ok": link_ok, "keyframe": kf_used,
                           "time_offset": self.time_offset, "cost": info.get("cost"), "m_index": int(self.m["index"]),
                           "b_index": int(index)}
         self._set_m(index, timestamp, rgb, None, conf_curr, node=j, pass_depth=depth_curr)
         self.m["rep"] = rep
+        if self.klt:
+            self._klt_detect()
 
     def _measure(self, obs):
         if self.use_graph:
@@ -586,7 +652,7 @@ class VggtImuFrontend:
         cfg = self.config.imu
         if self.time_offset_done or cfg.time_offset_after <= 0 or a1 <= a0:
             return
-        self.rate_log.append((0.5 * (a0 + a1), _so3_log(dR_vis_imu) / (a1 - a0)))
+        self.rate_log.append((0.5 * (a0 + a1), _so3_log(dR_vis_imu) / (a1 - a0), a1 - a0))
         # graph mode: a first calibration after 20 measurements (6 s), a final one after 100; the window's IMU
         # factors are preintegrated again with the new offset
         need = (20 if not self._offset_rounds else 100) if self.use_graph else max(30, cfg.time_offset_after // max(1, self.interval))
@@ -599,10 +665,24 @@ class VggtImuFrontend:
             return                           # too little rotation to see an offset (a standing robot): wait
         buf = self.imu_buffer
         errs = []
-        for off in np.arange(-cfg.time_offset_max, cfg.time_offset_max + 1e-9, 0.005):
-            # mean gyro rate over each interval (the rates are interval averages)
-            g = np.stack([np.interp(tm - off, buf[:, 0], buf[:, 1 + j]) for j in range(3)], axis=1) - self.gyro_bias
-            errs.append((float(np.sqrt(((g - rates) ** 2).sum(1).mean())), float(off)))
+        if self.use_graph:
+            # the gyro integrated over each measured interval against the visual rotation of the interval (a rotation
+            # vector to first order; robust median): sharper than rates at interval midpoints when the gyro is sampled
+            # at the frame rate (KITTI's OXTS, 10 Hz: 0.07 deg per 0.3 s at the right offset, 0.22 deg at zero)
+            t = buf[:, 0]
+            w = buf[:, 1:4] - self.gyro_bias
+            cum = np.concatenate([np.zeros((1, 3)), np.cumsum(0.5 * (w[1:] + w[:-1]) * np.diff(t)[:, None], axis=0)])
+            half = np.array([0.5 * r[2] for r in self.rate_log])                  # interval half lengths
+            target = rates * (2 * half)[:, None]                                  # visual rotation vectors
+            for off in np.arange(-cfg.time_offset_max, cfg.time_offset_max + 1e-9, 0.0025):
+                lo, hi = tm - half - off, tm + half - off
+                integ = np.stack([np.interp(hi, t, cum[:, j]) - np.interp(lo, t, cum[:, j]) for j in range(3)], axis=1)
+                errs.append((float(np.median(np.linalg.norm(integ - target, axis=1))), float(off)))
+        else:
+            for off in np.arange(-cfg.time_offset_max, cfg.time_offset_max + 1e-9, 0.005):
+                # mean gyro rate over each interval (the rates are interval averages)
+                g = np.stack([np.interp(tm - off, buf[:, 0], buf[:, 1 + j]) for j in range(3)], axis=1) - self.gyro_bias
+                errs.append((float(np.sqrt(((g - rates) ** 2).sum(1).mean())), float(off)))
         best = min(errs)
         at_zero = min(errs, key=lambda e: abs(e[1]))
         old = self.time_offset
@@ -619,7 +699,8 @@ class VggtImuFrontend:
         self.rate_log = []
 
     def shutdown(self):
-        pass
+        from loguru import logger
+        logger.info(f"VGGT-IMU frontend: {self.stats}")
 
 
 class _GraphEstimate:

@@ -9,6 +9,8 @@ some earlier nodes' frames).  Unknowns:
     global         g          gravity (world), |g| = 9.81
                    b_g, b_a   gyroscope and accelerometer biases (constant in the window, random walk on marginalization)
                    beta       log bias of learned metric depth (optional)
+                   kappa      log scale of the model's rotation angles (optional; e.g. a focal length estimated
+                              too short makes every rotation too large: KITTI 07, +4-6 %)
 
 Factors:
 
@@ -49,6 +51,9 @@ class GraphConfig:
     depth_bias: bool = False             # estimate the learned-depth bias
     depth_bias_std: float = 0.3
     depth_bias_drift: float = 0.005      # per sqrt(s)
+    rot_scale: bool = False              # estimate the rotation scale of the passes (calibrated against the gyro)
+    rot_scale_std: float = 0.05
+    rot_scale_drift: float = 0.001       # per sqrt(s)
     gravity_std: float = 0.3
     gravity_norm_std: float = 0.05
     gravity_drift: float = 0.02
@@ -124,6 +129,14 @@ class _Imu:
 
 
 @dataclass
+class _Rot:
+    a: int                       # a rotation-only measurement (e.g. tracked features with the calibrated camera)
+    b: int
+    R: np.ndarray
+    std: float
+
+
+@dataclass
 class _Rel:
     a: int                       # absolute node ids, pose of b in a's camera frame (pass units)
     b: int
@@ -151,8 +164,10 @@ class VgiGraph:
         self.bg0 = np.zeros(3)
         self.ba = np.zeros(3)
         self.beta = 0.0
+        self.kappa = 0.0                    # log rotation scale of the passes (rot_scale)
         self.imu: list[_Imu] = []
         self.rel: list[_Rel] = []
+        self.rots: list[_Rot] = []
         self.links: list[tuple] = []             # (j, k, log ratio, std): lam_j - lam_k = log ratio
         self.depth: dict[int, tuple] = {}        # node -> (log observation, std)
         self.prior = None                        # (L, node id, x_lin) on (node, globals)
@@ -163,7 +178,11 @@ class VgiGraph:
     # ------------------------------------------------------------------ building
     @property
     def n_global(self):
-        return 9 + int(self.cfg.depth_bias)
+        return 9 + int(self.cfg.depth_bias) + int(self.cfg.rot_scale)
+
+    @property
+    def i_kappa(self):
+        return 9 + int(self.cfg.depth_bias)          # offset of kappa among the globals
 
     def start(self, R_wc, accel_mean_body, lam0, t0, bg0=None):
         """The first node: gravity from the mean specific force, the gauge fixed at R_wc, p = 0."""
@@ -240,6 +259,11 @@ class VgiGraph:
         if a in self.R and b in self.R and s in self.R:
             self.rel.append(_Rel(a, b, s, np.asarray(R_ab, dtype=np.float64), np.asarray(t_ab, dtype=np.float64)))
 
+    def add_rotation(self, a, b, R_ab, std):
+        """A relative rotation of the cameras (not subject to the passes' rotation scale)."""
+        if a in self.R and b in self.R:
+            self.rots.append(_Rot(a, b, np.asarray(R_ab, dtype=np.float64), float(std)))
+
     def add_link(self, j, k, log_ratio, std=None):
         if j in self.R and k in self.R and np.isfinite(log_ratio):
             self.links.append((j, k, float(log_ratio), float(std if std is not None else self.cfg.link_std)))
@@ -260,6 +284,7 @@ class VgiGraph:
         G = 10 * n
         dg, dbg, dba = d[G:G + 3], d[G + 3:G + 6], d[G + 6:G + 9]
         dbeta = d[G + 9] if cfg.depth_bias else None
+        dkappa = d[G + self.i_kappa] if cfg.rot_scale else None
         T = lambda x: torch.as_tensor(np.asarray(x), dtype=torch.float64)
         R0 = T(np.stack([self.R[i] for i in ids]))
         R = R0 @ _exp_t(dn[:, 0:3])
@@ -270,6 +295,7 @@ class VgiGraph:
         bg = T(self.bg) + dbg
         ba = T(self.ba) + dba
         beta = (self.beta + dbeta) if cfg.depth_bias else None
+        kappa = (self.kappa + dkappa) if cfg.rot_scale else None
         Rcb, tcb = T(self.R_cb), T(self.t_cb)
         out = []
         # IMU
@@ -297,7 +323,10 @@ class VgiGraph:
             aa = torch.as_tensor([col[f.a] for f in self.rel])
             bb = torch.as_tensor([col[f.b] for f in self.rel])
             ss = torch.as_tensor([col[f.s] for f in self.rel])
-            Rm = T(np.stack([f.R for f in self.rel]))
+            if kappa is not None:
+                Rm = _exp_t(torch.exp(-kappa) * T(np.stack([_log(f.R) for f in self.rel])))
+            else:
+                Rm = T(np.stack([f.R for f in self.rel]))
             tm = T(np.stack([f.t for f in self.rel]))
             ang = T(np.array([np.linalg.norm(_log(f.R)) for f in self.rel]))[:, None]
             rot_sig = torch.sqrt(cfg.rot_std ** 2 + (cfg.rot_rel * ang) ** 2)
@@ -309,6 +338,16 @@ class VgiGraph:
             rt = (torch.exp(-lam[ss])[:, None] * rel_t - tm) / sig
             w = T(weights if weights is not None else np.ones(len(self.rel)))[:, None]
             out.append((w * torch.cat([rr, rt], -1)).reshape(-1))
+        # rotation-only measurements (Huber: a weight per factor from the current residual, as for the passes)
+        if self.rots:
+            aa = torch.as_tensor([col[f.a] for f in self.rots])
+            bb = torch.as_tensor([col[f.b] for f in self.rots])
+            Rm = T(np.stack([f.R for f in self.rots]))
+            sd = T([f.std for f in self.rots])[:, None]
+            rr = _log_t(Rm.transpose(-1, -2) @ R[aa].transpose(-1, -2) @ R[bb]) / sd
+            wr = T(self._rot_w if getattr(self, "_rot_w", None) is not None and len(self._rot_w) == len(self.rots)
+                   else np.ones(len(self.rots)))[:, None]
+            out.append((wr * rr).reshape(-1))
         # gauge links
         if self.links:
             jj = torch.as_tensor([col[l[0]] for l in self.links])
@@ -333,6 +372,8 @@ class VgiGraph:
             out.append(ba / cfg.accel_bias_std)
             if beta is not None:
                 out.append((beta / cfg.depth_bias_std)[None])
+            if kappa is not None:
+                out.append((kappa / cfg.rot_scale_std)[None])
         else:
             L, i0, xl = self.prior
             k0 = col[i0]
@@ -340,6 +381,8 @@ class VgiGraph:
                      g - T(xl["g"]), bg - T(xl["bg"]), ba - T(xl["ba"])]
             if beta is not None:
                 parts.append((beta - xl["beta"])[None])
+            if kappa is not None:
+                parts.append((kappa - xl["kappa"])[None])
             out.append(T(L).T @ torch.cat(parts))
         return torch.cat(out)
 
@@ -350,7 +393,12 @@ class VgiGraph:
                          for f in self.rel])
 
     def _rel_weights(self):
-        """Huber weights of the relative-pose factors at the current estimate."""
+        """Huber weights of the relative-pose factors (and of the rotation-only factors, kept in _rot_w) at the
+        current estimate."""
+        self._rot_w = None
+        if self.rots:
+            e = np.array([np.linalg.norm(_log(f.R.T @ self.R[f.a].T @ self.R[f.b])) / f.std for f in self.rots]) / np.sqrt(3)
+            self._rot_w = np.where(e <= self.cfg.huber, 1.0, np.sqrt(self.cfg.huber / np.maximum(e, 1e-12)))
         if not self.rel:
             return None
         with torch.no_grad():
@@ -375,6 +423,8 @@ class VgiGraph:
         self.ba = self.ba + d[G + 6:G + 9]
         if self.cfg.depth_bias:
             self.beta = self.beta + d[G + 9]
+        if self.cfg.rot_scale:
+            self.kappa = self.kappa + d[G + self.i_kappa]
 
     def _system(self, weights):
         D = 10 * len(self.ids) + self.n_global
@@ -425,14 +475,14 @@ class VgiGraph:
     def _save(self):
         return ({i: self.R[i].copy() for i in self.ids}, {i: self.p[i].copy() for i in self.ids},
                 {i: self.v[i].copy() for i in self.ids}, dict(self.lam), self.g.copy(), self.bg.copy(), self.ba.copy(),
-                self.beta)
+                self.beta, self.kappa)
 
     def _restore(self, s):
         self.R.update(s[0])
         self.p.update(s[1])
         self.v.update(s[2])
         self.lam.update(s[3])
-        self.g, self.bg, self.ba, self.beta = s[4], s[5], s[6], s[7]
+        self.g, self.bg, self.ba, self.beta, self.kappa = s[4], s[5], s[6], s[7], s[8]
 
     # ------------------------------------------------------------------ marginalization
     def marginalize(self):
@@ -444,6 +494,8 @@ class VgiGraph:
         i0, i1 = self.ids[0], self.ids[1]
         keep_rel = [f for f in self.rel if i0 not in (f.a, f.b, f.s)]
         mar_rel = [f for f in self.rel if (i0 in (f.a, f.b, f.s)) and {f.a, f.b, f.s} <= {i0, i1}]
+        keep_rots = [f for f in self.rots if i0 not in (f.a, f.b)]
+        mar_rots = [f for f in self.rots if (i0 in (f.a, f.b)) and {f.a, f.b} <= {i0, i1}]
         keep_links = [l for l in self.links if i0 not in (l[0], l[1])]
         mar_links = [l for l in self.links if (i0 in (l[0], l[1])) and {l[0], l[1]} <= {i0, i1}]
         # the factors involving only nodes 0 and 1 (and the globals), on a two-node sub-problem
@@ -451,6 +503,7 @@ class VgiGraph:
         self.ids = [i0, i1]
         self.imu = [f for f in self.imu if f.i == i0]
         self.rel = mar_rel
+        self.rots = mar_rots
         self.links = mar_links
         self.depth = {i: o for i, o in full[4].items() if i == i0}
         w = self._rel_weights()
@@ -472,6 +525,9 @@ class VgiGraph:
         cov[16:19, 16:19] += np.eye(3) * cfg.accel_bias_walk ** 2 * dt
         if cfg.depth_bias:
             cov[19, 19] += cfg.depth_bias_drift ** 2 * dt
+        if cfg.rot_scale:
+            k = 10 + self.i_kappa
+            cov[k, k] += cfg.rot_scale_drift ** 2 * dt
         # square root of the information (L L^T = cov^-1) by an eigendecomposition: a Cholesky factor fails when the
         # matrix is barely positive definite (KITTI 07: positions of hundreds of metres)
         w, V = np.linalg.eigh(0.5 * (cov + cov.T))
@@ -481,11 +537,13 @@ class VgiGraph:
         xl = {"R": self.R[i1] @ _exp(mean_shift[0:3]), "p": self.p[i1] + mean_shift[3:6],
               "v": self.v[i1] + mean_shift[6:9], "lam": self.lam[i1] + mean_shift[9],
               "g": self.g + mean_shift[10:13], "bg": self.bg + mean_shift[13:16], "ba": self.ba + mean_shift[16:19],
-              "beta": self.beta + (mean_shift[19] if cfg.depth_bias else 0.0)}
+              "beta": self.beta + (mean_shift[19] if cfg.depth_bias else 0.0),
+              "kappa": self.kappa + (mean_shift[10 + self.i_kappa] if cfg.rot_scale else 0.0)}
         # restore the window without node 0
         self.ids = full[0][1:]
         self.imu = [f for f in full[1] if f.i != i0]
         self.rel = keep_rel
+        self.rots = keep_rots
         self.links = keep_links
         self.depth = {i: o for i, o in full[4].items() if i != i0}
         self.prior = (L, i1, xl)

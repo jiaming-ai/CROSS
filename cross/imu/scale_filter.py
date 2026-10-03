@@ -118,6 +118,8 @@ class ImuConfig:
     vgio_depth_bias_std: float = 0.1             # prior std of the learned-depth log bias in the graph
     vgio_rot_rel: float = 0.05                   # graph: rotation noise also grows with the angle (fraction)
     # adaptive measurement times (vgio_adaptive): after the camera moved / turned this much, within these frame counts
+    vgio_rot_scale: bool = True                  # graph: calibrate the rotation scale of the passes against the gyro
+    vgio_klt: bool = True                        # graph: rotation factors from tracked corners (optional, gated)
     vgio_gyro_dt_noise: float = 0.0              # graph: preintegration noise growing with the IMU sampling interval
     vgio_accel_dt_noise: float = 0.0
     vgio_adaptive: bool = False
