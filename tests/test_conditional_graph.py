@@ -184,6 +184,7 @@ def test_representative_message_preserves_full_covariance_and_actual_source():
     hm = manager()
     system = System.__new__(System)
     system.device,system.config,system.hypothesis_manager = 'cpu',SystemConfig(),hm
+    system.state_device,system.place_projection='cpu',None
     frames=[]; models=[]
     for i,score in enumerate((.6,.9)):
         node = Keyframe(pp.identity_SE3(2),pp.se3(torch.full((2,6),.1)),torch.tensor([1.,0.]),
@@ -273,7 +274,7 @@ def test_initial_map_node_does_not_share_mutable_tracking_pose(conditional):
             return Keyframe(kw['mu'],kw['sigma'],kw['weights'],pose_charts=kw['pose_charts'])
     system=System.__new__(System)
     system.config=SystemConfig();system.config.mapping.hypothesis.conditional_sources=conditional
-    system.device=system.storage_device='cpu';system.topo_map=None
+    system.device=system.storage_device=system.state_device='cpu';system.topo_map=None
     system.kf_gmm_n_components=2;system._processed_frame_num=1;system.db=Database()
     system.hypothesis_manager=HypothesisManager(system,2,HypothesisConfig(chart_aware=True,session_recovery=True))
     system.odom_accumulator=OdomAccumulator(device='cpu')
