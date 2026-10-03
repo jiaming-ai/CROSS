@@ -173,6 +173,7 @@ class VggtImuFrontend:
             raise ValueError("The VGGT-IMU frontend needs frames with an IMU stream")
         if self.imu_calib is None:
             self.imu_calib = frame["imu_calib"]
+            self.time_offset = float(self.config.imu.vgio_time_offset)
             c = self.imu_calib
             if self.use_graph:
                 ic = self.config.imu
@@ -182,8 +183,12 @@ class VggtImuFrontend:
                                    depth_bias_std=ic.vgio_depth_bias_std, rot_rel=ic.vgio_rot_rel,
                                    accel_bias_std=ic.accel_bias_std, accel_bias_walk=ic.accel_bias_walk,
                                    gyro_dt_noise=ic.vgio_gyro_dt_noise, accel_dt_noise=ic.vgio_accel_dt_noise,
-                                   rot_scale=ic.vgio_rot_scale, rot_scale_std=ic.vgio_rot_scale_std)
+                                   rot_scale=ic.vgio_rot_scale, rot_scale_std=ic.vgio_rot_scale_std,
+                                   time_offset=ic.vgio_graph_time_offset, time_offset_std=ic.vgio_time_offset_std)
                 self.graph = VgiGraph(gcfg, c.T_cam_imu, c.gyro_noise_density, c.accel_noise_density)
+                self.graph.td = self.graph.td_init = self.time_offset
+                if ic.vgio_graph_time_offset:
+                    self.time_offset_done = True         # the graph estimates the offset
                 self.scale_filter = _GraphEstimate(self.graph)
             else:
                 imu_cfg = replace(self.config.imu, visual_std_rel=self.config.imu.vgio_visual_std_rel,
@@ -400,11 +405,18 @@ class VggtImuFrontend:
         if inliers < 30 or inliers < 0.5 * len(a):
             return None
         R_mb = R.T                                # x_b = R x_m + t: camera b's orientation in camera m
-        if _angle_deg(gyro_mb.T @ R_mb) > 1.0:
+        diff = _angle_deg(gyro_mb.T @ R_mb)
+        if diff > 1.0:
             self.stats["klt_rejected"] = self.stats.get("klt_rejected", 0) + 1
             return None
+        # the noise of these rotations, online: the median disagreement with the gyro (good to ~0.1 deg over 0.3 s)
+        # over the last 100 accepted ones; the norm of a 3-D error has its median at 1.54 sigma per axis.  KITTI 07:
+        # ~0.12 deg against ground truth, OpenLORIS home ~0.5 deg (low parallax, slow robot)
+        self.klt_diffs = (getattr(self, "klt_diffs", []) + [diff])[-100:]
+        sigma = max(0.1, float(np.median(self.klt_diffs)) / 1.54) if len(self.klt_diffs) >= 10 else 0.5
         self.stats["klt_used"] = self.stats.get("klt_used", 0) + 1
-        return R_mb, np.radians(0.15) * np.sqrt(100.0 / max(inliers, 30))
+        self.stats["klt_sigma_deg"] = round(sigma, 3)
+        return R_mb, np.radians(sigma) * np.sqrt(100.0 / max(inliers, 30))
 
     def _learned_depth(self, rgb, pass_depth, index):
         """Learned metric depth of this frame against a depth map of it (same pixels): a scale observation, at most
@@ -461,12 +473,19 @@ class VggtImuFrontend:
         c2w_m = np.asarray(obs["c2w_prev"], dtype=np.float64)
         T_mb = inverse(c2w_m) @ c2w_c
         self._calibrate_time_offset(a0, a1, R_cb.T @ T_mb[:3, :3] @ R_cb)
-        pre, jac = G.preintegrate(samples, a0, a1)
+        pre, jac = G.preintegrate(samples, a0, a1, self.time_offset)
         m_node = self.m["node"]
         # the pass is used only if its rotation m -> b agrees with the gyro's (a wrong pass would pull the shared
         # biases): the gyro over 0.3 s is good to ~0.25 deg
         gyro_mb = R_cb @ pre.dR @ R_cb.T
-        pass_ok = _angle_deg(gyro_mb.T @ T_mb[:3, :3]) <= self.rotation_gate_deg_graph
+        vdiff = _angle_deg(gyro_mb.T @ T_mb[:3, :3])
+        pass_ok = vdiff <= self.rotation_gate_deg_graph
+        if pass_ok and self.config.imu.vgio_online_noise:
+            # the passes' rotation noise, online: median disagreement with the gyro over the last 100 measurements
+            self.vggt_diffs = (getattr(self, "vggt_diffs", []) + [vdiff])[-100:]
+            if len(self.vggt_diffs) >= 10:
+                G.cfg.rot_std = np.radians(max(0.2, float(np.median(self.vggt_diffs)) / 1.54))
+                self.stats["vggt_rot_sigma_deg"] = round(float(np.degrees(G.cfg.rot_std)), 3)
         ratio, spread = _depth_ratio([(self.m["pass_depth"], self.m["conf"], obs["depth_prev"].float(), obs.get("conf_prev"))])
         link_ok = bool(np.isfinite(ratio) and spread < 0.25)
         lam_init = G.lam[m_node] + (np.log(ratio) if link_ok else 0.0)
@@ -500,6 +519,11 @@ class VggtImuFrontend:
         t0 = perf_counter()
         info = G.solve(need_std=not est.initialized)
         G.marginalize()
+        if G.cfg.time_offset and abs(G.td - self.time_offset) > 0.004:
+            # the samples of the window again at the graph's offset (its first-order correction is good to a few ms)
+            self.time_offset = float(G.td)
+            G.repreintegrate(self._samples, self.time_offset)
+            self.stats["offset_updates"] = self.stats.get("offset_updates", 0) + 1
         self.stats["t_graph"] = self.stats.get("t_graph", 0.0) + perf_counter() - t0
         if np.isfinite(info.get("lam_std", float("nan"))):
             est.lam_std = info["lam_std"]
@@ -528,7 +552,7 @@ class VggtImuFrontend:
                           "depth_bias": float(np.exp(G.beta)), "rot_scale": float(np.exp(G.kappa)),
                           "gravity_norm": float(np.linalg.norm(G.g)),
                           "speed": float(np.linalg.norm(v)), "link_ok": link_ok, "keyframe": kf_used,
-                          "time_offset": self.time_offset, "cost": info.get("cost"), "m_index": int(self.m["index"]),
+                          "time_offset": self.time_offset, "graph_time_offset": float(G.td), "cost": info.get("cost"), "m_index": int(self.m["index"]),
                           "b_index": int(index)}
         self._set_m(index, timestamp, rgb, None, conf_curr, node=j, pass_depth=depth_curr)
         self.m["rep"] = rep
@@ -706,7 +730,7 @@ class VggtImuFrontend:
         if self.use_graph:
             self.time_offset_done = self._offset_rounds >= 2
             if self.graph is not None and self.time_offset != old:
-                self.graph.repreintegrate(self._samples)
+                self.graph.repreintegrate(self._samples, self.time_offset)
             if not self.time_offset_done:
                 return                                   # the rate log keeps growing for the final round
         self.time_offset_done = True

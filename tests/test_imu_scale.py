@@ -7,14 +7,14 @@ from cross.imu import ImuConfig, InertialScaleFilter, preintegrate
 from cross.imu.simulate import simulate_imu
 
 
-def robot_path(seconds=60.0, fps=10.0, seed=0, speed=0.5):
+def robot_path(seconds=60.0, fps=10.0, seed=0, speed=0.5, turn_period=23.0):
     """Camera poses (forward-looking: z forward, y down) of a ground robot that drives, turns and stops."""
     rng = np.random.default_rng(seed)
     n = int(seconds * fps)
     t = np.arange(n) / fps
     v = speed * (1 + 0.3 * np.sin(2 * np.pi * t / 17.0)) * np.clip(t / 2.0, 0, 1)
     v[(t > 30) & (t < 33)] = 0.0                                     # a stop
-    yaw_rate = 0.4 * np.sin(2 * np.pi * t / 23.0 + rng.uniform(0, 6))
+    yaw_rate = 0.4 * np.sin(2 * np.pi * t / turn_period + rng.uniform(0, 6))
     yaw = np.cumsum(yaw_rate) / fps
     pos = np.cumsum(np.stack([v * np.cos(yaw), v * np.sin(yaw), np.zeros(n)], 1), 0) / fps
     # body x forward, y left, z up (world z up); camera = body rotated to z forward, y down

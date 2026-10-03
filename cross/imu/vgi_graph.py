@@ -11,11 +11,12 @@ some earlier nodes' frames).  Unknowns:
                    beta       log bias of learned metric depth (optional)
                    kappa      log scale of the model's rotation angles (optional; e.g. a focal length estimated
                               too short makes every rotation too large: KITTI 07, +4-6 %)
+                   t_d        camera - IMU time offset (optional)
 
 Factors:
 
-    IMU            preintegration between consecutive nodes, with first-order bias corrections (gyro-bias Jacobians by
-                   finite differences)
+    IMU            preintegration between consecutive nodes, with first-order corrections for the biases (and the
+                   time offset)
     relative pose  every pair of views of a pass: rotation, and translation = exp(lam_pass) * the pass's translation
                    (Huber)
     gauge link     lam_j - lam_k = log of the depth ratio of a frame both passes contain
@@ -54,6 +55,11 @@ class GraphConfig:
     rot_scale: bool = False              # estimate the rotation scale of the passes (calibrated against the gyro)
     rot_scale_std: float = 0.05
     rot_scale_drift: float = 0.001       # per sqrt(s)
+    # the camera-IMU time offset as a variable (s; camera clock = IMU clock + offset), observed through the rotation
+    # and the motion of the IMU factors; the samples are taken at the frontend's offset and corrected to first order
+    time_offset: bool = False
+    time_offset_std: float = 0.05
+    time_offset_drift: float = 0.0001
     gravity_std: float = 0.3
     gravity_norm_std: float = 0.05
     gravity_drift: float = 0.02
@@ -140,15 +146,20 @@ def _mv(M, x):
     return np.einsum("...ij,...j->...i", M, x)
 
 
-def _imu_block(Ri, pi, vi, Rj, pj, vj, q, g, bg, ba, Rcb, tcb, jac):
-    """IMU factors (batched): whitened residuals (n, 9) and Jacobians (n, 9, 27) over (rotation, position, velocity of
-    nodes i and j, gravity, gyro bias, accelerometer bias)."""
+def _imu_block(Ri, pi, vi, Rj, pj, vj, q, g, bg, ba, Rcb, tcb, jac, td=None):
+    """IMU factors (batched): whitened residuals (n, 9) and Jacobians (n, 9, 27 [+1]) over (rotation, position, velocity
+    of nodes i and j, gravity, gyro bias, accelerometer bias[, time offset])."""
     dt = q["dt"]
     dbg = bg[None] - q["bgpre"]
     psi = _mv(q["JRg"], dbg)
-    dRc = q["dR"] @ _exp_b(psi)
     dv = q["dv"] + _mv(q["Jv"], np.broadcast_to(ba, dbg.shape)) + _mv(q["Jvg"], dbg)
     dp = q["dp"] + _mv(q["Jp"], np.broadcast_to(ba, dbg.shape)) + _mv(q["Jpg"], dbg)
+    if td is not None:
+        dtd = td - q["td0"]
+        psi = psi + q["JRt"] * dtd[:, None]
+        dv = dv + q["Jvt"] * dtd[:, None]
+        dp = dp + q["Jpt"] * dtd[:, None]
+    dRc = q["dR"] @ _exp_b(psi)
     Rbi, Rbj = Ri @ Rcb, Rj @ Rcb
     pbi, pbj = pi + _mv(Ri, np.broadcast_to(tcb, pi.shape)), pj + _mv(Rj, np.broadcast_to(tcb, pj.shape))
     E = _T(dRc) @ _T(Rbi) @ Rbj                                  # the rotation residual's rotation
@@ -165,7 +176,11 @@ def _imu_block(Ri, pi, vi, Rj, pj, vj, q, g, bg, ba, Rcb, tcb, jac):
     n = len(dt)
     Ji = _jr_inv(rR)
     RcbT = Rcb.T
-    J9 = np.zeros((n, 9, 27))
+    J9 = np.zeros((n, 9, 27 if td is None else 28))
+    if td is not None:
+        J9[:, 0:3, 27] = (-Ji @ _T(E) @ _jr(psi) @ q["JRt"][:, :, None])[:, :, 0]
+        J9[:, 3:6, 27] = -q["Jvt"]
+        J9[:, 6:9, 27] = -q["Jpt"]
     # rotation residual: theta_i, theta_j, gyro bias
     J9[:, 0:3, 0:3] = -Ji @ _T(Rbj) @ Rbi @ RcbT
     J9[:, 0:3, 9:12] = Ji @ RcbT
@@ -258,6 +273,10 @@ class _Imu:
     W: np.ndarray                # 9x9 whitening (rotation, velocity, position)
     t0: float = 0.0              # the interval (camera clock), to preintegrate again with another time offset
     t1: float = 0.0
+    JR_t: np.ndarray = None      # d log(dR) / d time offset (time_offset), and of dv, dp
+    Jv_t: np.ndarray = None
+    Jp_t: np.ndarray = None
+    td0: float = 0.0             # the time offset of the samples
 
 
 @dataclass
@@ -297,6 +316,8 @@ class VgiGraph:
         self.ba = np.zeros(3)
         self.beta = 0.0
         self.kappa = 0.0                    # log rotation scale of the passes (rot_scale)
+        self.td = 0.0                       # camera - IMU time offset (time_offset)
+        self.td_init = 0.0
         self.imu: list[_Imu] = []
         self.rel: list[_Rel] = []
         self.rots: list[_Rot] = []
@@ -310,11 +331,15 @@ class VgiGraph:
     # ------------------------------------------------------------------ building
     @property
     def n_global(self):
-        return 9 + int(self.cfg.depth_bias) + int(self.cfg.rot_scale)
+        return 9 + int(self.cfg.depth_bias) + int(self.cfg.rot_scale) + int(self.cfg.time_offset)
 
     @property
     def i_kappa(self):
         return 9 + int(self.cfg.depth_bias)          # offset of kappa among the globals
+
+    @property
+    def i_td(self):
+        return 9 + int(self.cfg.depth_bias) + int(self.cfg.rot_scale)
 
     def start(self, R_wc, accel_mean_body, lam0, t0, bg0=None):
         """The first node: gravity from the mean specific force, the gauge fixed at R_wc, p = 0."""
@@ -334,28 +359,26 @@ class VgiGraph:
         self.R[i], self.p[i], self.v[i], self.lam[i], self.t[i] = R.copy(), p.copy(), v.copy(), float(lam), float(t)
         return i
 
-    def preintegrate(self, samples, t0, t1):
-        """IMU of an interval (samples: raw rows t w a on the camera clock) at the current gyro bias, with the
-        gyro-bias Jacobians by finite differences."""
+    def preintegrate(self, samples, t0, t1, td0=None):
+        """IMU of an interval (samples: raw rows t w a on the camera clock, taken at time offset td0) at the current
+        gyro bias, with the gyro-bias Jacobians (analytic) and the time-offset Jacobians (central differences)."""
         h = float(np.median(np.diff(samples[:, 0]))) if len(samples) > 1 else 0.0
         gn = float(np.hypot(self.gyro_noise, self.cfg.gyro_dt_noise * h))
         an = float(np.hypot(self.accel_noise, self.cfg.accel_dt_noise * h))
 
-        def run(bg):
+        def run(bg, shift=0.0, full=True):
             s = samples.copy()
             s[:, 1:4] -= bg
-            return preintegrate(s, t0, t1, gn, an)
+            s[:, 0] += shift                     # a larger offset: every sample later on the camera clock
+            return preintegrate(s, t0, t1, gn, an, full=full)
         base = run(self.bg)
-        eps = 1e-4
-        JR, Jv, Jp = np.zeros((3, 3)), np.zeros((3, 3)), np.zeros((3, 3))
-        for k in range(3):
-            d = np.zeros(3)
-            d[k] = eps
-            pk = run(self.bg + d)
-            JR[:, k] = _log(base.dR.T @ pk.dR) / eps
-            Jv[:, k] = (pk.dv - base.dv) / eps
-            Jp[:, k] = (pk.dp - base.dp) / eps
-        return base, (JR, Jv, Jp)
+        if not self.cfg.time_offset:
+            return base, (base.J_Rg, base.J_vg, base.J_pg)
+        et = 2e-3
+        pp, pm = run(self.bg, et, False), run(self.bg, -et, False)
+        tj = dict(JR_t=_log(pm.dR.T @ pp.dR) / (2 * et), Jv_t=(pp.dv - pm.dv) / (2 * et),
+                  Jp_t=(pp.dp - pm.dp) / (2 * et), td0=float(self.td if td0 is None else td0))
+        return base, (base.J_Rg, base.J_vg, base.J_pg, tj)
 
     def add_node(self, pre, jac, lam, t):
         """A node after the last one, linked by the IMU; its initial state from the IMU propagation."""
@@ -372,20 +395,21 @@ class VgiGraph:
         j = self._new_node(R_j, p_j, v_j, lam, t)
         cov = pre.cov + 1e-12 * np.eye(9)
         W = np.linalg.inv(np.linalg.cholesky(cov))
-        self.imu.append(_Imu(i, dt, pre.dR, pre.dv, pre.dp, pre.J_v, pre.J_p, *jac, self.bg.copy(), W,
-                             self.t[i], float(t)))
+        self.imu.append(_Imu(i, dt, pre.dR, pre.dv, pre.dp, pre.J_v, pre.J_p, *jac[:3], self.bg.copy(), W,
+                             self.t[i], float(t), **(jac[3] if len(jac) > 3 else {})))
         return j
 
-    def repreintegrate(self, samples_of):
-        """Preintegrate every IMU factor of the window again (samples_of(t0, t1): raw samples on the camera clock),
-        after the camera-IMU time offset changed."""
+    def repreintegrate(self, samples_of, td0=None):
+        """Preintegrate every IMU factor of the window again (samples_of(t0, t1): raw samples on the camera clock, at
+        time offset td0), after the camera-IMU time offset changed."""
         for k, f in enumerate(self.imu):
             samples = samples_of(f.t0, f.t1)
             if samples is None:
                 continue
-            pre, jac = self.preintegrate(samples, f.t0, f.t1)
+            pre, jac = self.preintegrate(samples, f.t0, f.t1, td0)
             W = np.linalg.inv(np.linalg.cholesky(pre.cov + 1e-12 * np.eye(9)))
-            self.imu[k] = _Imu(f.i, pre.dt, pre.dR, pre.dv, pre.dp, pre.J_v, pre.J_p, *jac, self.bg.copy(), W, f.t0, f.t1)
+            self.imu[k] = _Imu(f.i, pre.dt, pre.dR, pre.dv, pre.dp, pre.J_v, pre.J_p, *jac[:3], self.bg.copy(), W,
+                               f.t0, f.t1, **(jac[3] if len(jac) > 3 else {}))
 
     def add_relative(self, a, b, s, R_ab, t_ab):
         if a in self.R and b in self.R and s in self.R:
@@ -433,7 +457,14 @@ class VgiGraph:
                 Jvg=T(np.stack([f.Jv_g for f in fs])), Jpg=T(np.stack([f.Jp_g for f in fs])),
                 bgpre=T(np.stack([f.bg0 for f in fs])), W=T(np.stack([f.W for f in fs])),
                 cols=np.concatenate([10 * ii[:, None] + np.arange(9)[None], 10 * (ii + 1)[:, None] + np.arange(9)[None],
-                                     np.broadcast_to(g9, (len(fs), 9))], axis=1))
+                                     np.broadcast_to(g9, (len(fs), 9))]
+                                    + ([np.full((len(fs), 1), G + self.i_td)] if cfg.time_offset else []), axis=1))
+            if cfg.time_offset:
+                z3 = np.zeros(3)
+                P["imu"].update(JRt=T(np.stack([z3 if f.JR_t is None else f.JR_t for f in fs])),
+                                Jvt=T(np.stack([z3 if f.Jv_t is None else f.Jv_t for f in fs])),
+                                Jpt=T(np.stack([z3 if f.Jp_t is None else f.Jp_t for f in fs])),
+                                td0=np.array([f.td0 for f in fs]))
         if self.rel:
             fs = self.rel
             aa = np.array([col[f.a] for f in fs])
@@ -480,7 +511,7 @@ class VgiGraph:
             q = P["imu"]
             ii, jj = q["ii"], q["jj"]
             r, J = _imu_block(R[ii], p[ii], v[ii], R[jj], p[jj], v[jj], q, self.g, self.bg, self.ba, self.R_cb, self.t_cb,
-                              jac)
+                              jac, self.td if cfg.time_offset else None)
             out.append((q["cols"], r, J, "imu"))
         if "rel" in P:
             q = P["rel"]
@@ -512,13 +543,13 @@ class VgiGraph:
         out.append((np.arange(G, G + 3)[None], np.array([[(gn - GRAVITY) / cfg.gravity_norm_std]]),
                     (self.g / gn / cfg.gravity_norm_std)[None, None, :], "gnorm"))
         # priors
-        nb, nk = int(cfg.depth_bias), int(cfg.rot_scale)
+        nb, nk, nt = int(cfg.depth_bias), int(cfg.rot_scale), int(cfg.time_offset)
         if self.prior is None:
             i0 = ids[0]
             r_rot, J_rot = _prior_rotation(self.gauge[0], self.R[i0], 1e-3)
             rows = [r_rot, (self.p[i0] - self.gauge[1]) / 1e-3, (self.g - self.g0) / cfg.gravity_std,
                     (self.bg - self.bg0) / cfg.gyro_bias_std, self.ba / cfg.accel_bias_std]
-            J = np.zeros((15 + nb + nk, 15 + nb + nk))
+            J = np.zeros((15 + nb + nk + nt, 15 + nb + nk + nt))
             J[0:3, 0:3] = J_rot
             J[3:6, 3:6] = np.eye(3) / 1e-3
             J[6:9, 6:9] = np.eye(3) / cfg.gravity_std
@@ -533,6 +564,10 @@ class VgiGraph:
                 rows.append([self.kappa / cfg.rot_scale_std])
                 J[15 + nb, 15 + nb] = 1.0 / cfg.rot_scale_std
                 cols.append(G + self.i_kappa)
+            if nt:
+                rows.append([(self.td - self.td_init) / cfg.time_offset_std])
+                J[15 + nb + nk, 15 + nb + nk] = 1.0 / cfg.time_offset_std
+                cols.append(G + self.i_td)
             out.append((np.array(cols)[None], np.concatenate(rows)[None], J[None], "prior"))
         else:
             L, i0, xl = self.prior
@@ -544,6 +579,8 @@ class VgiGraph:
                 parts.append([self.beta - xl["beta"]])
             if nk:
                 parts.append([self.kappa - xl["kappa"]])
+            if nt:
+                parts.append([self.td - xl["td"]])
             d = np.concatenate(parts)
             Jd = np.eye(len(d))
             Jd[0:3, 0:3] = J_rot
@@ -611,6 +648,8 @@ class VgiGraph:
             self.beta = self.beta + d[G + 9]
         if self.cfg.rot_scale:
             self.kappa = self.kappa + d[G + self.i_kappa]
+        if self.cfg.time_offset:
+            self.td = self.td + d[G + self.i_td]
 
     def solve(self, iterations=None, need_std=True):
         """Gauss-Newton (Levenberg damping); need_std: the marginal std of the newest node's log scale."""
@@ -646,14 +685,14 @@ class VgiGraph:
     def _save(self):
         return ({i: self.R[i].copy() for i in self.ids}, {i: self.p[i].copy() for i in self.ids},
                 {i: self.v[i].copy() for i in self.ids}, dict(self.lam), self.g.copy(), self.bg.copy(), self.ba.copy(),
-                self.beta, self.kappa)
+                self.beta, self.kappa, self.td)
 
     def _restore(self, s):
         self.R.update(s[0])
         self.p.update(s[1])
         self.v.update(s[2])
         self.lam.update(s[3])
-        self.g, self.bg, self.ba, self.beta, self.kappa = s[4], s[5], s[6], s[7], s[8]
+        self.g, self.bg, self.ba, self.beta, self.kappa, self.td = s[4], s[5], s[6], s[7], s[8], s[9]
 
     # ------------------------------------------------------------------ marginalization
     def marginalize(self):
@@ -697,6 +736,9 @@ class VgiGraph:
         if cfg.rot_scale:
             k = 10 + self.i_kappa
             cov[k, k] += cfg.rot_scale_drift ** 2 * dt
+        if cfg.time_offset:
+            k = 10 + self.i_td
+            cov[k, k] += cfg.time_offset_drift ** 2 * dt
         # square root of the information (L L^T = cov^-1) by an eigendecomposition: a Cholesky factor fails when the
         # matrix is barely positive definite (KITTI 07: positions of hundreds of metres)
         w, V = np.linalg.eigh(0.5 * (cov + cov.T))
@@ -707,7 +749,8 @@ class VgiGraph:
               "v": self.v[i1] + mean_shift[6:9], "lam": self.lam[i1] + mean_shift[9],
               "g": self.g + mean_shift[10:13], "bg": self.bg + mean_shift[13:16], "ba": self.ba + mean_shift[16:19],
               "beta": self.beta + (mean_shift[19] if cfg.depth_bias else 0.0),
-              "kappa": self.kappa + (mean_shift[10 + self.i_kappa] if cfg.rot_scale else 0.0)}
+              "kappa": self.kappa + (mean_shift[10 + self.i_kappa] if cfg.rot_scale else 0.0),
+              "td": self.td + (mean_shift[10 + self.i_td] if cfg.time_offset else 0.0)}
         # restore the window without node 0
         self.ids = full[0][1:]
         self.imu = [f for f in full[1] if f.i != i0]

@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
+from cross.imu.preintegration import preintegrate      # noqa: E402
 from cross.imu.simulate import simulate_imu            # noqa: E402
 from cross.imu.vgi_graph import GraphConfig, VgiGraph   # noqa: E402
 from test_imu_scale import robot_path                   # noqa: E402
@@ -40,14 +41,27 @@ def _reference_class():
     return mod.VgiGraph
 
 
+def _window(samples, td, a0, a1):
+    """The raw samples covering camera times a0..a1, on the camera clock at time offset td (camera = IMU clock + td)."""
+    tc = samples[:, 0] + td
+    lo = max(int(np.searchsorted(tc, a0, "right")) - 1, 0)
+    hi = min(int(np.searchsorted(tc, a1, "left")) + 1, len(tc))
+    out = samples[lo:hi].copy()
+    out[:, 0] = tc[lo:hi]
+    return out
+
+
 def _drive(graphs, cfg_kw, seed=0, seconds=24.0, every=3, K=6, outliers=True, check=None, need_std=True,
-           link_bias=0.01):
-    """Feed the same synthetic measurements to every graph; check(graphs, stage) after each solve / marginalize."""
+           link_bias=0.01, offset=0.0, rot_noise=0.003, turn_period=23.0):
+    """Feed the same synthetic measurements to every graph; check(graphs, stage) after each solve / marginalize.
+    offset: the IMU's stamps are this early (camera = IMU clock + offset); a graph estimating the offset gets the
+    samples at its current estimate, preintegrated again when it moves (as the frontend does)."""
     fps = 10.0
-    poses = robot_path(seconds, fps, seed, 0.6)
+    poses = robot_path(seconds, fps, seed, 0.6, turn_period)
     rng = np.random.default_rng(seed + 11)
     t, w, a = simulate_imu(poses, fps, seed)
-    samples = np.concatenate([t[:, None], w, a], 1)
+    samples = np.concatenate([t[:, None] - offset, w, a], 1)
+    used = {id(g): 0.0 for g in graphs}             # the offset each graph's samples were taken at
     frames = list(range(0, len(poses), every))
     node, scale = {}, {}
     for n, f in enumerate(frames):
@@ -59,14 +73,21 @@ def _drive(graphs, cfg_kw, seed=0, seconds=24.0, every=3, K=6, outliers=True, ch
             ids = [g.start(poses[f, :3, :3], acc, da3, tt) for g in graphs]
         else:
             fp = frames[n - 1]
-            lo = max(np.searchsorted(t, fp / fps, "right") - 1, 0)
-            hi = min(np.searchsorted(t, tt, "left") + 1, len(t))
             ids = []
             for g in graphs:
-                pre, jac = g.preintegrate(samples[lo:hi], fp / fps, tt)
+                part = _window(samples, used[id(g)], fp / fps, tt)
+                if g.cfg.time_offset:
+                    pre, jac = g.preintegrate(part, fp / fps, tt, used[id(g)])
+                elif g is not graphs[0]:
+                    # the same factor data for every graph (the reference took its gyro-bias Jacobians by finite
+                    # differences): the comparison is of the solvers
+                    pre, jac = shared
+                else:
+                    pre, jac = shared = g.preintegrate(part, fp / fps, tt)
                 ids.append(g.add_node(pre, jac, g.lam[g.ids[-1]], tt))
             views = [frames[n - 1]] + ([frames[n - K]] if n - K >= 0 else [])
-            noise = [(Rotation.from_rotvec(rng.normal(0, 0.003, 3)).as_matrix(), rng.normal(0, 0.02, 3)) for _ in views]
+            noise = [(Rotation.from_rotvec(rng.normal(0, rot_noise, 3)).as_matrix(), rng.normal(0, 0.02, 3))
+                     for _ in views]
             bad = outliers and n % 5 == 0
             for g, i in zip(graphs, ids):
                 for (Rn, tn), fa in zip(noise, views):
@@ -79,7 +100,7 @@ def _drive(graphs, cfg_kw, seed=0, seconds=24.0, every=3, K=6, outliers=True, ch
                     T = np.linalg.inv(poses[views[1]]) @ poses[views[0]]
                     g.add_relative(node[views[1]], node[views[0]], i, T[:3, :3], T[:3, 3] / s_true)
                 Tr = np.linalg.inv(poses[fp]) @ poses[f]
-                g.add_rotation(node[fp], i, Tr[:3, :3] @ noise[0][0], 0.003)
+                g.add_rotation(node[fp], i, Tr[:3, :3] @ noise[0][0], rot_noise)
                 g.add_link(i, node[fp], np.log(s_true / scale[fp]) + link_bias)
         for g, i in zip(graphs, ids):
             g.add_depth(i, da3, 0.15)
@@ -91,6 +112,9 @@ def _drive(graphs, cfg_kw, seed=0, seconds=24.0, every=3, K=6, outliers=True, ch
                 check(graphs, f"solve {n}")
             for g in graphs:
                 g.marginalize()
+                if g.cfg.time_offset and abs(g.td - used[id(g)]) > 0.004:
+                    used[id(g)] = float(g.td)
+                    g.repreintegrate(lambda a0, a1, g=g: _window(samples, used[id(g)], a0, a1), used[id(g)])
             if check:
                 check(graphs, f"marginalize {n}")
     return poses, node, frames
@@ -182,3 +206,36 @@ def test_scale_of_a_simulated_drive():
     f = frames[-1]
     path = float(np.linalg.norm(np.diff(poses[:f + 1, :3, 3], axis=0), axis=1).sum())
     assert np.linalg.norm(g.p[node[f]] - (poses[f, :3, 3] - poses[0, :3, 3])) < 0.1 * path
+
+
+@pytest.mark.parametrize("offset", [0.0, 0.03, -0.02])
+def test_time_offset_estimated(offset):
+    """The IMU's stamps off by a constant, the graph started at zero offset: the offset, a variable of the graph, found
+    within 5 ms.  It is seen mainly through the rotations: an offset t_d changes an interval's rotation by about
+    (w(t1) - w(t0)) t_d, which a gyro bias mimics while the angular acceleration stays constant over the window; the
+    turn rate here changes within the window (period 4 s; with 23 s the estimate is biased by ~8 ms)."""
+    cfg = replace(GraphConfig(), window=20, depth_bias=True, time_offset=True, rot_std=0.003)
+    g = VgiGraph(cfg, np.eye(4), 1.1e-3, 1.2e-2)
+    _drive([g], {}, seconds=30.0, outliers=False, link_bias=0.0, offset=offset, turn_period=4.0)
+    assert abs(g.td - offset) < 0.005, g.td
+
+
+def test_gyro_bias_jacobians_match_finite_differences():
+    """The analytic gyro-bias Jacobians of the preintegration against central differences, on a turning interval."""
+    poses = robot_path(10.0, 10.0, 3, 0.6)
+    t, w, a = simulate_imu(poses, 10.0, 3)
+    samples = np.concatenate([t[:, None], w, a], 1)
+    t0, t1 = 4.0, 4.3
+    base = preintegrate(samples, t0, t1, 1e-3, 1e-2)
+    eps = 1e-4
+    for k in range(3):
+        d = np.zeros(3)
+        d[k] = eps
+        plus, minus = samples.copy(), samples.copy()
+        plus[:, 1:4] -= d
+        minus[:, 1:4] += d
+        p, m = preintegrate(plus, t0, t1, 0, 0, full=False), preintegrate(minus, t0, t1, 0, 0, full=False)
+        JR = Rotation.from_matrix(m.dR.T @ p.dR).as_rotvec() / (2 * eps)
+        assert np.allclose(base.J_Rg[:, k], JR, rtol=1e-4, atol=1e-8)
+        assert np.allclose(base.J_vg[:, k], (p.dv - m.dv) / (2 * eps), rtol=1e-4, atol=1e-7)
+        assert np.allclose(base.J_pg[:, k], (p.dp - m.dp) / (2 * eps), rtol=1e-4, atol=1e-8)

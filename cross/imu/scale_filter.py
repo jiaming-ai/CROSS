@@ -115,11 +115,16 @@ class ImuConfig:
     vgio_graph_window: int = 20                  # nodes
     vgio_depth_bias: bool = True                 # the graph estimates the learned-depth bias
     vgio_rot_std: float = 0.0087                 # rad, relative rotation of a pass in the graph (0.5 deg)
-    vgio_depth_bias_std: float = 0.1             # prior std of the learned-depth log bias in the graph
+    vgio_depth_bias_std: float = 0.05            # prior std of the learned-depth log bias in the graph
     vgio_rot_rel: float = 0.05                   # graph: rotation noise also grows with the angle (fraction)
     # adaptive measurement times (vgio_adaptive): after the camera moved / turned this much, within these frame counts
     vgio_rot_scale: bool = True                  # graph: calibrate the rotation scale of the passes against the gyro
     vgio_rot_scale_std: float = 0.05             # its prior std (log)
+    vgio_online_noise: bool = False              # graph: the passes' rotation noise from their disagreement with the gyro
+    vgio_time_offset: float = 0.0                # s, initial camera - IMU time offset (calibrated online from it)
+    vgio_graph_time_offset: bool = False         # graph: the time offset as a variable of the graph (no separate
+                                                 # calibration)
+    vgio_time_offset_std: float = 0.05           # its prior std (s)
     vgio_klt: bool = True                        # graph: rotation factors from tracked corners (optional, gated)
     # pipeline: measure on the back end's forward passes (at least vgio_align_min frames apart); a pass of the
     # frontend's own only after vgio_align_max frames without one
