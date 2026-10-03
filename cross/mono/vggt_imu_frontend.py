@@ -105,6 +105,7 @@ class VggtImuFrontend:
         self.bias_samples = []
         self.time_offset = 0.0
         self.time_offset_done = False
+        self._pp = None                          # principal-point correction of the passes' camera poses
         self.rate_log = []
         self._offset_rounds = 0
         self.index = 0
@@ -559,7 +560,25 @@ class VggtImuFrontend:
         if self.klt:
             self._klt_detect()
 
+    def _model_to_cam(self, obs):
+        """The pass's camera poses in the calibrated camera frame: VGGT-Omega places the principal point at the image
+        centre (the back end's correction, cross.cv.pose_est_ff.principal_point_rotation; KITTI ~0.9 deg, OpenLORIS
+        ~1.4 deg), which would otherwise act as a camera-IMU rotation error of that size."""
+        if obs is None or not self.config.imu.vgio_pp_correction:
+            return obs
+        if self._pp is None:
+            from cross.cv.pose_est_ff import principal_point_rotation
+            h, w = self._frame[2].shape[:2]
+            self._pp = np.eye(4)
+            self._pp[:3, :3] = principal_point_rotation(self.K, w, h).T
+        out = dict(obs)
+        for k in ("c2w_curr", "c2w_prev", "c2w_kf"):
+            if out.get(k) is not None:
+                out[k] = np.asarray(out[k], dtype=np.float64) @ self._pp
+        return out
+
     def _measure(self, obs):
+        obs = self._model_to_cam(obs)
         if self.use_graph:
             return self._measure_graph(obs)
         index, timestamp, rgb = self._frame

@@ -146,6 +146,19 @@ cross_mono_ff_vgio:
   args: [--mode, mono, --mono-estimator, ff, --odometry, vgio]
   outdoor_config: [configs/outdoor.yaml]
 
+# the same without learned depth (no DA3): the metric scale from the IMU alone, the output invalid until it is
+# observed (development)
+cross_mono_ff_vgio_nd:
+  label: CROSS (VGGT-Omega mono, VGGT-inertial odometry, no learned depth)
+  runner: cross_mono
+  setups: [mono]
+  uses_odometry: false
+  uses_imu: true
+  hidden: true
+  map_reuse: save/load
+  args: [--mode, mono, --mono-estimator, ff, --odometry, vgio, --mono-args, "--imu-config depth_prior=false"]
+  outdoor_config: [configs/outdoor.yaml]
+
 cross_rgbd_monoreloc:
   label: CROSS (RGB-D, PnP, relocalization options from CROSS-mono)
   runner: cross_rgbd

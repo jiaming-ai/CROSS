@@ -125,6 +125,7 @@ class ImuConfig:
     vgio_graph_time_offset: bool = False         # graph: the time offset as a variable of the graph (no separate
                                                  # calibration)
     vgio_time_offset_std: float = 0.05           # its prior std (s)
+    vgio_pp_correction: bool = True              # the passes' camera poses corrected for the principal point offset
     vgio_klt: bool = True                        # graph: rotation factors from tracked corners (optional, gated)
     # pipeline: measure on the back end's forward passes (at least vgio_align_min frames apart); a pass of the
     # frontend's own only after vgio_align_max frames without one
