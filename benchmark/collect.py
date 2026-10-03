@@ -6,7 +6,8 @@ benchmark/results/history.json.
   python benchmark/collect.py --backfill-git        # history.json from every committed version of results.json
 
 Results of the same cell (track, dataset, scene, system, setup, seed, sequence / map+query) found in several roots
-(e.g. a rerun) are resolved by the newest `time`.  Per-frame curves and trajectories stay in the merged file
+(e.g. a rerun) are resolved by the newest `time`; --prefer ROOT makes the cells of that root win (a rerun with new
+code that finished before another rerun of the old code).  Per-frame curves and trajectories stay in the merged file
 (downsampled by run.py), so the web page needs nothing else.
 
 history.json holds every run ever collected (one entry per cell, commit and run time; without the trajectories and
@@ -76,6 +77,7 @@ def main():
     ap.add_argument("--merge", action="store_true", help="keep the entries already in --out")
     ap.add_argument("--history", default=str(HISTORY), help="history file ('' to leave it alone)")
     ap.add_argument("--backfill-git", action="store_true", help="add the runs of every committed results.json to the history")
+    ap.add_argument("--prefer", nargs="*", default=[], help="roots (also given as roots) whose cells win regardless of time")
     a = ap.parse_args()
     if a.backfill_git:
         backfill_git(a.history)
@@ -87,7 +89,9 @@ def main():
         for r in json.loads(out.read_text())["results"]:
             cells[key(r)] = r
     n, found = 0, []
-    for root in a.roots:
+    preferred = set()
+    for root in sorted(a.roots, key=lambda x: x in a.prefer):     # preferred roots last
+        pref = root in a.prefer
         for f in Path(root).rglob("result.json"):
             try:
                 r = json.loads(f.read_text())
@@ -97,8 +101,11 @@ def main():
             n += 1
             found.append(r)
             k = key(r)
-            if k not in cells or (r.get("time") or "") >= (cells[k].get("time") or ""):
+            newer = k not in cells or (r.get("time") or "") >= (cells[k].get("time") or "")
+            if newer or (pref and k not in preferred):          # a preferred root's first result of a cell always wins
                 cells[k] = r
+                if pref:
+                    preferred.add(k)
     res = sorted(cells.values(), key=lambda r: [str(x) for x in key(r)])
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"results": res}, separators=(",", ":")))
