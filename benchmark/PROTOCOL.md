@@ -83,6 +83,25 @@ CROSS fuses an odometry stream with its visual observations. Each dataset gives 
   perturbed with SNR 10 noise, seeded, as in the CROSS paper's noise study and in SimChange. It is marked *sim-odom* in the tables.
 - **SimChange**: simulated, SNR 10, seed 0 for the map session and seed 1 for queries.
 
+**Stereo VIO odometry (systems `cross_*_vio`).** KITTI's INS velocities and the simulated odometry of ROVER and
+SimChange are derived from (or close to) the ground truth. The `_vio` systems instead get the odometry of a stereo-inertial
+VIO, Basalt (Usenko et al., RA-L 2020), run causally on the platform's own stereo pair and IMU
+(`benchmark/datasets/prepare_vio.py`, written as `odom_vio.txt`; no loop closure, the pose of each frame is the one
+estimated when that frame arrived). Datasets with wheel odometry keep it (OpenLORIS). One Basalt configuration (its
+EuRoC configuration) and the IMU noise of each sensor's datasheet / calibration are used everywhere; nothing is tuned on
+the ground truth. Inputs:
+
+- **KITTI**: the rectified colour pair (10 Hz) and the OXTS RT3003 accelerations / angular rates at 100 Hz from the raw
+  `*_extract` drives (`fetch_kitti_oxts.py` downloads only the `oxts/` folders); the camera's own timestamps.
+- **ROVER**: the rectified T265 pair (10 Hz) and the T265's IMU (~200 Hz, Kalibr calibration). The RGB-D folder (D435i)
+  gets the same trajectory interpolated to its frame times and moved to the D435i camera through the prism calibration.
+- **SimChange**: the rendered pair (0.3 m) and the simulated IMU described below.
+
+Accuracy over the 100-frame trial windows (`eval_odometry.py`, mean; details in the run report): KITTI 1.0–2.5 % of
+the distance (OXTS dead reckoning 0.8–2.0 %), except 01 (highway, 7 %); ROVER ~0.3 m per window, about half of which is
+the ground truth's own heading error (heading from the direction of travel), except the night session (no light, 3.4 m);
+SimChange 0.09–0.27 m (simulated SNR 10: 0.27–0.46 m).
+
 **IMU.** The monocular visual-inertial setups (CROSS mono with `--odometry vio`) get the IMU rigidly attached to the
 monocular camera, at its native rate, with its calibrated extrinsics and noise (`benchmark/datasets/prepare_imu.py`,
 written as `imu.txt` / `imu.json` next to the images):

@@ -211,6 +211,16 @@ rtabmap:
   map_reuse: database, localization mode
   skip: [kitti/rgbd]
 
+rtabmap_vio:
+  label: RTAB-Map (stereo VIO odometry)
+  runner: baseline
+  # the odometry of cross_*_vio (odom_vio.txt; wheel odometry where the dataset has it)
+  setups: [rgbd, stereo]
+  uses_odometry: true
+  map_reuse: database, localization mode
+  skip: [kitti/rgbd]
+  args: [--odom-file, odom_vio.txt]
+
 rtabmap_vo:
   label: RTAB-Map (visual odometry)
   runner: baseline

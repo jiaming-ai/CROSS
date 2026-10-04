@@ -56,12 +56,15 @@ def n_frames(seq: Path) -> int:
     return len(list((seq / image_dir(seq)).glob("*.png")))
 
 
-def prepare_sequence(seq: Path, snr, seed=0, cache: Path = None):
-    """Returns the odometry file of a sequence: its own odom_left.txt when it has one (real odometry, no simulated
+def prepare_sequence(seq: Path, snr, seed=0, cache: Path = None, odom_file: str = None):
+    """Returns the odometry file of a sequence: `odom_file` when given and present (e.g. odom_vio.txt of
+    benchmark/datasets/prepare_vio.py), else its own odom_left.txt when it has one (real odometry, no simulated
     noise), otherwise odom_snr{snr}.txt made from the ground truth.  With `cache`, the dataset folder stays read-only:
     the simulated odometry goes to `cache` and the per-run views (make_chunk) expose depth_mm / calib_pinhole.txt.
     Without it (legacy SimChange runs), calib_pinhole.txt, depth_mm/ and the odometry are written next to the sequence."""
     from cross.dataloader.stereo_loader import StereoSequenceLoader
+    if odom_file and (seq / odom_file).is_file():
+        return seq / odom_file
     if (seq / "odom_left.txt").is_file() and (cache is not None or not (seq / "left").is_dir()):
         return seq / "odom_left.txt"
     if cache is not None:
@@ -291,8 +294,8 @@ def run_orbslam3(args, out: Path):
 def run_rtabmap(args, out: Path):
     out.mkdir(parents=True, exist_ok=True)
     m, q = Path(args.map).resolve(), Path(args.query).resolve()
-    odom_m = prepare_sequence(m, args.snr, seed=0, cache=out / "odom")
-    odom_q = prepare_sequence(q, args.snr, seed=1, cache=out / "odom") if not args.map_only else None
+    odom_m = prepare_sequence(m, args.snr, seed=0, cache=out / "odom", odom_file=args.odom_file)
+    odom_q = prepare_sequence(q, args.snr, seed=1, cache=out / "odom", odom_file=args.odom_file) if not args.map_only else None
     db = out.resolve() / "map.db"
     map_poses = out / "map_poses.txt"
     # Mem/STMSize 30 as in RTAB-Map's own KITTI tool: with the default 10 (1 s at 10 Hz) the nodes just outside the
@@ -397,6 +400,8 @@ def main():
     ap.add_argument("--trial-len", type=int, default=0)
     ap.add_argument("--trial-stride", type=int, default=None)
     ap.add_argument("--r-d", type=float, default=2.0)
+    ap.add_argument("--odom-file", default=None, help="odometry file of the sequence folders to use when present "
+                    "(e.g. odom_vio.txt), else odom_left.txt / simulated")
     ap.add_argument("--rtab-vo", action="store_true", help="RTAB-Map: its own visual odometry instead of the dataset odometry")
     ap.add_argument("--orb-sensor", choices=["stereo", "rgbd", "mono"], default="stereo", help="ORB-SLAM3 input")
     ap.add_argument("--map-only", action="store_true", help="map the map sequence only (single-session accuracy)")

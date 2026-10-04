@@ -305,16 +305,17 @@ class Job:
             cmd += ["--baseline", self.dcfg["baseline"]]
         if system == "orbslam3":
             cmd += ["--system", "orbslam3", "--orb-sensor", self.a.setup]
-        elif system in ("rtabmap", "rtabmap_vo"):
+        elif system in ("rtabmap", "rtabmap_vo", "rtabmap_vio"):
             cmd += ["--system", "rtabmap_stereo" if self.a.setup == "stereo" else "rtabmap"]
             if system == "rtabmap_vo":
                 cmd += ["--rtab-vo"]
+        cmd += [str(v) for v in self.scfg.get("args", [])]
         return cmd + extra
 
     def baseline_map(self, map_seq, out: Path):
         """Map with up to two retries: ORB-SLAM3 occasionally crashes while saving its atlas at shutdown."""
         need = {"orbslam3": ["atlas.osa", "map_poses.txt"], "rtabmap": ["map.db", "map_poses.txt"],
-                "rtabmap_vo": ["map.db", "map_poses.txt"]}[self.a.system]
+                "rtabmap_vo": ["map.db", "map_poses.txt"], "rtabmap_vio": ["map.db", "map_poses.txt"]}[self.a.system]
         total = 0.0
         for attempt in range(3):
             for f in need + ["map_time.json", "map_poses.txt.final"]:

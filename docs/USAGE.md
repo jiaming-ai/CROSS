@@ -23,6 +23,18 @@ A run is two independent choices:
 All modes run with `external` and `visual`; `vio` is for the mono mode. Visual odometry needs DPVO (`install.sh
 --mono`) and its weights in `models/dpvo.pth` (or `--dpvo-checkpoint`, env `CROSS_DPVO_CHECKPOINT`).
 
+**External odometry from a stereo VIO.** A prepared folder can hold several odometry files; `--odom-file NAME`
+(`scripts/map_and_reloc*.py`) reads `NAME` instead of `odom_left.txt` when it exists (else `odom_left.txt`, else the
+simulated odometry). `benchmark/datasets/prepare_vio.py` writes `odom_vio.txt`: Basalt stereo-inertial odometry run
+causally on the folder's stereo pair and IMU (build with `scripts/vio/install_basalt.sh`, then `export BASALT_VIO=...`):
+
+```bash
+python benchmark/datasets/prepare_vio.py kitti $BENCH_DATA/kitti --raw /path/kitti_raw --extract /path/kitti_extract
+python benchmark/datasets/prepare_vio.py rover $BENCH_DATA/rover --raw /path/rover
+python benchmark/datasets/prepare_vio.py simchange $BENCH_DATA/simchange --baseline 0.3
+python benchmark/datasets/eval_odometry.py $BENCH_DATA/kitti/*/stereo      # accuracy of each odometry source
+```
+
 **Mono back ends.** `--mono-estimator da3` (default) is the monocular system of `cross/mono/` (learned metric depth,
 two-view matching, DA3 fallback). `--mono-estimator ff` uses the stereo mode's VGGT-Omega multi-view estimator on the
 single image; the metric scale of each forward pass comes from the previous observation and the (metric) odometry
@@ -135,6 +147,7 @@ A **system** is an entry of `benchmark/configs/systems.yaml`: its runner, setups
 |---|---|
 | `cross_rgbd`, `cross_rgbd_vo` | CROSS RGB-D mode, external / visual odometry |
 | `cross_stereo`, `cross_stereo_vo` | CROSS stereo mode, external / visual odometry |
+| `cross_rgbd_vio`, `cross_stereo_vio` | CROSS RGB-D / stereo mode with the stereo VIO odometry `odom_vio.txt` (wheel odometry where the dataset has it) |
 | `cross_mono_odom`, `cross_mono` | CROSS mono mode, external / visual odometry |
 | `cross_mono_vio` | CROSS mono mode, visual-inertial odometry (IMU) |
 | `cross_mono_ff_odom`, `cross_mono_ff`, `cross_mono_ff_vio` | CROSS mono mode with VGGT-Omega (`--mono-estimator ff`), external / visual / visual-inertial odometry |
