@@ -50,8 +50,8 @@ cross_stereo_vo:
 cross_stereo_fast:
   label: CROSS (VGGT-Omega fast, external odometry)
   runner: cross_ff
-  hidden: true              # rows appear once the system has been run on the benchmark
-  # --fast: configs/stereo_fast.yaml, 6 images per pass (current pair + 4 references) instead of 10
+  # --fast: configs/stereo_fast.yaml, 6 images per pass (current pair + 4 references) instead of 10; on the full
+  # benchmark (c12b2d0) the same accuracy as cross_stereo at 1.31x its frame rate
   setups: [stereo]
   uses_odometry: true
   map_reuse: save/load
@@ -133,15 +133,14 @@ cross_mono_ff_vio:
   args: [--mode, mono, --mono-estimator, ff, --odometry, vio]
   outdoor_config: [configs/outdoor.yaml]
 
-# no DPVO: the IMU carries the pose, VGGT-Omega's relative poses (the back end's forward passes, two-image passes
-# in between) correct it (development)
+# no DPVO: the IMU carries the pose; VGGT-Omega's relative poses (the back end's forward passes when it observes at a
+# measurement frame, three-image passes of its own otherwise) correct it in a local pose graph (cross/imu/vgi_graph.py)
 cross_mono_ff_vgio:
   label: CROSS (VGGT-Omega mono, VGGT-inertial odometry)
   runner: cross_mono
   setups: [mono]
   uses_odometry: false
   uses_imu: true
-  hidden: true
   map_reuse: save/load
   args: [--mode, mono, --mono-estimator, ff, --odometry, vgio]
   outdoor_config: [configs/outdoor.yaml]
