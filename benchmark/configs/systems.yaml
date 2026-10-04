@@ -37,27 +37,6 @@ cross_stereo:
   args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3"]
   outdoor_config: [configs/outdoor.yaml]
 
-cross_rgbd_vio:
-  label: CROSS (PnP, stereo VIO odometry)
-  runner: cross_rgbd
-  # odometry = the dataset's wheel odometry when it has one (OpenLORIS), else odom_vio.txt: Basalt stereo-inertial
-  # odometry on the platform's stereo pair + IMU (benchmark/datasets/prepare_vio.py) instead of INS / simulated odometry
-  setups: [rgbd]
-  uses_odometry: true
-  map_reuse: save/load
-  args: [--odom-file, odom_vio.txt]
-  outdoor_config: [configs/outdoor.yaml]
-
-cross_stereo_vio:
-  label: CROSS (VGGT-Omega, stereo VIO odometry)
-  runner: cross_ff
-  setups: [stereo]
-  uses_odometry: true
-  map_reuse: save/load
-  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3",
-         --odom-file, odom_vio.txt]
-  outdoor_config: [configs/outdoor.yaml]
-
 cross_stereo_vo:
   label: CROSS (VGGT-Omega, visual odometry)
   runner: cross_ff
@@ -210,16 +189,6 @@ rtabmap:
   uses_odometry: true
   map_reuse: database, localization mode
   skip: [kitti/rgbd]
-
-rtabmap_vio:
-  label: RTAB-Map (stereo VIO odometry)
-  runner: baseline
-  # the odometry of cross_*_vio (odom_vio.txt; wheel odometry where the dataset has it)
-  setups: [rgbd, stereo]
-  uses_odometry: true
-  map_reuse: database, localization mode
-  skip: [kitti/rgbd]
-  args: [--odom-file, odom_vio.txt]
 
 rtabmap_vo:
   label: RTAB-Map (visual odometry)

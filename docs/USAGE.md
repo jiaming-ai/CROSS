@@ -35,6 +35,14 @@ python benchmark/datasets/prepare_vio.py simchange $BENCH_DATA/simchange --basel
 python benchmark/datasets/eval_odometry.py $BENCH_DATA/kitti/*/stereo      # accuracy of each odometry source
 ```
 
+In the benchmark, `--odom-source vio` (`benchmark/run.py`, `benchmark/jobs.py`) runs any system that takes odometry
+(CROSS RGB-D / stereo / mono with external odometry, RTAB-Map) on `odom_vio.txt` instead of the dataset's odometry
+(wheel odometry where there is no `odom_vio.txt`); results go to `<system>+vio/` and appear as rows of their own:
+
+```bash
+python benchmark/jobs.py --dataset kitti --systems cross_stereo cross_rgbd cross_mono_ff_odom rtabmap --odom-source vio > q.txt
+```
+
 **Mono back ends.** `--mono-estimator da3` (default) is the monocular system of `cross/mono/` (learned metric depth,
 two-view matching, DA3 fallback). `--mono-estimator ff` uses the stereo mode's VGGT-Omega multi-view estimator on the
 single image; the metric scale of each forward pass comes from the previous observation and the (metric) odometry
@@ -147,7 +155,6 @@ A **system** is an entry of `benchmark/configs/systems.yaml`: its runner, setups
 |---|---|
 | `cross_rgbd`, `cross_rgbd_vo` | CROSS RGB-D mode, external / visual odometry |
 | `cross_stereo`, `cross_stereo_vo` | CROSS stereo mode, external / visual odometry |
-| `cross_rgbd_vio`, `cross_stereo_vio` | CROSS RGB-D / stereo mode with the stereo VIO odometry `odom_vio.txt` (wheel odometry where the dataset has it) |
 | `cross_mono_odom`, `cross_mono` | CROSS mono mode, external / visual odometry |
 | `cross_mono_vio` | CROSS mono mode, visual-inertial odometry (IMU) |
 | `cross_mono_ff_odom`, `cross_mono_ff`, `cross_mono_ff_vio` | CROSS mono mode with VGGT-Omega (`--mono-estimator ff`), external / visual / visual-inertial odometry |

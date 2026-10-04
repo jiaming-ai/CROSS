@@ -83,9 +83,10 @@ CROSS fuses an odometry stream with its visual observations. Each dataset gives 
   perturbed with SNR 10 noise, seeded, as in the CROSS paper's noise study and in SimChange. It is marked *sim-odom* in the tables.
 - **SimChange**: simulated, SNR 10, seed 0 for the map session and seed 1 for queries.
 
-**Stereo VIO odometry (systems `cross_*_vio`, `rtabmap_vio`).** An additional mode: the external-odometry systems
-above stay, and results are reported for both. KITTI's INS velocities and the simulated odometry of ROVER and
-SimChange are derived from (or close to) the ground truth. The `_vio` systems instead get the odometry of a stereo-inertial
+**Odometry source (`run.py --odom-source external|vio`).** Every system that takes odometry (CROSS RGB-D, stereo,
+mono with external odometry; RTAB-Map) runs with either source, and results are reported for both: `external` is the
+dataset odometry above, `vio` a stereo VIO (rows "… stereo VIO odometry", results under `<system>+vio/`). KITTI's INS velocities and the simulated odometry of ROVER and
+SimChange are derived from (or close to) the ground truth. With `--odom-source vio` the systems instead get the odometry of a stereo-inertial
 VIO, Basalt (Usenko et al., RA-L 2020), run causally on the platform's own stereo pair and IMU
 (`benchmark/datasets/prepare_vio.py`, written as `odom_vio.txt`; no loop closure, the pose of each frame is the one
 estimated when that frame arrived). Datasets with wheel odometry keep it (OpenLORIS). One Basalt configuration (its

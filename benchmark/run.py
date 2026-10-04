@@ -36,6 +36,10 @@ sys.path.insert(0, str(ROOT / "scripts" / "baselines"))
 from metrics import ate, multisession, wilson  # noqa: E402
 
 PY = sys.executable
+# --odom-source: the odometry file the systems that take odometry read in each sequence folder (None = the dataset's
+# own: odom_left.txt, else simulated from the ground truth with the dataset's SNR).  "vio": the stereo VIO odometry of
+# benchmark/datasets/prepare_vio.py, falling back to odom_left.txt (wheel odometry) where the folder has none.
+ODOM_FILES = {"external": None, "vio": "odom_vio.txt"}
 
 
 def load_cfg():
@@ -147,7 +151,11 @@ class Job:
         self.scene = self.dcfg["scenes"][a.scene]
         self.setup_dir = self.dcfg["setups"][a.setup]
         self.data = Path(a.data) / self.dcfg.get("data", a.dataset)      # dev splits read another dataset's folders
-        system_dir = a.system + (f"@{a.variant}" if a.variant else "")
+        if a.odom_source != "external" and not self.scfg.get("uses_odometry"):
+            sys.exit(f"--odom-source {a.odom_source}: {a.system} does not take external odometry")
+        self.odom_file = ODOM_FILES[a.odom_source]
+        system_dir = a.system + (f"+{a.odom_source}" if a.odom_source != "external" else "") + \
+            (f"@{a.variant}" if a.variant else "")
         self.run_root = Path(a.out) / a.dataset / a.scene / system_dir / a.setup / f"s{a.seed}"
         self.outdoor = self.dcfg["environment"] == "outdoor"
         self.snr = self.dcfg.get("snr")
@@ -155,6 +163,8 @@ class Job:
                      "label": self.scfg["label"], "uses_odometry": self.scfg.get("uses_odometry", False)}
         if a.variant:
             self.base["variant"] = a.variant
+        if a.odom_source != "external":
+            self.base["odom"] = a.odom_source
 
     def seq(self, name) -> Path:
         return self.data / name / self.setup_dir
@@ -184,6 +194,8 @@ class Job:
         cmd += ["--map", self.seq(map_seq), "--query", self.seq(query_seq), "--out", out]
         if cfgs:
             cmd += ["--config"] + [str(ROOT / c) for c in cfgs]
+        if self.odom_file:
+            cmd += ["--odom-file", self.odom_file]
         return cmd + shlex.split(a.args) + extra
 
     def cross_map(self, map_seq, out: Path):
@@ -305,17 +317,19 @@ class Job:
             cmd += ["--baseline", self.dcfg["baseline"]]
         if system == "orbslam3":
             cmd += ["--system", "orbslam3", "--orb-sensor", self.a.setup]
-        elif system in ("rtabmap", "rtabmap_vo", "rtabmap_vio"):
+        elif system in ("rtabmap", "rtabmap_vo"):
             cmd += ["--system", "rtabmap_stereo" if self.a.setup == "stereo" else "rtabmap"]
             if system == "rtabmap_vo":
                 cmd += ["--rtab-vo"]
         cmd += [str(v) for v in self.scfg.get("args", [])]
+        if self.odom_file:
+            cmd += ["--odom-file", self.odom_file]
         return cmd + extra
 
     def baseline_map(self, map_seq, out: Path):
         """Map with up to two retries: ORB-SLAM3 occasionally crashes while saving its atlas at shutdown."""
         need = {"orbslam3": ["atlas.osa", "map_poses.txt"], "rtabmap": ["map.db", "map_poses.txt"],
-                "rtabmap_vo": ["map.db", "map_poses.txt"], "rtabmap_vio": ["map.db", "map_poses.txt"]}[self.a.system]
+                "rtabmap_vo": ["map.db", "map_poses.txt"]}[self.a.system]
         total = 0.0
         for attempt in range(3):
             for f in need + ["map_time.json", "map_poses.txt.final"]:
@@ -597,6 +611,9 @@ def main():
     ap.add_argument("--only", nargs="*", default=[], choices=["t2", "t3"], help="query task: run only these tracks")
     ap.add_argument("--keep-maps", action="store_true")
     ap.add_argument("--keep-rows", action="store_true", help="keep the per-frame rows of the query runs")
+    ap.add_argument("--odom-source", choices=sorted(ODOM_FILES), default="external",
+                    help="odometry of the systems that take odometry: the dataset's (external) or the stereo VIO "
+                         "(vio: odom_vio.txt, wheel odometry where there is none); results go to <system>+vio")
     ap.add_argument("--variant", default="", help="label of an experiment: results go to <system>@<variant>")
     ap.add_argument("--args", default="", help="extra arguments of the CROSS command (e.g. \"--max-refs 4\"); a --set or "
                                                "--config here replaces one given by systems.yaml")

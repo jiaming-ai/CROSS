@@ -5,7 +5,7 @@ benchmark/results/history.json.
   python benchmark/collect.py <results_root> [<results_root> ...] [--out benchmark/results/results.json]
   python benchmark/collect.py --backfill-git        # history.json from every committed version of results.json
 
-Results of the same cell (track, dataset, scene, system, setup, seed, sequence / map+query) found in several roots
+Results of the same cell (track, dataset, scene, system, setup, seed, sequence / map+query, odometry source) found in several roots
 (e.g. a rerun) are resolved by the newest `time`; --prefer ROOT makes the cells of that root win (a rerun with new
 code that finished before another rerun of the old code).  Per-frame curves and trajectories stay in the merged file
 (downsampled by run.py), so the web page needs nothing else.
@@ -28,7 +28,7 @@ HEAVY = ("traj_est", "traj_gt", "err_curve")       # per-frame data, only kept f
 
 def key(r):
     return (r.get("track"), r.get("dataset"), r.get("scene"), r.get("system"), r.get("setup"), r.get("seed"),
-            r.get("sequence"), r.get("map"), r.get("query"))
+            r.get("sequence"), r.get("map"), r.get("query"), r.get("odom") or "external")
 
 
 def run_key(r):

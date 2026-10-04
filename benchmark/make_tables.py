@@ -27,6 +27,34 @@ def load():
     return ds, sy
 
 
+ODOM_LABEL = {"vio": "stereo VIO odometry"}
+
+
+def odom_rows(results, sy):
+    """Runs with another odometry source (result["odom"], benchmark/run.py --odom-source) as rows of their own: their
+    system becomes "<system>+<odom>" (in place; idempotent) and sy gets that entry right after the base system, labelled
+    with the odometry source.  Returns (results, sy)."""
+    derived = set()
+    for r in results:
+        o = r.get("odom") or "external"
+        if o != "external":
+            if "+" not in r["system"]:
+                r["system"] = f"{r['system']}+{o}"
+            derived.add(r["system"])
+    if not derived:
+        return results, sy
+    out = {}
+    for name, sc in sy.items():
+        out[name] = sc
+        for d in sorted(x for x in derived if x.split("+")[0] == name):
+            o = d.split("+", 1)[1]
+            lab = sc["label"]
+            new = ODOM_LABEL.get(o, o)
+            lab = lab.replace("external odometry", new) if "external odometry" in lab else f"{lab}, {new}"
+            out[d] = {**sc, "label": lab, "hidden": False, "odom": o}
+    return results, out
+
+
 def rows_for(ds_cfg, sy, dataset):
     """(system, setup) rows available for a dataset, in systems.yaml order."""
     out = []
@@ -232,6 +260,7 @@ def scored(r):
 class Tables:
     def __init__(self, results, seed):
         self.ds, self.sy = load()
+        results, self.sy = odom_rows(results, self.sy)
         f = ROOT / "benchmark/results/datasets.json"
         self.dstats = json.loads(f.read_text()) if f.is_file() else {}
         self.idx = defaultdict(list)
