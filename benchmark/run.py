@@ -165,6 +165,7 @@ class Job:
             self.base["variant"] = a.variant
         if a.odom_source != "external":
             self.base["odom"] = a.odom_source
+            self.base["label"] = self.base["label"].replace("external odometry", "stereo VIO odometry")
 
     def seq(self, name) -> Path:
         return self.data / name / self.setup_dir
