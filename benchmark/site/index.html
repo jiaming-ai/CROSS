@@ -485,16 +485,19 @@ function renderData(v) {
 const SYS_STYLE = {
   "cross_rgbd|rgbd": ["--c1", ""], "cross_rgbd_vo|rgbd": ["--c1", "6 4"],
   "cross_stereo|stereo": ["--c2", ""], "cross_stereo_vo|stereo": ["--c2", "6 4"],
+  "cross_rgbd_vio|rgbd": ["--c1", "1.5 3"], "cross_stereo_vio|stereo": ["--c2", "1.5 3"],
   "cross_mono_odom|mono": ["--c3", ""], "cross_mono|mono": ["--c3", "6 4"],
   "orbslam3|stereo": ["--c4", ""], "orbslam3|rgbd": ["--c4", "6 4"], "orbslam3|mono": ["--c4", "1.5 3"],
   "rtabmap|stereo": ["--c7", ""], "rtabmap|rgbd": ["--c7", "6 4"],
   "rtabmap_vo|stereo": ["--c7", "1.5 3"], "rtabmap_vo|rgbd": ["--c7", "8 3 1.5 3"],
+  "rtabmap_vio|stereo": ["--c7", "3 2"], "rtabmap_vio|rgbd": ["--c7", "3 2 8 2"],
   "mast3r_slam|mono": ["--c6", ""], "vggt_slam|mono": ["--c5", ""]};
 const SETUP = {rgbd: "RGB-D", stereo: "stereo", mono: "mono"};
 const sysKey = r => `${r.system}|${r.setup}`;
 const sysLabel = (system, setup, d) => `${(B.systems[system] || {}).label || system} · ${d === "kitti" && setup === "rgbd" ? "RGB-D*" : SETUP[setup] || setup}`;
 const ODO = {cross_rgbd: "ext. odometry", cross_stereo: "ext. odometry", cross_mono_odom: "ext. odometry",
-             cross_rgbd_vo: "visual odometry", cross_stereo_vo: "visual odometry", cross_mono: "visual odometry"};
+             cross_rgbd_vo: "visual odometry", cross_stereo_vo: "visual odometry", cross_mono: "visual odometry",
+             cross_rgbd_vio: "stereo VIO odometry", cross_stereo_vio: "stereo VIO odometry"};
 const shortLabel = (system, setup, d) => {         // compact row label of the plots
   const su = d === "kitti" && setup === "rgbd" ? "RGB-D*" : SETUP[setup] || setup;
   if (ODO[system]) return `CROSS ${su} · ${ODO[system]}`;
