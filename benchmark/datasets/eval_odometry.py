@@ -58,9 +58,10 @@ def main():
         for k, o in srcs.items():
             s = drift_stats(o, gt, window=a.window, stride=a.window // 2)
             res[str(f)][k] = s
-            t, r, pct = s["trans_m_mean_med_p95"], s["rot_deg_mean_med_p95"], s["trans_pct_mean_med_p95"]
-            print(f"{f}  {k:22s} trans {t[0]:7.3f} m (p95 {t[2]:7.3f})  rot {r[0]:6.2f} deg (p95 {r[2]:6.2f})  "
-                  f"{pct[0] if pct else float('nan'):6.2f} %", flush=True)
+            t, r, y = s["trans_m_mean_med_p95"], s["rot_deg_mean_med_p95"], s["yaw_deg_mean_med_p95"]
+            pct = s["trans_pct_mean_med_p95"]
+            print(f"{f}  {k:22s} trans {t[0]:7.3f} m (p95 {t[2]:7.3f})  rot {r[0]:6.2f} deg  yaw {y[0]:6.2f} deg "
+                  f"(p95 {y[2]:6.2f})  {pct[0] if pct else float('nan'):6.2f} %", flush=True)
     if a.json:
         Path(a.json).write_text(json.dumps(res, indent=1))
 

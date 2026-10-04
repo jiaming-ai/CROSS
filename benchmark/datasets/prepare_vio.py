@@ -307,27 +307,34 @@ def run_basalt(seq: ViSequence, work: Path, args) -> tuple[dict, dict]:
 
 # ---------------------------------------------------------------------------------------------------- OKVIS2-X
 def okvis_config(seq: ViSequence, template: Path) -> str:
-    import yaml
-    cfg = yaml.safe_load("\n".join(l for l in template.read_text().splitlines() if not l.startswith("%YAML")))
+    """The template (OpenCV FileStorage YAML, which PyYAML cannot round-trip) with the cameras block replaced and the
+    IMU noise, VIO mode (no loop closure, no final BA) and headless output set by key."""
+    import re
+    text = template.read_text()
     cams = []
     for T in _T_imu_cams(seq):
-        cams.append({"T_SC": [float(x) for x in T.reshape(-1)], "image_dimension": list(seq.size),
-                     "distortion_coefficients": [0.0, 0.0, 0.0, 0.0], "distortion_type": "radialtangential",
-                     "focal_length": [float(seq.K[0, 0]), float(seq.K[1, 1])],
-                     "principal_point": [float(seq.K[0, 2]), float(seq.K[1, 2])], "cam_model": "pinhole",
-                     "camera_type": "gray", "mapping": False, "mapping_rectification": False, "slam_use": "okvis"})
-    cfg["cameras"] = cams
+        rows = ",\n          ".join(", ".join(f"{x:.12g}" for x in r) for r in T)
+        cams.append(f"     - {{T_SC:\n        [ {rows} ],\n"
+                    f"        image_dimension: [{seq.size[0]}, {seq.size[1]}],\n"
+                    f"        distortion_coefficients: [0.0, 0.0, 0.0, 0.0],\n"
+                    f"        distortion_type: radialtangential,\n"
+                    f"        focal_length: [{seq.K[0, 0]:.9g}, {seq.K[1, 1]:.9g}],\n"
+                    f"        principal_point: [{seq.K[0, 2]:.9g}, {seq.K[1, 2]:.9g}],\n"
+                    f"        cam_model: pinhole,\n        camera_type: gray,\n        mapping: false,\n"
+                    f"        mapping_rectification: false,\n        slam_use: okvis}}\n")
+    a, b = text.index("cameras:"), text.index("# additional camera parameters")
+    text = text[:a] + "cameras:\n" + "\n".join(cams) + "\n" + text[b:]
     n = seq.noise
-    imu = cfg["imu_parameters"]
-    imu.update({"sigma_g_c": float(n["gyro_noise_density"]), "sigma_a_c": float(n["accel_noise_density"]),
-                "sigma_gw_c": float(n["gyro_random_walk"]), "sigma_aw_c": float(n["accel_random_walk"]),
-                "a0": [0.0, 0.0, 0.0], "g0": [0.0, 0.0, 0.0], "g_max": 20.0, "a_max": 200.0})
-    est = cfg["estimator_parameters"]
-    est.update({"do_loop_closures": False, "do_final_ba": False, "enforce_realtime": False})
-    out = cfg["output_parameters"]
-    out.update({"display_topview": False, "display_matches": False, "display_overhead": False,
-                "enable_submapping": False})
-    return "%YAML:1.0\n" + yaml.safe_dump(cfg, default_flow_style=None, sort_keys=False)
+    sets = {"sigma_g_c": n["gyro_noise_density"], "sigma_a_c": n["accel_noise_density"],
+            "sigma_gw_c": n["gyro_random_walk"], "sigma_aw_c": n["accel_random_walk"],
+            "a0": "[ 0.0, 0.0, 0.0 ]", "g0": "[ 0.0, 0.0, 0.0 ]", "g_max": 20.0, "a_max": 200.0,
+            "do_loop_closures": "false", "do_final_ba": "false", "enforce_realtime": "false",
+            "display_topview": "false", "display_matches": "false", "display_overhead": "false",
+            "enable_submapping": "false"}
+    for k, v in sets.items():
+        text, cnt = re.subn(rf"^(\s*{k}:)\s*[^#\n]*", lambda m: f"{m.group(1)} {v} ", text, flags=re.M)
+        assert cnt == 1, (k, cnt)
+    return text
 
 
 def run_okvis2(seq: ViSequence, work: Path, args) -> tuple[dict, dict]:
@@ -458,7 +465,19 @@ def process(seq: ViSequence, args):
 def drift_stats(est: np.ndarray, gt: np.ndarray, window=100, stride=50):
     """Relative error over `window`-frame segments (the benchmark's trial length): translation error in % of the
     distance travelled and in m, rotation error in deg (ground truth used for reporting only)."""
-    errs_t, errs_r, pct = [], [], []
+    errs_t, errs_r, errs_y, pct = [], [], [], []
+    # heading error: rotation angle about the world vertical (ground truth's most constant camera axis) expressed in the
+    # window's first camera frame, estimate vs ground truth; robust to ground truth without roll / pitch (ROVER)
+    R = gt[:, :3, :3]
+    v = max((R[:, :, ax].mean(0) for ax in (1, 2)), key=np.linalg.norm)
+    v = v / np.linalg.norm(v)
+
+    def yaw(Rrel, u):
+        a = np.cross(u, [1.0, 0, 0]) if abs(u[0]) < 0.9 else np.cross(u, [0, 1.0, 0])
+        a /= np.linalg.norm(a)
+        b = Rrel @ a
+        b = b - u * (b @ u)
+        return np.arctan2(np.cross(a, b) @ u, a @ b)
     for s in range(0, len(gt) - window, stride):
         e = np.linalg.inv(est[s]) @ est[s + window]
         g = np.linalg.inv(gt[s]) @ gt[s + window]
@@ -466,11 +485,14 @@ def drift_stats(est: np.ndarray, gt: np.ndarray, window=100, stride=50):
         dist = float(np.sum(np.linalg.norm(np.diff(gt[s:s + window + 1, :3, 3], axis=0), axis=1)))
         errs_t.append(float(np.linalg.norm(d[:3, 3])))
         errs_r.append(float(np.degrees(np.arccos(np.clip((np.trace(d[:3, :3]) - 1) / 2, -1, 1)))))
+        u = gt[s, :3, :3].T @ v                         # vertical in the window's first camera frame
+        dy = yaw(e[:3, :3], u) - yaw(g[:3, :3], u)
+        errs_y.append(float(abs(np.degrees((dy + np.pi) % (2 * np.pi) - np.pi))))
         if dist > 1.0:
             pct.append(100 * errs_t[-1] / dist)
     f = lambda a: (float(np.mean(a)), float(np.median(a)), float(np.percentile(a, 95))) if a else None
     return {"window": window, "trans_m_mean_med_p95": f(errs_t), "rot_deg_mean_med_p95": f(errs_r),
-            "trans_pct_mean_med_p95": f(pct)}
+            "yaw_deg_mean_med_p95": f(errs_y), "trans_pct_mean_med_p95": f(pct)}
 
 
 def main():
