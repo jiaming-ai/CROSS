@@ -118,7 +118,7 @@ def make_config(args) -> SystemConfig:
 
 def make_loader(path, args, seed):
     return PosedRGBDLoader(path, snr=args.snr, seed=seed, odom_scale_bias=args.odom_scale_bias,
-                           odom_yaw_drift_deg_per_m=args.odom_yaw_drift)
+                           odom_yaw_drift_deg_per_m=args.odom_yaw_drift, odom_file=args.odom_file)
 
 
 def new_system(args, ds, seed=None):
@@ -249,6 +249,8 @@ def main():
     ap.add_argument("--snr", type=float, default=10.0, help="odometry noise SNR (<= 0: perfect odometry)")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift (deg per metre)")
+    ap.add_argument("--odom-file", default=None, help="odometry file of the prepared folders to use instead of "
+                    "odom_left.txt when present (e.g. odom_vio.txt from benchmark/datasets/prepare_vio.py)")
     ap.add_argument("--seed", type=int, default=0, help="seed of the odometry noise (query sessions use seed + 1)")
     ap.add_argument("--trial-len", type=int, default=100)
     ap.add_argument("--trial-stride", type=int, default=50)

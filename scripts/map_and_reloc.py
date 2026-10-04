@@ -108,7 +108,8 @@ def make_config(args) -> SystemConfig:
 
 def odom_kwargs(args) -> dict:
     """Systematic odometry error of the simulated odometry (cross/dataloader/dataloader.py): scale bias, heading drift."""
-    return {"odom_scale_bias": args.odom_scale_bias, "odom_yaw_drift_deg_per_m": args.odom_yaw_drift}
+    return {"odom_scale_bias": args.odom_scale_bias, "odom_yaw_drift_deg_per_m": args.odom_yaw_drift,
+            "odom_file": getattr(args, "odom_file", None)}
 
 
 def pose_to_mat(p) -> np.ndarray:
@@ -366,6 +367,8 @@ def main():
     ap.add_argument("--dump-obs", action="store_true", help="write every observation of the mapping run to obs.jsonl (scripts/lc/obs_recorder.py)")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (e.g. 0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift of the odometry (deg per metre)")
+    ap.add_argument("--odom-file", default=None, help="odometry file of the prepared folders to use instead of "
+                    "odom_left.txt when present (e.g. odom_vio.txt from benchmark/datasets/prepare_vio.py)")
     ap.add_argument("--ff-meas-std", type=float, nargs=6, default=None, help="base measurement std [tx ty tz rx ry rz] of the FF estimator")
     args = ap.parse_args()
     if args.snr is not None and args.snr <= 0:
