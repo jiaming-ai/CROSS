@@ -30,10 +30,12 @@ def load():
 ODOM_LABEL = {"vio": "stereo VIO odometry"}
 
 
-def odom_rows(results, sy):
+def odom_rows(results, sy, ds=None):
     """Runs with another odometry source (result["odom"], benchmark/run.py --odom-source) as rows of their own: their
     system becomes "<system>+<odom>" (in place; idempotent) and sy gets that entry right after the base system, labelled
-    with the odometry source.  Returns (results, sy)."""
+    with the odometry source.  On datasets whose config has `odom_fallback: {<odom>: ...}` that source falls back to
+    the dataset's own odometry, so the external-odometry runs are reused for the derived row (marked
+    "odom_fallback").  Returns (results, sy)."""
     derived = set()
     for r in results:
         o = r.get("odom") or "external"
@@ -43,6 +45,17 @@ def odom_rows(results, sy):
             derived.add(r["system"])
     if not derived:
         return results, sy
+    if ds:
+        have = {(r["system"], r["dataset"]) for r in results}
+        extra = []
+        for d in sorted(derived):
+            base, o = d.split("+", 1)
+            for name, dc in ds.items():
+                fb = (dc.get("odom_fallback") or {}).get(o)
+                if fb and (d, name) not in have:
+                    extra += [dict(r, system=d, odom=o, odom_fallback=fb) for r in results
+                              if r["system"] == base and r["dataset"] == name and (r.get("odom") or "external") == "external"]
+        results = results + extra
     out = {}
     for name, sc in sy.items():
         out[name] = sc
@@ -260,7 +273,7 @@ def scored(r):
 class Tables:
     def __init__(self, results, seed):
         self.ds, self.sy = load()
-        results, self.sy = odom_rows(results, self.sy)
+        results, self.sy = odom_rows(results, self.sy, self.ds)
         f = ROOT / "benchmark/results/datasets.json"
         self.dstats = json.loads(f.read_text()) if f.is_file() else {}
         self.idx = defaultdict(list)
@@ -628,7 +641,9 @@ def main():
         "",
         f"Legend: `{PENDING}` not run yet, `{FAIL}` failed (crash, timeout or tracking completeness < 80 %), (xx%) completeness, "
         "⁽ᵒ⁾ the system uses the dataset's odometry (wheel odometry on OpenLORIS, OXTS dead reckoning on KITTI, "
-        "simulated on ROVER and SimChange), ⁽ⁱ⁾ the system uses the IMU of the camera (simulated on SimChange), "
+        "simulated on ROVER and SimChange); rows \"… stereo VIO odometry\": the same system with Basalt stereo-inertial "
+        "odometry (`run.py --odom-source vio`) instead, wheel odometry on OpenLORIS (the external-odometry runs), "
+        "⁽ⁱ⁾ the system uses the IMU of the camera (simulated on SimChange), "
         "RGB-D* = left image + stereo-matched depth (KITTI).",
         "",
         dataset_section(T.ds),

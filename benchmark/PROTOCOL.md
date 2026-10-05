@@ -104,6 +104,11 @@ the distance (OXTS dead reckoning 0.8–2.0 %), except 01 (highway, 7 %); ROVER 
 the ground truth's own heading error (heading from the direction of travel), except the night session (no light, 3.4 m);
 SimChange 0.09–0.27 m (simulated SNR 10: 0.27–0.46 m).
 
+A real VIO can fail: on ROVER's night session Basalt's velocity runs away to ~30× the true one over the last 500 frames.
+CROSS's odometry scale guard (`mapping.loop_closure.odom_guard_factor`, on by default; RGB-D and stereo modes, whose
+visual translations are metric without the odometry) rescales the odometry when the measured / odometry translation
+ratio of short spans leaves [½, 2]× its long-run value in two consecutive windows of 30 samples.
+
 **IMU.** The monocular visual-inertial setups (CROSS mono with `--odometry vio`) get the IMU rigidly attached to the
 monocular camera, at its native rate, with its calibrated extrinsics and noise (`benchmark/datasets/prepare_imu.py`,
 written as `imu.txt` / `imu.json` next to the images):

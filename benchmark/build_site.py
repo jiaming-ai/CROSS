@@ -235,7 +235,7 @@ def main():
     a = ap.parse_args()
     results = json.loads(Path(a.results).read_text())["results"] if Path(a.results).is_file() else []
     ds_cfg, sy_cfg = mt.load()
-    results, sy_cfg = mt.odom_rows(results, sy_cfg)        # runs with VIO odometry etc. as rows of their own
+    results, sy_cfg = mt.odom_rows(results, sy_cfg, ds_cfg)    # runs with VIO odometry etc. as rows of their own
     results = prepare(results, ds_cfg, sy_cfg, a.seed)
     runs, runs_by_key = {}, {}
     for r in results:
@@ -264,7 +264,7 @@ def main():
         "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", []), "thresholds": c["thresholds"]}]
                        for sc, v in c["scenes"].items()]
                    for d, c in T.ds.items()},
-        "history": history_models(mt.odom_rows(json.loads(Path(a.history).read_text())["runs"], sy_cfg)[0], results,
+        "history": history_models(mt.odom_rows(json.loads(Path(a.history).read_text())["runs"], sy_cfg, ds_cfg)[0], results,
                                   ds_cfg, sy_cfg, a.seed)
                    if Path(a.history).is_file() else None,
     }
