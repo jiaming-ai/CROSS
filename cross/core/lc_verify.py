@@ -398,6 +398,12 @@ class LoopClosureVerifier:
         self._ratio = collections.deque(maxlen=int(getattr(cfg, "adaptive_window", 150)))
         self.scale_ratio = float(getattr(cfg.noise, "visual_scale", 1.0) or 1.0)
         self.metric_correction = self.scale_ratio     # the value the estimator currently applies
+        # odometry scale guard (LoopClosureConfig.odom_guard_factor); `guard_metric` is set by the System when the
+        # estimator's translations are metric on their own (stereo / depth), the only case where they can judge the odometry
+        self.guard_factor = float(getattr(cfg, "odom_guard_factor", 0.0) or 0.0)
+        self.guard_metric = False
+        self._guard = collections.deque(maxlen=max(int(getattr(cfg, "odom_guard_window", 10)), 3))
+        self.odom_scale = 1.0                         # correction of the odometry's translations (applied by the System)
 
     def reset_session(self):
         self.anchor = None
@@ -406,6 +412,8 @@ class LoopClosureVerifier:
         for q in list(self._innov.values()) + list(self._innov_a.values()) + list(self._innov_c.values()) + list(self._innov_r.values()):
             q.clear()
         self._ratio.clear()
+        self._guard.clear()
+        self.odom_scale = 1.0
         self.scales = {"sess": 1.0, "map": 1.0}
         self.scales_along = {"sess": 1.0, "map": 1.0}
         self.scales_rot = {"sess": 1.0, "map": 1.0}
@@ -619,6 +627,27 @@ class LoopClosureVerifier:
         cov += transport(cov_chain, T_since) + cov_since
         return T_map.compose(rest), cov
 
+    def _guard_sample(self, sample: float) -> bool:
+        """Odometry scale guard: record one measured / odometry translation ratio; returns whether the sample is
+        consistent with the long-run ratio (and may update it).  Rescales the odometry when the recent samples agree on a
+        departure of more than the guard factor."""
+        if self.guard_factor <= 1.0 or not self.guard_metric or sample <= 0:
+            return True
+        ref = self.scale_ratio if self.scale_ratio > 0 else 1.0
+        g = sample / ref
+        self._guard.append(g)
+        lim = math.log(self.guard_factor)
+        if len(self._guard) == self._guard.maxlen:
+            m = float(np.median(self._guard))
+            if abs(math.log(m)) > lim:
+                self.odom_scale *= m
+                self._guard.clear()
+                self.stats["odom_guard_updates"] = self.stats.get("odom_guard_updates", 0) + 1
+                self.stats["odom_scale"] = round(self.odom_scale, 4)
+                logger.info(f"odometry scale guard: measured / odometry translation {m:.3f} x the long-run ratio over the "
+                            f"last {self._guard.maxlen} spans; odometry translations now scaled by {self.odom_scale:.4f}")
+        return abs(math.log(g)) <= lim
+
     def prior_gate(self, refs: Sequence, T_meas: Sequence, last_kf_id: int, T_since, n_since: int) -> Tuple[list, list]:
         """For every reference: True (consistent with hypothesis 0), False (inconsistent), None (no relation).
         T_meas: measured T_ref_current (pypose SE3 or 7-vectors).  Also records, per reference, whether the
@@ -645,8 +674,11 @@ class LoopClosureVerifier:
                 L = float(np.linalg.norm(T_pred.translation()))
                 short = ia is not None and ib is not None and ia[0] == ib[0] and abs(ia[1] - ib[1]) <= 5
                 if short and L >= float(getattr(self.cfg, "scale_min_span_m", 1.0)):
-                    self._ratio.append(d * self.metric_correction / L)
-                    if len(self._ratio) >= 20:
+                    sample = d * self.metric_correction / L
+                    consistent = self._guard_sample(sample)       # the odometry scale guard (off: always True)
+                    if consistent:
+                        self._ratio.append(sample)
+                    if consistent and len(self._ratio) >= 20:
                         self.scale_ratio = float(np.median(self._ratio))
                         self.stats["scale_ratio"] = round(self.scale_ratio, 4)
             self.scale = self.scales[kind]

@@ -207,6 +207,16 @@ class LoopClosureConfig:
     # estimator gets noisier and the model is inflated accordingly (never deflated below the calibration)
     adaptive_scale: bool = True
     adaptive_window: int = 150
+    # odometry scale guard (metric visual estimators only: stereo feed-forward, PnP on depth): the ratio of the measured
+    # to the odometry-chain translation over short spans (the samples of the online metric scale) is ~constant while the
+    # odometry is healthy.  When the median of the last `odom_guard_window` samples leaves [1/f, f] times the long-run
+    # ratio, the odometry's translations are rescaled by it from then on (repeatedly: the correction follows the fault and
+    # returns to 1 when the odometry recovers), and samples outside the band are kept out of the long-run ratio, so a
+    # diverging odometry neither drags the map nor the estimator's metric scale.  Seen with a stereo VIO at night (ROVER:
+    # the velocity ran away to 30x the true one while every visual measurement was rejected against the odometry chain).
+    # 0 disables.
+    odom_guard_factor: float = 0.0
+    odom_guard_window: int = 10
     # the visual noise is split along / across the measured bearing, each with its own online scale (innovations of
     # measurements to keyframes <= 5 odometry edges back, normalised with the un-inflated chain covariance).  The metric
     # scale of the feed-forward estimator comes from the stereo baseline and is its weak part far away: on KITTI the

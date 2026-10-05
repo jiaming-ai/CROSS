@@ -35,6 +35,7 @@ import copy
 from pathlib import Path
 
 import pickle
+
 import os
 import queue
 
@@ -48,6 +49,18 @@ torch.set_printoptions(
     sci_mode=False,        # turn off 1.23e+04 style
     linewidth=300,
 )
+
+def _scale_translation(delta, s: float):
+    """An odometry reading (4x4 array or pypose SE3, translation first) with its translation multiplied by s."""
+    if isinstance(delta, np.ndarray):
+        out = np.array(delta, dtype=np.float64, copy=True)
+        out[:3, 3] *= s
+        return out
+    t = delta.tensor().clone()
+    t[..., :3] *= s
+    return pp.SE3(t)
+
+
 class System:
     """Pose-aware topological mapping system.
     Important: everything is in OPENCV convention.
@@ -241,6 +254,10 @@ class System:
                 logger.info(f"Loop closure noise model loaded from {lc_cfg.noise_file}")
             from cross.core.lc_verify import LoopClosureVerifier
             self._lc_verifier = LoopClosureVerifier(self, lc_cfg)
+            # the odometry scale guard needs translations that are metric without the odometry: PnP on depth, or the
+            # feed-forward estimator with a stereo rig (not the monocular mode, whose scale comes from the odometry)
+            self._lc_verifier.guard_metric = self.pose_est_type == PoseEstType.PNP or (
+                self.pose_est_type == PoseEstType.FF and T_right_in_left is not None)
             # calibrated metric scale of the feed-forward estimator (measured / true translation, from the odometry)
             if float(getattr(lc_cfg.noise, "visual_scale", 1.0) or 1.0) != 1.0 and hasattr(self, "pose_est"):
                 self.pose_est.metric_scale_correction = float(lc_cfg.noise.visual_scale)
@@ -839,8 +856,11 @@ class System:
         """
 
 
-        # first accumulate the odometry
+        # first accumulate the odometry (translations rescaled by the odometry scale guard when it has fired)
         if self.use_odometry:
+            v = self._lc_verifier
+            if v is not None and v.odom_scale != 1.0 and obs.get("delta_pose") is not None:
+                obs = dict(obs, delta_pose=_scale_translation(obs["delta_pose"], v.odom_scale))
             self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"),
                                               source_factor=obs.get('motion_source_factor'))
         
