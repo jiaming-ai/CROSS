@@ -641,8 +641,8 @@ class VggtImuFrontend:
         (vgio_klt) and the stereo depth of m: (R_mb, t_mb, 6x6 covariance, info), or (None, info).  The covariance comes
         from the corners themselves: the pixel noise is the RMS reprojection error of the inliers, each corner's depth
         error the disparity noise (the same pixel noise) through z^2 / (f b), both propagated through the projection.
-        A metric motion independent of the passes (VGGT-Omega can under-report long translations: KITTI 01) and of the
-        IMU; used when it has enough inliers and its rotation agrees with the gyro."""
+        A metric motion independent of the passes and of the IMU; used when it has enough inliers and its rotation agrees
+        with the gyro as the corners' rotation-only factor must (it replaces that factor)."""
         depth = None if self.m is None else self.m.get("sgbm")
         if depth is None or self.klt_m is None or self.klt_cur is None or len(self.klt_cur) < 12:
             return None, {"ok": False, "reason": "no tracks or depth"}
@@ -704,7 +704,7 @@ class VggtImuFrontend:
         diff = _angle_deg(gyro_mb.T @ R_mb)
         info = {"ok": True, "n": int(len(u)), "inl": int(len(inl)), "px": round(s_px, 3), "t": round(float(np.linalg.norm(t_mb)), 4),
                 "t_std": round(float(np.sqrt(np.trace(cov[3:6, 3:6]))), 4), "gyro_deg": round(diff, 3)}
-        if diff > max(self.rotation_gate_deg_graph, 3.0 * gyro_sigma_deg):
+        if diff > max(1.0, 3.0 * gyro_sigma_deg):              # the corners' rotation-only factor's test (1 deg)
             self.stats["pnp_rejected"] = self.stats.get("pnp_rejected", 0) + 1
             return None, info | {"ok": False, "reason": "gyro"}
         self.stats["pnp_used"] = self.stats.get("pnp_used", 0) + 1
