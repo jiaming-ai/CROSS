@@ -186,6 +186,8 @@ class ImuConfig:
     # stereo + IMU: the translation tests with the IMU as the arbiter (VggtImuFrontend._stereo_gate); a factor > 1 also
     # accepts a pass within that factor of the IMU's prediction (the monocular test's tolerance for the learned scale)
     vgio_stereo_gate_factor: float = 1.0
+    vgio_stereo_gate_pairs: bool = False        # ... and the pass's keyframe pairs against the graph's motion
+    vgio_debug_costs: bool = False               # graph: log the cost of each factor type per solve (diagnostics)
     vgio_stereo_min_disparity: float = 2.0
     vgio_stereo_std: float = 0.02
     vgio_stereo_depth_k: float = 0.001

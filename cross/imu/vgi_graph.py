@@ -85,6 +85,7 @@ class GraphConfig:
     # prediction the graph does not yet know (session start, poor vision) cannot weaken the measurements
     trans_sigma_bound: bool = False
     robust_links: bool = True
+    debug_costs: bool = False            # solve() also reports the cost of each factor type (diagnostics)
 
 
 def _exp(phi):
@@ -824,6 +825,11 @@ class VgiGraph:
                 damping *= 10
                 info = {"cost": cost, "residuals": n_res}
         info["lam_std"] = float("nan")
+        if self.cfg.debug_costs:
+            w = self._huber(self._blocks(P, jac=False))
+            info["costs"] = {}
+            for _, r, _, kind in self._weighted(self._blocks(P, jac=False), w):
+                info["costs"][kind] = round(info["costs"].get(kind, 0.0) + float((r * r).sum()), 2)
         if need_std and H is not None:
             try:
                 k = 10 * (len(self.ids) - 1)

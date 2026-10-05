@@ -205,7 +205,7 @@ class VggtImuFrontend:
                                    rot_scale=ic.vgio_rot_scale, rot_scale_std=ic.vgio_rot_scale_std,
                                    time_offset=ic.vgio_graph_time_offset, time_offset_std=ic.vgio_time_offset_std,
                                    trans_sigma_predicted=ic.vgio_trans_sigma_predicted, robust_links=ic.vgio_robust_links,
-                                   trans_sigma_bound=ic.vgio_trans_sigma_bound,
+                                   trans_sigma_bound=ic.vgio_trans_sigma_bound, debug_costs=ic.vgio_debug_costs,
                                    depth_bias_drift=ic.vgio_depth_bias_drift,
                                    gyro_bias_walk=c.gyro_random_walk if ic.vgio_calib_gyro_walk else ic.vgio_gyro_bias_walk)
                 self.graph = VgiGraph(gcfg, c.T_cam_imu, c.gyro_noise_density, c.accel_noise_density)
@@ -816,7 +816,15 @@ class VggtImuFrontend:
             kf_log = {"kf_index": int(self.kf["index"]), "kf_t": float(np.linalg.norm(T_kb[:3, 3]))}
             # against the graph's current rotation from the keyframe (over ~2 s the gyro alone drifts)
             pred_km = G.R[k_node].T @ G.R[m_node]
-            if _angle_deg(pred_km.T @ T_km[:3, :3]) <= 2 * self.rotation_gate_deg_graph:
+            pairs_ok = True
+            if self.T_rl is not None and gate is not None and self.config.imu.vgio_stereo_gate_pairs:
+                # the keyframe pairs span ~2 s: their translations are tested against the graph as the pass's (one that
+                # under-reports them, accepted on its short pair, pulled every velocity of the window)
+                pairs_ok = (self._stereo_pair_ok(k_node, j, lam_init, T_kb[:3, 3])
+                            and self._stereo_pair_ok(k_node, m_node, lam_init, T_km[:3, 3]))
+                kf_log["pairs_ok"] = pairs_ok
+                self.stats["kf_pairs_gated"] = self.stats.get("kf_pairs_gated", 0) + int(not pairs_ok)
+            if pairs_ok and _angle_deg(pred_km.T @ T_km[:3, :3]) <= 2 * self.rotation_gate_deg_graph:
                 G.add_relative(k_node, j, j, T_kb[:3, :3], T_kb[:3, 3])
                 G.add_relative(k_node, m_node, j, T_km[:3, :3], T_km[:3, 3])
             r_k, s_k = _depth_ratio([(self.kf["pass_depth"], self.kf["conf"], obs["depth_kf"].float(), obs.get("conf_kf"))])
@@ -832,7 +840,8 @@ class VggtImuFrontend:
         # the scale's std is taken until initialization only (as before: the translation gate and the reported
         # uncertainty read that value); the velocity's std, for the bounded prediction, after every solve
         lam_std_wanted = not est.initialized
-        info = G.solve(need_std=lam_std_wanted or self.config.imu.vgio_trans_sigma_bound)
+        v_prop = float(np.linalg.norm(G.v[j]))
+        info = G.solve(need_std=lam_std_wanted or self.config.imu.vgio_trans_sigma_bound or self.T_rl is not None)
         G.marginalize()
         if G.cfg.time_offset and abs(G.td - self.time_offset) > 0.004:
             # the samples of the window again at the graph's offset (its first-order correction is good to a few ms)
@@ -875,7 +884,8 @@ class VggtImuFrontend:
                           "link_log": float(np.log(ratio)) if link_ok else None, "pass_ok": bool(pass_ok),
                           "pass_gyro_deg": round(vdiff, 3), "pass_t": float(np.linalg.norm(T_mb[:3, 3])),
                           "trans_gate": gate, "rest": rest, "kfc": kfc, "v_std": round(float(G.v_std), 4) if np.isfinite(G.v_std) else None,
-                          "stereo": stereo_info, "pnp": pnp_info, **(kf_log or {})}
+                          "stereo": stereo_info, "pnp": pnp_info, "v_prop": round(v_prop, 3),
+                          "costs": info.get("costs"), **(kf_log or {})}
         self._set_m(index, timestamp, rgb, None, conf_curr, node=j, pass_depth=depth_curr)
         self.m["rep"] = rep
         if self.klt:
@@ -930,7 +940,11 @@ class VggtImuFrontend:
         G = self.graph
         dt, v_pred, gap, imu_consistent = self._imu_prediction(m_node, j, timestamp)
         lam_std = self.scale_filter.lam_std if np.isfinite(self.scale_filter.lam_std) else 1.0
-        s_imu = 0.05 + G.cfg.accel_bias_std * gap
+        # the IMU's velocity uncertainty: its drift since the last accepted translation, and the graph's own marginal
+        # velocity std (last solve), large at a session start, where the IMU knows no speed yet (a relocalization
+        # session must not lose its first passes to an unconverged velocity)
+        v_std = float(G.v_std) if np.isfinite(G.v_std) else 1e3
+        s_imu = float(np.hypot(0.05 + G.cfg.accel_bias_std * gap, v_std))
         g = float(ic.vgio_stereo_gate_factor)
 
         def agree(v, s):
@@ -959,6 +973,20 @@ class VggtImuFrontend:
             self._last_trans_ok = timestamp
         info.update(ok=bool(pass_t), pnp_ok=bool(pnp_ok) if pnp is not None else None, trusted=trusted)
         return pass_t, pnp_ok, info
+
+    def _stereo_pair_ok(self, a, b, lam, t_ab):
+        """A longer pair of a pass (keyframe -> current, keyframe -> last measured) against the graph's motion between the
+        two nodes: speeds within 4 sigma (the pass's relative noise and scale uncertainty; the IMU's velocity uncertainty
+        over the pair's interval)."""
+        G = self.graph
+        dt = max(G.t[b] - G.t[a], 1e-3)
+        v_pred = float(np.linalg.norm(G.R[a].T @ (G.p[b] - G.p[a]))) / dt
+        v = float(np.exp(lam) * np.linalg.norm(t_ab)) / dt
+        lam_std = self.scale_filter.lam_std if np.isfinite(self.scale_filter.lam_std) else 1.0
+        v_std = float(G.v_std) if np.isfinite(G.v_std) else 1e3
+        s = float(np.linalg.norm([np.sqrt(G.cfg.trans_rel ** 2 + min(lam_std, 1.0) ** 2) * v,
+                                  0.05 + G.cfg.accel_bias_std * dt, v_std]))
+        return bool(abs(v - v_pred) <= 4.0 * s)
 
     def _translation_gate(self, m_node, j, lam_j, t_pass, timestamp):
         """Test of a pass's translation against the IMU's prediction (the counterpart of the gyro test of its rotation):

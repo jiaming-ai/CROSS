@@ -461,7 +461,8 @@ def test_stereo_gate():
     from cross.mono.config import MonoConfig
     from cross.mono.vggt_imu_frontend import VggtImuFrontend
     fe = VggtImuFrontend(np.eye(3), MonoConfig(), device="cpu", T_right_in_left=np.eye(4))
-    fe.graph = types.SimpleNamespace(cfg=GraphConfig(), R={0: np.eye(3), 1: np.eye(3)}, p={0: np.zeros(3), 1: np.zeros(3)})
+    fe.graph = types.SimpleNamespace(cfg=GraphConfig(), R={0: np.eye(3), 1: np.eye(3)}, p={0: np.zeros(3), 1: np.zeros(3)},
+                                     v_std=0.1)
     fe.scale_filter = types.SimpleNamespace(initialized=True, lam_std=0.03)
 
     def gate(v_pred, v_pass, v_pnp=None, rot_ok=True, last_ok=99.7, t=100.0):
@@ -480,5 +481,8 @@ def test_stereo_gate():
     assert gate(27.0, 6.0, 6.1, rot_ok=False) == (True, True)    # an IMU inconsistent with the passes outvotes nothing
     assert gate(27.0, 6.0, 20.0, rot_ok=False) == (True, False)
     assert gate(27.0, 6.0, last_ok=80.0) == (True, True)   # beyond the maximum gap the pass is accepted
+    fe.graph.v_std = np.inf
+    assert gate(27.0, 6.0, 6.1) == (True, True)            # a velocity the graph does not know yet vetoes nothing
+    fe.graph.v_std = 0.1
     fe.scale_filter.initialized = False
     assert gate(27.0, 1.0, 1.0) == (True, True)            # no test before the scale is known
