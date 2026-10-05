@@ -65,11 +65,15 @@ frame a VGGT-Omega forward pass (the back end's own pass when it observes then) 
 current frame, the last measured frame and a keyframe ~2 s older. A sliding-window pose graph (`cross/imu/vgi_graph.py`)
 optimizes these relative poses, the preintegrated IMU, gauge links between passes, tracked-corner rotations and the
 online calibration (gyro and accelerometer biases, gravity, the passes' rotation scale, the camera-IMU time offset).
-Each pass has a scale of its own: in the mono mode learned metric depth (DA3) observes it, with a bias state; in the
-stereo mode (`--mode stereo --odometry vgio`) the stereo pair does, through classical stereo depth (SGBM) of the current
-pair against the pass's depth map (no learned depth; `--mono-args "--imu-config vgio_stereo_source=baseline"` uses the
-right image as one more view of the pass instead). The stereo mode needs the IMU next to the stereo folder
-(`prepare_imu.py <dataset> ... --setup stereo` for OpenLORIS and ROVER, whose stereo pair is the T265 with its own IMU).
+Each pass has a scale of its own: in the mono mode learned metric depth (DA3) observes it, with a bias state. In the
+stereo mode (`--mode stereo --odometry vgio`) the stereo pair adds two constraints: classical stereo depth (SGBM) of the
+current pair against the pass's depth map observes the pass's scale (no learned depth, no bias state), and the tracked
+corners lifted to 3-D with that depth give the metric motion between measured frames (PnP, with its own covariance).
+Every visual translation is tested against the IMU's prediction (the IMU arbitrates when the visual cues disagree, e.g.
+when vehicles alongside fill the view). The stereo mode needs the IMU next to the stereo folder (`prepare_imu.py
+<dataset> ... --setup stereo` for OpenLORIS and ROVER, whose stereo pair is the T265 with its own IMU). Options:
+`--mono-args "--imu-config key=value"`, e.g. `vgio_stereo_pnp=false`, `vgio_stereo_source=baseline` (the right image as
+one more view of the pass instead of SGBM depth; biased on KITTI).
 
 ## 2. Run one sequence
 

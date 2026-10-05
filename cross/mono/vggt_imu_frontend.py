@@ -14,10 +14,12 @@ estimator recovers the metres per unit, with learned metric depth (Depth Anythin
 Before the scale is known the frontend reports invalid motion, or with a continuous start unknown motion (the gyro's
 rotation, wide translation covariance).
 
-With a stereo rig (T_right_in_left; the stereo mode) the stereo pair observes each pass's metric scale directly
-(VgiGraph.add_stereo): the same graph, without learned depth and its bias.  Two ways (vgio_stereo_source): "depth",
-classical stereo matching (SGBM) of the current pair against the pass's depth of the current frame, or "baseline", the
-right image as one more view of the pass and its left-right translation against the calibrated baseline."""
+With a stereo rig (T_right_in_left; the stereo mode) the same graph, without learned depth and its bias, gets two stereo
+constraints: the current pair observes each pass's metric scale (VgiGraph.add_stereo; vgio_stereo_source "depth":
+classical stereo matching (SGBM) against the pass's depth of the current frame, or "baseline": the right image as one
+more view of the pass, against the calibrated baseline), and the corners tracked between measured frames, lifted to 3-D
+with the stereo depth, give their metric motion (PnP; VgiGraph.add_metric_relative).  Visual translations are tested
+against the IMU's prediction, the IMU arbitrating between the passes and the corners (_stereo_gate)."""
 
 from dataclasses import replace
 from time import perf_counter

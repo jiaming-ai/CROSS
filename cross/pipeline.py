@@ -14,7 +14,8 @@ Two independent choices define a run:
                                      mode): no DPVO, the IMU carries the pose and VGGT-Omega's relative poses correct it
                                      in a local pose graph (cross/mono/vggt_imu_frontend), from the back end's forward
                                      passes where it observes; mono: learned depth as a prior on the metric scale,
-                                     stereo: the right image in every pass observes it
+                                     stereo: stereo depth observes it and the tracked corners' metric motion (PnP)
+                                     is a factor too
 
 The mono mode has two back ends (mono_estimator): da3, the monocular system of cross/mono (learned metric depth,
 two-view / feed-forward DA3 relative poses), and ff, the stereo mode's feed-forward multi-view estimator (VGGT-Omega) on
@@ -405,7 +406,7 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
 def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_left=None) -> Pipeline:
     """The VGGT-Omega + IMU frontend (cross/mono/vggt_imu_frontend) on the back end's model and image transforms.  The
     mono mode takes the metric scale from learned depth (DA3, with its bias in the graph), the stereo mode from the
-    right image of the current frame in every pass (no learned depth)."""
+    current stereo pair (no learned depth)."""
     from cross.mono.vggt_imu_frontend import VggtImuFrontend
     stereo = mode == "stereo"
     if stereo:

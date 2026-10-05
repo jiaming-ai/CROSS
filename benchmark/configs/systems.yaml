@@ -47,9 +47,8 @@ cross_stereo_vo:
          --odometry, visual]
   outdoor_config: [configs/outdoor.yaml]
 
-# stereo + IMU: the VGGT-Omega + IMU local pose graph of cross_mono_ff_vgio with the stereo pair as the metric scale
-# of every pass (classical stereo depth against the pass's depth; no learned depth) instead of DPVO or external
-# odometry (development)
+# stereo + IMU: the VGGT-Omega + IMU local pose graph of cross_mono_ff_vgio with stereo constraints instead of learned
+# depth (the pass's scale from SGBM depth, the tracked corners' metric motion by PnP) (development)
 cross_stereo_vgio:
   label: CROSS (VGGT-Omega, VGGT-inertial odometry)
   runner: cross_ff
