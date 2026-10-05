@@ -548,12 +548,20 @@ class VggtImuFrontend:
         t0 = perf_counter()
         metric = self.metric.predict_metric(rgb, self.K, rgb.shape[:2])
         self.stats["t_da3"] = self.stats.get("t_da3", 0.0) + perf_counter() - t0
+        observed = self._metric_depth_scale(metric, pass_depth, self.config.scale)
+        if observed is not None:
+            self.stats["depth_priors"] += 1
+        return observed
+
+    def _metric_depth_scale(self, metric, pass_depth, scale_config):
+        """A metric depth map of the current image (full resolution; learned or stereo) against the pass's depth of it:
+        the log metres per unit of the pass (cross.mono.scale.observe_scale), or None if the sizes differ."""
         metric_v = self.depth_transform(torch.from_numpy(np.asarray(metric, dtype=np.float32))[None])[0].numpy()
         source = pass_depth.float().cpu().numpy()
         if metric_v.shape != source.shape:
             return None
-        self.stats["depth_priors"] += 1
-        return observe_scale(metric_v, source, None, self.config.scale)
+        metric_v[~np.isfinite(metric_v)] = 0.0
+        return observe_scale(metric_v, source, None, scale_config)
 
     def _stereo_scale(self, obs, depth, conf):
         """The metric scale of a pass from the current stereo pair: (log metres per pass unit, its std) of the source
@@ -591,12 +599,9 @@ class VggtImuFrontend:
         metric[metric > fx * nb / max(ic.vgio_stereo_min_disparity, 1e-3)] = 0.0
         self._sgbm_depth = metric
         self.stats["t_sgbm"] = self.stats.get("t_sgbm", 0.0) + perf_counter() - t0
-        metric_v = self.depth_transform(torch.from_numpy(np.asarray(metric, dtype=np.float32))[None])[0].numpy()
-        source = pass_depth.float().cpu().numpy()
-        if metric_v.shape != source.shape:
+        o = self._metric_depth_scale(metric, pass_depth, ScaleConfig(observation_std_floor=ic.vgio_stereo_std))
+        if o is None:
             return None, {"ok": False, "reason": "shape"}
-        metric_v[~np.isfinite(metric_v)] = 0.0
-        o = observe_scale(metric_v, source, None, ScaleConfig(observation_std_floor=ic.vgio_stereo_std))
         info = {"ok": bool(o.accepted), "log": round(float(o.log_scale), 4), "std": round(float(np.sqrt(o.variance)), 4)
                 if np.isfinite(o.variance) else None, "pixels": int(o.pixels), "mad": round(float(o.log_mad), 3),
                 "inl": round(float(o.inlier_fraction), 3)}
