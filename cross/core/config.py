@@ -214,11 +214,14 @@ class LoopClosureConfig:
     # returns to 1 when the odometry recovers), and samples outside the band are kept out of the long-run ratio, so a
     # diverging odometry neither drags the map nor the estimator's metric scale.  Seen with a stereo VIO at night (ROVER:
     # the velocity ran away to 30x the true one while every visual measurement was rejected against the odometry chain).
-    # f = 2 and 30 samples: in the dark the healthy samples scatter widely (log-MAD 0.3, up to 14 % of them > 2x off;
-    # 10 samples / f 1.5 fired on noise, also on KITTI 07 RGB-D with OXTS odometry), in daylight log-MAD 0.02-0.05;
-    # the night runaway is detected 180 frames after it starts.  0 disables.
+    # f = 2, windows of 20 samples, 2 consecutive windows (odom_guard_persist): in the dark the healthy samples scatter
+    # widely (log-MAD 0.3, up to 14 % of them > 2x off; one window of 10 samples with f 1.5 fired on noise, also on KITTI
+    # 07 RGB-D with OXTS odometry), in daylight log-MAD 0.02-0.05.  0 disables.
     odom_guard_factor: float = 2.0
-    odom_guard_window: int = 30
+    odom_guard_window: int = 20
+    # the departure must hold in this many consecutive windows (same direction) before the odometry is rescaled: PnP at
+    # night has 2x departures lasting a few seconds that revert (single windows of 30 fired 8 times on ROVER night RGB-D)
+    odom_guard_persist: int = 2
     # the visual noise is split along / across the measured bearing, each with its own online scale (innovations of
     # measurements to keyframes <= 5 odometry edges back, normalised with the un-inflated chain covariance).  The metric
     # scale of the feed-forward estimator comes from the stereo baseline and is its weak part far away: on KITTI the
