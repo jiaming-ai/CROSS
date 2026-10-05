@@ -631,10 +631,13 @@ class LoopClosureVerifier:
         """Odometry scale guard: record one measured / odometry translation ratio; returns whether the sample is
         consistent with the long-run ratio (and may update it).  Rescales the odometry when the recent samples agree on a
         departure of more than the guard factor."""
-        if self.guard_factor <= 1.0 or not self.guard_metric or sample <= 0:
+        if not self.guard_metric or sample <= 0:
             return True
         ref = self.scale_ratio if self.scale_ratio > 0 else 1.0
         g = sample / ref
+        logger.debug(f"odometry scale sample {g:.4f} (raw {sample:.4f}, long-run {ref:.4f}, odometry scale {self.odom_scale:.4f})")
+        if self.guard_factor <= 1.0:
+            return True
         self._guard.append(g)
         lim = math.log(self.guard_factor)
         if len(self._guard) == self._guard.maxlen:
