@@ -709,6 +709,18 @@ class VggtImuFrontend:
         if diff > max(1.0, 3.0 * gyro_sigma_deg):              # the corners' rotation-only factor's test (1 deg)
             self.stats["pnp_rejected"] = self.stats.get("pnp_rejected", 0) + 1
             return None, info | {"ok": False, "reason": "gyro"}
+        if self.config.imu.vgio_stereo_pnp_rotation == "calibrated":
+            # the rotation's noise self-calibrated like the corners' rotation-only factor: the median disagreement with
+            # the gyro over the last 100 accepted ones (median of a 3-D error norm: 1.54 sigma per axis) as a floor of
+            # the analytic covariance, which knows the pixel and depth noise but not their systematic errors
+            self.pnp_diffs = (getattr(self, "pnp_diffs", []) + [diff])[-100:]
+            if len(self.pnp_diffs) >= 10:
+                s_r = np.radians(max(0.05, float(np.median(self.pnp_diffs)) / 1.54))
+                w, V = np.linalg.eigh(cov[0:3, 0:3])
+                extra = V @ np.diag(np.maximum(s_r ** 2 - w, 0.0)) @ V.T
+                cov = cov.copy()
+                cov[0:3, 0:3] += extra
+                info["rot_floor_deg"] = round(float(np.degrees(s_r)), 3)
         self.stats["pnp_used"] = self.stats.get("pnp_used", 0) + 1
         return (R_mb, t_mb, cov), info
 
@@ -793,7 +805,7 @@ class VggtImuFrontend:
             pass_ok = False
             self.stats["trans_gated"] = self.stats.get("trans_gated", 0) + 1
         self.klt_last = None
-        pnp_rot = self.config.imu.vgio_stereo_pnp_rotation
+        pnp_rot = self.config.imu.vgio_stereo_pnp_rotation not in (False, "false", "none", 0)
         if pnp is not None:
             R_p, t_p, cov_p = pnp
             if not pnp_rot:
