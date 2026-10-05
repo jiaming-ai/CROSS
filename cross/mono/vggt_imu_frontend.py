@@ -793,9 +793,18 @@ class VggtImuFrontend:
             pass_ok = False
             self.stats["trans_gated"] = self.stats.get("trans_gated", 0) + 1
         self.klt_last = None
+        pnp_rot = self.config.imu.vgio_stereo_pnp_rotation
         if pnp is not None:
-            G.add_metric_relative(m_node, j, *pnp)       # the tracks' full metric motion (their rotation included)
-        klt = self._klt_rotation(gyro_mb) if self.klt and pnp is None else None
+            R_p, t_p, cov_p = pnp
+            if not pnp_rot:
+                # the translation only (its marginal covariance): the corners' rotation stays the essential matrix's
+                # factor below, whose noise is calibrated against the gyro
+                cov_p = cov_p.copy()
+                cov_p[0:3, :] = 0.0
+                cov_p[:, 0:3] = 0.0
+                cov_p[0:3, 0:3] = np.eye(3) * 1e4
+            G.add_metric_relative(m_node, j, R_p, t_p, cov_p)
+        klt = self._klt_rotation(gyro_mb) if self.klt and (pnp is None or not pnp_rot) else None
         if klt is not None and self.config.imu.vgio_noise_hat:
             klt = self._noise_hat(gyro_mb, T_mb[:3, :3] if pass_ok else None, klt, a1 - a0) or klt
         if klt is not None:

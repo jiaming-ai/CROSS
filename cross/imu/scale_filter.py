@@ -192,6 +192,8 @@ class ImuConfig:
     # 0.057 -> 0.024 m, KITTI 07 relative error 2.5 -> 1.4 %; it locks onto vehicles alongside on a highway (KITTI 01),
     # which the translation tests catch
     vgio_stereo_pnp: bool = True
+    # ... with its rotation (False: its translation only, the corners' rotation from the essential matrix as without it)
+    vgio_stereo_pnp_rotation: bool = False
     # stereo + IMU: the translation tests with the IMU as the arbiter (VggtImuFrontend._stereo_gate): the pass and the
     # corners' motion must agree with the IMU's prediction within 4 sigma (vgio_stereo_gate_factor > 1 also accepts
     # within that factor, the monocular test's tolerance for the learned scale); vgio_stereo_gate_pairs: the pass's
