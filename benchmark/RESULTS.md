@@ -255,11 +255,11 @@ Overall: mean over the three datasets of the pooled recall at each dataset's sma
 | CROSS (PnP, stereo VIO odometry) · RGB-D ⁽ᵒ⁾ | 0.45 / 0.68 | 0.96 / 0.97 | 0.94 / 0.94 | 0.79 / 0.87 |
 | CROSS (PnP, visual odometry) · RGB-D | 0.28 / 0.44 | 0.94 / 0.96 | 0.90 / 0.93 | 0.71 / 0.78 |
 | CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 0.61 / 0.81 | 0.98 / 0.98 | 0.97 / 0.98 | 0.85 / 0.92 |
-| CROSS (VGGT-Omega, stereo VIO odometry) · stereo ⁽ᵒ⁾ | 0.61 / 0.81 | 0.97 / 0.97 | 0.94 / 0.96 (1/76 ✗) | 0.84 / 0.92 (1/100 ✗) |
+| CROSS (VGGT-Omega, stereo VIO odometry) · stereo ⁽ᵒ⁾ | 0.61 / 0.81 | 0.97 / 0.97 | 0.96 / 0.98 | 0.85 / 0.92 |
 | CROSS (VGGT-Omega, visual odometry) · stereo | 0.45 / 0.55 | 0.98 / 0.99 | 0.95 / 0.96 | 0.79 / 0.83 |
 | CROSS (VGGT-Omega fast, external odometry) · stereo ⁽ᵒ⁾ | 0.62 / 0.82 | 0.97 / 0.98 | 0.97 / 0.98 | 0.85 / 0.93 |
 | CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | 0.47 / 0.72 | 0.96 / 0.98 | 0.90 / 0.93 | 0.78 / 0.88 |
-| CROSS (DA3, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.47 / 0.72 | 0.96 / 0.97 | 0.90 / 0.91 (1/76 ✗) | 0.78 / 0.87 (1/100 ✗) |
+| CROSS (DA3, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.47 / 0.72 | 0.96 / 0.97 | 0.92 / 0.93 | 0.78 / 0.87 |
 | CROSS (DA3, visual odometry) · mono | 0.40 / 0.47 | 0.02 / 0.14 | 0.58 / 0.86 | 0.33 / 0.49 |
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.67 / 0.80 | 0.97 / 0.98 | 0.97 / 0.97 | 0.87 / 0.92 |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.67 / 0.80 | 0.96 / 0.98 | 0.94 / 0.96 (1/76 ✗) | 0.86 / 0.91 (1/100 ✗) |
@@ -287,14 +287,14 @@ Overall: mean over the three datasets of the pooled success at each dataset's sm
 | CROSS (PnP, stereo VIO odometry) · RGB-D ⁽ᵒ⁾ | 0.59 / 0.67 | 0.77 / 0.77 | 0.93 / 0.93 | 0.76 / 0.79 |
 | CROSS (PnP, visual odometry) · RGB-D | 0.55 / 0.64 | 0.71 / 0.72 | 0.91 / 0.92 | 0.72 / 0.76 |
 | CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 0.80 / 0.86 | 0.90 / 0.91 | 0.96 / 0.97 | 0.89 / 0.91 |
-| CROSS (VGGT-Omega, stereo VIO odometry) · stereo ⁽ᵒ⁾ | 0.80 / 0.86 | 0.89 / 0.90 | 0.95 / 0.96 (1/76 ✗) | 0.88 / 0.90 (1/100 ✗) |
+| CROSS (VGGT-Omega, stereo VIO odometry) · stereo ⁽ᵒ⁾ | 0.80 / 0.86 | 0.89 / 0.90 | 0.96 / 0.98 | 0.88 / 0.91 |
 | CROSS (VGGT-Omega, visual odometry) · stereo | 0.62 / 0.78 | 0.88 / 0.90 | 0.95 / 0.96 | 0.82 / 0.88 |
 | CROSS (VGGT-Omega fast, external odometry) · stereo ⁽ᵒ⁾ | 0.77 / 0.84 | 0.90 / 0.91 | 0.97 / 0.98 | 0.88 / 0.91 |
 | CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | 0.59 / 0.67 | 0.69 / 0.70 | 0.93 / 0.94 | 0.73 / 0.77 |
 | CROSS (DA3, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.59 / 0.67 | 0.70 / 0.70 | 0.94 / 0.94 | 0.74 / 0.77 |
 | CROSS (DA3, visual odometry) · mono | 0.49 / 0.60 | 0.44 / 0.47 | 0.86 / 0.89 | 0.60 / 0.65 |
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.90 / 0.92 | 0.96 / 0.98 | 0.85 / 0.89 |
-| CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.89 / 0.91 | 0.96 / 0.98 | 0.85 / 0.89 |
+| CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.89 / 0.91 | 0.94 / 0.95 (1/76 ✗) | 0.84 / 0.88 (1/100 ✗) |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.56 / 0.67 | 0.51 / 0.58 | 0.93 / 0.94 | 0.66 / 0.73 |
 | CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.64 / 0.75 | 0.67 / 0.79 | 0.96 / 0.98 | 0.76 / 0.84 |
 | ORB-SLAM3 · RGB-D | 0.17 / 0.23 | 0.08 / 0.08 | 0.66 / 0.66 | 0.30 / 0.32 |
@@ -481,14 +481,14 @@ Overall = mean over the three datasets of the pooled success at each dataset's s
 | CROSS (PnP, stereo VIO odometry) · RGB-D ⁽ᵒ⁾ | 0.59 / 0.67 | 0.77 / 0.77 | 0.93 / 0.93 | 0.76 / 0.79 |
 | CROSS (PnP, visual odometry) · RGB-D | 0.55 / 0.64 | 0.71 / 0.72 | 0.91 / 0.92 | 0.72 / 0.76 |
 | CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 0.80 / 0.86 | 0.90 / 0.91 | 0.96 / 0.97 | 0.89 / 0.91 |
-| CROSS (VGGT-Omega, stereo VIO odometry) · stereo ⁽ᵒ⁾ | 0.80 / 0.86 | 0.89 / 0.90 | 0.95 / 0.96 (1/76 ✗) | 0.88 / 0.90 (1/100 ✗) |
+| CROSS (VGGT-Omega, stereo VIO odometry) · stereo ⁽ᵒ⁾ | 0.80 / 0.86 | 0.89 / 0.90 | 0.96 / 0.98 | 0.88 / 0.91 |
 | CROSS (VGGT-Omega, visual odometry) · stereo | 0.62 / 0.78 | 0.88 / 0.90 | 0.95 / 0.96 | 0.82 / 0.88 |
 | CROSS (VGGT-Omega fast, external odometry) · stereo ⁽ᵒ⁾ | 0.77 / 0.84 | 0.90 / 0.91 | 0.97 / 0.98 | 0.88 / 0.91 |
 | CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | 0.59 / 0.67 | 0.69 / 0.70 | 0.93 / 0.94 | 0.73 / 0.77 |
 | CROSS (DA3, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.59 / 0.67 | 0.70 / 0.70 | 0.94 / 0.94 | 0.74 / 0.77 |
 | CROSS (DA3, visual odometry) · mono | 0.49 / 0.60 | 0.44 / 0.47 | 0.86 / 0.89 | 0.60 / 0.65 |
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.90 / 0.92 | 0.96 / 0.98 | 0.85 / 0.89 |
-| CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.89 / 0.91 | 0.96 / 0.98 | 0.85 / 0.89 |
+| CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.89 / 0.91 | 0.94 / 0.95 (1/76 ✗) | 0.84 / 0.88 (1/100 ✗) |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.56 / 0.67 | 0.51 / 0.58 | 0.93 / 0.94 | 0.66 / 0.73 |
 | CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.64 / 0.75 | 0.67 / 0.79 | 0.96 / 0.98 | 0.76 / 0.84 |
 | ORB-SLAM3 · RGB-D | 0.17 / 0.23 | 0.08 / 0.08 | 0.66 / 0.66 | 0.30 / 0.32 |
@@ -577,14 +577,14 @@ Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m 
 | CROSS (PnP, stereo VIO odometry) · RGB-D ⁽ᵒ⁾ | 0.97 / 0.98 | 0.94 / 0.95 | 0.97 / 1.00 | 0.79 / 0.80 | 0.93 / 0.93 [1134, 0.92–0.95] |
 | CROSS (PnP, visual odometry) · RGB-D | 0.94 / 0.97 | 0.94 / 0.94 | 0.97 / 1.00 | 0.75 / 0.75 | 0.91 / 0.92 [1134, 0.90–0.93] |
 | CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾ | 0.98 / 0.98 | 0.96 / 0.98 | 1.00 / 1.00 | 0.92 / 0.94 | 0.96 / 0.97 [1134, 0.96–0.98] |
-| CROSS (VGGT-Omega, stereo VIO odometry) · stereo ⁽ᵒ⁾ | 0.94 / 0.94 (1/21 ✗) | 0.96 / 0.98 | 0.97 / 1.00 | 0.94 / 0.96 | 0.95 / 0.96 [1134, 0.95–0.97] (1/76 ✗) |
+| CROSS (VGGT-Omega, stereo VIO odometry) · stereo ⁽ᵒ⁾ | 0.98 / 0.99 | 0.96 / 0.98 | 0.97 / 1.00 | 0.94 / 0.96 | 0.96 / 0.98 [1134, 0.97–0.99] |
 | CROSS (VGGT-Omega, visual odometry) · stereo | 0.98 / 0.98 | 0.95 / 0.97 | 1.00 / 1.00 | 0.89 / 0.91 | 0.95 / 0.96 [1134, 0.95–0.97] |
 | CROSS (VGGT-Omega fast, external odometry) · stereo ⁽ᵒ⁾ | 0.98 / 0.99 | 0.97 / 0.98 | 1.00 / 1.00 | 0.92 / 0.93 | 0.97 / 0.98 [1134, 0.97–0.98] |
 | CROSS (DA3, external odometry) · mono ⁽ᵒ⁾ | 0.97 / 0.98 | 0.95 / 0.96 | 1.00 / 1.00 | 0.76 / 0.77 | 0.93 / 0.94 [1134, 0.92–0.95] |
 | CROSS (DA3, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.98 / 0.98 | 0.95 / 0.96 | 1.00 / 1.00 | 0.79 / 0.79 | 0.94 / 0.94 [1134, 0.93–0.95] |
 | CROSS (DA3, visual odometry) · mono | 0.96 / 0.96 | 0.88 / 0.92 | 0.97 / 1.00 | 0.56 / 0.63 | 0.86 / 0.89 [1134, 0.87–0.90] |
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.98 / 0.98 | 0.96 / 0.98 | 1.00 / 1.00 | 0.92 / 0.94 | 0.96 / 0.98 [1134, 0.96–0.98] |
-| CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.98 / 0.98 | 0.97 / 0.99 | 1.00 / 1.00 | 0.92 / 0.94 | 0.96 / 0.98 [1134, 0.97–0.98] |
+| CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.98 / 0.98 | 0.91 / 0.93 (1/21 ✗) | 1.00 / 1.00 | 0.92 / 0.94 | 0.94 / 0.95 [1134, 0.94–0.96] (1/76 ✗) |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.97 / 0.98 | 0.88 / 0.90 | 0.97 / 1.00 | 0.93 / 0.94 | 0.93 / 0.94 [1134, 0.92–0.95] |
 | CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.97 / 0.98 | 0.97 / 0.98 | 1.00 / 1.00 | 0.92 / 0.95 | 0.96 / 0.98 [1134, 0.97–0.98] |
 | ORB-SLAM3 · RGB-D | 0.71 / 0.73 | 0.60 / 0.60 | 0.92 / 0.92 | 0.65 / 0.65 | 0.66 / 0.66 [1134, 0.64–0.69] |
