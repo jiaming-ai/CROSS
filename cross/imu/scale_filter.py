@@ -172,6 +172,18 @@ class ImuConfig:
     vgio_max_interval: int = 4
     vgio_min_translation: float = 0.5
     vgio_min_rotation_deg: float = 3.0
+    # stereo + IMU (the stereo mode with --odometry vgio): the current stereo pair observes each pass's metric scale
+    # (VggtImuFrontend._stereo_scale).  Source "depth": classical stereo depth (SGBM) against the pass's depth of the
+    # current frame (pixels with >= vgio_stereo_min_disparity px), std floored at vgio_stereo_std; "baseline": the right
+    # image in the pass and its left-right translation against the calibrated baseline, std hypot(vgio_stereo_std,
+    # vgio_stereo_depth_k * scene depth / baseline), not used when the pass's rotation between the cameras or its
+    # baseline direction disagrees with the calibration; "both": both computed and logged, depth used
+    vgio_stereo_source: str = "depth"
+    vgio_stereo_min_disparity: float = 2.0
+    vgio_stereo_std: float = 0.02
+    vgio_stereo_depth_k: float = 0.001
+    vgio_stereo_rot_gate_deg: float = 3.0
+    vgio_stereo_dir_cos: float = 0.95
 
 
 @dataclass

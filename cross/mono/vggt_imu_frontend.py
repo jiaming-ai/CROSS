@@ -12,7 +12,12 @@ the two gauges, so all displacements are in one slowly drifting unit, like a vis
 estimator recovers the metres per unit, with learned metric depth (Depth Anything 3) as a prior on it.
 
 Before the scale is known the frontend reports invalid motion, or with a continuous start unknown motion (the gyro's
-rotation, wide translation covariance)."""
+rotation, wide translation covariance).
+
+With a stereo rig (T_right_in_left; the stereo mode) the stereo pair observes each pass's metric scale directly
+(VgiGraph.add_stereo): the same graph, without learned depth and its bias.  Two ways (vgio_stereo_source): "depth",
+classical stereo matching (SGBM) of the current pair against the pass's depth of the current frame, or "baseline", the
+right image as one more view of the pass and its left-right translation against the calibrated baseline."""
 
 from dataclasses import replace
 from time import perf_counter
@@ -53,11 +58,16 @@ class VggtImuFrontend:
     def __init__(self, K, config, device="cuda", metric_model=None, backend=None, rgb_transform=None,
                  depth_transform=None, interval: int = 3, depth_every: int = 3, context: int = 1,
                  keyframe_age: float = 0.0, visual_rotation: bool = False, rotation_gate_deg: float = 3.0,
-                 graph: bool = False):
+                 graph: bool = False, T_right_in_left=None):
         self.config = config
         self.K = np.asarray(K, dtype=np.float64).copy()
         self.device = device
         self.metric = metric_model               # DA3 metric depth (scale prior), or None
+        # stereo rig: the right camera's pose in the left camera (metres), or None (monocular)
+        self.T_rl = None if T_right_in_left is None else np.asarray(T_right_in_left, dtype=np.float64).copy()
+        self._right = None                       # right image of the current frame (stereo)
+        self._sgbm = None                        # stereo matcher (vgio_stereo_source depth)
+        self._stereo_res = []                    # recent stereo-scale innovations (online noise, _stereo_noise)
         self.backend = backend                   # the VGGT-Omega backend (cross.cv.pose_est_ff), shared with the back end
         self.rgb_transform = rgb_transform       # the back end's image transform (same tensors: token-cache hits)
         self.depth_transform = depth_transform
@@ -173,6 +183,7 @@ class VggtImuFrontend:
     def track(self, frame):
         start = perf_counter()
         rgb = frame["rgb"]
+        self._right = frame.get("rgb_right") if self.T_rl is not None else None
         # the IMU clock of this frame: the end of its IMU window (cross.dataloader.imu, camera times)
         timestamp = float(frame.get("imu_t1", frame["timestamp"]))
         if self.last_timestamp is not None and timestamp <= self.last_timestamp:
@@ -372,6 +383,8 @@ class VggtImuFrontend:
         elif self.m is not None and self.context >= 2 and self.m_prev is not None:
             third = "m_prev"
             views.append(self.rgb_transform(self.m_prev["rgb"]))
+        if self._right is not None and self._stereo_views():
+            views.append(self.rgb_transform(self._right))         # the stereo pair's right image, last
         images = torch.stack(views).float().to(self.backend.device if hasattr(self.backend, "device") else "cuda")
         if images.max() > 1.5:
             images = images / 255.0
@@ -386,7 +399,13 @@ class VggtImuFrontend:
             out.update(depth_prev2=pred.depth[2], conf_prev2=_conf(pred, 2))
         elif third == "kf":
             out.update(depth_kf=pred.depth[2], conf_kf=_conf(pred, 2), c2w_kf=pred.c2w[2])
+        if self._right is not None and self._stereo_views():
+            out["c2w_right"] = pred.c2w[len(views) - 1]
         return out
+
+    def _stereo_views(self):
+        """The right image rides along in the frontend's own passes (only the baseline source needs it)."""
+        return self.config.imu.vgio_stereo_source in ("baseline", "both")
 
     # ------------------------------------------------------------------ the visual measurement
     def _klt_track(self, rgb):
@@ -536,6 +555,81 @@ class VggtImuFrontend:
         self.stats["depth_priors"] += 1
         return observe_scale(metric_v, source, None, self.config.scale)
 
+    def _stereo_scale(self, obs, depth, conf):
+        """The metric scale of a pass from the current stereo pair: (log metres per pass unit, its std) of the source
+        vgio_stereo_source, or None; and a log of both sources.  Neither has a bias state: the rig is calibrated."""
+        if self.T_rl is None or obs is None:
+            return None, None
+        source = self.config.imu.vgio_stereo_source
+        info = {}
+        out = {}
+        if source in ("depth", "both"):
+            out["depth"], info["depth"] = self._stereo_depth_scale(depth)
+        if source in ("baseline", "both"):
+            out["baseline"], info["baseline"] = self._stereo_baseline_scale(obs, depth, conf)
+        use = out.get("baseline" if source == "baseline" else "depth")
+        self.stats["stereo_used"] = self.stats.get("stereo_used", 0) + int(use is not None)
+        if use is not None:
+            info |= {"log": round(use[0], 4), "std": round(use[1], 4)}
+        return use, info
+
+    def _stereo_depth_scale(self, pass_depth):
+        """Classical stereo depth (SGBM) of the current pair against the pass's depth of the left image, as learned depth
+        is in the monocular case (cross.mono.scale.observe_scale: tiles, inliers; its std, floored at vgio_stereo_std).
+        Pixels with less than vgio_stereo_min_disparity px of disparity are left out (their depth is mostly noise)."""
+        if self._right is None:
+            return None, {"ok": False, "reason": "no right image"}
+        from cross.dataloader.stereo_loader import SGBMDepth
+        from cross.mono.config import ScaleConfig
+        ic = self.config.imu
+        rgb = self._frame[2]
+        if self._sgbm is None:
+            self._sgbm = SGBMDepth(rgb.shape[1])
+        t0 = perf_counter()
+        fx, nb = float(self.K[0, 0]), float(np.linalg.norm(self.T_rl[:3, 3]))
+        metric = self._sgbm(rgb, np.asarray(self._right), fx, nb)
+        metric[metric > fx * nb / max(ic.vgio_stereo_min_disparity, 1e-3)] = 0.0
+        self.stats["t_sgbm"] = self.stats.get("t_sgbm", 0.0) + perf_counter() - t0
+        metric_v = self.depth_transform(torch.from_numpy(np.asarray(metric, dtype=np.float32))[None])[0].numpy()
+        source = pass_depth.float().cpu().numpy()
+        if metric_v.shape != source.shape:
+            return None, {"ok": False, "reason": "shape"}
+        metric_v[~np.isfinite(metric_v)] = 0.0
+        o = observe_scale(metric_v, source, None, ScaleConfig(observation_std_floor=ic.vgio_stereo_std))
+        info = {"ok": bool(o.accepted), "log": round(float(o.log_scale), 4), "std": round(float(np.sqrt(o.variance)), 4)
+                if np.isfinite(o.variance) else None, "pixels": int(o.pixels), "mad": round(float(o.log_mad), 3),
+                "inl": round(float(o.inlier_fraction), 3)}
+        if not o.accepted:
+            self.stats["stereo_depth_rejected"] = self.stats.get("stereo_depth_rejected", 0) + 1
+            return None, info
+        return (float(o.log_scale), float(np.sqrt(o.variance))), info
+
+    def _stereo_baseline_scale(self, obs, depth, conf):
+        """The right image as one more view of the pass: its centre in the left camera's frame along the calibrated
+        baseline, against the baseline's length.  Not used when the pass's rotation between the two cameras or its
+        baseline direction disagrees with the calibration (a wrongly registered right view carries no scale).  The std
+        grows with the scene depth over the baseline, both in the pass's units (scale-free).  VGGT-Omega's baseline is
+        biased by scene (KITTI 07: 13 % too long against the pass's own translations, KITTI 01: 30 %; OpenLORIS T265
+        2-7 % short), while its depths agree with its translations (cross_mono_ff_vgio analysis: 0.99-1.02)."""
+        if obs.get("c2w_right") is None:
+            return None, {"ok": False, "reason": "no right view"}
+        ic = self.config.imu
+        T = inverse(np.asarray(obs["c2w_curr"], dtype=np.float64)) @ np.asarray(obs["c2w_right"], dtype=np.float64)
+        b = self.T_rl[:3, 3]
+        nb = float(np.linalg.norm(b))
+        t = T[:3, 3]
+        along = float(t @ b) / nb
+        cos = along / max(float(np.linalg.norm(t)), 1e-12)
+        rot = _angle_deg(self.T_rl[:3, :3].T @ T[:3, :3])
+        d_over_b = _median_depth(depth, conf) / max(along, 1e-12)
+        info = {"rot_deg": round(rot, 3), "cos": round(cos, 4), "d_over_b": round(float(d_over_b), 2)}
+        if along <= 0 or rot > ic.vgio_stereo_rot_gate_deg or cos < ic.vgio_stereo_dir_cos or not np.isfinite(d_over_b):
+            self.stats["stereo_baseline_rejected"] = self.stats.get("stereo_baseline_rejected", 0) + 1
+            return None, info | {"ok": False}
+        std = float(np.hypot(ic.vgio_stereo_std, ic.vgio_stereo_depth_k * d_over_b))
+        log_obs = float(np.log(nb) - np.log(along))
+        return (log_obs, std), info | {"ok": True, "log": round(log_obs, 4), "std": round(std, 4)}
+
     def _measure_graph(self, obs):
         """A visual measurement as a node of the local pose graph."""
         index, timestamp, rgb = self._frame
@@ -549,13 +643,17 @@ class VggtImuFrontend:
         observed = self._learned_depth(rgb, depth_curr, index)
         da3 = (float(observed.log_scale), float(np.sqrt(observed.variance))) if observed is not None and observed.accepted \
             else None
+        stereo, stereo_info = self._stereo_scale(obs, depth_curr, conf_curr)
         if self.m is None or not G.ids:
             if not self.accel_history:
                 return
-            lam0 = da3[0] if da3 is not None else float(-np.log(max(_median_depth(depth_curr, conf_curr), 1e-6)))
+            lam0 = stereo[0] if stereo is not None else da3[0] if da3 is not None \
+                else float(-np.log(max(_median_depth(depth_curr, conf_curr), 1e-6)))
             node = G.start(self.R_wc, np.mean(self.accel_history, axis=0), lam0, timestamp, bg0=self.gyro_bias)
             if da3 is not None:
                 G.add_depth(node, *da3)
+            if stereo is not None:
+                G.add_stereo(node, *stereo)
             self._set_m(index, timestamp, rgb, None, conf_curr, node=node, pass_depth=depth_curr)
             if self.klt:
                 self._klt_detect()
@@ -593,7 +691,7 @@ class VggtImuFrontend:
                 self.stats["vggt_rot_sigma_deg"] = round(float(np.degrees(G.cfg.rot_std)), 3)
         ratio, spread = _depth_ratio([(self.m["pass_depth"], self.m["conf"], obs["depth_prev"].float(), obs.get("conf_prev"))])
         link_ok = bool(np.isfinite(ratio) and spread < 0.25)
-        lam_init = G.lam[m_node] + (np.log(ratio) if link_ok else 0.0)
+        lam_init = stereo[0] if stereo is not None else G.lam[m_node] + (np.log(ratio) if link_ok else 0.0)
         kfc = self._keyframe_consistency(obs, c2w_c, c2w_m, index, ratio if link_ok else None)
         j = G.add_node(pre, jac, lam_init, timestamp)
         gate = self._translation_gate(m_node, j, lam_init, T_mb[:3, 3], timestamp) if pass_ok else None
@@ -617,11 +715,12 @@ class VggtImuFrontend:
                 G.add_link(j, m_node, np.log(ratio))
         else:
             self.stats["slips"] += 1
-        kf_used = False
+        kf_used = kf_log = False
         if pass_ok and obs.get("c2w_kf") is not None and self.kf is not None and self.kf.get("node") in G.R:
             c2w_k = np.asarray(obs["c2w_kf"], dtype=np.float64)
             k_node = self.kf["node"]
             T_kb, T_km = inverse(c2w_k) @ c2w_c, inverse(c2w_k) @ c2w_m
+            kf_log = {"kf_index": int(self.kf["index"]), "kf_t": float(np.linalg.norm(T_kb[:3, 3]))}
             # against the graph's current rotation from the keyframe (over ~2 s the gyro alone drifts)
             pred_km = G.R[k_node].T @ G.R[m_node]
             if _angle_deg(pred_km.T @ T_km[:3, :3]) <= 2 * self.rotation_gate_deg_graph:
@@ -633,6 +732,8 @@ class VggtImuFrontend:
             kf_used = True
         if da3 is not None:
             G.add_depth(j, *da3)
+        if stereo is not None:
+            G.add_stereo(j, *stereo)
         est = self.scale_filter
         t0 = perf_counter()
         # the scale's std is taken until initialization only (as before: the translation gate and the reported
@@ -680,7 +781,8 @@ class VggtImuFrontend:
                           "b_index": int(index), "da3": None if da3 is None else [round(da3[0], 4), round(da3[1], 4)],
                           "link_log": float(np.log(ratio)) if link_ok else None, "pass_ok": bool(pass_ok),
                           "pass_gyro_deg": round(vdiff, 3), "pass_t": float(np.linalg.norm(T_mb[:3, 3])),
-                          "trans_gate": gate, "rest": rest, "kfc": kfc, "v_std": round(float(G.v_std), 4) if np.isfinite(G.v_std) else None}
+                          "trans_gate": gate, "rest": rest, "kfc": kfc, "v_std": round(float(G.v_std), 4) if np.isfinite(G.v_std) else None,
+                          "stereo": stereo_info, **(kf_log or {})}
         self._set_m(index, timestamp, rgb, None, conf_curr, node=j, pass_depth=depth_curr)
         self.m["rep"] = rep
         if self.klt:
@@ -750,7 +852,7 @@ class VggtImuFrontend:
             self._pp = np.eye(4)
             self._pp[:3, :3] = principal_point_rotation(self.K, w, h).T
         out = dict(obs)
-        for k in ("c2w_curr", "c2w_prev", "c2w_kf"):
+        for k in ("c2w_curr", "c2w_prev", "c2w_kf", "c2w_right"):
             if out.get(k) is not None:
                 out[k] = np.asarray(out[k], dtype=np.float64) @ self._pp
         return out

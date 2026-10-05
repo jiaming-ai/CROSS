@@ -17,8 +17,11 @@ that camera's frame (T_cam_imu) and its noise densities:
   simchange  simulated: the 10 Hz ground truth is interpolated by a C2 spline and differentiated at 200 Hz, with the
              noise and bias of a BMI055 (the D435i IMU; ROVER's Kalibr values) and a seed derived from the sequence name
 
-  python benchmark/datasets/prepare_imu.py openloris /path/to/openloris $BENCH_DATA/openloris [--seqs office1-1 ...]
-  python benchmark/datasets/prepare_imu.py rover     /path/to/rover     $BENCH_DATA/rover
+With --setup stereo (openloris, rover) the IMU of the stereo setup is written instead: the T265's own IMU, with its pose
+in the rectified left camera of the stereo folder.  KITTI's and SimChange's single folder serves both setups.
+
+  python benchmark/datasets/prepare_imu.py openloris /path/to/openloris $BENCH_DATA/openloris [--seqs office1-1 ...] [--setup stereo]
+  python benchmark/datasets/prepare_imu.py rover     /path/to/rover     $BENCH_DATA/rover [--setup stereo]
   python benchmark/datasets/prepare_imu.py kitti     /path/to/kitti_raw $BENCH_DATA/kitti
   python benchmark/datasets/prepare_imu.py simchange -                  $BENCH_DATA/simchange
 """
@@ -57,7 +60,9 @@ def _openloris_intrinsic(seq: Path, sensor: str):
     return m[:, :3], m[:, 3]
 
 
-def openloris(raw: Path, bench: Path, seqs):
+def openloris(raw: Path, bench: Path, seqs, setup="rgbd"):
+    if setup == "stereo":
+        return openloris_stereo(raw, bench, seqs)
     sys.path.insert(0, str(ROOT / "benchmark" / "datasets"))
     from prepare_openloris import read_child_extrinsic
     seqs = seqs or sorted(p.name for p in bench.iterdir() if (p / "rgbd" / "times.txt").is_file())
@@ -83,8 +88,42 @@ def openloris(raw: Path, bench: Path, seqs):
         print(f"{name}: {len(t)} samples, |a| median {np.median(np.linalg.norm(a, axis=1)):.3f}", flush=True)
 
 
+def openloris_stereo(raw: Path, bench: Path, seqs):
+    """The T265's IMU (BMI055: gyroscope 200 Hz, accelerometer 62.5 Hz interpolated to the gyroscope times; factory
+    intrinsics applied) for the stereo folder (the T265 fisheye pair rectified by prepare_openloris.py): its pose in
+    the rectified left camera."""
+    sys.path.insert(0, str(ROOT / "benchmark" / "datasets"))
+    from prepare_openloris import fisheye_rectifier, read_child_extrinsic
+    seqs = seqs or sorted(p.name for p in bench.iterdir() if (p / "stereo" / "times.txt").is_file())
+    for name in seqs:
+        out = bench / name / "stereo"
+        src = raw / name.split("_f")[0] if not (raw / name).is_dir() else raw / name
+        if not (out / "times.txt").is_file() or not (src / "t265_gyroscope.txt").is_file():
+            print(f"{name}: no prepared stereo folder or no T265 IMU, skipped")
+            continue
+        gyro = np.loadtxt(src / "t265_gyroscope.txt", comments="#", dtype=np.float64)
+        acc = np.loadtxt(src / "t265_accelerometer.txt", comments="#", dtype=np.float64)
+        S_g, b_g = _openloris_intrinsic(src, "t265_gyroscope")
+        S_a, b_a = _openloris_intrinsic(src, "t265_accelerometer")
+        tg = gyro[:, 0]
+        a_raw = np.stack([np.interp(tg, acc[:, 0], acc[:, k]) for k in (1, 2, 3)], axis=1)
+        inside = (tg >= acc[0, 0]) & (tg <= acc[-1, 0])
+        w = gyro[:, 1:4] @ S_g.T - b_g
+        a = a_raw @ S_a.T - b_a
+        t, w, a = _clip(tg[inside], w[inside], a[inside], t_frames=_frames(out))
+        _, _, _, T_cam1_rect = fisheye_rectifier(src)
+        T_cam1_imu = read_child_extrinsic(src, "t265_fisheye1_optical_frame", "t265_accelerometer")
+        T_cam_imu = np.linalg.inv(T_cam1_rect) @ T_cam1_imu
+        write_imu(out, t, w, a, {"T_cam_imu": T_cam_imu.tolist(), **BMI055, "rate_hz": 200.0,
+                                 "source": f"OpenLORIS {src.name} T265 IMU (factory intrinsics applied), "
+                                           "pose in the rectified left camera"})
+        print(f"{name}: {len(t)} samples, |a| median {np.median(np.linalg.norm(a, axis=1)):.3f}", flush=True)
+
+
 # ---------------------------------------------------------------------------------------------------- ROVER
-def rover(raw: Path, bench: Path, names):
+def rover(raw: Path, bench: Path, names, setup="rgbd"):
+    if setup == "stereo":
+        return rover_stereo(raw, bench, names)
     import yaml
     cal = yaml.safe_load((raw / "calibration/calib_d435i.yaml").read_text())
     T_cam_imu = np.asarray(cal["IMU-To-Cam"], dtype=np.float64)
@@ -116,6 +155,40 @@ def rover(raw: Path, bench: Path, names):
                                  "accel_noise_density": nz["noise_acc"], "gyro_random_walk": nz["walk_gyro"],
                                  "accel_random_walk": nz["walk_acc"], "rate_hz": float(1 / np.median(np.diff(t))),
                                  "source": f"ROVER {top} {src}"})
+        print(f"{name}: {len(t)} samples ({1 / np.median(np.diff(t)):.0f} Hz), "
+              f"|a| median {np.median(np.linalg.norm(a, axis=1)):.3f}", flush=True)
+
+
+def rover_stereo(raw: Path, bench: Path, names):
+    """The T265's IMU (realsense_T265/imu/imu.txt) for the stereo folder (the T265 pair rectified by
+    prepare_rover.py), with the Kalibr extrinsics and noise of calibration/calib_t265.yaml."""
+    sys.path.insert(0, str(ROOT / "benchmark" / "datasets"))
+    from prepare_rover import read_calib, stereo_rectification
+    _, cal_t = read_calib(raw)
+    T_camleft_imu = np.asarray(cal_t["IMU-To-CamLeft"], dtype=np.float64)       # Kalibr: x_camleft = T x_imu
+    nz = cal_t["IMU_Intrinsics"]
+    names = names or sorted(p.name for p in bench.iterdir() if (p / "stereo" / "times.txt").is_file())
+    for name in names:
+        out = bench / name / "stereo"
+        if not (raw / f"{name}.zip").is_file() or not (out / "times.txt").is_file():
+            print(f"{name}: no zip or no prepared stereo folder, skipped")
+            continue
+        z = zipfile.ZipFile(raw / f"{name}.zip")
+        top = z.namelist()[0].split("/")[0]
+        _, _, T_prism_rect, _ = stereo_rectification(z, top, cal_t)
+        T_cam_rect = np.linalg.inv(np.asarray(cal_t["CamLeft-To-Prism"], dtype=np.float64)) @ T_prism_rect
+        T_cam_imu = np.linalg.inv(T_cam_rect) @ T_camleft_imu
+        rows = [l.split(",") for l in z.read(f"{top}/realsense_T265/imu/imu.txt").decode().splitlines()
+                if l.strip() and not l.startswith("#")]
+        d = np.asarray(rows, dtype=np.float64)                                     # t, ax, ay, az, wx, wy, wz
+        o = np.argsort(d[:, 0], kind="stable")
+        d = d[o][np.concatenate([[True], np.diff(d[o, 0]) > 1e-6])]
+        t, w, a = _clip(d[:, 0], d[:, 4:7], d[:, 1:4], t_frames=_frames(out))
+        write_imu(out, t, w, a, {"T_cam_imu": T_cam_imu.tolist(), "gyro_noise_density": nz["noise_gyro"],
+                                 "accel_noise_density": nz["noise_acc"], "gyro_random_walk": nz["walk_gyro"],
+                                 "accel_random_walk": nz["walk_acc"], "rate_hz": float(1 / np.median(np.diff(t))),
+                                 "source": f"ROVER {top} realsense_T265/imu (Kalibr calib_t265.yaml), pose in the "
+                                           "rectified left camera"})
         print(f"{name}: {len(t)} samples ({1 / np.median(np.diff(t)):.0f} Hz), "
               f"|a| median {np.median(np.linalg.norm(a, axis=1)):.3f}", flush=True)
 
@@ -173,12 +246,15 @@ def main():
     ap.add_argument("raw", help="raw dataset root ('-' for simchange)")
     ap.add_argument("bench", help="prepared benchmark root of the dataset ($BENCH_DATA/<dataset>)")
     ap.add_argument("--seqs", nargs="*", default=None)
+    ap.add_argument("--setup", choices=["rgbd", "stereo"], default="rgbd",
+                    help="openloris / rover: the folder and camera of the IMU (stereo: the T265 pair and its own IMU); "
+                         "kitti and simchange have one folder (the stereo pair's left camera)")
     a = ap.parse_args()
     raw, bench = Path(a.raw), Path(a.bench)
     if a.dataset == "openloris":
-        openloris(raw, bench, a.seqs)
+        openloris(raw, bench, a.seqs, a.setup)
     elif a.dataset == "rover":
-        rover(raw, bench, a.seqs)
+        rover(raw, bench, a.seqs, a.setup)
     elif a.dataset == "kitti":
         kitti(raw, bench, a.seqs)
     else:

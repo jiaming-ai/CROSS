@@ -19,8 +19,9 @@ A run is two independent choices:
 | `external` (default) | the dataset's odometry (wheel, OXTS, or simulated from ground truth with `--snr`) |
 | `visual` | DPVO from the images; metric scale from the mode's depth (sensor, stereo, or learned for mono) |
 | `vio` (mono mode) | DPVO with its metric scale from the IMU (visual-inertial; learned depth as a prior) |
+| `vgio` (mono mode with `--mono-estimator ff`, stereo mode) | no DPVO: VGGT-Omega relative poses and the IMU in a local pose graph; metric scale from learned depth (mono) or the stereo pair (stereo) |
 
-All modes run with `external` and `visual`; `vio` is for the mono mode. Visual odometry needs DPVO (`install.sh
+All modes run with `external` and `visual`; `vio` is for the mono mode, `vgio` for the mono (`ff`) and stereo modes. Visual odometry needs DPVO (`install.sh
 --mono`) and its weights in `models/dpvo.pth` (or `--dpvo-checkpoint`, env `CROSS_DPVO_CHECKPOINT`).
 
 **External odometry from a stereo VIO.** A prepared folder can hold several odometry files; `--odom-file NAME`
@@ -59,6 +60,17 @@ Anything 3) as a prior; the gyro bias and the camera-IMU time offset are calibra
 The back end receives the metric DPVO motion as odometry, as with external odometry. Settings: `--mono-args "--imu-config
 key=value"` (fields of `ImuConfig`).
 
+**VGGT-inertial odometry (`--odometry vgio`).** No DPVO: the IMU carries the pose between frames, and every third
+frame a VGGT-Omega forward pass (the back end's own pass when it observes then) measures the relative poses of the
+current frame, the last measured frame and a keyframe ~2 s older. A sliding-window pose graph (`cross/imu/vgi_graph.py`)
+optimizes these relative poses, the preintegrated IMU, gauge links between passes, tracked-corner rotations and the
+online calibration (gyro and accelerometer biases, gravity, the passes' rotation scale, the camera-IMU time offset).
+Each pass has a scale of its own: in the mono mode learned metric depth (DA3) observes it, with a bias state; in the
+stereo mode (`--mode stereo --odometry vgio`) the stereo pair does, through classical stereo depth (SGBM) of the current
+pair against the pass's depth map (no learned depth; `--mono-args "--imu-config vgio_stereo_source=baseline"` uses the
+right image as one more view of the pass instead). The stereo mode needs the IMU next to the stereo folder
+(`prepare_imu.py <dataset> ... --setup stereo` for OpenLORIS and ROVER, whose stereo pair is the T265 with its own IMU).
+
 ## 2. Run one sequence
 
 ```bash
@@ -68,6 +80,7 @@ python run.py data/sim/lonemonk/map --mode stereo --baseline 0.3         # SimCh
 python run.py data/posed/home1-1 --loader posed --odometry visual        # RGB-D, no odometry input
 python run.py data/posed/home1-1 --loader posed --mode mono --odometry visual
 python run.py $BENCH_DATA/openloris/home1-1/rgbd --loader posed --mode mono --mono-estimator ff --odometry vio
+python run.py $BENCH_DATA/kitti/07/stereo --mode stereo --odometry vgio --config configs/outdoor.yaml   # stereo + IMU
 ```
 
 Useful flags: `--no-viz` (no Rerun window; use it on a server), `--frames N`, `--start N`, `--loader` (default:

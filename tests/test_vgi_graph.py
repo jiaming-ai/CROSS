@@ -52,10 +52,12 @@ def _window(samples, td, a0, a1):
 
 
 def _drive(graphs, cfg_kw, seed=0, seconds=24.0, every=3, K=6, outliers=True, check=None, need_std=True,
-           link_bias=0.01, offset=0.0, rot_noise=0.003, turn_period=23.0):
+           link_bias=0.01, offset=0.0, rot_noise=0.003, turn_period=23.0, stereo_std=None, truth=None):
     """Feed the same synthetic measurements to every graph; check(graphs, stage) after each solve / marginalize.
     offset: the IMU's stamps are this early (camera = IMU clock + offset); a graph estimating the offset gets the
-    samples at its current estimate, preintegrated again when it moves (as the frontend does)."""
+    samples at its current estimate, preintegrated again when it moves (as the frontend does).  stereo_std: each pass's
+    scale observed by a stereo pair with this log noise instead of learned depth (every 7th one off by log 2 when
+    outliers).  truth: filled with the true log scale of each node's pass."""
     fps = 10.0
     poses = robot_path(seconds, fps, seed, 0.6, turn_period)
     rng = np.random.default_rng(seed + 11)
@@ -103,7 +105,13 @@ def _drive(graphs, cfg_kw, seed=0, seconds=24.0, every=3, K=6, outliers=True, ch
                 g.add_rotation(node[fp], i, Tr[:3, :3] @ noise[0][0], rot_noise)
                 g.add_link(i, node[fp], np.log(s_true / scale[fp]) + link_bias)
         for g, i in zip(graphs, ids):
-            g.add_depth(i, da3, 0.15)
+            if stereo_std is None:
+                g.add_depth(i, da3, 0.15)
+            else:
+                e = rng.normal(0, stereo_std) + (np.log(2.0) if outliers and n % 7 == 3 else 0.0)
+                g.add_stereo(i, np.log(s_true) + e, stereo_std)
+        if truth is not None:
+            truth[ids[0]] = np.log(s_true)
         node[f], scale[f] = ids[0], s_true
         if n > 0:
             for g in graphs:
@@ -327,3 +335,57 @@ def test_zero_rate_update():
     _drive([g], {}, seconds=30.0, outliers=False, check=check)
     assert np.linalg.norm(g.bg - ref.bg - offset) < 0.3 * np.linalg.norm(offset), (g.bg - ref.bg, offset)
 
+
+
+def test_stereo_scale_of_a_simulated_drive():
+    """Stereo + IMU: each pass's scale observed by the stereo pair in it (no learned depth, no bias state).  With outlier
+    passes (rotations 0.1 rad off, stereo scales log 2 off) the window's pass scales stay within a few percent and the
+    stereo outliers are down-weighted; without them the newest node is within 3 % of the path length of its true
+    position (learned depth 1.5x off with its bias state: 6 %)."""
+    cfg = replace(GraphConfig(), window=20, depth_bias=False)
+    g = VgiGraph(cfg, np.eye(4), 1.1e-3, 1.2e-2)
+    truth, seen = {}, {}
+
+    def check(graphs, stage):
+        if stage.startswith("solve"):
+            blocks = graphs[0]._blocks(graphs[0]._prepare(), jac=False)
+            for kind, w in graphs[0]._huber(blocks).items():
+                seen[kind] = min(seen.get(kind, 1.0), float(w.min()))
+    _drive([g], {}, seconds=30.0, link_bias=0.0, stereo_std=0.03, truth=truth, check=check)
+    err = np.array([g.lam[i] - truth[i] for i in g.ids])
+    assert np.median(np.abs(err)) < 0.03, err
+    assert seen.get("stereo", 1.0) < 1.0                           # the log-2 stereo outliers were down-weighted
+    assert not g.depth and len(g.stereo) == len(g.ids)            # marginalized nodes take their stereo factor along
+    g = VgiGraph(cfg, np.eye(4), 1.1e-3, 1.2e-2)
+    poses, node, frames = _drive([g], {}, seconds=30.0, link_bias=0.0, stereo_std=0.03, outliers=False)
+    f = frames[-1]
+    path = float(np.linalg.norm(np.diff(poses[:f + 1, :3, 3], axis=0), axis=1).sum())
+    assert np.linalg.norm(g.p[node[f]] - (poses[f, :3, 3] - poses[0, :3, 3])) < 0.03 * path
+
+
+def test_stereo_depth_scale_observation():
+    """The stereo-depth scale of a pass (VggtImuFrontend._stereo_depth_scale): a textured slanted plane rendered as a
+    rectified pair (0.1 m baseline), the pass's depth at half the true depth: SGBM depth against it gives log 2."""
+    import cv2
+    import torch
+    from cross.mono.config import MonoConfig
+    from cross.mono.vggt_imu_frontend import VggtImuFrontend
+    h, w, f, b = 240, 320, 300.0, 0.1
+    K = np.array([[f, 0, (w - 1) / 2], [0, f, (h - 1) / 2], [0, 0, 1.0]])
+    rng = np.random.default_rng(0)
+    tex = cv2.resize(rng.integers(0, 255, (h // 4, w // 2)).astype(np.uint8), (2 * w, h), interpolation=cv2.INTER_NEAREST)
+    tex = cv2.GaussianBlur(tex, (3, 3), 0)
+    depth = 2.0 + 1.0 * np.linspace(0, 1, w)[None, :].repeat(h, 0)          # 2-3 m, slanted
+    xs = np.arange(w)[None, :].repeat(h, 0).astype(np.float32)
+    left = cv2.cvtColor(tex[:, w // 2:w // 2 + w], cv2.COLOR_GRAY2RGB)
+    # right image: the left pixel x sees the plane point that the right camera images at x - f b / depth
+    disp = (f * b / depth).astype(np.float32)
+    mapx = xs + disp                                                        # right(x) = left(x + d)
+    right = cv2.remap(left, mapx, np.arange(h)[:, None].repeat(w, 1).astype(np.float32), cv2.INTER_LINEAR)
+    T_rl = np.eye(4)
+    T_rl[0, 3] = b
+    fe = VggtImuFrontend(K, MonoConfig(), device="cpu", depth_transform=lambda x: x, T_right_in_left=T_rl)
+    fe._frame, fe._right = (0, 0.0, left), right
+    obs, info = fe._stereo_depth_scale(torch.from_numpy((depth / 2.0).astype(np.float32)))
+    assert obs is not None, info
+    assert abs(obs[0] - np.log(2.0)) < 0.03 and obs[1] < 0.1, (obs, info)

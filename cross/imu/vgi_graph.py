@@ -21,6 +21,8 @@ Factors:
                    (Huber)
     gauge link     lam_j - lam_k = log of the depth ratio of a frame both passes contain
     learned depth  lam_i + beta = log(learned metric depth / pass depth) of node i's frame
+    stereo         lam_i = log(calibrated baseline / the baseline of the pass), when node i's pass also contains the
+                   right image of its frame (a stereo rig: metric, so no bias state; Huber)
     priors         |g|; start-up priors on the first node (gauge) and the biases; the marginalization prior
 
 Gauss-Newton on the stacked tangent-space increment (right perturbations of the rotations); each factor's Jacobian is
@@ -339,6 +341,7 @@ class VgiGraph:
         self.rots: list[_Rot] = []
         self.links: list[tuple] = []             # (j, k, log ratio, std): lam_j - lam_k = log ratio
         self.depth: dict[int, tuple] = {}        # node -> (log observation, std)
+        self.stereo: dict[int, tuple] = {}       # node -> (log observation, std): stereo scale of its pass
         self.zrate: dict[int, tuple] = {}        # node -> (gyro mean (IMU frame), std (3,)) over an interval at rest
         self.prior = None                        # (L, node id, x_lin) on (node, globals)
         self.gauge = None
@@ -481,6 +484,11 @@ class VgiGraph:
         if i in self.R and np.isfinite(log_obs):
             self.depth[i] = (float(log_obs), max(float(std), self.cfg.depth_std_floor))
 
+    def add_stereo(self, i, log_obs, std):
+        """The metric scale of node i's pass from the stereo pair in it: lam_i = log_obs (std in log)."""
+        if i in self.R and np.isfinite(log_obs) and np.isfinite(std) and std > 0:
+            self.stereo[i] = (float(log_obs), float(std))
+
     # ------------------------------------------------------------------ the problem
     # The normal equations are assembled factor type by factor type: each factor's residual is a function of its own
     # few variables (an IMU factor: two nodes' rotation, position, velocity and the gravity and biases; a pass's
@@ -557,6 +565,10 @@ class VgiGraph:
         if dk:
             P["depth"] = dict(kk=np.array([col[i] for i in dk]), obs=np.array([self.depth[i][0] for i in dk]),
                               std=np.array([self.depth[i][1] for i in dk]))
+        sk = [i for i in self.stereo if i in col]
+        if sk:
+            P["stereo"] = dict(kk=np.array([col[i] for i in sk]), obs=np.array([self.stereo[i][0] for i in sk]),
+                               std=np.array([self.stereo[i][1] for i in sk]))
         return P
 
     def _blocks(self, P, jac=True):
@@ -614,6 +626,10 @@ class VgiGraph:
                 cols.append(np.full(len(q["kk"]), G + 9))
                 Js.append(1.0 / q["std"])
             out.append((np.stack(cols, axis=1), r, np.stack(Js, axis=1)[:, None, :], "depth"))
+        if "stereo" in P:
+            q = P["stereo"]
+            out.append(((10 * q["kk"] + 9)[:, None], ((lam[q["kk"]] - q["obs"]) / q["std"])[:, None],
+                        (1.0 / q["std"])[:, None, None], "stereo"))
         if "zrate" in P:
             q = P["zrate"]
             n = len(q["obs"])
@@ -670,13 +686,13 @@ class VgiGraph:
         return out
 
     def _huber(self, blocks):
-        """Huber weights of the relative-pose, rotation-only and gauge-link factors from their unweighted residuals
-        (a gauge link is a visual measurement too: a pass whose depth of the shared frame jumps by 30-40 % gave links
-        of 10-15 sigma at full weight)."""
+        """Huber weights of the relative-pose, rotation-only, stereo-scale and gauge-link factors from their unweighted
+        residuals (a gauge link is a visual measurement too: a pass whose depth of the shared frame jumps by 30-40 % gave
+        links of 10-15 sigma at full weight)."""
         h = self.cfg.huber
         w = {}
         for _, r, _, kind in blocks:
-            if kind in ("rel", "rots", "zrate") or (kind == "links" and self.cfg.robust_links):
+            if kind in ("rel", "rots", "zrate", "stereo") or (kind == "links" and self.cfg.robust_links):
                 e = np.linalg.norm(r, axis=1) / np.sqrt(r.shape[1])
                 w[kind] = np.where(e <= h, 1.0, np.sqrt(h / np.maximum(e, 1e-12)))
         return w
@@ -782,9 +798,9 @@ class VgiGraph:
 
     # ------------------------------------------------------------------ marginalization
     def marginalize(self):
-        """Drop the oldest node: its IMU factor, its relative poses with the next node, its gauge link and learned
-        depth, and the current prior become a Gaussian prior on the next node and the globals (Schur complement);
-        its relative poses with later nodes are dropped."""
+        """Drop the oldest node: its IMU factor, its relative poses with the next node, its gauge link, learned depth
+        and stereo scale, and the current prior become a Gaussian prior on the next node and the globals (Schur
+        complement); its relative poses with later nodes are dropped."""
         if len(self.ids) <= self.cfg.window:
             return
         i0, i1 = self.ids[0], self.ids[1]
@@ -795,7 +811,7 @@ class VgiGraph:
         keep_links = [l for l in self.links if i0 not in (l[0], l[1])]
         mar_links = [l for l in self.links if (i0 in (l[0], l[1])) and {l[0], l[1]} <= {i0, i1}]
         # the factors involving only nodes 0 and 1 (and the globals), on a two-node sub-problem
-        full = (self.ids, self.imu, self.rel, self.links, self.depth, self.zrate)
+        full = (self.ids, self.imu, self.rel, self.links, self.depth, self.zrate, self.stereo)
         self.ids = [i0, i1]
         self.imu = [f for f in self.imu if f.i == i0]
         self.rel = mar_rel
@@ -803,6 +819,7 @@ class VgiGraph:
         self.links = mar_links
         self.depth = {i: o for i, o in full[4].items() if i == i0}
         self.zrate = {i: o for i, o in full[5].items() if i == i0}
+        self.stereo = {i: o for i, o in full[6].items() if i == i0}
         H, c, _, _, _ = self._system(self._prepare())
         mi = np.arange(10)
         ri = np.arange(10, 20 + self.n_global)
@@ -846,6 +863,7 @@ class VgiGraph:
         self.links = keep_links
         self.depth = {i: o for i, o in full[4].items() if i != i0}
         self.zrate = {i: o for i, o in full[5].items() if i != i0}
+        self.stereo = {i: o for i, o in full[6].items() if i != i0}
         self.prior = (L, i1, xl)
         for dct in (self.R, self.p, self.v, self.lam, self.t):
             dct.pop(i0, None)

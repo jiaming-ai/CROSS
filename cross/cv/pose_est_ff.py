@@ -584,6 +584,8 @@ class PoseEstFeedForward:
             if kf_idx is not None:
                 self.last_frontend_obs.update(c2w_kf=pred.c2w[kf_idx], depth_kf=pred.depth[kf_idx],
                                               conf_kf=None if conf is None else conf[kf_idx])
+            if "curr_R" in view_tags:            # the current stereo pair: the frontend's metric scale of the pass
+                self.last_frontend_obs["c2w_right"] = pred.c2w[view_tags.index("curr_R")]
 
         # ---- metric scale ----
         scale_est = estimate_scale(
