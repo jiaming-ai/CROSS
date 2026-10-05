@@ -179,6 +179,13 @@ class ImuConfig:
     # vgio_stereo_depth_k * scene depth / baseline), not used when the pass's rotation between the cameras or its
     # baseline direction disagrees with the calibration; "both": both computed and logged, depth used
     vgio_stereo_source: str = "depth"
+    # stereo + IMU: the corners tracked between measured frames (vgio_klt) with the stereo depth of the earlier frame give
+    # the metric motion by PnP, a factor with its own covariance (VggtImuFrontend._stereo_pnp) in place of their
+    # rotation-only factor, tested against the IMU's prediction like the passes' translations
+    vgio_stereo_pnp: bool = False
+    # stereo + IMU: the translation tests with the IMU as the arbiter (VggtImuFrontend._stereo_gate); a factor > 1 also
+    # accepts a pass within that factor of the IMU's prediction (the monocular test's tolerance for the learned scale)
+    vgio_stereo_gate_factor: float = 1.0
     vgio_stereo_min_disparity: float = 2.0
     vgio_stereo_std: float = 0.02
     vgio_stereo_depth_k: float = 0.001
