@@ -139,9 +139,13 @@ class DenseScaleHead(nn.Module):
     def __init__(self, layers=(-1, 4, 11, 17, 23), dim_agg: int = 2048, dim_dino: int = 1024, dim: int = 256,
                  depth: int = 2, num_heads: int = 4, num_special: int = 17, init_log_scale: float = math.log(2.0),
                  dropout: float = 0.0, arch: str = "dense", canonical_hfov: float | None = None,
-                 enc_dim: int | None = None):
+                 enc_dim: int | None = None, context: str = "global"):
         super().__init__()
         self.layers, self.num_special = list(layers), num_special
+        # context: "global" = transformer blocks over all patches + the camera / register tokens; "local" = no attention
+        # across patches (two 3x3 convolutions + per-patch MLP): each vote sees only its neighbourhood of the features,
+        # so a domain-wide cue cannot shift every vote at once (the global head's out-of-domain error is image-wide)
+        self.context = context
         # enc_dim: patch tokens of a trainable scale encoder (scale_encoder.py) for the first frames, added per patch
         self.proj_enc = None if enc_dim is None else nn.Sequential(nn.LayerNorm(enc_dim), nn.Linear(enc_dim, dim))
         self.enc_flag = None if enc_dim is None else nn.Parameter(torch.zeros(dim))
@@ -149,13 +153,20 @@ class DenseScaleHead(nn.Module):
         self.proj = nn.ModuleDict({str(l): nn.Sequential(nn.LayerNorm(dim_dino if l < 0 else dim_agg),
                                                          nn.Linear(dim_dino if l < 0 else dim_agg, dim))
                                    for l in self.layers})
-        self.special = nn.Sequential(nn.LayerNorm(dim_agg), nn.Linear(dim_agg, dim))
-        self.special_pos = nn.Parameter(torch.zeros(1, num_special, dim))
-        nn.init.normal_(self.special_pos, std=0.02)
+        if context != "local":
+            self.special = nn.Sequential(nn.LayerNorm(dim_agg), nn.Linear(dim_agg, dim))
+            self.special_pos = nn.Parameter(torch.zeros(1, num_special, dim))
+            nn.init.normal_(self.special_pos, std=0.02)
         self.pos_conv = nn.Conv2d(dim, dim, 3, padding=1, groups=dim)
-        layer = nn.TransformerEncoderLayer(dim, num_heads, 4 * dim, dropout=dropout, activation="gelu",
-                                           batch_first=True, norm_first=True)
-        self.blocks = nn.TransformerEncoder(layer, depth, enable_nested_tensor=False)
+        if context == "local":
+            self.local = nn.Sequential(nn.Conv2d(dim, dim, 3, padding=1), nn.GELU(), nn.Conv2d(dim, dim, 3, padding=1),
+                                       nn.GELU())
+            self.mlp = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, 4 * dim), nn.GELU(), nn.Dropout(dropout),
+                                     nn.Linear(4 * dim, dim))
+        else:
+            layer = nn.TransformerEncoderLayer(dim, num_heads, 4 * dim, dropout=dropout, activation="gelu",
+                                               batch_first=True, norm_first=True)
+            self.blocks = nn.TransformerEncoder(layer, depth, enable_nested_tensor=False)
         self.out = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, 2))
         nn.init.zeros_(self.out[-1].weight)
         with torch.no_grad():
@@ -175,8 +186,13 @@ class DenseScaleHead(nn.Module):
             x = torch.cat([x[:, :k] + self.proj_enc(enc.float()) + self.enc_flag, x[:, k:]], 1).reshape(B * S, h * w, -1)
         g = x.transpose(1, 2).reshape(B * S, -1, h, w)
         x = x + self.pos_conv(g).flatten(2).transpose(1, 2)
-        sp = self.special(tokens_list[-1][:, :, :patch_token_start].float().reshape(B * S, patch_token_start, -1))
-        z = self.blocks(torch.cat([sp + self.special_pos, x], 1))[:, patch_token_start:]
+        if self.context == "local":
+            g = x.transpose(1, 2).reshape(B * S, -1, h, w)
+            z = x + self.local(g).flatten(2).transpose(1, 2)
+            z = z + self.mlp(z)
+        else:
+            sp = self.special(tokens_list[-1][:, :, :patch_token_start].float().reshape(B * S, patch_token_start, -1))
+            z = self.blocks(torch.cat([sp + self.special_pos, x], 1))[:, patch_token_start:]
         o = self.out(z).reshape(B, S, h, w, 2)
         r, wl = o[..., 0], o[..., 1]
         if self.canonical_f is not None and focal is not None:
