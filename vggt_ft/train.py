@@ -202,7 +202,7 @@ def compute_losses(pred, batch, lc, hw, teach=None, meta=None, steach=None):
             tgt_t = scale_distill_target(steach, raw_pred)
         out["loss_scale_distill"] = (pred["log_scale"] - tgt_t).abs().mean()
         total = total + lc.get("w_scale_distill", 1.0) * out["loss_scale_distill"]
-    if "covis_logits" in pred and lc.get("w_covis", 1.0) > 0:
+    if "covis_logits" in pred and lc.get("w_covis", 1.0) > 0 and pred["covis_logits"].shape[1] > 1:   # no pairs in 1-frame windows
         cv = covis_loss(pred["covis_logits"], covis_gt, None if posed is None else posed.float())
         out.update(cv)
         total = total + lc.get("w_covis", 1.0) * cv["loss_covis"]
