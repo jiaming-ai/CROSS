@@ -97,7 +97,7 @@ Repository = "https://github.com/jiaming-ai/CROSS"
 Issues = "https://github.com/jiaming-ai/CROSS/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cross"]
+packages = ["cross", "vggt_ft"]
 
 [tool.ruff]
 line-length = 120

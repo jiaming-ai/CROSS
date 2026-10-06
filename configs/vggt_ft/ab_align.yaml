@@ -1,0 +1,64 @@
+# ab_align: clean A/B of loss.scale_align (true): v4b recipe (freeze 16, distillation, EMA, lr 1e-5), fresh start, same
+# seed and data, 3 GPUs x 64 images, 3000 steps; the only difference between ab_align and ab_noalign is scale_align.
+# v4b: v3b + scale-aligned losses (GT of each window scaled to the prediction's gauge: the released model's gauge is
+# 0.83-1.17x our unit-mean-distance normalisation depending on the dataset, so unaligned losses push all outputs).
+# v3b: v2 with the first 16 of 24 aggregator blocks frozen (v2: 8): only the last third adapts.
+# v2: keep the released model's static-scene pose (v1 lost precision: ETH3D AUC@3 0.72 -> 0.51, NRGBD rotation error
+# 0.30 -> 0.77 deg at step 2000): DINO + the first 8 of 24 aggregator blocks frozen, half the backbone learning rate,
+# distillation to the released model (v1d), EMA weights, more real static data (ScanNet++, ScanNet, ARKitScenes, Waymo).
+# v1d: v1 + distillation to the frozen released model (pose + log depth; GT-less pixels weighted x2), 3 GPUs x 64 images (same batch as v1: 4 x 48).
+# v1: first full fine-tune.  Released VGGT-Omega 1B-512 + scale head + covisibility head, all parameters trained at a
+# low learning rate (new heads x20), replay of VGGT-Omega's public training sets (whatever is converted), multi-session
+# windows (TartanAir variant / trajectory sessions, Map-free, VKITTI2 variants, Hypersim cameras) and grouped negatives.
+# Distances in the sampler are in units of the sequence's median depth (cross_radius, neg_dist).
+exp_name: ab_align
+pretrained: /mnt/datasets-livsyn/jz/ckpt/vggt_omega_1b_512.pt
+out_dir: /mnt/datasets-livsyn/jz/runs
+resume: auto
+seed: 0
+log_every: 20
+data:
+  root: /mnt/datasets-livsyn/jz/cache
+  frames: [2, 24]
+  images_per_gpu: 64
+  aspect: [0.5, 1.33]
+  area: 262144
+  num_workers: 10
+  prefetch: 2
+  aug: {p_color: 0.8, color: 1.0, p_gray: 0.05, p_blur: 0.05, p_noise: 0.05}
+  datasets:
+    tartanair2: {weight: 0.20, stride: [1, 6], p_cross: 0.5, cross_radius: [0.0, 0.5], cross_max_rot: 45, p_neg: 0.3}
+    mapfree:    {weight: 0.12, stride: [1, 6], p_cross: 0.6, cross_radius: [0.0, 0.5], cross_max_rot: 45, p_neg: 0.3}
+    hypersim:   {weight: 0.10, stride: [1, 3], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 60, p_neg: 0.3}
+    vkitti2:    {weight: 0.06, stride: [1, 4], p_cross: 0.5, cross_radius: [0.0, 0.3], cross_max_rot: 30, p_neg: 0.3,
+                 neg_dist: [[3.0, 10.0], [10.0, 60.0]]}
+    megadepth:  {weight: 0.08, stride: [1, 3], p_cross: 0.0, p_neg: 0.3, neg_types: {other_scene: 1.0}}
+    uco3d:      {weight: 0.08, stride: [1, 10], p_cross: 0.0, p_neg: 0.2, neg_types: {other_scene: 1.0}}
+    co3d:       {weight: 0.06, stride: [1, 8], p_cross: 0.0, p_neg: 0.2, neg_types: {other_scene: 1.0}}
+    blendedmvs: {weight: 0.05, stride: [1, 2], p_cross: 0.0, p_neg: 0.3}
+    mvssynth:   {weight: 0.04, stride: [1, 3], p_cross: 0.0, p_neg: 0.3}
+    wildrgbd:   {weight: 0.04, stride: [1, 4], p_cross: 0.0, p_neg: 0.2, neg_types: {other_scene: 1.0}}
+    pandaset:   {weight: 0.04, stride: [1, 3], p_cross: 0.0, p_neg: 0.3}
+    spring:     {weight: 0.02, stride: [1, 3], p_cross: 0.0, p_neg: 0.2}
+    unreal4k:   {weight: 0.02, stride: [1, 2], p_cross: 0.0, p_neg: 0.2}
+    scannetpp:  {weight: 0.10, stride: [1, 4], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 60, p_neg: 0.3}
+    scannet:    {weight: 0.06, stride: [2, 10], p_cross: 0.0, p_neg: 0.3}
+    arkitscenes: {weight: 0.06, stride: [2, 10], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 60, p_neg: 0.3}
+    waymo:      {weight: 0.04, stride: [1, 3], p_cross: 0.0, p_neg: 0.3}
+    dl3dv:      {weight: 0.08, stride: [1, 3], p_cross: 0.0, p_neg: 0.3}   # depth = released-model teacher labels
+train:
+  steps: 3000
+  lr: 1.0e-5
+  lr_mult: {scale_head: 40.0, covis_head: 40.0}
+  freeze_blocks: 16
+  ema: 0.9995
+  # DINO patch embedding frozen (no backward through it: ~25 % faster); everything after it is trained
+  trainable: ["aggregator.frame_blocks.*", "aggregator.inter_frame_blocks.*", "aggregator.camera_token",
+              "aggregator.register_token", "camera_head.*", "dense_head.*", "scale_head.*", "covis_head.*"]
+  warmup: 300
+  weight_decay: 0.05
+  clip: 1.0
+  save_every: 500
+  keep_every: 1000
+loss: {w_camera: 5.0, w_depth: 1.0, w_point: 1.0, w_scale: 1.0, w_covis: 1.0, mask_unobservable: unconnected_other_session, scale_align: true,
+       distill: true, w_distill_pose: 1.0, w_distill_depth: 0.5}
