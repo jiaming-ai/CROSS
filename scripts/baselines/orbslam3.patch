@@ -31,6 +31,22 @@ index 933445b..2802283 100644
     SET(CMAKE_CXX_FLAGS_COVERAGE "${CMAKE_CXX_FLAGS_DEBUG} --coverage -fno-inline -fno-inline-small-functions -fno-default-inline")
     SET(CMAKE_EXE_LINKER_FLAGS_COVERAGE "${CMAKE_EXE_LINKER_FLAGS_DEBUG} --coverage")
     SET(CMAKE_SHARED_LINKER_FLAGS_COVERAGE "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} --coverage")
+diff --git a/include/LoopClosing.h b/include/LoopClosing.h
+index c9ccb26..9a88630 100644
+--- a/include/LoopClosing.h
++++ b/include/LoopClosing.h
+@@ -239,6 +239,11 @@ protected:
+ 
+     // To (de)activate LC
+     bool mbActiveLC = true;
++public:
++    // CROSS benchmark option (settings key LoopClosing.mergeAfterImuInit, default off = upstream): in the inertial
++    // modes, run place recognition once the map's IMU is initialized instead of after the second inertial BA
++    // (~15 s); MergeLocal2 already completes a map's inertial initialization when it merges one without it
++    bool mbPlaceRecognitionAfterImuInit = false;
+ 
+ #ifdef REGISTER_LOOP
+     string mstrFolderLoop;
 diff --git a/include/MapPoint.h b/include/MapPoint.h
 index 29cb420..ed792cb 100644
 --- a/include/MapPoint.h
@@ -115,9 +131,18 @@ index 293ab48..d6bf0be 100644
  
      //Camera data
 diff --git a/src/LoopClosing.cc b/src/LoopClosing.cc
-index 319afb5..27e7bbf 100644
+index 319afb5..927f45f 100644
 --- a/src/LoopClosing.cc
 +++ b/src/LoopClosing.cc
+@@ -338,7 +338,7 @@ bool LoopClosing::NewDetectCommonRegions()
+         mpLastMap = mpCurrentKF->GetMap();
+     }
+ 
+-    if(mpLastMap->IsInertial() && !mpLastMap->GetIniertialBA2())
++    if(mpLastMap->IsInertial() && !(mbPlaceRecognitionAfterImuInit ? mpLastMap->isImuInitialized() : mpLastMap->GetIniertialBA2()))
+     {
+         mpKeyFrameDB->add(mpCurrentKF);
+         mpCurrentKF->SetErase();
 @@ -353,7 +353,7 @@ bool LoopClosing::NewDetectCommonRegions()
          return false;
      }
@@ -233,10 +258,25 @@ index 1cf802c..c940c11 100644
  
  void MapPoint::PostLoad(map<long unsigned int, KeyFrame*>& mpKFid, map<long unsigned int, MapPoint*>& mpMPid)
 diff --git a/src/System.cc b/src/System.cc
-index 60d9c51..4a7a88d 100644
+index 60d9c51..e3d322a 100644
 --- a/src/System.cc
 +++ b/src/System.cc
-@@ -523,6 +523,19 @@ void System::Shutdown()
+@@ -211,6 +211,14 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
+     //Initialize the Loop Closing thread and launch
+     // mSensor!=MONOCULAR && mSensor!=IMU_MONOCULAR
+     mpLoopCloser = new LoopClosing(mpAtlas, mpKeyFrameDatabase, mpVocabulary, mSensor!=MONOCULAR, activeLC); // mSensor!=MONOCULAR);
++    // CROSS benchmark options (off by default): IMU.fastInit (the Settings loader of File.version 1.0 does not read
++    // it: start an inertial map without waiting for an acceleration change of 0.5 m/s^2) and
++    // LoopClosing.mergeAfterImuInit (see LoopClosing::mbPlaceRecognitionAfterImuInit)
++    if(!fsSettings["IMU.fastInit"].empty())
++        mpTracker->mFastInit = static_cast<int>(fsSettings["IMU.fastInit"]) != 0;
++    if(!fsSettings["LoopClosing.mergeAfterImuInit"].empty())
++        mpLoopCloser->mbPlaceRecognitionAfterImuInit = static_cast<int>(fsSettings["LoopClosing.mergeAfterImuInit"]) != 0;
++    cout << "IMU.fastInit " << mpTracker->mFastInit << ", LoopClosing.mergeAfterImuInit " << mpLoopCloser->mbPlaceRecognitionAfterImuInit << endl;
+     mptLoopClosing = new thread(&ORB_SLAM3::LoopClosing::Run, mpLoopCloser);
+ 
+     //Set pointers between threads
+@@ -523,6 +531,19 @@ void System::Shutdown()
  
      mpLocalMapper->RequestFinish();
      mpLoopCloser->RequestFinish();
@@ -256,7 +296,7 @@ index 60d9c51..4a7a88d 100644
      /*if(mpViewer)
      {
          mpViewer->RequestFinish();
-@@ -1547,3 +1560,43 @@ string System::CalculateCheckSum(string filename, int type)
+@@ -1547,3 +1568,43 @@ string System::CalculateCheckSum(string filename, int type)
  
  } //namespace ORB_SLAM
  

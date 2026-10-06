@@ -139,6 +139,11 @@ def orb_imu_lines(seq: Path, noise_scale: float = 1.0) -> list:
         "IMU.T_b_c1: !!opencv-matrix", "  rows: 4", "  cols: 4", "  dt: f",
         "  data: [" + ",".join(f"{v:.9f}" for v in T_bc.reshape(-1)) + "]",
         "IMU.InsertKFsWhenLost: 0",
+        # start-up gates of the inertial modes, built for long sessions: no map until a 0.5 m/s^2 acceleration change,
+        # no place recognition (so no merge into the stored map) until the second inertial BA (~15 s); a 10 s
+        # relocalization trial never passes the second, a slow indoor robot often not the first (orbslam3.patch)
+        "IMU.fastInit: 1",
+        "LoopClosing.mergeAfterImuInit: 1",
         f"IMU.NoiseGyro: {noise_scale * cal['gyro_noise_density']:.6e}",
         f"IMU.NoiseAcc: {noise_scale * cal['accel_noise_density']:.6e}",
         f"IMU.GyroWalk: {noise_scale * cal['gyro_random_walk']:.6e}",
