@@ -553,3 +553,33 @@ def test_map_guard_samples_off():
         for ref in (40, 45, 48):
             _localize(v, gt, ref, last)
     assert v.odom_scale == 1.0
+
+
+def test_chain_fault_error_grows_with_the_displacement():
+    """A straight stretch of 40 edges with fault 0.5: the prediction's variance along the direction of travel gains
+    (0.5 x displacement)^2 (shared scale error), not 40 independent (0.5 x 0.25)^2."""
+    hm, _ = _chain_system(n=30)
+    hm.odom_edges = {}
+    for i in range(1, 41):
+        e = Edge(_lie(gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(0.25, 0, 0))), pp.se3(torch.full((6,), 0.1)), EdgeType.ODOMETRY)
+        e.n_frames = 1
+        hm.odom_edges[(i - 1, i)] = e
+    cp = ChainPredictor(hm, NoiseModel(NoiseModelConfig()))
+    _, cov0 = cp.predict(0, 40)
+    for e in hm.odom_edges.values():
+        e.odom_fault = 0.5
+    cp = ChainPredictor(hm, NoiseModel(NoiseModelConfig()))
+    _, cov1 = cp.predict(0, 40)
+    indep = 40 * (0.5 * 0.25) ** 2                       # the edges' own (independent) inflation
+    assert abs(cov1[3, 3] - cov0[3, 3] - indep - (0.5 * 10.0) ** 2) < 1e-6
+    assert abs(cov1[4, 4] - cov0[4, 4] - indep) < 1e-6   # across the direction: independent share only
+    _, cov_half0 = ChainPredictor(hm, NoiseModel(NoiseModelConfig())).predict(20, 40)
+    for e in hm.odom_edges.values():
+        e.odom_fault = 0.0
+    _, cov_half_ok = ChainPredictor(hm, NoiseModel(NoiseModelConfig())).predict(20, 40)
+    # half the stretch: (0.5 x 5 m)^2 shared plus 20 independent shares
+    assert abs(cov_half0[3, 3] - cov_half_ok[3, 3] - 20 * (0.5 * 0.25) ** 2 - (0.5 * 5.0) ** 2) < 1e-6
+    for e in hm.odom_edges.values():
+        e.odom_fault = 0.5
+    _, covr = ChainPredictor(hm, NoiseModel(NoiseModelConfig())).predict(40, 0)   # reverse order keeps the shared term
+    assert covr[3, 3] > (0.5 * 10.0) ** 2

@@ -222,7 +222,13 @@ class ChainPredictor:
     S_i = sum_{k<=i} Ad(P_k) Sigma_k Ad(P_k)^T (Sigma_k: covariance of edge k, right perturbation), the relative pose
     a -> b is P_a^{-1} P_b and its covariance (right perturbation at b) is Ad(P_b^{-1}) (S_b - S_a) Ad(P_b^{-1})^T.
     The tables follow the manager's odometry edges (mutation counter, count and newest key); a new edge at the end
-    of a chain is appended in O(1), any other change rebuilds the tables (vectorised, ~1 ms per 500 edges)."""
+    of a chain is appended in O(1), any other change rebuilds the tables (vectorised, ~1 ms per 500 edges).
+
+    Edges with the odometry scale guard's fault (`odom_fault` f, a relative translation error) share one error: a
+    scale fault makes every edge of the stretch too long (or short) together, so its error grows with the stretch's
+    displacement, not with the square root of the number of edges.  F_i = sum_{k<=i} f_k (p_k - p_{k-1}) (positions
+    in the chain-start frame) gives the rank-one translation covariance v v^T, v = R_b^T (F_b - F_a), added to the
+    prediction a -> b (the edges' own sigmas keep their independent share for the pose-graph optimisation)."""
 
     def __init__(self, hm, noise: NoiseModel):
         self.hm = hm
@@ -233,6 +239,7 @@ class ChainPredictor:
         self._idx: Dict[int, Tuple[int, int]] = {}      # node -> (chain, position)
         self._P: list = []                                # per chain: (n, 4, 4) prefix poses
         self._S: list = []                                # per chain: (n, 6, 6) prefix covariance sums
+        self._F: list = []                                # per chain: (n, 3) prefix fault-weighted displacements
         self._ends: list = []                             # per chain: last node
 
     # --- tables ---
@@ -258,6 +265,8 @@ class ChainPredictor:
         M = A @ np.diag(self._edge_sigma(key, e) ** 2) @ A.T
         self._P[chain] = np.concatenate([self._P[chain], P[None]], 0)
         self._S[chain] = np.concatenate([self._S[chain], (self._S[chain][-1] + M)[None]], 0)
+        f = float(getattr(e, "odom_fault", 0.0) or 0.0)
+        self._F[chain] = np.concatenate([self._F[chain], (self._F[chain][-1] + f * (P[:3, 3] - P_prev[:3, 3]))[None]], 0)
         self._idx[node] = (chain, len(self._P[chain]) - 1)
         self._ends[chain] = node
 
@@ -265,7 +274,7 @@ class ChainPredictor:
         oe = self.hm.odom_edges
         self._next = {a: (b, e) for (a, b), e in oe.items()}
         preds = {b for (_, b) in oe}
-        self._idx, self._P, self._S, self._ends = {}, [], [], []
+        self._idx, self._P, self._S, self._F, self._ends = {}, [], [], [], []
         for root in sorted(a for a in self._next if a not in preds):
             nodes, keys, edges, cur = [root], [], [], root
             while cur in self._next and len(nodes) < 1000000:
@@ -282,8 +291,10 @@ class ChainPredictor:
             A = self._adjoint(P[1:])
             M = np.einsum("nij,nj,nkj->nik", A, sig ** 2, A)
             S = np.zeros((n + 1, 6, 6)); S[1:] = np.cumsum(M, 0)
+            f = np.array([float(getattr(e, "odom_fault", 0.0) or 0.0) for e in edges]) if n else np.zeros(0)
+            F = np.zeros((n + 1, 3)); F[1:] = np.cumsum(f[:, None] * (P[1:, :3, 3] - P[:-1, :3, 3]), 0)
             chain = len(self._P)
-            self._P.append(P); self._S.append(S); self._ends.append(nodes[-1])
+            self._P.append(P); self._S.append(S); self._F.append(F); self._ends.append(nodes[-1])
             for i, node in enumerate(nodes):
                 self._idx[node] = (chain, i)
 
@@ -324,6 +335,10 @@ class ChainPredictor:
         T = Pa.between(Pb)
         A = Pb.inverse().AdjointMap()
         cov = A @ (S[ib] - S[ia]) @ A.T * inflate ** 2
+        v = self._F[ca][ib] - self._F[ca][ia]
+        if np.any(v):                                     # the shared error of a faulty stretch (guard fault)
+            vb = P[ib][:3, :3].T @ v
+            cov[3:, 3:] += np.outer(vb, vb) * inflate ** 2
         return T, 0.5 * (cov + cov.T)
 
     def predict(self, a: int, b: int, inflate: float = 1.0) -> Tuple[Optional[gtsam.Pose3], Optional[np.ndarray]]:
