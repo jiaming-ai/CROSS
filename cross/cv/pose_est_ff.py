@@ -364,12 +364,17 @@ def _load_scale_encoder(sd: dict, patch_embed, scale_head_cfg: Optional[dict], d
         return None
     from vggt_ft.scale_encoder import ScaleEncoder
     enc = ScaleEncoder(patch_embed, **enc_cfg)
-    enc.base_state_from(patch_embed)
-    lora = {k[len("scale_encoder.dino."):]: v.float() for k, v in sd.items() if k.startswith("scale_encoder.") and "lora_" in k}
-    missing, _ = enc.dino.load_state_dict(lora, strict=False)
-    if any("lora_" in k for k in missing):
-        raise RuntimeError(f"scale encoder adapters missing in the checkpoint, e.g. {[k for k in missing if 'lora_' in k][:3]}")
-    logger.info(f"loaded the fine-tune's scale encoder ({enc.n_lora} LoRA layers)")
+    if enc.full:      # fully fine-tuned copy: all of its weights come from the checkpoint
+        own = {k[len("scale_encoder.dino."):]: v.float() for k, v in sd.items() if k.startswith("scale_encoder.dino.")}
+        enc.dino.load_state_dict(own, strict=True)
+    else:             # LoRA: base = the patch embedding, adapters from the checkpoint
+        enc.base_state_from(patch_embed)
+        lora = {k[len("scale_encoder.dino."):]: v.float() for k, v in sd.items()
+                if k.startswith("scale_encoder.") and "lora_" in k}
+        missing, _ = enc.dino.load_state_dict(lora, strict=False)
+        if any("lora_" in k for k in missing):
+            raise RuntimeError(f"scale encoder adapters missing in the checkpoint, e.g. {[k for k in missing if 'lora_' in k][:3]}")
+    logger.info(f"loaded the fine-tune's scale encoder ({'fully fine-tuned' if enc.full else f'{enc.n_lora} LoRA layers'})")
     return enc.eval().to(device)
 
 

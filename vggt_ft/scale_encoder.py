@@ -5,8 +5,8 @@ every attention / MLP linear layer, and runs on the first `frames` frames of a w
 scale head.  Why: the frozen backbone's features were trained on scale-normalised geometry, and every strong metric
 model trains its encoder for metric depth (MoGe-2, Depth Anything 3 metric; Depth Pro's FoV head gains most from its
 own trainable encoder).  Inference cost: one extra DINO pass per window (frame 0), a few % of a VGGT-Omega window.
-Checkpoints keep only the adapters under `scale_encoder.*lora_*`; the base weights are copied from the patch embedding
-(`VGGTOmegaFT.sync_scale_encoder`).
+The base weights are copied from the patch embedding at initialisation (`VGGTOmegaFT.sync_scale_encoder`); with LoRA only
+the adapters `scale_encoder.*lora_*` are new, with `full: true` the whole copy is fine-tuned and its weights are new.
 """
 from __future__ import annotations
 
@@ -52,10 +52,12 @@ def add_lora(module: nn.Module, rank: int, alpha: float, names=("qkv", "proj", "
 
 
 class ScaleEncoder(nn.Module):
-    def __init__(self, patch_embed: nn.Module, rank: int = 32, alpha: float = 32.0, frames: int = 1):
+    def __init__(self, patch_embed: nn.Module, rank: int = 32, alpha: float = 32.0, frames: int = 1, full: bool = False):
         super().__init__()
         self.dino = copy.deepcopy(patch_embed)
-        self.n_lora = add_lora(self.dino, rank, alpha)
+        # full: the whole copy is fine-tuned (no adapters; its own weights are stored in the checkpoint)
+        self.full = full
+        self.n_lora = 0 if full else add_lora(self.dino, rank, alpha)
         self.frames = frames
 
     def base_state_from(self, patch_embed: nn.Module):

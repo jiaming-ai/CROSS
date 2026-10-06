@@ -68,7 +68,8 @@ class VGGTOmegaFT(VGGTOmega):
             raise RuntimeError(f"{path}: missing {missing[:5]} ({len(missing)}), unexpected {unexpected[:5]}")
         if verbose and new:
             print(f"[VGGTOmegaFT] {path}: no weights for {new} (initialised)")
-        self.sync_scale_encoder()
+        if not any(k.startswith("scale_encoder.") and "lora_" not in k for k in sd):
+            self.sync_scale_encoder()          # a checkpoint with its own (fully fine-tuned) encoder keeps it
         return self
 
     def sync_scale_encoder(self):
