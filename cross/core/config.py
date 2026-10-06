@@ -656,6 +656,11 @@ class FeedForwardConfig:
     map_anchor_min_dist: float = 0.5     # metres between the two keyframes
     map_anchor_max_dist: float = 60.0
     map_anchor_max_pairs: int = 8
+    # map anchors only between references that overlap each other (covisibility >= this, both ways; 0 = off; then every
+    # pair in [min_dist, max_dist] is a candidate and the map_anchor_max_pairs longest that pass are used).  The model
+    # places a reference that overlaps nothing else in the pass arbitrarily; every anchor through it shares that error,
+    # so the anchors agree and a wrong scale looks certain (mono passes whose only anchors are map pairs)
+    map_anchor_min_pair_covis: float = 0.0
     anchor_weight_by_baseline: bool = True   # weight anchors by predicted baseline length (precision of the ratio)
     anchor_max_rot_err_deg: float = 20.0
     anchor_min_dir_cos: float = 0.5
