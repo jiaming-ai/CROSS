@@ -124,9 +124,11 @@ class _VGGTOmegaBackend(_Backend):
             raise RuntimeError(f"{ckpt.name} lacks {len(missing)} weights of the model, e.g. {missing[:3]}")
         # heads of the vggt_ft fine-tune (covisibility, metric scale): used when the checkpoint has them
         self.covis_head, self.scale_head = _load_ft_heads(sd, device, head_cfg)
-        # the multi-layer scale head also reads the DINO tokens and the aggregator layers the dense head keeps
-        self._scale_multilayer = type(self.scale_head).__name__ == "MultiLayerScaleHead"
-        unexpected = [u for u in unexpected if not u.startswith(("covis_head.", "scale_head."))]
+        # the multi-layer and dense scale heads also read the DINO tokens and the aggregator layers the dense head keeps
+        self._scale_multilayer = type(self.scale_head).__name__ in ("MultiLayerScaleHead", "DenseScaleHead")
+        # LoRA scale encoder of the dense head (vggt_ft/scale_encoder.py): one extra DINO pass on the first view
+        self.scale_encoder = _load_scale_encoder(sd, self.model.aggregator.patch_embed, head_cfg, device)
+        unexpected = [u for u in unexpected if not u.startswith(("covis_head.", "scale_head.", "scale_encoder."))]
         if unexpected:      # e.g. the text-alignment head of vggt_omega_1b_256_text.pt, unused here
             logger.info(f"{ckpt.name}: ignored {len(unexpected)} weights of heads not in use")
         self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
@@ -197,7 +199,19 @@ class _VGGTOmegaBackend(_Backend):
                 B, S = x.shape[:2]
                 p = m.aggregator.patch_size
                 dino = dino.reshape(B, S, -1, dino.shape[-1]) if dino is not None else None
-                log_scale = self.scale_head(tokens, start, (x.shape[-2] // p, x.shape[-1] // p), dino)
+                kw = {}
+                if getattr(self.scale_head, "canonical_f", None) is not None:
+                    # canonical-camera head: converted with the model's own focal (CROSS passes no intrinsics here)
+                    kw["focal"] = 0.5 / torch.tan(pose_enc[..., 8].float() / 2)
+                if getattr(self, "scale_encoder", None) is not None:
+                    n = min(self.scale_encoder.frames, S)
+                    xe = (x[:, :n] - m.aggregator._resnet_mean) / m.aggregator._resnet_std
+                    with torch.autocast(device_type="cuda", dtype=self.dtype):
+                        enc = self.scale_encoder(xe.reshape(B * n, *x.shape[2:]))
+                    kw["enc"] = enc.reshape(B, n, -1, enc.shape[-1])
+                log_scale = self.scale_head(tokens, start, (x.shape[-2] // p, x.shape[-1] // p), dino, **kw)
+                if isinstance(log_scale, tuple):         # dense head: (log scale, per-patch votes, confidences)
+                    log_scale = log_scale[0]
             else:
                 log_scale = (self.scale_head(final, start, pose_enc[:, 0, 8] if getattr(self.scale_head, "canonical_f",
                                                                                         None) else None)
@@ -332,11 +346,31 @@ def _load_ft_heads(sd: dict, device: str, scale_head_cfg: Optional[dict] = None)
             heads.append(None)
             continue
         from vggt_ft import heads as ft_heads
-        h = ft_heads.build_scale_head(scale_head_cfg) if name == "ScaleHead" else getattr(ft_heads, name)()
+        cfg = dict(scale_head_cfg or {})
+        if cfg.pop("encoder", None) and name == "ScaleHead":
+            cfg["enc_dim"] = sub["proj_enc.1.weight"].shape[1]
+        h = ft_heads.build_scale_head(cfg) if name == "ScaleHead" else getattr(ft_heads, name)()
         h.load_state_dict(sub)
         heads.append(h.eval().to(device))
         logger.info(f"loaded the fine-tune's {type(h).__name__}")
     return tuple(heads)
+
+
+def _load_scale_encoder(sd: dict, patch_embed, scale_head_cfg: Optional[dict], device: str):
+    """LoRA scale encoder of a vggt_ft checkpoint: base weights from the model's patch embedding, adapters from the
+    checkpoint; None if the scale head has none."""
+    enc_cfg = (scale_head_cfg or {}).get("encoder")
+    if not enc_cfg:
+        return None
+    from vggt_ft.scale_encoder import ScaleEncoder
+    enc = ScaleEncoder(patch_embed, **enc_cfg)
+    enc.base_state_from(patch_embed)
+    lora = {k[len("scale_encoder.dino."):]: v.float() for k, v in sd.items() if k.startswith("scale_encoder.") and "lora_" in k}
+    missing, _ = enc.dino.load_state_dict(lora, strict=False)
+    if any("lora_" in k for k in missing):
+        raise RuntimeError(f"scale encoder adapters missing in the checkpoint, e.g. {[k for k in missing if 'lora_' in k][:3]}")
+    logger.info(f"loaded the fine-tune's scale encoder ({enc.n_lora} LoRA layers)")
+    return enc.eval().to(device)
 
 
 class _DA3Backend(_Backend):
