@@ -123,6 +123,12 @@ written as `imu.txt` / `imu.json` next to the images):
 - **SimChange**: simulated from the ground truth (C2 spline, 200 Hz) with the noise and bias of the D435i's IMU
   (BMI055), seeded by the sequence name.
 
+The stereo visual-inertial setup (CROSS stereo with `--odometry vgio`) gets the IMU rigidly attached to the stereo pair
+(`prepare_imu.py <dataset> ... --setup stereo`): on OpenLORIS and ROVER the T265's own IMU (BMI055, gyroscope 200 Hz,
+accelerometer interpolated to it; OpenLORIS factory intrinsics, ROVER Kalibr calibration `calib_t265.yaml`), with its
+pose in the rectified left camera; KITTI and SimChange use the same IMU as the monocular setup (their stereo folder is
+the monocular setup's).
+
 The system calibrates the camera-IMU time offset and the gyroscope bias online (against its visual odometry); nothing is
 taken from the ground truth. IMU setups are marked ⁽ⁱ⁾ in the tables.
 
