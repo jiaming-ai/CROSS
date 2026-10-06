@@ -193,7 +193,17 @@ class NoiseModel:
         T = to_gtsam(f)
         L = float(np.linalg.norm(T.translation()))
         theta = float(np.linalg.norm(logmap(T)[:3]))
-        return self.odom(L, theta, int(getattr(f, "n_frames", 1) or 1))
+        return self.with_fault(self.odom(L, theta, int(getattr(f, "n_frames", 1) or 1)), L, getattr(f, "odom_fault", 0.0))
+
+    @staticmethod
+    def with_fault(s: np.ndarray, L: float, fault) -> np.ndarray:
+        """Odometry sigmas with the odometry scale guard's fault inflation: a translation sigma of fault * L added (in
+        quadrature) to the model's; the rotation (gyro-driven, not what the guard measures) is unchanged."""
+        fault = float(fault or 0.0)
+        if fault > 0:
+            s = np.array(s, dtype=np.float64)
+            s[3:] = np.sqrt(s[3:] ** 2 + (fault * L) ** 2)
+        return s
 
     def factor_sigmas_pypose(self, f) -> Optional[np.ndarray]:
         """Sigmas for the pose-graph optimisation (pypose order); None keeps the factor's own std."""
@@ -406,6 +416,18 @@ class LoopClosureVerifier:
         self._guard_run = []                          # log medians of consecutive departing windows
         self.guard_persist = max(int(getattr(cfg, "odom_guard_persist", 2)), 1)
         self.odom_scale = 1.0                         # correction of the odometry's translations (applied by the System)
+        # after a firing: the odometry's relative translation error measured by the guard (0: none measured), applied to
+        # the odometry edges from the departing windows on (odom_guard_inflate)
+        self.guard_inflate = bool(getattr(cfg, "odom_guard_inflate", False))
+        self.odom_fault = 0.0
+        # relocalization sessions: map measurements as guard samples (odom_guard_map)
+        self.guard_map = bool(getattr(cfg, "odom_guard_map", False))
+        self._guard_win_kf = None                     # earliest keyframe spanned by the samples of the current window
+        self._guard_run_kf = None                     # ... of the first window of the current departing run
+        # after a firing only spans from keyframes created after it are samples (a span over odometry recorded before
+        # the rescaling mixes the old and the corrected scale and would make the guard fire again on the old error)
+        self._guard_epoch_kf = None
+        self._gate_last_kf = None
 
     def reset_session(self):
         self.anchor = None
@@ -417,6 +439,8 @@ class LoopClosureVerifier:
         self._guard.clear()
         self._guard_run = []
         self.odom_scale = 1.0
+        self.odom_fault = 0.0
+        self._guard_win_kf = self._guard_run_kf = self._guard_epoch_kf = self._gate_last_kf = None
         self.scales = {"sess": 1.0, "map": 1.0}
         self.scales_along = {"sess": 1.0, "map": 1.0}
         self.scales_rot = {"sess": 1.0, "map": 1.0}
@@ -630,36 +654,110 @@ class LoopClosureVerifier:
         cov += transport(cov_chain, T_since) + cov_since
         return T_map.compose(rest), cov
 
-    def _guard_sample(self, sample: float) -> bool:
-        """Odometry scale guard: record one measured / odometry translation ratio; returns whether the sample is
-        consistent with the long-run ratio (and may update it).  Rescales the odometry when the recent samples agree on a
-        departure of more than the guard factor."""
+    def _guard_sample(self, sample: float, span_from: Optional[int] = None) -> bool:
+        """Odometry scale guard: record one measured / odometry translation ratio of a session span starting at keyframe
+        `span_from`; returns whether the sample is consistent with the long-run ratio (and may update it).  Rescales the
+        odometry when the recent samples agree on a departure of more than the guard factor."""
         if not self.guard_metric or sample <= 0:
             return True
         ref = self.scale_ratio if self.scale_ratio > 0 else 1.0
         g = sample / ref
         logger.debug(f"odometry scale sample {g:.4f} (raw {sample:.4f}, long-run {ref:.4f}, odometry scale {self.odom_scale:.4f})")
+        return self._guard_push(g, span_from)
+
+    def _guard_push(self, g: float, span_from: Optional[int] = None) -> bool:
+        """One guard sample g (measured / odometry, 1 when healthy) over a span starting at keyframe `span_from`."""
         if self.guard_factor <= 1.0:
             return True
-        self._guard.append(g)
         lim = math.log(self.guard_factor)
+        if span_from is not None and self._guard_epoch_kf is not None and span_from < self._guard_epoch_kf:
+            return abs(math.log(g)) <= lim
+        if span_from is not None:
+            self._guard_win_kf = span_from if self._guard_win_kf is None else min(self._guard_win_kf, span_from)
+        self._guard.append(g)
         if len(self._guard) == self._guard.maxlen:            # consecutive, non-overlapping windows
             lm = float(np.median(np.log(self._guard)))
             self._guard.clear()
+            start, self._guard_win_kf = self._guard_win_kf, None
             if abs(lm) > lim and (not self._guard_run or (lm > 0) == (self._guard_run[-1] > 0)):
+                if not self._guard_run:
+                    self._guard_run_kf = start
                 self._guard_run.append(lm)
             else:
                 self._guard_run = [lm] if abs(lm) > lim else []
+                self._guard_run_kf = start if self._guard_run else None
             if len(self._guard_run) >= self.guard_persist:
                 m = math.exp(lm)                              # the latest window's departure
                 self.odom_scale *= m
                 self._guard_run = []
+                if self._gate_last_kf is not None:
+                    self._guard_epoch_kf = self._gate_last_kf + 1
                 self.stats["odom_guard_updates"] = self.stats.get("odom_guard_updates", 0) + 1
                 self.stats["odom_scale"] = round(self.odom_scale, 4)
                 logger.info(f"odometry scale guard: measured / odometry translation {m:.3f} x the long-run ratio in "
                             f"{self.guard_persist} consecutive windows of {self._guard.maxlen} spans; odometry translations "
                             f"now scaled by {self.odom_scale:.4f}")
+                if self.guard_inflate:
+                    self._set_fault(abs(1.0 - m), self._guard_run_kf)
+                self._guard_run_kf = None
+            elif self.guard_inflate and self.odom_fault > 0:
+                # after a firing the odometry is as uncertain as the latest window's departure (from the corrected
+                # odometry): the inflation follows the fault and fades when the odometry is healthy again
+                self._set_fault(abs(1.0 - math.exp(lm)), None)
         return abs(math.log(g)) <= lim
+
+    def _set_fault(self, err: float, from_kf: Optional[int]) -> None:
+        """Relative translation error of the odometry measured by the guard: the sigma of the odometry from now on (new
+        edges, the odometry since the last keyframe) and, with `from_kf`, of the session's odometry edges from that
+        keyframe on (the stretch the departing windows measured)."""
+        self.odom_fault = float(err)
+        self.stats["odom_fault"] = round(self.odom_fault, 4)
+        if from_kf is None:
+            return
+        n = 0
+        for (a, b), e in list(self.system.hypothesis_manager.odom_edges.items()):
+            if a >= from_kf and not self._is_map_kf(a) and err > float(getattr(e, "odom_fault", 0.0) or 0.0):
+                e.odom_fault = float(err)
+                self.chain._sig.pop((a, b), None)
+                n += 1
+        if n:
+            self.chain._stamp = None                          # rebuild the prefix tables with the new sigmas
+        logger.info(f"odometry fault: translation sigma {err:.2f} x the length on {n} odometry edges from keyframe {from_kf} on")
+
+    def _since_cov(self, Ts: gtsam.Pose3, n_since: int) -> np.ndarray:
+        """Gate-inflated covariance of the odometry since the last keyframe (with the guard's fault inflation)."""
+        L = float(np.linalg.norm(Ts.translation())); th = float(np.linalg.norm(logmap(Ts)[:3]))
+        s = self.noise.with_fault(self.noise.odom(L, th, max(n_since, 1)), L, self.odom_fault)
+        return np.diag((s * self.cfg.noise.gate_inflation) ** 2)
+
+    def _map_guard_sample(self, ref_id: int, Tm: gtsam.Pose3, last_kf_id: int, Ts: gtsam.Pose3) -> None:
+        """Relocalization session: the distance moved since the session anchor according to this map measurement (and
+        the anchor's), against the odometry chain's distance over the same span, as a guard sample.  Used when the span
+        is long against the map fixes' noise (map-relative pose of the two map keyframes, the anchor's and this
+        measurement: translation sigma <= log(f) / 3 of the distance)."""
+        if not self.guard_map or self.guard_factor <= 1.0 or self.anchor is None:
+            return
+        hm = self.system.hypothesis_manager
+        a2 = self.anchor["map_kf"]
+        if ref_id not in hm.nodes or a2 not in hm.nodes:
+            return
+        T_chain, _ = self.chain.predict(self.anchor["kf"], last_kf_id)
+        if T_chain is None:
+            return
+        T_map = to_gtsam(hm.nodes[ref_id].pose_mu[0]).between(to_gtsam(hm.nodes[a2].pose_mu[0]))
+        Lo = float(np.linalg.norm(T_chain.compose(Ts).translation()))
+        Lm = float(np.linalg.norm(T_map.compose(self.anchor["T"]).between(Tm).translation()))
+        if Lo < float(getattr(self.cfg, "scale_min_span_m", 1.0)) or Lm <= 0:
+            return
+        sig = math.sqrt(float(self.noise.map_rel(float(np.linalg.norm(T_map.translation())))[3]) ** 2
+                        + float(self.anchor["sigma"][3]) ** 2
+                        + float(self.noise.visual(float(np.linalg.norm(Tm.translation())), self.scales["map"])[3]) ** 2)
+        if sig > math.log(self.guard_factor) / 3.0 * max(Lo, Lm):
+            return
+        g = Lm / Lo
+        logger.debug(f"odometry scale sample (map) {g:.4f} (since the anchor: map {Lm:.2f} m, odometry {Lo:.2f} m, "
+                     f"sigma {sig:.2f} m; odometry scale {self.odom_scale:.4f})")
+        self._guard_push(g, int(self.anchor["kf"]))
 
     def prior_gate(self, refs: Sequence, T_meas: Sequence, last_kf_id: int, T_since, n_since: int) -> Tuple[list, list]:
         """For every reference: True (consistent with hypothesis 0), False (inconsistent), None (no relation).
@@ -668,8 +766,8 @@ class LoopClosureVerifier:
         than the measurement (translation covariance trace), which is the case for revisits, not for the keyframes
         just behind the robot (`self.last_loop_flags`)."""
         Ts = to_gtsam(T_since) if T_since is not None else gtsam.Pose3()
-        L = float(np.linalg.norm(Ts.translation())); th = float(np.linalg.norm(logmap(Ts)[:3]))
-        cov_since = np.diag((self.noise.odom(L, th, max(n_since, 1)) * self.cfg.noise.gate_inflation) ** 2)
+        cov_since = self._since_cov(Ts, n_since)
+        self._gate_last_kf = int(last_kf_id)
         oks, chis, loops = [], [], []
         self._update_scale()
         for kf, Tm in zip(refs, T_meas):
@@ -688,12 +786,14 @@ class LoopClosureVerifier:
                 short = ia is not None and ib is not None and ia[0] == ib[0] and abs(ia[1] - ib[1]) <= 5
                 if short and L >= float(getattr(self.cfg, "scale_min_span_m", 1.0)):
                     sample = d * self.metric_correction / L
-                    consistent = self._guard_sample(sample)       # the odometry scale guard (off: always True)
+                    consistent = self._guard_sample(sample, int(kf.id))   # the odometry scale guard (off: always True)
                     if consistent:
                         self._ratio.append(sample)
                     if consistent and len(self._ratio) >= 20:
                         self.scale_ratio = float(np.median(self._ratio))
                         self.stats["scale_ratio"] = round(self.scale_ratio, 4)
+            else:
+                self._map_guard_sample(int(kf.id), Tm, last_kf_id, Ts)
             self.scale = self.scales[kind]
             cov0 = cov / max(self.cfg.noise.gate_inflation, 1e-6) ** 2      # un-inflated chain covariance
             if self.anisotropic:
@@ -756,8 +856,7 @@ class LoopClosureVerifier:
         of hypothesis 0), i.e. whether two map measurements of different observations agree through the odometry chain
         between them.  None when no chain relates them."""
         Ts = to_gtsam(T_since) if T_since is not None else gtsam.Pose3()
-        L = float(np.linalg.norm(Ts.translation())); th = float(np.linalg.norm(logmap(Ts)[:3]))
-        cov_since = np.diag((self.noise.odom(L, th, max(n_since, 1)) * self.cfg.noise.gate_inflation) ** 2)
+        cov_since = self._since_cov(Ts, n_since)
         saved, self.anchor = self.anchor, anchor
         try:
             T_pred, cov = self.predict_to_current(int(ref_id), last_kf_id, Ts, cov_since)

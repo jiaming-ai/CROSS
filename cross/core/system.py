@@ -1859,6 +1859,10 @@ class System:
         if delta_pose is not None:
             last_kf = self.hypothesis_manager.nodes.get(self.last_added_kf_id)
             last_step = getattr(last_kf, "step_created", None) if last_kf is not None else None
+            meta = {"n_frames": max(int(self._processed_frame_num) - int(last_step), 1) if last_step is not None else None}
+            v = getattr(self, "_lc_verifier", None)
+            if v is not None and getattr(v, "odom_fault", 0.0) > 0:   # the odometry scale guard has measured an odometry fault
+                meta["odom_fault"] = v.odom_fault
             self.hypothesis_manager.add_edge(
                 id1=self.last_added_kf_id, # since odom edge is from last added kf to current kf
                 id2=current_kf_id,
@@ -1866,7 +1870,7 @@ class System:
                 rel_pose_std=std,
                 type=EdgeType.ODOMETRY,
                 conditional_pose=conditional_motion,
-                meta={"n_frames": max(int(self._processed_frame_num) - int(last_step), 1) if last_step is not None else None},
+                meta=meta,
             )
         self.odom_accumulator.reset_item("since_last_add_kf")
         self.last_added_kf_id = current_kf_id

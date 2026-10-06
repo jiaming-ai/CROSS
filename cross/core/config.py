@@ -222,6 +222,19 @@ class LoopClosureConfig:
     # the departure must hold in this many consecutive windows (same direction) before the odometry is rescaled: PnP at
     # night has 2x departures lasting a few seconds that revert (ROVER night RGB-D: single windows of 30 fired 6 times before the VIO runaway, 2 windows of 20 7 times, 2 of 30 only in it)
     odom_guard_persist: int = 2
+    # once the guard has fired, the odometry's translations are as uncertain as the error the guard measured: every
+    # odometry edge from the start of the departing windows on gets a translation sigma of |1 - m| times its length
+    # (m: the measured / odometry ratio of the latest window), so the visual measurements the faulty chain had been
+    # rejecting (the session's own keyframes, revisits) pass the prior test and the pose-graph optimisation can correct
+    # the stretch.  Before the first firing nothing changes; after it the extra sigma follows the latest window and
+    # fades when the odometry is healthy again (|1 - m| ~ 0.02-0.05).
+    odom_guard_inflate: bool = True
+    # relocalization sessions: the references are the stored map's keyframes, so the session-span samples above never
+    # occur.  A map measurement gives the distance moved since the session anchor (the latest map fix) independently of
+    # the odometry (metric in every mode: stereo / depth, or the stored map's keyframe pairs in mono); its ratio to the
+    # odometry chain's distance over the same span is a guard sample when the span is long against the map fixes'
+    # noise (translation sigma <= log(f) / 3 of the distance).
+    odom_guard_map: bool = True
     # the visual noise is split along / across the measured bearing, each with its own online scale (innovations of
     # measurements to keyframes <= 5 odometry edges back, normalised with the un-inflated chain covariance).  The metric
     # scale of the feed-forward estimator comes from the stereo baseline and is its weak part far away: on KITTI the

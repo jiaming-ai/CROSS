@@ -453,3 +453,103 @@ def test_loop_closure_skips_a_graph_that_cannot_be_built(monkeypatch):
     hm.pgo_skip_fn = lambda: None
     res = hm.handle_loop_closure(1)
     assert res["success"] is False and "reference chart" in res["message"]
+
+
+# ----------------------------------------------------------------------------- odometry scale guard: fault response
+def test_guard_fault_inflates_only_the_translation():
+    nm = NoiseModel(NoiseModelConfig())
+    s = nm.odom(2.0, 0.1, 3)
+    assert np.array_equal(nm.with_fault(s, 2.0, 0.0), s)
+    f = nm.with_fault(s, 2.0, 0.5)
+    assert np.allclose(f[:3], s[:3]) and np.allclose(f[3:], np.sqrt(s[3:] ** 2 + 1.0))
+
+
+def _fire(v, g, first_kf, n=60):
+    """Two windows of departing samples g over spans starting at first_kf, first_kf + 1, ..."""
+    for i in range(n):
+        v._guard_push(g, first_kf + i // 2)
+
+
+def test_guard_fault_inflates_the_departing_stretch_and_fades():
+    """A runaway from keyframe 60 on: the guard fires after two windows, rescales the odometry, and the odometry edges
+    from the first departing window's earliest span on get the measured error as translation sigma (the chain's
+    prediction across them loosens, the stretch before keeps its covariance); healthy windows let the error fade."""
+    hm, _ = _chain_system(n=120)
+    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    _, cov_run = v.chain.predict(60, 100)
+    _, cov_early = v.chain.predict(10, 40)
+    for i in range(60):
+        assert v._guard_push(1.0 + 0.01 * (-1) ** i, 10)
+    assert v.odom_scale == 1.0 and v.odom_fault == 0.0
+    _fire(v, 0.25, 60)
+    assert abs(v.odom_scale - 0.25) < 1e-12 and abs(v.odom_fault - 0.75) < 1e-12
+    assert all(getattr(e, "odom_fault", 0.0) == 0.75 for (a, _), e in hm.odom_edges.items() if a >= 60)
+    assert not any(getattr(e, "odom_fault", 0.0) for (a, _), e in hm.odom_edges.items() if a < 60)
+    _, cov_run2 = v.chain.predict(60, 100)
+    _, cov_early2 = v.chain.predict(10, 40)
+    assert np.trace(cov_run2[3:, 3:]) > 10 * np.trace(cov_run[3:, 3:])
+    assert np.allclose(cov_early2, cov_early)
+    for i in range(30):                                   # healthy again (relative to the corrected odometry)
+        v._guard_push(1.02, 100)
+    assert abs(v.odom_fault - 0.02) < 1e-9
+    assert all(getattr(e, "odom_fault", 0.0) == 0.75 for (a, _), e in hm.odom_edges.items() if a >= 60)
+
+
+def test_guard_without_inflation_only_rescales():
+    hm, _ = _chain_system(n=120)
+    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig(odom_guard_inflate=False))
+    _fire(v, 0.25, 60)
+    assert abs(v.odom_scale - 0.25) < 1e-12 and v.odom_fault == 0.0
+    assert not any(getattr(e, "odom_fault", 0.0) for e in hm.odom_edges.values())
+
+
+def _reloc_session(odom_factor, session_start=50, n=120):
+    """Map keyframes 0..session_start-1 at the true poses; session keyframes after them linked by odometry edges whose
+    translations are odom_factor times the true ones."""
+    hm = FakeHM()
+    gt, _ = make_chain(n=n)
+    for i, g in enumerate(gt):
+        kf = Keyframe(pose_mu=_lie(g).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+        kf.id = i
+        kf.step_created = i
+        hm.nodes[i] = kf
+    for i in range(session_start + 1, n):
+        d = gt[i - 1].between(gt[i])
+        d = gtsam.Pose3(d.rotation(), gtsam.Point3(*(np.asarray(d.translation()) * odom_factor)))
+        e = Edge(_lie(d), pp.se3(torch.full((6,), 0.1)), EdgeType.ODOMETRY)
+        e.n_frames = 1
+        hm.odom_edges[(i - 1, i)] = e
+    v = LoopClosureVerifier(FakeSystem(hm, session_start=session_start), LoopClosureConfig())
+    return hm, gt, v
+
+
+def _localize(v, gt, ref, last):
+    return v.prior_gate([v.system.hypothesis_manager.nodes[ref]], [_lie(gt[ref].between(gt[last]))], last, gtsam.Pose3(), 1)
+
+
+@pytest.mark.parametrize("factor", [3.0, 1.0])
+def test_map_guard_samples_detect_a_runaway_in_a_relocalization_session(factor):
+    """Relocalization session anchored at session keyframe 52 (map keyframe 47): true map measurements against an
+    odometry chain that claims 3x the motion fire the guard (odometry scale -> 1/3, the chain since the anchor is
+    inflated); with a healthy chain nothing happens."""
+    hm, gt, v = _reloc_session(factor)
+    v.update_anchor(47, 52, _lie(gt[47].between(gt[52])))
+    for last in range(53, 120):
+        for ref in (40, 45, 48):
+            _localize(v, gt, ref, last)
+    if factor == 1.0:
+        assert v.odom_scale == 1.0 and v.odom_fault == 0.0
+        return
+    assert v.stats.get("odom_guard_updates", 0) >= 1
+    assert abs(v.odom_scale - 1.0 / 3.0) < 0.05, v.odom_scale
+    assert all(getattr(e, "odom_fault", 0.0) > 0.5 for (a, _), e in hm.odom_edges.items() if a >= 52)
+
+
+def test_map_guard_samples_off():
+    hm, gt, v = _reloc_session(3.0)
+    v.guard_map = False
+    v.update_anchor(47, 52, _lie(gt[47].between(gt[52])))
+    for last in range(53, 120):
+        for ref in (40, 45, 48):
+            _localize(v, gt, ref, last)
+    assert v.odom_scale == 1.0
