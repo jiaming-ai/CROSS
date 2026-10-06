@@ -546,9 +546,11 @@ def add_session_args(ap):
     g.add_argument("--remote-upload", choices=("predicted", "all"), default="predicted",
                    help="images of the frames the back end will observe and the odometry measures, or of every mapped frame")
     g.add_argument("--remote-seed", type=int, default=0, help="seed of the jitter")
-    g.add_argument("--remote-max-backlog", type=float, default=0.0,
+    g.add_argument("--remote-max-backlog", type=float, default=0.3,
                    help="overload policy (s, 0: off): a frame that waited longer than this on the server is stepped "
-                        "without its observation (the back end observes the next fresh frame); measurements are kept")
+                        "without its observation (the back end observes the next fresh frame); measurements are kept.  "
+                        "It acts only when the server is behind (outputs/2026-10-06_remote_mode: it never fired where "
+                        "the server kept up, and it kept every overloaded case close to the local session)")
     g.add_argument("--remote-server", default="",
                    help="HOST:PORT of a remote-session server (scripts/remote/serve.py): a real gRPC link instead of the "
                         "simulated one; this process runs only the edge")

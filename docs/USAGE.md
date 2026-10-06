@@ -235,6 +235,7 @@ Simulated network, on the dataset's clock (deterministic; any runner or benchmar
 python scripts/map_and_reloc.py ... --odometry vgio --remote --remote-rtt 0.1           # 100 ms round trip
 #   --remote-compute model|measured|zero   server time (model: cross/remote/link.py, --remote-costs to override)
 #   --remote-jitter 0.05  --remote-outage every:30:3  --remote-jpeg 90  --remote-uplink-mbps 5
+#   --remote-max-backlog 0.3 (default; 0: off)   a server behind the edge skips stale observations instead of queueing
 #   --remote --remote-compute zero --remote-upload all   reproduces the local session exactly
 python benchmark/dev.py run --systems cross_stereo_vgio --variant rtt100 --args "--remote --remote-rtt 0.1 --online-poses"
 ```
