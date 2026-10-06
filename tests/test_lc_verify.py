@@ -595,3 +595,21 @@ def test_map_guard_samples_need_a_metric_estimator():
         for ref in (40, 45, 48):
             _localize(v, gt, ref, last)
     assert v.odom_scale == 1.0
+
+
+def test_guard_counts_observations_not_references():
+    """A failed estimate of one frame gives agreeing samples for all its references: 10 frames with 8 departing samples
+    each are 10 window samples (no firing); 60 such frames fire."""
+    hm, _ = _chain_system(n=120)
+    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    v.guard_metric = True
+    for _ in range(10):
+        for _ in range(8):
+            v._guard_sample(0.25, 60)
+        v._guard_flush()
+    assert v.odom_scale == 1.0
+    for _ in range(60):
+        for _ in range(8):
+            v._guard_sample(0.25, 60)
+        v._guard_flush()
+    assert abs(v.odom_scale - 0.25) < 1e-9

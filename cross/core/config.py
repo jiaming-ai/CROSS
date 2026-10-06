@@ -217,6 +217,8 @@ class LoopClosureConfig:
     # f = 2, windows of 30 samples, 2 consecutive windows (odom_guard_persist): in the dark the healthy samples scatter
     # widely (log-MAD 0.3, up to 14 % of them > 2x off; one window of 10 samples with f 1.5 fired on noise, also on KITTI
     # 07 RGB-D with OXTS odometry), in daylight log-MAD 0.02-0.05.  0 disables.
+    # The window counts observations (the median of each observation's samples): the references of one observation share
+    # its estimate, and at car speed a frame gives 5-9 samples (KITTI 04, PnP: per-sample windows fired on a healthy VIO).
     odom_guard_factor: float = 2.0
     odom_guard_window: int = 30
     # the departure must hold in this many consecutive windows (same direction) before the odometry is rescaled: PnP at

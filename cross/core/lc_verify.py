@@ -443,6 +443,7 @@ class LoopClosureVerifier:
         # the rescaling mixes the old and the corrected scale and would make the guard fire again on the old error)
         self._guard_epoch_kf = None
         self._gate_last_kf = None
+        self._pass_g: list = []                       # guard samples of the current observation (one window sample)
 
     def reset_session(self):
         self.anchor = None
@@ -456,6 +457,7 @@ class LoopClosureVerifier:
         self.odom_scale = 1.0
         self.odom_fault = 0.0
         self._guard_win_kf = self._guard_run_kf = self._guard_epoch_kf = self._gate_last_kf = None
+        self._pass_g = []
         self.scales = {"sess": 1.0, "map": 1.0}
         self.scales_along = {"sess": 1.0, "map": 1.0}
         self.scales_rot = {"sess": 1.0, "map": 1.0}
@@ -678,7 +680,29 @@ class LoopClosureVerifier:
         ref = self.scale_ratio if self.scale_ratio > 0 else 1.0
         g = sample / ref
         logger.debug(f"odometry scale sample {g:.4f} (raw {sample:.4f}, long-run {ref:.4f}, odometry scale {self.odom_scale:.4f})")
-        return self._guard_push(g, span_from)
+        if self.guard_factor <= 1.0:
+            return True
+        self._collect(g, span_from)
+        return abs(math.log(g)) <= math.log(self.guard_factor)
+
+    def _collect(self, g: float, span_from: Optional[int]) -> None:
+        """A guard sample of the current observation (spans from before the latest firing excepted)."""
+        if span_from is not None and self._guard_epoch_kf is not None and span_from < self._guard_epoch_kf:
+            return
+        self._pass_g.append((float(g), span_from))
+
+    def _guard_flush(self) -> None:
+        """One window sample per observation: the (log) median of its samples.  The references of one observation share
+        the current frame's estimate, so a failed estimate gives many agreeing samples at once (KITTI 04, PnP on depth at
+        car speed: 5-9 samples per frame, two windows of 30 filled within ~10 frames of failed PnP and the guard fired on a
+        healthy VIO); counting observations makes the persistence independent of the sampling density."""
+        if not self._pass_g:
+            return
+        gs = [g for g, _ in self._pass_g if g > 0]
+        froms = [f for _, f in self._pass_g if f is not None]
+        self._pass_g = []
+        if gs:
+            self._guard_push(float(np.exp(np.median(np.log(gs)))), min(froms) if froms else None)
 
     def _guard_push(self, g: float, span_from: Optional[int] = None) -> bool:
         """One guard sample g (measured / odometry, 1 when healthy) over a span starting at keyframe `span_from`."""
@@ -774,7 +798,7 @@ class LoopClosureVerifier:
         g = Lm / Lo
         logger.debug(f"odometry scale sample (map) {g:.4f} (since the anchor: map {Lm:.2f} m, odometry {Lo:.2f} m, "
                      f"sigma {sig:.2f} m; odometry scale {self.odom_scale:.4f})")
-        self._guard_push(g, int(self.anchor["kf"]))
+        self._collect(g, int(self.anchor["kf"]))
 
     def prior_gate(self, refs: Sequence, T_meas: Sequence, last_kf_id: int, T_since, n_since: int) -> Tuple[list, list]:
         """For every reference: True (consistent with hypothesis 0), False (inconsistent), None (no relation).
@@ -847,6 +871,7 @@ class LoopClosureVerifier:
             if c2 > self.thr:
                 self.stats["prior_rejected"] += 1
             oks.append(bool(c2 <= self.thr)); chis.append(c2)
+        self._guard_flush()
         self.last_loop_flags = loops
         self.stats["loop_candidates"] = self.stats.get("loop_candidates", 0) + sum(1 for l, o in zip(loops, oks) if l and o is not None)
         return oks, chis
