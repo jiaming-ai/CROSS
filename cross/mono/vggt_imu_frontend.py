@@ -110,6 +110,9 @@ class VggtImuFrontend:
         self.time_offset = 0.0
         self.time_offset_done = False
         self._pp = None                          # principal-point correction of the passes' camera poses
+        self._last_trans_ok = None               # time of the last pass translation accepted by the IMU test
+        self._rest_spread, self._rest_nis, self._rest_prev = [], [], None   # zero-rate updates (_rest_rate)
+        self._rot_checks = []                    # outcomes of the last gyro tests of the passes' rotations
         self.rate_log = []
         self._offset_rounds = 0
         self.index = 0
@@ -190,7 +193,10 @@ class VggtImuFrontend:
                                    gyro_dt_noise=ic.vgio_gyro_dt_noise, accel_dt_noise=ic.vgio_accel_dt_noise,
                                    rot_scale=ic.vgio_rot_scale, rot_scale_std=ic.vgio_rot_scale_std,
                                    time_offset=ic.vgio_graph_time_offset, time_offset_std=ic.vgio_time_offset_std,
-                                   gyro_bias_walk=c.gyro_random_walk if ic.vgio_calib_gyro_walk else GraphConfig.gyro_bias_walk)
+                                   trans_sigma_predicted=ic.vgio_trans_sigma_predicted, robust_links=ic.vgio_robust_links,
+                                   trans_sigma_bound=ic.vgio_trans_sigma_bound,
+                                   depth_bias_drift=ic.vgio_depth_bias_drift,
+                                   gyro_bias_walk=c.gyro_random_walk if ic.vgio_calib_gyro_walk else ic.vgio_gyro_bias_walk)
                 self.graph = VgiGraph(gcfg, c.T_cam_imu, c.gyro_noise_density, c.accel_noise_density)
                 self.graph.td = self.graph.td_init = self.time_offset
                 if ic.vgio_graph_time_offset:
@@ -389,12 +395,16 @@ class VggtImuFrontend:
             lk = dict(winSize=(21, 21), maxLevel=3, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
             p1, st, _ = cv2.calcOpticalFlowPyrLK(self.klt_gray, gray, self.klt_cur, None, **lk)
             p0, st2, _ = cv2.calcOpticalFlowPyrLK(gray, self.klt_gray, p1, None, **lk)
-            ok = (st[:, 0] == 1) & (st2[:, 0] == 1) & (np.linalg.norm((p0 - self.klt_cur)[:, 0], axis=1) < 1.0)
+            fb = np.linalg.norm((p0 - self.klt_cur)[:, 0], axis=1)
+            ok = (st[:, 0] == 1) & (st2[:, 0] == 1) & (fb < 1.0)
+            if ok.sum() >= 8:            # per step: tracking noise (forward-backward error) and image motion
+                self.klt_steps.append((float(np.median(fb[ok])), float(np.median(np.linalg.norm((p1 - self.klt_cur)[ok, 0], axis=1)))))
             self.klt_cur, self.klt_m = p1[ok], self.klt_m[ok]
         self.klt_gray = gray
 
     def _klt_detect(self):
         pts = cv2.goodFeaturesToTrack(self.klt_gray, maxCorners=300, qualityLevel=0.01, minDistance=8)
+        self.klt_steps = []
         self.klt_m = None if pts is None else pts.astype(np.float32)
         self.klt_cur = None if pts is None else pts.astype(np.float32).copy()
 
@@ -424,6 +434,59 @@ class VggtImuFrontend:
         self.stats["klt_used"] = self.stats.get("klt_used", 0) + 1
         self.stats["klt_sigma_deg"] = round(sigma, 3)
         return R_mb, np.radians(sigma) * np.sqrt(100.0 / max(inliers, 30))
+
+    def _rest_rate(self, samples, pre, a0, a1):
+        """The gyro bias measured directly over an interval at rest: (mean of the gyro samples, its std per axis), or
+        None.  At rest is decided by the images: the tracked corners moved no more than their tracking noise allows.
+        The noise-only median displacement after n steps, from the forward-backward errors of the same tracks, is
+        fb sqrt(n / 2) (per step sigma = fb / (1.18 sqrt 2), the median of a 2-D norm 1.18 sigma); the chained tracks
+        drift more than that at a standstill (ROVER night 3x: 0.13-0.18 px; day 15-20x: 0.02-0.03 px, where the
+        forward-backward error of sharp static images is ~0.001 px), and driving moves them >= 3 px (1st percentile on
+        ROVER, KITTI, OpenLORIS).  The test: displacement <= max(6 fb sqrt(2 n), 0.25 px, KLT's sub-pixel precision),
+        >= 12x below the slowest motion seen.  A frame repeated by the camera (no image motion at all), an IMU gap or a
+        gyro spread above the one at earlier rests (99 % F bound) vetoes.  The std: the sample spread / sqrt N, scaled
+        by the consistency of consecutive rest means (correlated samples, a slowly moving bias; used only once 30
+        such comparisons exist), and the rotation rate the images still allow (displacement / (focal length x
+        interval))."""
+        steps = getattr(self, "klt_steps", [])
+        if self.klt_m is None or self.klt_cur is None or len(self.klt_cur) < 30 or not steps:
+            return None
+        fb = float(np.median([s[0] for s in steps]))
+        if min(s[1] for s in steps) < 1e-3 or fb <= 0.0:          # a repeated frame: no evidence of rest
+            return None
+        disp = float(np.median(np.linalg.norm((self.klt_cur - self.klt_m)[:, 0], axis=1)))
+        thr = max(6.0 * fb * np.sqrt(2.0 * len(steps)), 0.25)
+        info = {"disp": round(disp, 4), "thr": round(thr, 4)}
+        if disp > thr or getattr(pre, "dropout", 0.0):
+            return info | {"ok": False}
+        sel = (samples[:, 0] + self.time_offset > a0) & (samples[:, 0] + self.time_offset <= a1)
+        w = samples[sel, 1:4]
+        n = len(w)
+        h = float(np.median(np.diff(self.imu_buffer[-200:, 0]))) if len(self.imu_buffer) > 2 else 0.0
+        if n < 10 or (h > 0 and n < 0.5 * (a1 - a0) / h):
+            return info | {"ok": False}
+        spread = float(np.mean(w.std(0)))
+        floor = self._rest_spread
+        info["spread"] = spread
+        if len(floor) >= 3:
+            f0 = float(np.median(floor))
+            if spread ** 2 > f0 ** 2 * (1.0 + 2.33 * np.sqrt(2.0 / (n - 1))):
+                return info | {"ok": False, "floor": f0}
+        self._rest_spread = (floor + [spread])[-50:]
+        mean, std = w.mean(0), np.maximum(w.std(0), 1e-6) / np.sqrt(n)
+        if self._rest_prev is not None and self._rest_prev[2] == self.m.get("index"):
+            z2 = (mean - self._rest_prev[0]) ** 2 / (std ** 2 + self._rest_prev[1] ** 2)
+            self._rest_nis = (self._rest_nis + z2.tolist())[-300:]
+        self._rest_prev = (mean, std, self._frame[0])
+        if len(self._rest_nis) < 30:
+            # the noise model is not validated yet (too few consecutive rest windows to check it): no factor.  Six
+            # windows in the first 2 s of OpenLORIS office1-1 pinned a start-up bias for the whole session and broke
+            # relocalization against that map (office1-7 LR 0.53 -> 0)
+            return info | {"ok": False, "uncalibrated": True}
+        k2 = max(1.0, float(np.median(self._rest_nis)) / 0.455)
+        self.stats["rest"] = self.stats.get("rest", 0) + 1
+        w_img = disp / (float(self.K[0, 0]) * (a1 - a0))            # rad/s: the rotation the images allow
+        return mean, np.sqrt(k2 * std ** 2 + w_img ** 2), info | {"ok": True, "k": round(float(np.sqrt(k2)), 2)}
 
     def _noise_hat(self, gyro_mb, vggt_mb, klt, dt):
         """The rotation noise of the gyro, the tracked corners and the passes from their disagreements over the same
@@ -517,7 +580,11 @@ class VggtImuFrontend:
         # biases): the gyro over 0.3 s is good to ~0.25 deg
         gyro_mb = R_cb @ pre.dR @ R_cb.T
         vdiff = _angle_deg(gyro_mb.T @ T_mb[:3, :3])
-        pass_ok = vdiff <= self.rotation_gate_deg_graph
+        # the test is as wide as the gyro's own uncertainty over the interval allows (an interval bridging a dropout
+        # of the IMU stream is uncertain, and its rotation cannot veto the pass)
+        gyro_sigma_deg = float(np.degrees(np.sqrt(max(np.trace(pre.cov[0:3, 0:3]) / 3.0, 0.0))))
+        pass_ok = vdiff <= max(self.rotation_gate_deg_graph, 3.0 * gyro_sigma_deg)
+        self._rot_checks = (self._rot_checks + [bool(pass_ok)])[-5:]
         if pass_ok and self.config.imu.vgio_online_noise:
             # the passes' rotation noise, online: median disagreement with the gyro over the last 100 measurements
             self.vggt_diffs = (getattr(self, "vggt_diffs", []) + [vdiff])[-100:]
@@ -527,13 +594,23 @@ class VggtImuFrontend:
         ratio, spread = _depth_ratio([(self.m["pass_depth"], self.m["conf"], obs["depth_prev"].float(), obs.get("conf_prev"))])
         link_ok = bool(np.isfinite(ratio) and spread < 0.25)
         lam_init = G.lam[m_node] + (np.log(ratio) if link_ok else 0.0)
+        kfc = self._keyframe_consistency(obs, c2w_c, c2w_m, index, ratio if link_ok else None)
         j = G.add_node(pre, jac, lam_init, timestamp)
+        gate = self._translation_gate(m_node, j, lam_init, T_mb[:3, 3], timestamp) if pass_ok else None
+        gated = gate is not None and not gate["ok"]
+        if gated:
+            pass_ok = False
+            self.stats["trans_gated"] = self.stats.get("trans_gated", 0) + 1
         self.klt_last = None
         klt = self._klt_rotation(gyro_mb) if self.klt else None
         if klt is not None and self.config.imu.vgio_noise_hat:
             klt = self._noise_hat(gyro_mb, T_mb[:3, :3] if pass_ok else None, klt, a1 - a0) or klt
         if klt is not None:
             G.add_rotation(m_node, j, *klt)
+        rest = self._rest_rate(samples, pre, a0, a1) if self.klt and self.config.imu.vgio_zero_rate else None
+        if isinstance(rest, tuple):
+            G.add_zero_rate(j, rest[0], rest[1])
+            rest = rest[2]
         if pass_ok:
             G.add_relative(m_node, j, j, T_mb[:3, :3], T_mb[:3, 3])
             if link_ok:
@@ -558,7 +635,10 @@ class VggtImuFrontend:
             G.add_depth(j, *da3)
         est = self.scale_filter
         t0 = perf_counter()
-        info = G.solve(need_std=not est.initialized)
+        # the scale's std is taken until initialization only (as before: the translation gate and the reported
+        # uncertainty read that value); the velocity's std, for the bounded prediction, after every solve
+        lam_std_wanted = not est.initialized
+        info = G.solve(need_std=lam_std_wanted or self.config.imu.vgio_trans_sigma_bound)
         G.marginalize()
         if G.cfg.time_offset and abs(G.td - self.time_offset) > 0.004:
             # the samples of the window again at the graph's offset (its first-order correction is good to a few ms)
@@ -566,7 +646,7 @@ class VggtImuFrontend:
             G.repreintegrate(self._samples, self.time_offset)
             self.stats["offset_updates"] = self.stats.get("offset_updates", 0) + 1
         self.stats["t_graph"] = self.stats.get("t_graph", 0.0) + perf_counter() - t0
-        if np.isfinite(info.get("lam_std", float("nan"))):
+        if lam_std_wanted and np.isfinite(info.get("lam_std", float("nan"))):
             est.lam_std = info["lam_std"]
         if not est.initialized and len(G.ids) >= 4 and est.lam_std < self.config.imu.init_log_std:
             est.initialized = True
@@ -581,7 +661,10 @@ class VggtImuFrontend:
             T_m[:3, :3], T_m[:3, 3] = G.R[m_node], G.p[m_node]
             rep = self.m["rep"] @ inverse(T_m) @ T_j
         else:
-            rep = T_j
+            rep = T_j.copy()
+        # the reported pose is a running product over the whole session: kept a rigid transform, else any deviation of
+        # the factors from SO(3) compounds (it shrank the KITTI 00 trajectory by 14 % over 1500 measurements)
+        rep[:3, :3] = _ortho(rep[:3, :3])
         A = rep[:3, :3] @ R.T
         self.R_wc, self.p_cam = _ortho(rep[:3, :3]), rep[:3, 3].copy()
         self.v_imu = A @ v
@@ -594,11 +677,66 @@ class VggtImuFrontend:
                           "gravity_norm": float(np.linalg.norm(G.g)),
                           "speed": float(np.linalg.norm(v)), "link_ok": link_ok, "keyframe": kf_used,
                           "time_offset": self.time_offset, "graph_time_offset": float(G.td), "cost": info.get("cost"), "m_index": int(self.m["index"]),
-                          "b_index": int(index)}
+                          "b_index": int(index), "da3": None if da3 is None else [round(da3[0], 4), round(da3[1], 4)],
+                          "link_log": float(np.log(ratio)) if link_ok else None, "pass_ok": bool(pass_ok),
+                          "pass_gyro_deg": round(vdiff, 3), "pass_t": float(np.linalg.norm(T_mb[:3, 3])),
+                          "trans_gate": gate, "rest": rest, "kfc": kfc, "v_std": round(float(G.v_std), 4) if np.isfinite(G.v_std) else None}
         self._set_m(index, timestamp, rgb, None, conf_curr, node=j, pass_depth=depth_curr)
         self.m["rep"] = rep
         if self.klt:
             self._klt_detect()
+
+    def _keyframe_consistency(self, obs, c2w_c, c2w_m, index, ratio):
+        """Vision-only consistency of consecutive passes: the previous pass measured keyframe -> its current frame (=
+        this pass's previous frame m), this pass measures keyframe -> m again; in metres at the gauge the depth ratio
+        of m carries, log |t_km (this)| + log ratio - log |t_kb (previous)| should be ~0 (a pass whose translation
+        collapsed relative to its depth disagrees).  Returns it (or None); remembers this pass's keyframe -> current."""
+        out = None
+        if obs.get("c2w_kf") is None or self.kf is None:
+            self._kf_prev = None
+            return None
+        c2w_k = np.asarray(obs["c2w_kf"], dtype=np.float64)
+        t_kb = float(np.linalg.norm((inverse(c2w_k) @ c2w_c)[:3, 3]))
+        t_km = float(np.linalg.norm((inverse(c2w_k) @ c2w_m)[:3, 3]))
+        prev = getattr(self, "_kf_prev", None)
+        if prev is not None and ratio is not None and prev[0] == self.kf["index"] and prev[1] == self.m["index"] \
+                and min(prev[2], t_km) > 1e-9:
+            out = round(float(np.log(t_km) + np.log(ratio) - np.log(prev[2])), 4)
+        self._kf_prev = (self.kf["index"], index, t_kb)
+        return out
+
+    def _translation_gate(self, m_node, j, lam_j, t_pass, timestamp):
+        """Test of a pass's translation against the IMU's prediction (the counterpart of the gyro test of its rotation):
+        the new node's IMU-propagated position relative to the last measured one, against the pass's translation in
+        metres at the gauge it inherits, as velocities over the interval.  The IMU may outvote a pass only while it is
+        consistent with the passes: the gyro tests of the last five passes' rotations all passed (a dropout or a clock
+        jump of the IMU stream shows there first, and a drifting IMU velocity must not then lock out the passes that
+        would correct it).  Rejected when the lengths differ by more than the factor vgio_trans_gate and the velocities
+        by more than 4 sigma, sigma combining the pass's relative noise, the scale's uncertainty and the IMU velocity's,
+        which grows with the time since the last accepted translation (accelerometer bias std x time).  After
+        vgio_trans_gate_max_gap s without an accepted translation the pass is accepted whatever it says.  Before the
+        scale is known no test.  Returns None (no test) or {"ok", "log_ratio", "dv", "tol"}."""
+        g = float(self.config.imu.vgio_trans_gate)
+        G = self.graph
+        if g <= 1.0 or not self.scale_filter.initialized:
+            return None
+        dt = max(timestamp - self.m["timestamp"], 1e-3)
+        v_pred = float(np.linalg.norm(G.R[m_node].T @ (G.p[j] - G.p[m_node]))) / dt
+        v_meas = float(np.exp(lam_j) * np.linalg.norm(t_pass)) / dt
+        if self._last_trans_ok is None:
+            self._last_trans_ok = self.m["timestamp"]
+        gap = max(timestamp - self._last_trans_ok, dt)
+        lam_std = self.scale_filter.lam_std if np.isfinite(self.scale_filter.lam_std) else 1.0
+        sig_v = float(np.sqrt((G.cfg.trans_rel ** 2 + lam_std ** 2) * v_meas ** 2
+                              + (0.05 + G.cfg.accel_bias_std * gap) ** 2))
+        lr = float(np.log((v_meas * dt + 0.02) / (v_pred * dt + 0.02)))
+        imu_consistent = len(self._rot_checks) >= 5 and all(self._rot_checks)
+        ok = (not imu_consistent or abs(lr) <= np.log(g) or abs(v_meas - v_pred) <= 4.0 * sig_v
+              or gap > float(self.config.imu.vgio_trans_gate_max_gap))
+        if ok:
+            self._last_trans_ok = timestamp
+        return {"ok": bool(ok), "log_ratio": round(lr, 3), "dv": round(v_meas - v_pred, 3), "tol": round(4.0 * sig_v, 3),
+                "imu_consistent": imu_consistent}
 
     def _model_to_cam(self, obs):
         """The pass's camera poses in the calibrated camera frame: VGGT-Omega places the principal point at the image

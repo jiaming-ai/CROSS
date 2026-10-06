@@ -41,7 +41,11 @@ class ImuCalibration:
     def from_dict(cls, d: dict) -> "ImuCalibration":
         keys = {f for f in cls.__dataclass_fields__}
         out = cls(**{k: v for k, v in d.items() if k in keys})
-        out.T_cam_imu = np.asarray(out.T_cam_imu, dtype=np.float64)
+        out.T_cam_imu = np.asarray(out.T_cam_imu, dtype=np.float64).copy()
+        # the nearest rotation: calibration files print the rotation with a few digits (KITTI: singular values 1 -
+        # 9e-8), and estimators that chain it through every frame compound the error
+        U, _, Vt = np.linalg.svd(out.T_cam_imu[:3, :3])
+        out.T_cam_imu[:3, :3] = U @ np.diag([1.0, 1.0, np.sign(np.linalg.det(U @ Vt))]) @ Vt
         return out
 
 

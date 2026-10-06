@@ -138,7 +138,8 @@ CASES = [
 @pytest.mark.parametrize("case", range(len(CASES)))
 def test_same_estimates_as_dense_reference(case):
     Ref = _reference_class()
-    cfg = replace(GraphConfig(), window=6, **CASES[case])
+    # the reference predates the robustness options (translation noise from the prediction, Huber gauge links)
+    cfg = replace(GraphConfig(), window=6, trans_sigma_predicted=False, robust_links=False, **CASES[case])
     T_ci = np.eye(4)
     T_ci[:3, :3] = Rotation.from_rotvec([0.1, -0.2, 0.05]).as_matrix()
     T_ci[:3, 3] = [0.05, -0.02, 0.1]
@@ -239,3 +240,90 @@ def test_gyro_bias_jacobians_match_finite_differences():
         assert np.allclose(base.J_Rg[:, k], JR, rtol=1e-4, atol=1e-8)
         assert np.allclose(base.J_vg[:, k], (p.dv - m.dv) / (2 * eps), rtol=1e-4, atol=1e-7)
         assert np.allclose(base.J_pg[:, k], (p.dp - m.dp) / (2 * eps), rtol=1e-4, atol=1e-8)
+
+
+def test_rotations_stay_on_so3():
+    """A slightly non-orthonormal extrinsic (as printed in calibration files) and hundreds of nodes: every stored
+    rotation stays a rotation (the reported trajectory is a running product of them)."""
+    T_ci = np.eye(4)
+    T_ci[:3, :3] = Rotation.from_rotvec([0.1, -0.2, 0.05]).as_matrix() * (1 + 1e-6)
+    g = VgiGraph(replace(GraphConfig(), window=6), T_ci, 1.1e-3, 1.2e-2)
+    _drive([g], {}, seconds=40.0, outliers=False)
+    for R in list(g.R.values()) + [g.R_cb, g.prior[2]["R"]]:
+        assert np.allclose(R @ R.T, np.eye(3), atol=1e-12) and abs(np.linalg.det(R) - 1) < 1e-12
+
+
+def test_imu_calibration_rotation_is_orthonormalized():
+    from cross.dataloader.imu import ImuCalibration
+    R = Rotation.from_rotvec([0.3, 0.1, -0.2]).as_matrix()
+    T = np.eye(4)
+    T[:3, :3] = np.round(R, 4)                     # four printed digits
+    T[:3, 3] = [0.1, 0.2, 0.3]
+    c = ImuCalibration.from_dict({"T_cam_imu": T.tolist()})
+    Rc = c.T_cam_imu[:3, :3]
+    assert np.allclose(Rc @ Rc.T, np.eye(3), atol=1e-12) and np.allclose(Rc, R, atol=1e-4)
+    assert np.allclose(c.T_cam_imu[:3, 3], [0.1, 0.2, 0.3])
+
+
+def test_translation_gate():
+    """The IMU test of a pass's translation: a pass reporting a fraction of the motion at highway speed is rejected
+    while the gyro agrees with the passes' rotations; an agreeing one is accepted; an IMU velocity that ran away loses
+    within seconds (its uncertainty grows with the time since the last accepted translation); an IMU whose gyro
+    disagrees with the passes (dropout, clock jump) outvotes nothing; never more than the maximum gap."""
+    import types
+    from cross.mono.config import MonoConfig
+    from cross.mono.vggt_imu_frontend import VggtImuFrontend
+    fe = VggtImuFrontend(np.eye(3), MonoConfig(), device="cpu")
+    fe.graph = types.SimpleNamespace(cfg=GraphConfig(), R={0: np.eye(3), 1: np.eye(3)}, p={0: np.zeros(3), 1: np.zeros(3)})
+    fe.scale_filter = types.SimpleNamespace(initialized=True, lam_std=0.1)
+
+    def gate(v_pred, v_meas, last_ok=99.7, t=100.0, rot_ok=True):
+        fe.m = {"timestamp": t - 0.3}
+        fe._last_trans_ok = last_ok
+        fe._rot_checks = [True] * 4 + [rot_ok]
+        fe.graph.p[1] = np.array([0.0, 0.0, v_pred * 0.3])
+        return fe._translation_gate(0, 1, 0.0, np.array([0.0, 0.0, v_meas * 0.3]), t)["ok"]
+
+    assert not gate(25.7, 3.0)                     # KITTI 01: VGGT-Omega reports a fraction of the motion
+    assert not gate(25.7, 3.0, last_ok=92.0)       # ... and still loses to the IMU 8 s later at that speed
+    assert gate(25.7, 24.0)                        # agreement
+    assert not gate(1.5, 0.4)                      # a runaway IMU velocity wins right after a good update ...
+    assert gate(1.5, 0.4, last_ok=96.0)            # ... but not for long
+    assert gate(25.7, 3.0, rot_ok=False)           # a gyro inconsistent with the passes outvotes nothing
+    assert gate(25.7, 3.0, last_ok=80.0)           # beyond the maximum gap the pass is accepted whatever it says
+    fe.scale_filter.initialized = False
+    assert fe._translation_gate(0, 1, 0.0, np.array([0.0, 0.0, 0.1]), 100.0) is None
+
+
+def test_imu_dropout_inflates_the_factor():
+    """A 1.2 s hole in the IMU stream inside an interval: the factor's covariance grows with the hole (the bridged
+    rotation and velocity are guesses), an interval without a hole keeps the sensor noise."""
+    poses = robot_path(10.0, 10.0, 5, 0.6)
+    t, w, a = simulate_imu(poses, 10.0, 5)
+    samples = np.concatenate([t[:, None], w, a], 1)
+    g = VgiGraph(replace(GraphConfig(), window=6), np.eye(4), 1.1e-3, 1.2e-2)
+    for t0 in np.arange(0.0, 3.0, 0.3):            # the IMU's motion level from normal intervals
+        g.preintegrate(_window(samples, 0.0, t0, t0 + 0.3), t0, t0 + 0.3)
+    full, _ = g.preintegrate(_window(samples, 0.0, 4.0, 5.5), 4.0, 5.5)
+    holed = samples[(samples[:, 0] < 4.1) | (samples[:, 0] > 5.3)]
+    gap, _ = g.preintegrate(_window(holed, 0.0, 4.0, 5.5), 4.0, 5.5)
+    assert getattr(gap, "dropout", 0.0) > 1.0 and getattr(full, "dropout", 0.0) == 0.0
+    assert np.trace(gap.cov[0:3, 0:3]) > 100 * np.trace(full.cov[0:3, 0:3])
+    assert np.trace(gap.cov[3:6, 3:6]) > 100 * np.trace(full.cov[3:6, 3:6])
+
+
+def test_zero_rate_update():
+    """A gyro mean over an interval at rest measures the gyro bias directly: given early in the drive with an offset
+    the visual rotations cannot see, the bias follows it and keeps it after those nodes are marginalized."""
+    cfg = replace(GraphConfig(), window=10, gyro_bias_walk=1e-5)
+    ref = VgiGraph(cfg, np.eye(4), 1.1e-3, 1.2e-2)
+    _drive([ref], {}, seconds=30.0, outliers=False)              # the bias the visual rotations give
+    offset = np.array([0.0, 0.004, 0.0])                         # rad/s, far beyond what they resolve
+    g = VgiGraph(cfg, np.eye(4), 1.1e-3, 1.2e-2)
+
+    def check(graphs, stage):
+        if stage.startswith("solve") and int(stage.split()[1]) <= 15:
+            graphs[0].add_zero_rate(graphs[0].ids[-1], ref.bg + offset, np.full(3, 1e-4))
+    _drive([g], {}, seconds=30.0, outliers=False, check=check)
+    assert np.linalg.norm(g.bg - ref.bg - offset) < 0.3 * np.linalg.norm(offset), (g.bg - ref.bg, offset)
+

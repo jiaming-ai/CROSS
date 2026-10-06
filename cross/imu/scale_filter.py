@@ -116,6 +116,7 @@ class ImuConfig:
     vgio_depth_bias: bool = True                 # the graph estimates the learned-depth bias
     vgio_rot_std: float = 0.0087                 # rad, relative rotation of a pass in the graph (0.5 deg)
     vgio_depth_bias_std: float = 0.05            # prior std of the learned-depth log bias in the graph
+    vgio_depth_bias_drift: float = 0.005         # its random walk (log per sqrt(s))
     vgio_rot_rel: float = 0.05                   # graph: rotation noise also grows with the angle (fraction)
     # adaptive measurement times (vgio_adaptive): after the camera moved / turned this much, within these frame counts
     vgio_rot_scale: bool = True                  # graph: calibrate the rotation scale of the passes against the gyro
@@ -137,6 +138,33 @@ class ImuConfig:
     vgio_align: bool = False
     vgio_align_min: int = 2
     vgio_align_max: int = 4
+    # graph: a pass's translation must agree with the IMU's prediction in length within this factor or in velocity
+    # within 4 sigma of the combined uncertainty (cross.mono.vggt_imu_frontend._translation_gate), else the pass is not
+    # used (like a pass whose rotation disagrees with the gyro).  0 or 1: no test.  KITTI 01 without it: VGGT-Omega
+    # reported 10-20 % of the motion for ~6 s on the highway, the graph followed it to 1 m/s at a true 25.7 m/s, and the
+    # IMU (which only measures changes of velocity) kept the wrong speed: map scale 0.3, ATE 411 m
+    vgio_trans_gate: float = 1.5
+    vgio_trans_gate_max_gap: float = 15.0        # s: the longest the IMU may outvote the passes' translations
+    # graph: random walk of the gyro bias (rad/s per sqrt(s)) when vgio_calib_gyro_walk is off.  The window's visual
+    # rotations carry small systematic errors that a loose walk lets the bias follow: on ROVER the gyro alone, with the
+    # bias of the initial standstill, turns 1079.9 deg for a true 1080.2 deg, while the graph's bias wandered 0.05-0.07
+    # deg/s off with 1e-4 (heading drift 26 deg over 600 s, the integrated bias error 21 deg).  1e-5: drift 18 deg, front
+    # end ATE 0.98x in geometric mean over 13 sequences (ROVER 0.91-0.96x, the rest within 3 %); 3e-6 changes nothing more
+    vgio_gyro_bias_walk: float = 1e-5
+    # graph: relative translation noise from the larger of the measured and predicted translation, Huber gauge links
+    # (cross.imu.vgi_graph.GraphConfig.trans_sigma_predicted / robust_links).  ROVER night relocalization (T3 against
+    # one map): the predicted-translation noise costs trials (with it 83, without 105 of 140, gate off), the Huber links
+    # nothing; on KITTI 01 the predicted-translation noise and the gate are what stop the collapse
+    # graph: the gyro bias measured directly while the images show the platform at rest (zero-rate update); the
+    # visual rotations alone pin it to ~0.05 deg/s, and while driving they carry a motion-coupled error of that size
+    # (ROVER: the bias learned at the start drifted 0.2 -> 0.15-0.29 deg/s, heading 15-30 deg)
+    vgio_zero_rate: bool = True
+    vgio_trans_sigma_predicted: bool = True
+    vgio_robust_links: bool = True
+    # ... with the predicted translation lowered by twice its uncertainty (the graph's marginal velocity std): a
+    # prediction the graph does not know yet (session start) cannot weaken the measurements (GraphConfig.trans_sigma_bound;
+    # ROVER night relocalization vs the v4 map 76 -> 91 of 140, KITTI 01 kept)
+    vgio_trans_sigma_bound: bool = True
     vgio_gyro_dt_noise: float = 0.0              # graph: preintegration noise growing with the IMU sampling interval
     vgio_accel_dt_noise: float = 0.0
     vgio_adaptive: bool = False

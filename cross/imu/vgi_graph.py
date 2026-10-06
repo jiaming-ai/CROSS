@@ -74,10 +74,26 @@ class GraphConfig:
     accel_dt_noise: float = 0.0
     huber: float = 3.0
     iterations: int = 3
+    # robustness to gross visual errors: the relative translation noise of a pass from the larger of its measured and
+    # its predicted translation (False: the measured one), and Huber weights on the gauge links (False: none)
+    trans_sigma_predicted: bool = True
+    # ... with the predicted translation lowered by twice its uncertainty (from the velocity's marginal covariance): a
+    # prediction the graph does not yet know (session start, poor vision) cannot weaken the measurements
+    trans_sigma_bound: bool = False
+    robust_links: bool = True
 
 
 def _exp(phi):
     return Rotation.from_rotvec(phi).as_matrix()
+
+
+def _so3(R):
+    """The nearest rotation.  Node rotations are chained (a new node starts from its predecessor through the
+    extrinsic and the preintegrated rotation) and updated in place for the whole session, so rounding and an imperfect
+    extrinsic accumulate unless every stored rotation is projected back (KITTI 00: singular values 1 +- 1e-4 after
+    800 nodes without it)."""
+    U, _, Vt = np.linalg.svd(R)
+    return U @ np.diag([1.0, 1.0, np.sign(np.linalg.det(U @ Vt))]) @ Vt
 
 
 def _log(R):
@@ -299,7 +315,7 @@ class _Rel:
 class VgiGraph:
     def __init__(self, config: GraphConfig, T_cam_imu: np.ndarray, gyro_noise: float, accel_noise: float):
         self.cfg = config
-        self.R_cb = np.asarray(T_cam_imu, dtype=np.float64)[:3, :3]
+        self.R_cb = _so3(np.asarray(T_cam_imu, dtype=np.float64)[:3, :3])
         self.t_cb = np.asarray(T_cam_imu, dtype=np.float64)[:3, 3]
         self.gyro_noise = float(gyro_noise)
         self.accel_noise = float(np.hypot(accel_noise, config.extra_accel_noise))
@@ -323,10 +339,16 @@ class VgiGraph:
         self.rots: list[_Rot] = []
         self.links: list[tuple] = []             # (j, k, log ratio, std): lam_j - lam_k = log ratio
         self.depth: dict[int, tuple] = {}        # node -> (log observation, std)
+        self.zrate: dict[int, tuple] = {}        # node -> (gyro mean (IMU frame), std (3,)) over an interval at rest
         self.prior = None                        # (L, node id, x_lin) on (node, globals)
         self.gauge = None
         self.next_id = 0
         self.last_info = {}
+        # motion level seen by the IMU (running RMS of the bias-corrected rate and of the specific force's deviation
+        # from its interval mean): scales the uncertainty of the IMU factors across sample dropouts
+        self.motion_w = 0.0
+        self.motion_a = 0.0
+        self.v_std = np.inf                      # marginal std of the newest node's velocity (m/s, last solve)
 
     # ------------------------------------------------------------------ building
     @property
@@ -356,7 +378,7 @@ class VgiGraph:
         i = self.next_id
         self.next_id += 1
         self.ids.append(i)
-        self.R[i], self.p[i], self.v[i], self.lam[i], self.t[i] = R.copy(), p.copy(), v.copy(), float(lam), float(t)
+        self.R[i], self.p[i], self.v[i], self.lam[i], self.t[i] = _so3(R), p.copy(), v.copy(), float(lam), float(t)
         return i
 
     def preintegrate(self, samples, t0, t1, td0=None):
@@ -372,6 +394,7 @@ class VgiGraph:
             s[:, 0] += shift                     # a larger offset: every sample later on the camera clock
             return preintegrate(s, t0, t1, gn, an, full=full)
         base = run(self.bg)
+        self._dropout(base, samples, t0, t1, h)
         if not self.cfg.time_offset:
             return base, (base.J_Rg, base.J_vg, base.J_pg)
         et = 2e-3
@@ -379,6 +402,36 @@ class VgiGraph:
         tj = dict(JR_t=_log(pm.dR.T @ pp.dR) / (2 * et), Jv_t=(pp.dv - pm.dv) / (2 * et),
                   Jp_t=(pp.dp - pm.dp) / (2 * et), td0=float(self.td if td0 is None else td0))
         return base, (base.J_Rg, base.J_vg, base.J_pg, tj)
+
+    def _dropout(self, pre, samples, t0, t1, h):
+        """Sample dropouts: the preintegration bridges a gap in the IMU stream by holding the last sample, as if the
+        platform had kept its rate and acceleration (ROVER summer: gaps of 1.0-1.3 s; the bridged rotation failed the
+        gyro test of the passes and the bridged velocity started a runaway).  The factor's covariance grows with the
+        gaps (the parts longer than 5 nominal sample intervals): rotation by 3x the IMU's recent RMS rate x gap,
+        velocity by 3x its recent RMS acceleration x gap, position by that x the interval.  The motion level is the
+        IMU's own, so nothing here depends on the platform."""
+        t = samples[:, 0]
+        inside = (t >= t0 - h) & (t <= t1 + h)
+        if inside.sum() >= 3:
+            w = samples[inside, 1:4] - self.bg
+            a = samples[inside, 4:7]
+            rw = float(np.sqrt((w ** 2).sum(1).mean()))
+            ra = float(np.sqrt(((a - a.mean(0)) ** 2).sum(1).mean()))
+            k = 0.05 if self.motion_w > 0 else 1.0
+            self.motion_w += k * (rw - self.motion_w)
+            self.motion_a += k * (ra - self.motion_a)
+        d = np.diff(np.clip(t, t0, t1))
+        gap = float(np.sum(d[d > max(5 * h, 1e-3)])) if h > 0 else 0.0
+        if gap <= 0:
+            return
+        dt = max(t1 - t0, gap)
+        sr = 3.0 * max(self.motion_w, 0.05) * gap
+        sv = 3.0 * max(self.motion_a, 0.1) * gap
+        pre.cov = pre.cov.copy()
+        pre.cov[0:3, 0:3] += np.eye(3) * sr ** 2
+        pre.cov[3:6, 3:6] += np.eye(3) * sv ** 2
+        pre.cov[6:9, 6:9] += np.eye(3) * (sv * dt) ** 2
+        pre.dropout = gap
 
     def add_node(self, pre, jac, lam, t):
         """A node after the last one, linked by the IMU; its initial state from the IMU propagation."""
@@ -434,6 +487,12 @@ class VgiGraph:
     # relative pose: two nodes' rotation and position, the scale of the pass and the rotation scale), its Jacobian is
     # analytic over those variables only (batched over the factors of the type), and J^T J and J^T r are scattered into
     # the dense system of the window.  The factors' constant data are stacked once per solve.
+
+    def add_zero_rate(self, i, gyro_mean, std):
+        """The gyro's mean over an interval ending at node i during which the platform was at rest: a direct
+        measurement of the gyro bias (rad/s, IMU frame), independent of the visual rotations."""
+        if i in self.R:
+            self.zrate[i] = (np.asarray(gyro_mean, dtype=np.float64).copy(), np.asarray(std, dtype=np.float64).copy())
 
     def _prepare(self):
         """The factors' constant data as tensors, and their global columns (fixed during one solve).  Columns: node k at
@@ -491,6 +550,9 @@ class VgiGraph:
         if self.links:
             P["links"] = dict(jj=np.array([col[l[0]] for l in self.links]), kk=np.array([col[l[1]] for l in self.links]),
                               obs=np.array([l[2] for l in self.links]), std=np.array([l[3] for l in self.links]))
+        zk = [i for i in self.zrate if i in col]
+        if zk:
+            P["zrate"] = dict(obs=np.stack([self.zrate[i][0] for i in zk]), std=np.stack([self.zrate[i][1] for i in zk]))
         dk = [i for i in self.depth if i in col]
         if dk:
             P["depth"] = dict(kk=np.array([col[i] for i in dk]), obs=np.array([self.depth[i][0] for i in dk]),
@@ -516,8 +578,22 @@ class VgiGraph:
         if "rel" in P:
             q = P["rel"]
             aa, bb, ss = q["aa"], q["bb"], q["ss"]
-            # translation noise in the pass's units, from the current scale (constant in the derivative, as before)
-            sig = np.sqrt((cfg.trans_rel * q["tnorm"]) ** 2 + (cfg.trans_floor * np.exp(-lam[ss])) ** 2)
+            # translation noise in the pass's units, from the current scale (constant in the derivative, as before).
+            # The relative part scales with the larger of the measured and the predicted translation: with the measured
+            # one alone a translation the model under-reports claims to be precise in proportion (errors in variables
+            # favour short measurements; KITTI 01: passes 7.7 m apart reporting 10-20 % of the motion dragged the speed
+            # from 25 to 1 m/s while the IMU said constant velocity)
+            tn = q["tnorm"]
+            if cfg.trans_sigma_predicted:
+                u = np.einsum("nji,nj->ni", R[aa], p[bb] - p[aa]) * np.exp(-lam[ss])[:, None]
+                un = np.linalg.norm(u, axis=1)
+                if cfg.trans_sigma_bound:
+                    # the prediction only as far as it is known: its lower 2-sigma bound, the velocity's marginal std
+                    # (newest node, last solve) over the pass interval (at a session start it is ~0)
+                    tab = np.array([self.t[ids[b]] - self.t[ids[a]] for a, b in zip(aa, bb)])
+                    un = np.maximum(un - 2.0 * self.v_std * tab * np.exp(-lam[ss]), 0.0)
+                tn = np.maximum(tn, un)
+            sig = np.sqrt((cfg.trans_rel * tn) ** 2 + (cfg.trans_floor * np.exp(-lam[ss])) ** 2)
             r, J = _rel_block(R[aa], p[aa], R[bb], p[bb], lam[ss], q, sig, self.kappa if cfg.rot_scale else None, jac)
             out.append((q["cols"], r, J, "rel"))
         if "rots" in P:
@@ -538,6 +614,11 @@ class VgiGraph:
                 cols.append(np.full(len(q["kk"]), G + 9))
                 Js.append(1.0 / q["std"])
             out.append((np.stack(cols, axis=1), r, np.stack(Js, axis=1)[:, None, :], "depth"))
+        if "zrate" in P:
+            q = P["zrate"]
+            n = len(q["obs"])
+            out.append((np.broadcast_to(np.arange(G + 3, G + 6), (n, 3)), (self.bg[None] - q["obs"]) / q["std"],
+                        (np.eye(3)[None] / q["std"][:, :, None]), "zrate"))
         # |g|
         gn = float(np.linalg.norm(self.g))
         out.append((np.arange(G, G + 3)[None], np.array([[(gn - GRAVITY) / cfg.gravity_norm_std]]),
@@ -589,11 +670,13 @@ class VgiGraph:
         return out
 
     def _huber(self, blocks):
-        """Huber weights of the relative-pose and the rotation-only factors from their unweighted residuals."""
+        """Huber weights of the relative-pose, rotation-only and gauge-link factors from their unweighted residuals
+        (a gauge link is a visual measurement too: a pass whose depth of the shared frame jumps by 30-40 % gave links
+        of 10-15 sigma at full weight)."""
         h = self.cfg.huber
         w = {}
         for _, r, _, kind in blocks:
-            if kind in ("rel", "rots"):
+            if kind in ("rel", "rots", "zrate") or (kind == "links" and self.cfg.robust_links):
                 e = np.linalg.norm(r, axis=1) / np.sqrt(r.shape[1])
                 w[kind] = np.where(e <= h, 1.0, np.sqrt(h / np.maximum(e, 1e-12)))
         return w
@@ -636,7 +719,7 @@ class VgiGraph:
         n = len(self.ids)
         dn = d[:10 * n].reshape(n, 10)
         for k, i in enumerate(self.ids):
-            self.R[i] = self.R[i] @ _exp(dn[k, 0:3])
+            self.R[i] = _so3(self.R[i] @ _exp(dn[k, 0:3]))
             self.p[i] = self.p[i] + dn[k, 3:6]
             self.v[i] = self.v[i] + dn[k, 6:9]
             self.lam[i] = self.lam[i] + dn[k, 9]
@@ -673,12 +756,15 @@ class VgiGraph:
         info["lam_std"] = float("nan")
         if need_std and H is not None:
             try:
-                k = 10 * (len(self.ids) - 1) + 9
-                e = np.zeros(len(H))
-                e[k] = 1.0
-                info["lam_std"] = float(np.sqrt(max(np.linalg.solve(H + 1e-12 * np.eye(len(H)), e)[k], 0.0)))
+                k = 10 * (len(self.ids) - 1)
+                E = np.zeros((len(H), 4))
+                E[[k + 9, k + 6, k + 7, k + 8], [0, 1, 2, 3]] = 1.0
+                X = np.linalg.solve(H + 1e-12 * np.eye(len(H)), E)
+                info["lam_std"] = float(np.sqrt(max(X[k + 9, 0], 0.0)))
+                self.v_std = float(np.sqrt(max((X[k + 6, 1] + X[k + 7, 2] + X[k + 8, 3]) / 3.0, 0.0)))
             except np.linalg.LinAlgError:
                 info["lam_std"] = float("inf")
+                self.v_std = np.inf
         self.last_info = info
         return info
 
@@ -709,13 +795,14 @@ class VgiGraph:
         keep_links = [l for l in self.links if i0 not in (l[0], l[1])]
         mar_links = [l for l in self.links if (i0 in (l[0], l[1])) and {l[0], l[1]} <= {i0, i1}]
         # the factors involving only nodes 0 and 1 (and the globals), on a two-node sub-problem
-        full = (self.ids, self.imu, self.rel, self.links, self.depth)
+        full = (self.ids, self.imu, self.rel, self.links, self.depth, self.zrate)
         self.ids = [i0, i1]
         self.imu = [f for f in self.imu if f.i == i0]
         self.rel = mar_rel
         self.rots = mar_rots
         self.links = mar_links
         self.depth = {i: o for i, o in full[4].items() if i == i0}
+        self.zrate = {i: o for i, o in full[5].items() if i == i0}
         H, c, _, _, _ = self._system(self._prepare())
         mi = np.arange(10)
         ri = np.arange(10, 20 + self.n_global)
@@ -745,7 +832,7 @@ class VgiGraph:
         w = np.maximum(w, 1e-12 * max(float(w.max()), 1e-12))
         L = V / np.sqrt(w)[None, :]
         # linearization point moved to the minimum (tangent-space shift of node 1 and the globals)
-        xl = {"R": self.R[i1] @ _exp(mean_shift[0:3]), "p": self.p[i1] + mean_shift[3:6],
+        xl = {"R": _so3(self.R[i1] @ _exp(mean_shift[0:3])), "p": self.p[i1] + mean_shift[3:6],
               "v": self.v[i1] + mean_shift[6:9], "lam": self.lam[i1] + mean_shift[9],
               "g": self.g + mean_shift[10:13], "bg": self.bg + mean_shift[13:16], "ba": self.ba + mean_shift[16:19],
               "beta": self.beta + (mean_shift[19] if cfg.depth_bias else 0.0),
@@ -758,6 +845,7 @@ class VgiGraph:
         self.rots = keep_rots
         self.links = keep_links
         self.depth = {i: o for i, o in full[4].items() if i != i0}
+        self.zrate = {i: o for i, o in full[5].items() if i != i0}
         self.prior = (L, i1, xl)
         for dct in (self.R, self.p, self.v, self.lam, self.t):
             dct.pop(i0, None)
