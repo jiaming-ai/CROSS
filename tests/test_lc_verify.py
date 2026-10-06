@@ -107,7 +107,7 @@ def test_inpass_gate_drops_wrong_reference():
         kf = Keyframe(pose_mu=_lie(g).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
         kf.id = i
         hm.nodes[i] = kf
-    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    v = LoopClosureVerifier(FakeSystem(hm), GUARD_ON)
     refs = [hm.nodes[10], hm.nodes[11], hm.nodes[12], hm.nodes[40]]
     # pass poses: current at gt[13]; correct references at their true poses, reference 40 placed as if it were keyframe 12
     cur = gt[13]
@@ -401,7 +401,7 @@ def test_margin_keeps_neighbours_out_and_loops_in():
 def test_anisotropic_scales_follow_the_innovation():
     """Measurements whose length is 20 % off (direction exact) inflate the along-track scale, not the across one."""
     hm, gt = _chain_system(n=200)
-    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    v = LoopClosureVerifier(FakeSystem(hm), GUARD_ON)
     rng = np.random.default_rng(1)
     for last in range(30, 199):
         refs = [hm.nodes[last - 3]]
@@ -456,6 +456,9 @@ def test_loop_closure_skips_a_graph_that_cannot_be_built(monkeypatch):
 
 
 # ----------------------------------------------------------------------------- odometry scale guard: fault response
+GUARD_ON = LoopClosureConfig(odom_guard_inflate=True, odom_guard_map=True, odom_guard_attribute=True,
+                             odom_guard_per_observation=True)
+
 def test_guard_fault_inflates_only_the_translation():
     nm = NoiseModel(NoiseModelConfig())
     s = nm.odom(2.0, 0.1, 3)
@@ -475,7 +478,7 @@ def test_guard_fault_inflates_the_departing_stretch_and_fades():
     from the first departing window's earliest span on get the measured error as translation sigma (the chain's
     prediction across them loosens, the stretch before keeps its covariance); healthy windows let the error fade."""
     hm, _ = _chain_system(n=120)
-    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    v = LoopClosureVerifier(FakeSystem(hm), GUARD_ON)
     _, cov_run = v.chain.predict(60, 100)
     _, cov_early = v.chain.predict(10, 40)
     for i in range(60):
@@ -497,7 +500,7 @@ def test_guard_fault_inflates_the_departing_stretch_and_fades():
 
 def test_guard_without_inflation_only_rescales():
     hm, _ = _chain_system(n=120)
-    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig(odom_guard_inflate=False))
+    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig(odom_guard_inflate=False, odom_guard_per_observation=True))
     _fire(v, 0.25, 60)
     assert abs(v.odom_scale - 0.25) < 1e-12 and v.odom_fault == 0.0
     assert not any(getattr(e, "odom_fault", 0.0) for e in hm.odom_edges.values())
@@ -519,7 +522,7 @@ def _reloc_session(odom_factor, session_start=50, n=120):
         e = Edge(_lie(d), pp.se3(torch.full((6,), 0.1)), EdgeType.ODOMETRY)
         e.n_frames = 1
         hm.odom_edges[(i - 1, i)] = e
-    v = LoopClosureVerifier(FakeSystem(hm, session_start=session_start), LoopClosureConfig())
+    v = LoopClosureVerifier(FakeSystem(hm, session_start=session_start), GUARD_ON)
     v.guard_metric = True                     # stereo / depth: the map measurements are metric on their own
     return hm, gt, v
 
@@ -600,7 +603,7 @@ def test_guard_counts_observations_not_references():
     """A failed estimate of one frame gives agreeing samples for all its references: 10 frames with 8 departing samples
     each are 10 window samples (no firing); 60 such frames fire."""
     hm, _ = _chain_system(n=120)
-    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    v = LoopClosureVerifier(FakeSystem(hm), GUARD_ON)
     v.guard_metric = True
     for _ in range(10):
         for _ in range(8):
@@ -630,7 +633,7 @@ def test_map_fix_needs_two_agreeing_references():
 
 def _attrib_verifier():
     hm, _ = _chain_system(n=120)
-    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    v = LoopClosureVerifier(FakeSystem(hm), GUARD_ON)
     v.guard_metric = True
     for _ in range(30):                                   # one healthy window: the odometry's pace, 0.05 m per frame
         v._guard_push(1.0, 10, 0.05)
@@ -661,7 +664,21 @@ def test_guard_fires_when_the_odometry_sped_up():
 
 def test_guard_needs_a_healthy_reference_pace():
     hm, _ = _chain_system(n=120)
-    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    v = LoopClosureVerifier(FakeSystem(hm), GUARD_ON)
     for _ in range(60):
         v._guard_push(0.25, 60, 0.2)
     assert v.odom_scale == 1.0 and v.stats.get("odom_guard_held", 0) == 1
+
+
+def test_guard_options_off_is_the_old_guard():
+    """Default config: per-measurement windows, no attribution, no inflation, no epoch, no map fixes."""
+    hm, gt, _ = _reloc_session(3.0)
+    v = LoopClosureVerifier(FakeSystem(hm, session_start=50), LoopClosureConfig())
+    v.guard_metric = True
+    assert not (v.guard_inflate or v.guard_map or v.guard_attribute or v.guard_per_obs)
+    for _ in range(60):
+        v._guard_sample(0.25, 60, 0.05)                 # 60 measurements of one departure: the old guard fires
+    assert abs(v.odom_scale - 0.25) < 1e-12 and v.odom_fault == 0.0 and v._guard_epoch_kf is None
+    for last in range(53, 120):
+        _localize(v, gt, (40, 45, 48), last)
+    assert not v._fix_hist

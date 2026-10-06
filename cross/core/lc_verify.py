@@ -447,6 +447,8 @@ class LoopClosureVerifier:
         # attribution (odom_guard_attribute): log odometry speed (raw, per frame) of the window samples, and of the latest
         # healthy window before any fault (the odometry's own reference)
         self.guard_attribute = bool(getattr(cfg, "odom_guard_attribute", False))
+        # one window sample per observation (odom_guard_per_observation); off: every measurement is a sample
+        self.guard_per_obs = bool(getattr(cfg, "odom_guard_per_observation", False))
         self._guard_ls: list = []
         self._guard_speed_ref: Optional[float] = None
         self._pass_fix: list = []                     # map fixes of the current observation (position, sigma)
@@ -701,6 +703,9 @@ class LoopClosureVerifier:
         odometry's distance per frame over the sample's span."""
         if span_from is not None and self._guard_epoch_kf is not None and span_from < self._guard_epoch_kf:
             return
+        if not self.guard_per_obs:
+            self._guard_push(float(g), span_from, speed)
+            return
         self._pass_g.append((float(g), span_from, speed))
 
     def _step(self) -> Optional[int]:
@@ -768,7 +773,7 @@ class LoopClosureVerifier:
                 m = math.exp(lm)                              # the latest window's departure
                 self.odom_scale *= m
                 self._guard_run = []
-                if self._gate_last_kf is not None:
+                if self.guard_inflate and self._gate_last_kf is not None:
                     self._guard_epoch_kf = self._gate_last_kf + 1
                 self.stats["odom_guard_updates"] = self.stats.get("odom_guard_updates", 0) + 1
                 self.stats["odom_scale"] = round(self.odom_scale, 4)
