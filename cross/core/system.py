@@ -2303,7 +2303,7 @@ class System:
     def _map_anchor_pairs(self, keyframes):
         """Pairs of references with their metric relative pose from the map (component-0 means), used as
         long-baseline scale anchors by the feed-forward estimator.  Pairs are chosen by decreasing distance
-        within [map_anchor_min_dist, map_anchor_max_dist]."""
+        within [map_anchor_min_dist, map_anchor_max_dist] (all of them with map_anchor_min_pair_covis)."""
         ffc = self.config.pose_est.ff
         if not ffc.use_map_anchors or len(keyframes) < 2:
             return None
@@ -2316,7 +2316,9 @@ class System:
                 if ffc.map_anchor_min_dist <= d <= ffc.map_anchor_max_dist:
                     pairs.append((d, i, j, T_ij))
         pairs.sort(key=lambda x: -x[0])
-        return [(i, j, T) for _, i, j, T in pairs[:ffc.map_anchor_max_pairs]] or None
+        # with the pair-covisibility filter every pair is a candidate (the estimator keeps the longest that pass)
+        n = None if getattr(ffc, "map_anchor_min_pair_covis", 0.0) > 0 else ffc.map_anchor_max_pairs
+        return [(i, j, T) for _, i, j, T in pairs[:n]] or None
 
     def _construct_observation_dist(
         self,

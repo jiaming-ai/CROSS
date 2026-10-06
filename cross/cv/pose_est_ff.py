@@ -387,6 +387,33 @@ def _load_scale_encoder(sd: dict, patch_embed, scale_head_cfg: Optional[dict], d
     return enc.eval().to(device)
 
 
+def filter_map_anchors(pred: FFPrediction, anchors: List[ScaleAnchor], min_covis: float, max_pairs: int,
+                       source: str = "geometric", grid: int = 48, rel_depth_tol: float = 0.15) -> List[ScaleAnchor]:
+    """Map anchors only between references that overlap each other: covisibility >= min_covis both ways, from the
+    predicted depth and poses ("geometric", needs both views' depth), the covisibility head ("head") or the smaller
+    of the two ("min"); the max_pairs first that pass are kept (the system lists them longest first).  Other anchors
+    are kept as they are."""
+    maps = [a for a in anchors if a.kind == "map"]
+    if not maps:
+        return anchors
+    views = sorted({a.idx_a for a in maps} | {a.idx_b for a in maps})
+    has_depth = pred.depth is not None and pred.depth.shape[0] > views[-1]
+    use_head = pred.covis is not None and (source in ("head", "min") or not has_depth)
+    use_geo = has_depth and (source != "head" or pred.covis is None)
+    if not (use_head or use_geo):
+        return anchors
+    C = np.ones((views[-1] + 1, views[-1] + 1))
+    if use_geo:
+        for dst in views:
+            src = [v for v in views if v != dst]
+            C[src, dst] = covisibility_scores(pred, src, dst, grid=grid, rel_depth_tol=rel_depth_tol)
+    if use_head:
+        C = np.minimum(C, np.asarray(pred.covis, dtype=np.float64)[:C.shape[0], :C.shape[1]])
+    keep = [a for a in maps if min(C[a.idx_a, a.idx_b], C[a.idx_b, a.idx_a]) >= min_covis][:max_pairs]
+    logger.debug(f"FF map anchors with pair covisibility >= {min_covis}: {len(keep)} of {len(maps)}")
+    return [a for a in anchors if a.kind != "map"] + keep
+
+
 class _DA3Backend(_Backend):
     def __init__(self, checkpoint: str, device: str, process_res: int = 504):
         from depth_anything_3.api import DepthAnything3
@@ -688,6 +715,10 @@ class PoseEstFeedForward:
                 self.last_frontend_obs["c2w_right"] = pred.c2w[view_tags.index("curr_R")]
 
         # ---- metric scale ----
+        if getattr(cfg, "map_anchor_min_pair_covis", 0.0) > 0:
+            anchors = filter_map_anchors(pred, anchors, cfg.map_anchor_min_pair_covis, cfg.map_anchor_max_pairs,
+                                         source=getattr(cfg, "covis_source", "geometric"), grid=cfg.covis_grid,
+                                         rel_depth_tol=cfg.covis_depth_tol)
         scale_est = estimate_scale(
             pred.c2w, anchors, method=cfg.scale_method,
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
