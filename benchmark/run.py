@@ -555,6 +555,27 @@ class Job:
                 shutil.rmtree(lock, ignore_errors=True)
         return d
 
+    def reeval_t1(self, seq):
+        """Re-score a stored T1 run with the current metrics (no system run): the map session's files in maps/<seq>,
+        another session's in t1/<seq>/native.  Keeps the run's own fields (time, host, commit, ...)."""
+        _, t1_result, _ = self.runner()
+        res_file = self.run_root / "t1" / seq / "result.json"
+        d = self.run_root / "maps" / seq if seq == self.scene.get("map") else self.run_root / "t1" / seq / "native"
+        if not res_file.is_file() or not d.is_dir():
+            print(f"nothing to re-score: {res_file}", file=sys.stderr)
+            return
+        old = json.loads(res_file.read_text())
+        try:
+            res = t1_result(seq, d, old.get("wall_s"))
+        except Exception as e:        # noqa: BLE001
+            print(f"cannot re-score {d}: {e!r}", file=sys.stderr)
+            return
+        keep = {k: old[k] for k in ("status", "rc", "wall_s", "host", "gpu", "commit", "time", "fps", "error") if k in old}
+        res.update({**keep, "rescored": time.strftime("%Y-%m-%d %H:%M:%S")})
+        write_result(res_file, res)
+        print(f"{seq}: completeness {old.get('completeness')} -> {res.get('completeness')}, failed {old.get('failed')} -> "
+              f"{res.get('failed')}, ATE {old.get('ate_rmse')} -> {res.get('ate_rmse')}")
+
     def ready(self, names) -> bool:
         return all((self.seq(n) / "calib.json").is_file() for n in names)
 
@@ -565,13 +586,15 @@ class Job:
         if not self.ready(need):
             print(f"data not ready: {[str(self.seq(n)) for n in need]}", file=sys.stderr)
             sys.exit(3)                        # the worker releases the job for a later pass
-        if a.task == "map":
+        if a.task == "map" and not a.reeval:
             md = self.ensure_map(self.scene["map"])
             if not self.scene.get("queries") and not a.keep_maps:     # single-session scene: the map is not reused
                 for f in ("map.pkl", "atlas.osa", "map.db"):
                     if (md / f).exists():
                         (md / f).unlink()
                 shutil.rmtree(md / "views_map", ignore_errors=True)
+        elif a.task in ("map", "t1") and a.reeval:
+            self.reeval_t1(self.scene["map"] if a.task == "map" else a.seq)
         elif a.task == "t1":
             seq = a.seq
             if seq == self.scene.get("map"):
@@ -631,7 +654,8 @@ def main():
                     help="T3 trials per query for systems without map persistence (evenly spaced)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--wait-for-map", action="store_true", help="wait while another worker builds the map (default: exit 3)")
-    ap.add_argument("--reeval", action="store_true", help="baselines: re-score existing query runs from their pose files")
+    ap.add_argument("--reeval", action="store_true", help="re-score existing runs from their stored files (query tasks: "
+                                                          "baselines' pose files; map / t1 tasks: the T1 result)")
     ap.add_argument("--redo", nargs="*", default=[], choices=["t2", "t3"], help="query task: re-run these tracks although results exist")
     ap.add_argument("--only", nargs="*", default=[], choices=["t2", "t3"], help="query task: run only these tracks")
     ap.add_argument("--keep-maps", action="store_true")

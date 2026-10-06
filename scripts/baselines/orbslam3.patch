@@ -128,10 +128,29 @@ index 319afb5..27e7bbf 100644
          // cout << "LoopClousure: Stereo KF inserted without check, map is small: " << mpCurrentKF->mnId << endl;
          mpKeyFrameDB->add(mpCurrentKF);
 diff --git a/src/Map.cc b/src/Map.cc
-index f1f8cd0..607a11f 100644
+index f1f8cd0..26df01b 100644
 --- a/src/Map.cc
 +++ b/src/Map.cc
-@@ -395,8 +395,12 @@ void Map::PreSave(std::set<GeometricCamera*> &spCams)
+@@ -359,7 +359,10 @@ void Map::SetLastMapChange(int currentChangeId)
+ void Map::PreSave(std::set<GeometricCamera*> &spCams)
+ {
+     int nMPWithoutObs = 0;
+-    for(MapPoint* pMPi : mspMapPoints)
++    // iterate over a copy: EraseObservation can set a point bad, which erases it from mspMapPoints (the loop over the
++    // set itself then dereferences an invalid iterator: segfault while saving the atlas)
++    const vector<MapPoint*> vpMPsCopy(mspMapPoints.begin(), mspMapPoints.end());
++    for(MapPoint* pMPi : vpMPsCopy)
+     {
+         if(!pMPi || pMPi->isBad())
+             continue;
+@@ -390,13 +393,18 @@ void Map::PreSave(std::set<GeometricCamera*> &spCams)
+ 
+     // Backup of MapPoints
+     mvpBackupMapPoints.clear();
+-    for(MapPoint* pMPi : mspMapPoints)
++    const vector<MapPoint*> vpMPsLeft(mspMapPoints.begin(), mspMapPoints.end());
++    for(MapPoint* pMPi : vpMPsLeft)
+     {
          if(!pMPi || pMPi->isBad())
              continue;
  
@@ -145,7 +164,7 @@ index f1f8cd0..607a11f 100644
      }
  
      // Backup of KeyFrames
-@@ -460,6 +464,22 @@ void Map::PostLoad(KeyFrameDatabase* pKFDB, ORBVocabulary* pORBVoc/*, map<long u
+@@ -460,6 +468,22 @@ void Map::PostLoad(KeyFrameDatabase* pKFDB, ORBVocabulary* pORBVoc/*, map<long u
          pMPi->PostLoad(mpKeyFrameId, mpMapPointId);
      }
  
@@ -214,7 +233,7 @@ index 1cf802c..c940c11 100644
  
  void MapPoint::PostLoad(map<long unsigned int, KeyFrame*>& mpKFid, map<long unsigned int, MapPoint*>& mpMPid)
 diff --git a/src/System.cc b/src/System.cc
-index 60d9c51..ab2efa0 100644
+index 60d9c51..4a7a88d 100644
 --- a/src/System.cc
 +++ b/src/System.cc
 @@ -523,6 +523,19 @@ void System::Shutdown()
@@ -222,8 +241,8 @@ index 60d9c51..ab2efa0 100644
      mpLocalMapper->RequestFinish();
      mpLoopCloser->RequestFinish();
 +    // CROSS benchmark: wait until local mapping, loop closing and a running global BA have stopped before the atlas
-+    // is saved (upstream has this wait commented out below, so the atlas was saved while those threads still changed
-+    // the map: segfault while saving in about one run in six).  Bounded so that a stuck thread cannot hang the run.
++    // is saved (upstream has this wait commented out below, so the atlas could be saved while those threads still
++    // changed the map).  Bounded so that a stuck thread cannot hang the run.
 +    {
 +        int waited_ms = 0;
 +        while((!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA()) && waited_ms < 600000)

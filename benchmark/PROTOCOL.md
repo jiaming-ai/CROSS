@@ -235,9 +235,9 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 Baselines run with their published default parameters for the sensor type. The same parameters are used on every dataset, apart
 from the camera calibration and frame rate. A baseline that crashes or times out (default 2 h per session) is reported as a
 failure of that run, not dropped. ORB-SLAM3 carries bug fixes only (`scripts/baselines/orbslam3.patch`): saving and
-loading atlases with culled keyframes, waiting for its mapping and loop-closing threads before the atlas is saved at
-shutdown (upstream saves while they still change the map and crashes in about one run in six), and the trajectory export
-of the largest map with each frame's map id (monocular too).
+loading atlases with culled keyframes; two crashes while saving the atlas at shutdown (`Map::PreSave` erased map points
+from the set it was iterating over, in about one run in six, and the atlas was saved while the mapping and loop-closing
+threads still changed the map); and the trajectory export of the largest map with each frame's map id (monocular too).
 
 ## 6. Run rules
 
