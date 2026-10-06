@@ -219,9 +219,35 @@ class LoopClosureConfig:
     # 07 RGB-D with OXTS odometry), in daylight log-MAD 0.02-0.05.  0 disables.
     odom_guard_factor: float = 2.0
     odom_guard_window: int = 30
+    # odom_guard_per_observation: a window sample is an observation (the median of its samples), not a measurement.  The
+    # references of one observation share its estimate, and at car speed a frame gives 5-9 samples (KITTI 04 with VIO,
+    # PnP: per-measurement windows filled within ~10 frames of failed PnP and the guard fired on a healthy VIO, 1.7 ->
+    # 40 m).  The odom_guard_* options of 2026-10-06 (per_observation, attribute, inflate, map) are off by default (the
+    # guard of a139e25); tested together on, see outputs/2026-10-06_odom_guard_response/REPORT.md.
+    odom_guard_per_observation: bool = False
     # the departure must hold in this many consecutive windows (same direction) before the odometry is rescaled: PnP at
     # night has 2x departures lasting a few seconds that revert (ROVER night RGB-D: single windows of 30 fired 6 times before the VIO runaway, 2 windows of 20 7 times, 2 of 30 only in it)
     odom_guard_persist: int = 2
+    # once the guard has fired, the odometry's translations are as uncertain as the error the guard measured: every
+    # odometry edge from the start of the departing windows on gets a translation sigma of |1 - m| times its length
+    # (m: the measured / odometry ratio of the latest window), so the visual measurements the faulty chain had been
+    # rejecting (the session's own keyframes, revisits) pass the prior test and the pose-graph optimisation can correct
+    # the stretch.  Before the first firing nothing changes; after it the extra sigma follows the latest window and
+    # fades when the odometry is healthy again (|1 - m| ~ 0.02-0.05).  After a firing only spans from keyframes
+    # created after it are samples (a span over odometry recorded before the rescaling mixes both scales).
+    odom_guard_inflate: bool = False
+    # a departure fires the guard only when it is the odometry that changed: its own speed (distance per frame) moved
+    # from its last healthy window in the matching direction by at least half of the departure.  A visual estimator
+    # can fail for hundreds of frames (KITTI 01, PnP on depth at highway speed: measured translations ~0 while the VIO
+    # kept its pace; the guard fired and the map went from 13.8 to 393 m); a diverging VIO changes its speed (ROVER night).
+    odom_guard_attribute: bool = False
+    # relocalization sessions: the references are the stored map's keyframes, so the session-span samples above never
+    # occur.  The map measurements of an observation give its position in the stored map (a fix, when two references
+    # agree); the distance between two fixes against the odometry chain's distance between the two frames is a guard
+    # sample when it is long against the fixes' noise (sigma <= log(f) / 3 of the distance).  Metric estimators only
+    # (stereo / depth): in mono the map measurements' scale follows the odometry, and on ROVER night the samples made
+    # the guard rescale the wrong way.
+    odom_guard_map: bool = False
     # the visual noise is split along / across the measured bearing, each with its own online scale (innovations of
     # measurements to keyframes <= 5 odometry edges back, normalised with the un-inflated chain covariance).  The metric
     # scale of the feed-forward estimator comes from the stereo baseline and is its weak part far away: on KITTI the

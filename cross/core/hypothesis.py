@@ -653,6 +653,10 @@ class HypothesisManager:
                                                                   device=self.device,dtype=combined_std.dtype))
                         bridging_factor.conditional_pose = model
                     bridging_factor.n_frames = (getattr(pred_edge, "n_frames", None) or 1) + (getattr(succ_edge, "n_frames", None) or 1)
+                    # odometry-fault inflation of the odometry scale guard (lc_verify): the larger of the two
+                    fault = max(float(getattr(pred_edge, "odom_fault", 0.0) or 0.0), float(getattr(succ_edge, "odom_fault", 0.0) or 0.0))
+                    if fault > 0:
+                        bridging_factor.odom_fault = fault
                     self.odom_edges[(predecessor_id, successor_id)] = bridging_factor
                     
                     # Note: No need to maintain adjacency list since odometry edges are sequential
@@ -2187,6 +2191,8 @@ class HypothesisManager:
                 "conditional_pose": edge.conditional_pose.record() if edge.conditional_pose is not None else None,
                 "n_frames": getattr(edge, "n_frames", None),
             }
+            if getattr(edge, "odom_fault", None):
+                odom_edges[edge_key]["odom_fault"] = float(edge.odom_fault)
 
         # --- 3. Save only hypothesis 0 (ground truth) ---
         hypotheses_data = {}
@@ -2278,6 +2284,8 @@ class HypothesisManager:
                 type=EdgeType[edge_data["type"]],
             )
             edge.n_frames = edge_data.get("n_frames")
+            if edge_data.get("odom_fault"):
+                edge.odom_fault = float(edge_data["odom_fault"])
             self.odom_edges[edge_key] = edge
             if edge_data.get('conditional_pose') is not None:
                 edge.conditional_pose = ConditionalPose.from_record(edge_data['conditional_pose'])

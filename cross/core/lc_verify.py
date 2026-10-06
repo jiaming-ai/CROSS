@@ -193,7 +193,17 @@ class NoiseModel:
         T = to_gtsam(f)
         L = float(np.linalg.norm(T.translation()))
         theta = float(np.linalg.norm(logmap(T)[:3]))
-        return self.odom(L, theta, int(getattr(f, "n_frames", 1) or 1))
+        return self.with_fault(self.odom(L, theta, int(getattr(f, "n_frames", 1) or 1)), L, getattr(f, "odom_fault", 0.0))
+
+    @staticmethod
+    def with_fault(s: np.ndarray, L: float, fault) -> np.ndarray:
+        """Odometry sigmas with the odometry scale guard's fault inflation: a translation sigma of fault * L added (in
+        quadrature) to the model's; the rotation (gyro-driven, not what the guard measures) is unchanged."""
+        fault = float(fault or 0.0)
+        if fault > 0:
+            s = np.array(s, dtype=np.float64)
+            s[3:] = np.sqrt(s[3:] ** 2 + (fault * L) ** 2)
+        return s
 
     def factor_sigmas_pypose(self, f) -> Optional[np.ndarray]:
         """Sigmas for the pose-graph optimisation (pypose order); None keeps the factor's own std."""
@@ -212,7 +222,13 @@ class ChainPredictor:
     S_i = sum_{k<=i} Ad(P_k) Sigma_k Ad(P_k)^T (Sigma_k: covariance of edge k, right perturbation), the relative pose
     a -> b is P_a^{-1} P_b and its covariance (right perturbation at b) is Ad(P_b^{-1}) (S_b - S_a) Ad(P_b^{-1})^T.
     The tables follow the manager's odometry edges (mutation counter, count and newest key); a new edge at the end
-    of a chain is appended in O(1), any other change rebuilds the tables (vectorised, ~1 ms per 500 edges)."""
+    of a chain is appended in O(1), any other change rebuilds the tables (vectorised, ~1 ms per 500 edges).
+
+    Edges with the odometry scale guard's fault (`odom_fault` f, a relative translation error) share one error: a
+    scale fault makes every edge of the stretch too long (or short) together, so its error grows with the stretch's
+    displacement, not with the square root of the number of edges.  F_i = sum_{k<=i} f_k (p_k - p_{k-1}) (positions
+    in the chain-start frame) gives the rank-one translation covariance v v^T, v = R_b^T (F_b - F_a), added to the
+    prediction a -> b (the edges' own sigmas keep their independent share for the pose-graph optimisation)."""
 
     def __init__(self, hm, noise: NoiseModel):
         self.hm = hm
@@ -223,6 +239,7 @@ class ChainPredictor:
         self._idx: Dict[int, Tuple[int, int]] = {}      # node -> (chain, position)
         self._P: list = []                                # per chain: (n, 4, 4) prefix poses
         self._S: list = []                                # per chain: (n, 6, 6) prefix covariance sums
+        self._F: list = []                                # per chain: (n, 3) prefix fault-weighted displacements
         self._ends: list = []                             # per chain: last node
 
     # --- tables ---
@@ -248,6 +265,8 @@ class ChainPredictor:
         M = A @ np.diag(self._edge_sigma(key, e) ** 2) @ A.T
         self._P[chain] = np.concatenate([self._P[chain], P[None]], 0)
         self._S[chain] = np.concatenate([self._S[chain], (self._S[chain][-1] + M)[None]], 0)
+        f = float(getattr(e, "odom_fault", 0.0) or 0.0)
+        self._F[chain] = np.concatenate([self._F[chain], (self._F[chain][-1] + f * (P[:3, 3] - P_prev[:3, 3]))[None]], 0)
         self._idx[node] = (chain, len(self._P[chain]) - 1)
         self._ends[chain] = node
 
@@ -255,7 +274,7 @@ class ChainPredictor:
         oe = self.hm.odom_edges
         self._next = {a: (b, e) for (a, b), e in oe.items()}
         preds = {b for (_, b) in oe}
-        self._idx, self._P, self._S, self._ends = {}, [], [], []
+        self._idx, self._P, self._S, self._F, self._ends = {}, [], [], [], []
         for root in sorted(a for a in self._next if a not in preds):
             nodes, keys, edges, cur = [root], [], [], root
             while cur in self._next and len(nodes) < 1000000:
@@ -272,8 +291,10 @@ class ChainPredictor:
             A = self._adjoint(P[1:])
             M = np.einsum("nij,nj,nkj->nik", A, sig ** 2, A)
             S = np.zeros((n + 1, 6, 6)); S[1:] = np.cumsum(M, 0)
+            f = np.array([float(getattr(e, "odom_fault", 0.0) or 0.0) for e in edges]) if n else np.zeros(0)
+            F = np.zeros((n + 1, 3)); F[1:] = np.cumsum(f[:, None] * (P[1:, :3, 3] - P[:-1, :3, 3]), 0)
             chain = len(self._P)
-            self._P.append(P); self._S.append(S); self._ends.append(nodes[-1])
+            self._P.append(P); self._S.append(S); self._F.append(F); self._ends.append(nodes[-1])
             for i, node in enumerate(nodes):
                 self._idx[node] = (chain, i)
 
@@ -314,6 +335,10 @@ class ChainPredictor:
         T = Pa.between(Pb)
         A = Pb.inverse().AdjointMap()
         cov = A @ (S[ib] - S[ia]) @ A.T * inflate ** 2
+        v = self._F[ca][ib] - self._F[ca][ia]
+        if np.any(v):                                     # the shared error of a faulty stretch (guard fault)
+            vb = P[ib][:3, :3].T @ v
+            cov[3:, 3:] += np.outer(vb, vb) * inflate ** 2
         return T, 0.5 * (cov + cov.T)
 
     def predict(self, a: int, b: int, inflate: float = 1.0) -> Tuple[Optional[gtsam.Pose3], Optional[np.ndarray]]:
@@ -406,6 +431,28 @@ class LoopClosureVerifier:
         self._guard_run = []                          # log medians of consecutive departing windows
         self.guard_persist = max(int(getattr(cfg, "odom_guard_persist", 2)), 1)
         self.odom_scale = 1.0                         # correction of the odometry's translations (applied by the System)
+        # after a firing: the odometry's relative translation error measured by the guard (0: none measured), applied to
+        # the odometry edges from the departing windows on (odom_guard_inflate)
+        self.guard_inflate = bool(getattr(cfg, "odom_guard_inflate", False))
+        self.odom_fault = 0.0
+        # relocalization sessions: map measurements as guard samples (odom_guard_map)
+        self.guard_map = bool(getattr(cfg, "odom_guard_map", False))
+        self._guard_win_kf = None                     # earliest keyframe spanned by the samples of the current window
+        self._guard_run_kf = None                     # ... of the first window of the current departing run
+        # after a firing only spans from keyframes created after it are samples (a span over odometry recorded before
+        # the rescaling mixes the old and the corrected scale and would make the guard fire again on the old error)
+        self._guard_epoch_kf = None
+        self._gate_last_kf = None
+        self._pass_g: list = []                       # guard samples of the current observation (one window sample)
+        # attribution (odom_guard_attribute): log odometry speed (raw, per frame) of the window samples, and of the latest
+        # healthy window before any fault (the odometry's own reference)
+        self.guard_attribute = bool(getattr(cfg, "odom_guard_attribute", False))
+        # one window sample per observation (odom_guard_per_observation); off: every measurement is a sample
+        self.guard_per_obs = bool(getattr(cfg, "odom_guard_per_observation", False))
+        self._guard_ls: list = []
+        self._guard_speed_ref: Optional[float] = None
+        self._pass_fix: list = []                     # map fixes of the current observation (position, sigma)
+        self._fix_hist = collections.deque(maxlen=300)    # earlier map fixes: (last keyframe, odometry since it, position, sigma)
 
     def reset_session(self):
         self.anchor = None
@@ -417,6 +464,13 @@ class LoopClosureVerifier:
         self._guard.clear()
         self._guard_run = []
         self.odom_scale = 1.0
+        self.odom_fault = 0.0
+        self._guard_win_kf = self._guard_run_kf = self._guard_epoch_kf = self._gate_last_kf = None
+        self._pass_g = []
+        self._pass_fix = []
+        self._fix_hist.clear()
+        self._guard_ls = []
+        self._guard_speed_ref = None
         self.scales = {"sess": 1.0, "map": 1.0}
         self.scales_along = {"sess": 1.0, "map": 1.0}
         self.scales_rot = {"sess": 1.0, "map": 1.0}
@@ -630,10 +684,10 @@ class LoopClosureVerifier:
         cov += transport(cov_chain, T_since) + cov_since
         return T_map.compose(rest), cov
 
-    def _guard_sample(self, sample: float) -> bool:
-        """Odometry scale guard: record one measured / odometry translation ratio; returns whether the sample is
-        consistent with the long-run ratio (and may update it).  Rescales the odometry when the recent samples agree on a
-        departure of more than the guard factor."""
+    def _guard_sample(self, sample: float, span_from: Optional[int] = None, speed: Optional[float] = None) -> bool:
+        """Odometry scale guard: record one measured / odometry translation ratio of a session span starting at keyframe
+        `span_from`; returns whether the sample is consistent with the long-run ratio (and may update it).  Rescales the
+        odometry when the recent samples agree on a departure of more than the guard factor."""
         if not self.guard_metric or sample <= 0:
             return True
         ref = self.scale_ratio if self.scale_ratio > 0 else 1.0
@@ -641,25 +695,184 @@ class LoopClosureVerifier:
         logger.debug(f"odometry scale sample {g:.4f} (raw {sample:.4f}, long-run {ref:.4f}, odometry scale {self.odom_scale:.4f})")
         if self.guard_factor <= 1.0:
             return True
-        self._guard.append(g)
+        self._collect(g, span_from, speed)
+        return abs(math.log(g)) <= math.log(self.guard_factor)
+
+    def _collect(self, g: float, span_from: Optional[int], speed: Optional[float] = None) -> None:
+        """A guard sample of the current observation (spans from before the latest firing excepted); `speed`: the
+        odometry's distance per frame over the sample's span."""
+        if span_from is not None and self._guard_epoch_kf is not None and span_from < self._guard_epoch_kf:
+            return
+        if not self.guard_per_obs:
+            self._guard_push(float(g), span_from, speed)
+            return
+        self._pass_g.append((float(g), span_from, speed))
+
+    def _step(self) -> Optional[int]:
+        st = getattr(self.system, "_processed_frame_num", None)
+        return int(st) if st is not None else None
+
+    def _speed(self, L: float, frames: Optional[int]) -> Optional[float]:
+        """Raw odometry speed (distance per frame, before the guard's rescaling) of a span of L metres."""
+        if frames is None or frames <= 0 or L <= 0:
+            return None
+        return L / frames / (self.odom_scale if self.odom_scale > 0 else 1.0)
+
+    def _guard_flush(self) -> None:
+        """One window sample per observation: the (log) median of its samples.  The references of one observation share
+        the current frame's estimate, so a failed estimate gives many agreeing samples at once (KITTI 04, PnP on depth at
+        car speed: 5-9 samples per frame, two windows of 30 filled within ~10 frames of failed PnP and the guard fired on a
+        healthy VIO); counting observations makes the persistence independent of the sampling density."""
+        if not self._pass_g:
+            return
+        gs = [g for g, _, _ in self._pass_g if g > 0]
+        froms = [f for _, f, _ in self._pass_g if f is not None]
+        sp = [v for _, _, v in self._pass_g if v is not None and v > 0]
+        self._pass_g = []
+        if gs:
+            self._guard_push(float(np.exp(np.median(np.log(gs)))), min(froms) if froms else None,
+                             float(np.exp(np.median(np.log(sp)))) if sp else None)
+
+    def _guard_push(self, g: float, span_from: Optional[int] = None, speed: Optional[float] = None) -> bool:
+        """One guard sample g (measured / odometry, 1 when healthy) over a span starting at keyframe `span_from`; `speed`:
+        the raw odometry speed over it (attribution of a departure)."""
+        if self.guard_factor <= 1.0:
+            return True
         lim = math.log(self.guard_factor)
+        if span_from is not None and self._guard_epoch_kf is not None and span_from < self._guard_epoch_kf:
+            return abs(math.log(g)) <= lim
+        if span_from is not None:
+            self._guard_win_kf = span_from if self._guard_win_kf is None else min(self._guard_win_kf, span_from)
+        self._guard.append(g)
+        if speed is not None and speed > 0:
+            self._guard_ls.append(math.log(speed))
         if len(self._guard) == self._guard.maxlen:            # consecutive, non-overlapping windows
             lm = float(np.median(np.log(self._guard)))
+            ls = float(np.median(self._guard_ls)) if self._guard_ls else None
             self._guard.clear()
+            self._guard_ls = []
+            start, self._guard_win_kf = self._guard_win_kf, None
+            if abs(lm) <= lim and ls is not None and self.odom_scale == 1.0:
+                self._guard_speed_ref = ls                # the odometry's own pace while healthy
             if abs(lm) > lim and (not self._guard_run or (lm > 0) == (self._guard_run[-1] > 0)):
+                if not self._guard_run:
+                    self._guard_run_kf = start
                 self._guard_run.append(lm)
             else:
                 self._guard_run = [lm] if abs(lm) > lim else []
-            if len(self._guard_run) >= self.guard_persist:
+                self._guard_run_kf = start if self._guard_run else None
+            if len(self._guard_run) >= self.guard_persist and not self._attributed_to_odometry(lm, ls):
+                self.stats["odom_guard_held"] = self.stats.get("odom_guard_held", 0) + 1
+                logger.info(f"odometry scale guard: measured / odometry translation {math.exp(lm):.3f} x the long-run ratio, "
+                            f"but the odometry kept its pace (raw speed {math.exp(ls) if ls is not None else float('nan'):.3f} vs "
+                            f"{math.exp(self._guard_speed_ref) if self._guard_speed_ref is not None else float('nan'):.3f} per frame "
+                            f"before): attributed to the visual estimator, odometry kept")
+                self._guard_run = []
+                self._guard_run_kf = None
+            elif len(self._guard_run) >= self.guard_persist:
                 m = math.exp(lm)                              # the latest window's departure
                 self.odom_scale *= m
                 self._guard_run = []
+                if self.guard_inflate and self._gate_last_kf is not None:
+                    self._guard_epoch_kf = self._gate_last_kf + 1
                 self.stats["odom_guard_updates"] = self.stats.get("odom_guard_updates", 0) + 1
                 self.stats["odom_scale"] = round(self.odom_scale, 4)
                 logger.info(f"odometry scale guard: measured / odometry translation {m:.3f} x the long-run ratio in "
                             f"{self.guard_persist} consecutive windows of {self._guard.maxlen} spans; odometry translations "
                             f"now scaled by {self.odom_scale:.4f}")
+                if self.guard_inflate:
+                    self._set_fault(abs(1.0 - m), self._guard_run_kf)
+                self._guard_run_kf = None
+            elif self.guard_inflate and self.odom_fault > 0:
+                # after a firing the odometry is as uncertain as the latest window's departure (from the corrected
+                # odometry): the inflation follows the fault and fades when the odometry is healthy again
+                self._set_fault(abs(1.0 - math.exp(lm)), None)
         return abs(math.log(g)) <= lim
+
+    def _attributed_to_odometry(self, lm: float, ls: Optional[float]) -> bool:
+        """Which sensor changed?  A departure of the measured / odometry ratio is the odometry's when the odometry's own
+        speed changed in the matching direction by at least half of it (lm (lm + 2 lo) <= 0, lm: the cumulative log
+        departure, lo: the log change of the raw odometry speed from its last healthy window); otherwise the visual
+        estimator changed (KITTI 01, PnP on depth at highway speed: measured translations near zero for ~250 frames while
+        the VIO kept its pace; ROVER night: the VIO's speed rose several-fold).  Without speed information (or with
+        attribution off) the departure is the odometry's, as before."""
+        if not self.guard_attribute or ls is None:
+            return True
+        if self._guard_speed_ref is None:
+            return False                                  # no healthy reference of the odometry's pace yet
+        lm_cum = lm + math.log(self.odom_scale)
+        lo = ls - self._guard_speed_ref
+        return lm_cum * (lm_cum + 2.0 * lo) <= 0.0
+
+    def _set_fault(self, err: float, from_kf: Optional[int]) -> None:
+        """Relative translation error of the odometry measured by the guard: the sigma of the odometry from now on (new
+        edges, the odometry since the last keyframe) and, with `from_kf`, of the session's odometry edges from that
+        keyframe on (the stretch the departing windows measured)."""
+        self.odom_fault = float(err)
+        self.stats["odom_fault"] = round(self.odom_fault, 4)
+        if from_kf is None:
+            return
+        n = 0
+        for (a, b), e in list(self.system.hypothesis_manager.odom_edges.items()):
+            if a >= from_kf and not self._is_map_kf(a) and err > float(getattr(e, "odom_fault", 0.0) or 0.0):
+                e.odom_fault = float(err)
+                self.chain._sig.pop((a, b), None)
+                n += 1
+        if n:
+            self.chain._stamp = None                          # rebuild the prefix tables with the new sigmas
+        logger.info(f"odometry fault: translation sigma {err:.2f} x the length on {n} odometry edges from keyframe {from_kf} on")
+
+    def _since_cov(self, Ts: gtsam.Pose3, n_since: int) -> np.ndarray:
+        """Gate-inflated covariance of the odometry since the last keyframe (with the guard's fault inflation)."""
+        L = float(np.linalg.norm(Ts.translation())); th = float(np.linalg.norm(logmap(Ts)[:3]))
+        s = self.noise.with_fault(self.noise.odom(L, th, max(n_since, 1)), L, self.odom_fault)
+        return np.diag((s * self.cfg.noise.gate_inflation) ** 2)
+
+    def _map_fix(self, ref_id: int, Tm: gtsam.Pose3) -> None:
+        """Relocalization session: the current frame's position in the stored map's frame implied by a measurement to
+        map keyframe ref_id (collected per observation for the map guard samples)."""
+        if not self.guard_map or not self.guard_metric or self.guard_factor <= 1.0:
+            return
+        node = self.system.hypothesis_manager.nodes.get(ref_id)
+        if node is None:
+            return
+        p = np.asarray(to_gtsam(node.pose_mu[0]).compose(Tm).translation(), dtype=np.float64)
+        sig = math.hypot(float(self.noise.visual(float(np.linalg.norm(Tm.translation())), self.scales["map"])[3]),
+                         float(self.noise.map_rel(0.0)[3]))
+        self._pass_fix.append((p, sig))
+
+    def _map_fix_sample(self, last_kf_id: int, Ts: gtsam.Pose3) -> None:
+        """Map guard sample of this observation.  Its map fix is the median of the fixes of its map references, used when
+        at least two of them agree within 3 sigma (a lone, possibly aliased, reference is no fix).  The distance to the
+        latest earlier fix far enough back (the two fixes' sigma <= log(f) / 3 of the distance) in the map frame, against
+        the odometry chain's distance between the two frames, is the sample; it needs neither a session anchor (the
+        anchor checks drop the anchor when the odometry fails) nor a long time without one.  Metric estimators only: in
+        mono the map measurements' scale follows the odometry (ROVER night, VGGT-Omega mono: the samples rose to 2-4x
+        while the VIO ran away, and the guard rescaled the wrong way)."""
+        fixes, self._pass_fix = self._pass_fix, []
+        if len(fixes) < 2:
+            return
+        P = np.array([f[0] for f in fixes]); S = np.array([f[1] for f in fixes])
+        med = np.median(P, 0)
+        agree = np.linalg.norm(P - med, axis=1) <= 3.0 * S
+        if agree.sum() < 2:
+            return
+        p_m, sig = np.median(P[agree], 0), float(np.median(S[agree]))
+        lim = math.log(self.guard_factor)
+        st = self._step()
+        for kf_i, Ts_i, p_i, sig_i, st_i in reversed(self._fix_hist):
+            T_chain, _ = self.chain.predict(kf_i, last_kf_id)
+            if T_chain is None:
+                break                                       # another chain (the history is of this session)
+            Lo = float(np.linalg.norm(Ts_i.inverse().compose(T_chain).compose(Ts).translation()))
+            Lm = float(np.linalg.norm(p_m - p_i))
+            if Lo >= float(getattr(self.cfg, "scale_min_span_m", 1.0)) and lim / 3.0 * max(Lo, Lm) >= math.hypot(sig, sig_i):
+                g = Lm / Lo
+                logger.debug(f"odometry scale sample (map) {g:.4f} (map fixes {Lm:.2f} m apart, odometry {Lo:.2f} m, "
+                             f"sigma {math.hypot(sig, sig_i):.2f} m; odometry scale {self.odom_scale:.4f})")
+                self._collect(g, kf_i, self._speed(Lo, st - st_i if st is not None and st_i is not None else None))
+                break
+        self._fix_hist.append((int(last_kf_id), Ts, p_m, sig, st))
 
     def prior_gate(self, refs: Sequence, T_meas: Sequence, last_kf_id: int, T_since, n_since: int) -> Tuple[list, list]:
         """For every reference: True (consistent with hypothesis 0), False (inconsistent), None (no relation).
@@ -668,11 +881,13 @@ class LoopClosureVerifier:
         than the measurement (translation covariance trace), which is the case for revisits, not for the keyframes
         just behind the robot (`self.last_loop_flags`)."""
         Ts = to_gtsam(T_since) if T_since is not None else gtsam.Pose3()
-        L = float(np.linalg.norm(Ts.translation())); th = float(np.linalg.norm(logmap(Ts)[:3]))
-        cov_since = np.diag((self.noise.odom(L, th, max(n_since, 1)) * self.cfg.noise.gate_inflation) ** 2)
+        cov_since = self._since_cov(Ts, n_since)
+        self._gate_last_kf = int(last_kf_id)
         oks, chis, loops = [], [], []
         self._update_scale()
         for kf, Tm in zip(refs, T_meas):
+            if self._is_map_kf(int(kf.id)):
+                self._map_fix(int(kf.id), to_gtsam(Tm))           # with or without a prediction (session anchor)
             T_pred, cov = self.predict_to_current(int(kf.id), last_kf_id, Ts, cov_since)
             if T_pred is None:
                 self.stats["prior_no_chain"] = self.stats.get("prior_no_chain", 0) + 1
@@ -688,7 +903,9 @@ class LoopClosureVerifier:
                 short = ia is not None and ib is not None and ia[0] == ib[0] and abs(ia[1] - ib[1]) <= 5
                 if short and L >= float(getattr(self.cfg, "scale_min_span_m", 1.0)):
                     sample = d * self.metric_correction / L
-                    consistent = self._guard_sample(sample)       # the odometry scale guard (off: always True)
+                    st, st_ref = self._step(), getattr(kf, "step_created", None)
+                    sp = self._speed(L, st - int(st_ref) if st is not None and st_ref is not None else None)
+                    consistent = self._guard_sample(sample, int(kf.id), sp)   # the odometry scale guard (off: always True)
                     if consistent:
                         self._ratio.append(sample)
                     if consistent and len(self._ratio) >= 20:
@@ -730,6 +947,8 @@ class LoopClosureVerifier:
             if c2 > self.thr:
                 self.stats["prior_rejected"] += 1
             oks.append(bool(c2 <= self.thr)); chis.append(c2)
+        self._map_fix_sample(int(last_kf_id), Ts)
+        self._guard_flush()
         self.last_loop_flags = loops
         self.stats["loop_candidates"] = self.stats.get("loop_candidates", 0) + sum(1 for l, o in zip(loops, oks) if l and o is not None)
         return oks, chis
@@ -756,8 +975,7 @@ class LoopClosureVerifier:
         of hypothesis 0), i.e. whether two map measurements of different observations agree through the odometry chain
         between them.  None when no chain relates them."""
         Ts = to_gtsam(T_since) if T_since is not None else gtsam.Pose3()
-        L = float(np.linalg.norm(Ts.translation())); th = float(np.linalg.norm(logmap(Ts)[:3]))
-        cov_since = np.diag((self.noise.odom(L, th, max(n_since, 1)) * self.cfg.noise.gate_inflation) ** 2)
+        cov_since = self._since_cov(Ts, n_since)
         saved, self.anchor = self.anchor, anchor
         try:
             T_pred, cov = self.predict_to_current(int(ref_id), last_kf_id, Ts, cov_since)
