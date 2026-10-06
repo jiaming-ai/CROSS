@@ -750,7 +750,9 @@ class LoopClosureVerifier:
         the anchor's), against the odometry chain's distance over the same span, as a guard sample.  Used when the span
         is long against the map fixes' noise (map-relative pose of the two map keyframes, the anchor's and this
         measurement: translation sigma <= log(f) / 3 of the distance)."""
-        if not self.guard_map or self.guard_factor <= 1.0 or self.anchor is None:
+        # metric estimators only: in mono the map measurements' translation scale follows the odometry (ROVER night,
+        # VGGT-Omega mono: the samples rose to 2-4x while the VIO ran away, and the guard rescaled the wrong way)
+        if not self.guard_map or not self.guard_metric or self.guard_factor <= 1.0 or self.anchor is None:
             return
         hm = self.system.hypothesis_manager
         a2 = self.anchor["map_kf"]

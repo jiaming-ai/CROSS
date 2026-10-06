@@ -520,6 +520,7 @@ def _reloc_session(odom_factor, session_start=50, n=120):
         e.n_frames = 1
         hm.odom_edges[(i - 1, i)] = e
     v = LoopClosureVerifier(FakeSystem(hm, session_start=session_start), LoopClosureConfig())
+    v.guard_metric = True                     # stereo / depth: the map measurements are metric on their own
     return hm, gt, v
 
 
@@ -583,3 +584,14 @@ def test_chain_fault_error_grows_with_the_displacement():
         e.odom_fault = 0.5
     _, covr = ChainPredictor(hm, NoiseModel(NoiseModelConfig())).predict(40, 0)   # reverse order keeps the shared term
     assert covr[3, 3] > (0.5 * 10.0) ** 2
+
+
+def test_map_guard_samples_need_a_metric_estimator():
+    """Mono (guard_metric False): the map measurements' scale follows the odometry, so they are no guard samples."""
+    hm, gt, v = _reloc_session(3.0)
+    v.guard_metric = False
+    v.update_anchor(47, 52, _lie(gt[47].between(gt[52])))
+    for last in range(53, 120):
+        for ref in (40, 45, 48):
+            _localize(v, gt, ref, last)
+    assert v.odom_scale == 1.0
