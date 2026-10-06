@@ -231,6 +231,11 @@ class LoopClosureConfig:
     # the stretch.  Before the first firing nothing changes; after it the extra sigma follows the latest window and
     # fades when the odometry is healthy again (|1 - m| ~ 0.02-0.05).
     odom_guard_inflate: bool = True
+    # a departure fires the guard only when it is the odometry that changed: its own speed (distance per frame) moved
+    # from its last healthy window in the matching direction by at least half of the departure.  A visual estimator
+    # can fail for hundreds of frames (KITTI 01, PnP on depth at highway speed: measured translations ~0 while the VIO
+    # kept its pace; the guard fired and the map went from 13.8 to 393 m); a diverging VIO changes its speed (ROVER night).
+    odom_guard_attribute: bool = True
     # relocalization sessions: the references are the stored map's keyframes, so the session-span samples above never
     # occur.  The map measurements of an observation give its position in the stored map (a fix, when two references
     # agree); the distance between two fixes against the odometry chain's distance between the two frames is a guard

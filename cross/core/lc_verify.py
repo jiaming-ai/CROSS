@@ -444,6 +444,11 @@ class LoopClosureVerifier:
         self._guard_epoch_kf = None
         self._gate_last_kf = None
         self._pass_g: list = []                       # guard samples of the current observation (one window sample)
+        # attribution (odom_guard_attribute): log odometry speed (raw, per frame) of the window samples, and of the latest
+        # healthy window before any fault (the odometry's own reference)
+        self.guard_attribute = bool(getattr(cfg, "odom_guard_attribute", False))
+        self._guard_ls: list = []
+        self._guard_speed_ref: Optional[float] = None
         self._pass_fix: list = []                     # map fixes of the current observation (position, sigma)
         self._fix_hist = collections.deque(maxlen=300)    # earlier map fixes: (last keyframe, odometry since it, position, sigma)
 
@@ -462,6 +467,8 @@ class LoopClosureVerifier:
         self._pass_g = []
         self._pass_fix = []
         self._fix_hist.clear()
+        self._guard_ls = []
+        self._guard_speed_ref = None
         self.scales = {"sess": 1.0, "map": 1.0}
         self.scales_along = {"sess": 1.0, "map": 1.0}
         self.scales_rot = {"sess": 1.0, "map": 1.0}
@@ -675,7 +682,7 @@ class LoopClosureVerifier:
         cov += transport(cov_chain, T_since) + cov_since
         return T_map.compose(rest), cov
 
-    def _guard_sample(self, sample: float, span_from: Optional[int] = None) -> bool:
+    def _guard_sample(self, sample: float, span_from: Optional[int] = None, speed: Optional[float] = None) -> bool:
         """Odometry scale guard: record one measured / odometry translation ratio of a session span starting at keyframe
         `span_from`; returns whether the sample is consistent with the long-run ratio (and may update it).  Rescales the
         odometry when the recent samples agree on a departure of more than the guard factor."""
@@ -686,14 +693,25 @@ class LoopClosureVerifier:
         logger.debug(f"odometry scale sample {g:.4f} (raw {sample:.4f}, long-run {ref:.4f}, odometry scale {self.odom_scale:.4f})")
         if self.guard_factor <= 1.0:
             return True
-        self._collect(g, span_from)
+        self._collect(g, span_from, speed)
         return abs(math.log(g)) <= math.log(self.guard_factor)
 
-    def _collect(self, g: float, span_from: Optional[int]) -> None:
-        """A guard sample of the current observation (spans from before the latest firing excepted)."""
+    def _collect(self, g: float, span_from: Optional[int], speed: Optional[float] = None) -> None:
+        """A guard sample of the current observation (spans from before the latest firing excepted); `speed`: the
+        odometry's distance per frame over the sample's span."""
         if span_from is not None and self._guard_epoch_kf is not None and span_from < self._guard_epoch_kf:
             return
-        self._pass_g.append((float(g), span_from))
+        self._pass_g.append((float(g), span_from, speed))
+
+    def _step(self) -> Optional[int]:
+        st = getattr(self.system, "_processed_frame_num", None)
+        return int(st) if st is not None else None
+
+    def _speed(self, L: float, frames: Optional[int]) -> Optional[float]:
+        """Raw odometry speed (distance per frame, before the guard's rescaling) of a span of L metres."""
+        if frames is None or frames <= 0 or L <= 0:
+            return None
+        return L / frames / (self.odom_scale if self.odom_scale > 0 else 1.0)
 
     def _guard_flush(self) -> None:
         """One window sample per observation: the (log) median of its samples.  The references of one observation share
@@ -702,14 +720,17 @@ class LoopClosureVerifier:
         healthy VIO); counting observations makes the persistence independent of the sampling density."""
         if not self._pass_g:
             return
-        gs = [g for g, _ in self._pass_g if g > 0]
-        froms = [f for _, f in self._pass_g if f is not None]
+        gs = [g for g, _, _ in self._pass_g if g > 0]
+        froms = [f for _, f, _ in self._pass_g if f is not None]
+        sp = [v for _, _, v in self._pass_g if v is not None and v > 0]
         self._pass_g = []
         if gs:
-            self._guard_push(float(np.exp(np.median(np.log(gs)))), min(froms) if froms else None)
+            self._guard_push(float(np.exp(np.median(np.log(gs)))), min(froms) if froms else None,
+                             float(np.exp(np.median(np.log(sp)))) if sp else None)
 
-    def _guard_push(self, g: float, span_from: Optional[int] = None) -> bool:
-        """One guard sample g (measured / odometry, 1 when healthy) over a span starting at keyframe `span_from`."""
+    def _guard_push(self, g: float, span_from: Optional[int] = None, speed: Optional[float] = None) -> bool:
+        """One guard sample g (measured / odometry, 1 when healthy) over a span starting at keyframe `span_from`; `speed`:
+        the raw odometry speed over it (attribution of a departure)."""
         if self.guard_factor <= 1.0:
             return True
         lim = math.log(self.guard_factor)
@@ -718,10 +739,16 @@ class LoopClosureVerifier:
         if span_from is not None:
             self._guard_win_kf = span_from if self._guard_win_kf is None else min(self._guard_win_kf, span_from)
         self._guard.append(g)
+        if speed is not None and speed > 0:
+            self._guard_ls.append(math.log(speed))
         if len(self._guard) == self._guard.maxlen:            # consecutive, non-overlapping windows
             lm = float(np.median(np.log(self._guard)))
+            ls = float(np.median(self._guard_ls)) if self._guard_ls else None
             self._guard.clear()
+            self._guard_ls = []
             start, self._guard_win_kf = self._guard_win_kf, None
+            if abs(lm) <= lim and ls is not None and self.odom_scale == 1.0:
+                self._guard_speed_ref = ls                # the odometry's own pace while healthy
             if abs(lm) > lim and (not self._guard_run or (lm > 0) == (self._guard_run[-1] > 0)):
                 if not self._guard_run:
                     self._guard_run_kf = start
@@ -729,7 +756,15 @@ class LoopClosureVerifier:
             else:
                 self._guard_run = [lm] if abs(lm) > lim else []
                 self._guard_run_kf = start if self._guard_run else None
-            if len(self._guard_run) >= self.guard_persist:
+            if len(self._guard_run) >= self.guard_persist and not self._attributed_to_odometry(lm, ls):
+                self.stats["odom_guard_held"] = self.stats.get("odom_guard_held", 0) + 1
+                logger.info(f"odometry scale guard: measured / odometry translation {math.exp(lm):.3f} x the long-run ratio, "
+                            f"but the odometry kept its pace (raw speed {math.exp(ls) if ls is not None else float('nan'):.3f} vs "
+                            f"{math.exp(self._guard_speed_ref) if self._guard_speed_ref is not None else float('nan'):.3f} per frame "
+                            f"before): attributed to the visual estimator, odometry kept")
+                self._guard_run = []
+                self._guard_run_kf = None
+            elif len(self._guard_run) >= self.guard_persist:
                 m = math.exp(lm)                              # the latest window's departure
                 self.odom_scale *= m
                 self._guard_run = []
@@ -748,6 +783,21 @@ class LoopClosureVerifier:
                 # odometry): the inflation follows the fault and fades when the odometry is healthy again
                 self._set_fault(abs(1.0 - math.exp(lm)), None)
         return abs(math.log(g)) <= lim
+
+    def _attributed_to_odometry(self, lm: float, ls: Optional[float]) -> bool:
+        """Which sensor changed?  A departure of the measured / odometry ratio is the odometry's when the odometry's own
+        speed changed in the matching direction by at least half of it (lm (lm + 2 lo) <= 0, lm: the cumulative log
+        departure, lo: the log change of the raw odometry speed from its last healthy window); otherwise the visual
+        estimator changed (KITTI 01, PnP on depth at highway speed: measured translations near zero for ~250 frames while
+        the VIO kept its pace; ROVER night: the VIO's speed rose several-fold).  Without speed information (or with
+        attribution off) the departure is the odometry's, as before."""
+        if not self.guard_attribute or ls is None:
+            return True
+        if self._guard_speed_ref is None:
+            return False                                  # no healthy reference of the odometry's pace yet
+        lm_cum = lm + math.log(self.odom_scale)
+        lo = ls - self._guard_speed_ref
+        return lm_cum * (lm_cum + 2.0 * lo) <= 0.0
 
     def _set_fault(self, err: float, from_kf: Optional[int]) -> None:
         """Relative translation error of the odometry measured by the guard: the sigma of the odometry from now on (new
@@ -804,7 +854,8 @@ class LoopClosureVerifier:
             return
         p_m, sig = np.median(P[agree], 0), float(np.median(S[agree]))
         lim = math.log(self.guard_factor)
-        for kf_i, Ts_i, p_i, sig_i in reversed(self._fix_hist):
+        st = self._step()
+        for kf_i, Ts_i, p_i, sig_i, st_i in reversed(self._fix_hist):
             T_chain, _ = self.chain.predict(kf_i, last_kf_id)
             if T_chain is None:
                 break                                       # another chain (the history is of this session)
@@ -814,9 +865,9 @@ class LoopClosureVerifier:
                 g = Lm / Lo
                 logger.debug(f"odometry scale sample (map) {g:.4f} (map fixes {Lm:.2f} m apart, odometry {Lo:.2f} m, "
                              f"sigma {math.hypot(sig, sig_i):.2f} m; odometry scale {self.odom_scale:.4f})")
-                self._collect(g, kf_i)
+                self._collect(g, kf_i, self._speed(Lo, st - st_i if st is not None and st_i is not None else None))
                 break
-        self._fix_hist.append((int(last_kf_id), Ts, p_m, sig))
+        self._fix_hist.append((int(last_kf_id), Ts, p_m, sig, st))
 
     def prior_gate(self, refs: Sequence, T_meas: Sequence, last_kf_id: int, T_since, n_since: int) -> Tuple[list, list]:
         """For every reference: True (consistent with hypothesis 0), False (inconsistent), None (no relation).
@@ -847,7 +898,9 @@ class LoopClosureVerifier:
                 short = ia is not None and ib is not None and ia[0] == ib[0] and abs(ia[1] - ib[1]) <= 5
                 if short and L >= float(getattr(self.cfg, "scale_min_span_m", 1.0)):
                     sample = d * self.metric_correction / L
-                    consistent = self._guard_sample(sample, int(kf.id))   # the odometry scale guard (off: always True)
+                    st, st_ref = self._step(), getattr(kf, "step_created", None)
+                    sp = self._speed(L, st - int(st_ref) if st is not None and st_ref is not None else None)
+                    consistent = self._guard_sample(sample, int(kf.id), sp)   # the odometry scale guard (off: always True)
                     if consistent:
                         self._ratio.append(sample)
                     if consistent and len(self._ratio) >= 20:

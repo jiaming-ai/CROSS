@@ -626,3 +626,42 @@ def test_map_fix_needs_two_agreeing_references():
         v.prior_gate([hm2.nodes[45], hm2.nodes[30]], [_lie(gt[45].between(gt[last])), _lie(gt[30].between(gt[last]).compose(off))],
                      last, gtsam.Pose3(), 1)
     assert v.odom_scale == 1.0 and not v._fix_hist
+
+
+def _attrib_verifier():
+    hm, _ = _chain_system(n=120)
+    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    v.guard_metric = True
+    for _ in range(30):                                   # one healthy window: the odometry's pace, 0.05 m per frame
+        v._guard_push(1.0, 10, 0.05)
+    return hm, v
+
+
+def test_guard_holds_when_the_odometry_kept_its_pace():
+    """The measured / odometry ratio collapses (a failing visual estimator) while the odometry's speed is unchanged:
+    the departure is the visual estimator's, the odometry is kept (KITTI 01, PnP at highway speed)."""
+    hm, v = _attrib_verifier()
+    for _ in range(60):
+        v._guard_push(0.05, 60, 0.05)
+    assert v.odom_scale == 1.0 and v.odom_fault == 0.0 and v.stats.get("odom_guard_held", 0) == 1
+    assert not any(getattr(e, "odom_fault", 0.0) for e in hm.odom_edges.values())
+
+
+def test_guard_fires_when_the_odometry_sped_up():
+    """The ratio drops to 0.25 while the odometry's speed rose 4x (a diverging VIO): the guard fires; a second departure
+    after the rescaling is judged on the cumulative departure and the raw speed."""
+    hm, v = _attrib_verifier()
+    for _ in range(60):
+        v._guard_push(0.25, 60, 0.2)
+    assert abs(v.odom_scale - 0.25) < 1e-12
+    for _ in range(60):                                   # the VIO keeps accelerating: raw 0.6 m / frame, ratio 0.4 more
+        v._guard_push(0.4, 100, 0.6)
+    assert abs(v.odom_scale - 0.1) < 1e-12
+
+
+def test_guard_needs_a_healthy_reference_pace():
+    hm, _ = _chain_system(n=120)
+    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig())
+    for _ in range(60):
+        v._guard_push(0.25, 60, 0.2)
+    assert v.odom_scale == 1.0 and v.stats.get("odom_guard_held", 0) == 1
