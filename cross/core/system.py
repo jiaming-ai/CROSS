@@ -858,7 +858,7 @@ class System:
 
         # first accumulate the odometry (translations rescaled by the odometry scale guard when it has fired)
         if self.use_odometry:
-            v = self._lc_verifier
+            v = getattr(self, "_lc_verifier", None)       # absent in test stubs built without __init__
             if v is not None and v.odom_scale != 1.0 and obs.get("delta_pose") is not None:
                 obs = dict(obs, delta_pose=_scale_translation(obs["delta_pose"], v.odom_scale))
             self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"),
