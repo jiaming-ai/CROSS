@@ -132,6 +132,16 @@ the monocular setup's).
 The system calibrates the camera-IMU time offset and the gyroscope bias online (against its visual odometry); nothing is
 taken from the ground truth. IMU setups are marked ⁽ⁱ⁾ in the tables.
 
+The baselines with an IMU (ORB-SLAM3 visual-inertial, RTAB-Map visual-inertial odometry; rows next to their
+vision-only rows) get the IMU rigidly attached to the camera of their setup: the IMU above for the monocular and
+RGB-D setups; for the stereo setups, the stereo pair's IMU (`prepare_vio.py --write-imu imu_vio`): KITTI's OXTS at
+100 Hz from the raw extract drives (also for KITTI mono, whose camera is the stereo pair's left one; the 10 Hz of the
+synced drives is too slow for inertial ORB-SLAM3), the T265's own BMI055 on OpenLORIS and ROVER (factory intrinsics
+and extrinsics on OpenLORIS, Kalibr on ROVER), the simulated IMU on SimChange.  Every IMU extrinsic was checked
+against the ground truth: the gyroscope's rate about the vertical axis, moved into the camera frame, correlates
+with the ground truth's at 1.00 (OpenLORIS, KITTI, SimChange) and 0.65 (ROVER, whose heading is the direction of
+travel).
+
 Baselines that accept external odometry (RTAB-Map) get the same odometry stream; RTAB-Map also runs with its own visual
 odometry (`rtabmap_vo`). Visual(-inertial) systems (ORB-SLAM3,
 MASt3R-SLAM, VGGT-SLAM 2.0, DROID-SLAM) run on images only. The tables mark every system that uses odometry or IMU, so the
@@ -228,6 +238,8 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 | ORB-SLAM3 | mono, stereo, RGB-D | none (visual) | atlas save / load, multi-map merge | [UZ-SLAMLab/ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) + `scripts/baselines/orbslam3_reloc.cc` |
 | RTAB-Map | RGB-D, stereo | same odometry as CROSS | database, localization mode | [introlab/rtabmap](https://github.com/introlab/rtabmap) + `scripts/baselines/rtabmap_reloc.cc`; every frame processed, `Mem/STMSize 30` (RTAB-Map's KITTI setting) |
 | RTAB-Map (visual odometry) | RGB-D, stereo | none: RTAB-Map's own visual odometry (frame-to-map, reset to the latest pose after a lost frame) | database, localization mode | as above, `rtabmap_reloc --vo` |
+| ORB-SLAM3 (visual-inertial) | mono, stereo, RGB-D | IMU (§3) | atlas save / load, multi-map merge | as ORB-SLAM3, `--sensor imu_mono / imu_stereo / imu_rgbd` (its IMU_* modes, default IMU initialization) |
+| RTAB-Map (visual-inertial odometry) | RGB-D, stereo | IMU (§3): its visual odometry with the IMU orientation (RTAB-Map's complementary filter), gravity constraints in its odometry and map graph | database, localization mode | as above, `rtabmap_reloc --vo --imu` |
 | MASt3R-SLAM | mono | none | concatenated stream | [rmurai0610/MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) |
 | VGGT-SLAM 2.0 | mono | none | concatenated stream | [MIT-SPARK/VGGT-SLAM](https://github.com/MIT-SPARK/VGGT-SLAM) |
 | DROID-SLAM | mono, stereo, RGB-D | none | concatenated stream | [princeton-vl/DROID-SLAM](https://github.com/princeton-vl/DROID-SLAM) (planned) |
