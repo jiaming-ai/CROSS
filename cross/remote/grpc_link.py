@@ -178,6 +178,9 @@ class GrpcLink:
                     entry["arrival"], entry["server_s"] = now, r.get("server_seconds")
                 if r.get("last_added_kf_id") is not None:
                     self.last_added_kf_id = r["last_added_kf_id"]
+                work = r.get("work") or {}
+                self.n_stale = getattr(self, "n_stale", 0) + int(bool(work.get("stale")))
+                self.n_observed = getattr(self, "n_observed", 0) + int(bool(work.get("observed")))
                 out.append(r)
         return out
 
@@ -218,7 +221,8 @@ class GrpcLink:
         lat = np.array([e["arrival"] - e["sent"] for e in self.log if e.get("arrival") is not None])
         dur = max(self.log[-1]["sent"] - self.log[0]["sent"], 1e-9) if self.log else 1e-9
         out = {"extra_delay": self.extra_delay, "jpeg": self.jpeg, "messages": len(self.log), "realtime": self.realtime,
-               "late_frames": getattr(self, "late", 0),
+               "late_frames": getattr(self, "late", 0), "stale": getattr(self, "n_stale", 0),
+               "observed": getattr(self, "n_observed", 0),
                "images": int(sum(e["images"] for e in self.log)), "uplink_kBps": self.bytes_up / dur / 1e3,
                "downlink_kBps": self.bytes_down / dur / 1e3}
         if len(lat):
