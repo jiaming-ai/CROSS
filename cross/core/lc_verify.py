@@ -444,6 +444,8 @@ class LoopClosureVerifier:
         self._guard_epoch_kf = None
         self._gate_last_kf = None
         self._pass_g: list = []                       # guard samples of the current observation (one window sample)
+        self._pass_fix: list = []                     # map fixes of the current observation (position, sigma)
+        self._fix_hist = collections.deque(maxlen=300)    # earlier map fixes: (last keyframe, odometry since it, position, sigma)
 
     def reset_session(self):
         self.anchor = None
@@ -458,6 +460,8 @@ class LoopClosureVerifier:
         self.odom_fault = 0.0
         self._guard_win_kf = self._guard_run_kf = self._guard_epoch_kf = self._gate_last_kf = None
         self._pass_g = []
+        self._pass_fix = []
+        self._fix_hist.clear()
         self.scales = {"sess": 1.0, "map": 1.0}
         self.scales_along = {"sess": 1.0, "map": 1.0}
         self.scales_rot = {"sess": 1.0, "map": 1.0}
@@ -769,36 +773,50 @@ class LoopClosureVerifier:
         s = self.noise.with_fault(self.noise.odom(L, th, max(n_since, 1)), L, self.odom_fault)
         return np.diag((s * self.cfg.noise.gate_inflation) ** 2)
 
-    def _map_guard_sample(self, ref_id: int, Tm: gtsam.Pose3, last_kf_id: int, Ts: gtsam.Pose3) -> None:
-        """Relocalization session: the distance moved since the session anchor according to this map measurement (and
-        the anchor's), against the odometry chain's distance over the same span, as a guard sample.  Used when the span
-        is long against the map fixes' noise (map-relative pose of the two map keyframes, the anchor's and this
-        measurement: translation sigma <= log(f) / 3 of the distance)."""
-        # metric estimators only: in mono the map measurements' translation scale follows the odometry (ROVER night,
-        # VGGT-Omega mono: the samples rose to 2-4x while the VIO ran away, and the guard rescaled the wrong way)
-        if not self.guard_map or not self.guard_metric or self.guard_factor <= 1.0 or self.anchor is None:
+    def _map_fix(self, ref_id: int, Tm: gtsam.Pose3) -> None:
+        """Relocalization session: the current frame's position in the stored map's frame implied by a measurement to
+        map keyframe ref_id (collected per observation for the map guard samples)."""
+        if not self.guard_map or not self.guard_metric or self.guard_factor <= 1.0:
             return
-        hm = self.system.hypothesis_manager
-        a2 = self.anchor["map_kf"]
-        if ref_id not in hm.nodes or a2 not in hm.nodes:
+        node = self.system.hypothesis_manager.nodes.get(ref_id)
+        if node is None:
             return
-        T_chain, _ = self.chain.predict(self.anchor["kf"], last_kf_id)
-        if T_chain is None:
+        p = np.asarray(to_gtsam(node.pose_mu[0]).compose(Tm).translation(), dtype=np.float64)
+        sig = math.hypot(float(self.noise.visual(float(np.linalg.norm(Tm.translation())), self.scales["map"])[3]),
+                         float(self.noise.map_rel(0.0)[3]))
+        self._pass_fix.append((p, sig))
+
+    def _map_fix_sample(self, last_kf_id: int, Ts: gtsam.Pose3) -> None:
+        """Map guard sample of this observation.  Its map fix is the median of the fixes of its map references, used when
+        at least two of them agree within 3 sigma (a lone, possibly aliased, reference is no fix).  The distance to the
+        latest earlier fix far enough back (the two fixes' sigma <= log(f) / 3 of the distance) in the map frame, against
+        the odometry chain's distance between the two frames, is the sample; it needs neither a session anchor (the
+        anchor checks drop the anchor when the odometry fails) nor a long time without one.  Metric estimators only: in
+        mono the map measurements' scale follows the odometry (ROVER night, VGGT-Omega mono: the samples rose to 2-4x
+        while the VIO ran away, and the guard rescaled the wrong way)."""
+        fixes, self._pass_fix = self._pass_fix, []
+        if len(fixes) < 2:
             return
-        T_map = to_gtsam(hm.nodes[ref_id].pose_mu[0]).between(to_gtsam(hm.nodes[a2].pose_mu[0]))
-        Lo = float(np.linalg.norm(T_chain.compose(Ts).translation()))
-        Lm = float(np.linalg.norm(T_map.compose(self.anchor["T"]).between(Tm).translation()))
-        if Lo < float(getattr(self.cfg, "scale_min_span_m", 1.0)) or Lm <= 0:
+        P = np.array([f[0] for f in fixes]); S = np.array([f[1] for f in fixes])
+        med = np.median(P, 0)
+        agree = np.linalg.norm(P - med, axis=1) <= 3.0 * S
+        if agree.sum() < 2:
             return
-        sig = math.sqrt(float(self.noise.map_rel(float(np.linalg.norm(T_map.translation())))[3]) ** 2
-                        + float(self.anchor["sigma"][3]) ** 2
-                        + float(self.noise.visual(float(np.linalg.norm(Tm.translation())), self.scales["map"])[3]) ** 2)
-        if sig > math.log(self.guard_factor) / 3.0 * max(Lo, Lm):
-            return
-        g = Lm / Lo
-        logger.debug(f"odometry scale sample (map) {g:.4f} (since the anchor: map {Lm:.2f} m, odometry {Lo:.2f} m, "
-                     f"sigma {sig:.2f} m; odometry scale {self.odom_scale:.4f})")
-        self._collect(g, int(self.anchor["kf"]))
+        p_m, sig = np.median(P[agree], 0), float(np.median(S[agree]))
+        lim = math.log(self.guard_factor)
+        for kf_i, Ts_i, p_i, sig_i in reversed(self._fix_hist):
+            T_chain, _ = self.chain.predict(kf_i, last_kf_id)
+            if T_chain is None:
+                break                                       # another chain (the history is of this session)
+            Lo = float(np.linalg.norm(Ts_i.inverse().compose(T_chain).compose(Ts).translation()))
+            Lm = float(np.linalg.norm(p_m - p_i))
+            if Lo >= float(getattr(self.cfg, "scale_min_span_m", 1.0)) and lim / 3.0 * max(Lo, Lm) >= math.hypot(sig, sig_i):
+                g = Lm / Lo
+                logger.debug(f"odometry scale sample (map) {g:.4f} (map fixes {Lm:.2f} m apart, odometry {Lo:.2f} m, "
+                             f"sigma {math.hypot(sig, sig_i):.2f} m; odometry scale {self.odom_scale:.4f})")
+                self._collect(g, kf_i)
+                break
+        self._fix_hist.append((int(last_kf_id), Ts, p_m, sig))
 
     def prior_gate(self, refs: Sequence, T_meas: Sequence, last_kf_id: int, T_since, n_since: int) -> Tuple[list, list]:
         """For every reference: True (consistent with hypothesis 0), False (inconsistent), None (no relation).
@@ -812,6 +830,8 @@ class LoopClosureVerifier:
         oks, chis, loops = [], [], []
         self._update_scale()
         for kf, Tm in zip(refs, T_meas):
+            if self._is_map_kf(int(kf.id)):
+                self._map_fix(int(kf.id), to_gtsam(Tm))           # with or without a prediction (session anchor)
             T_pred, cov = self.predict_to_current(int(kf.id), last_kf_id, Ts, cov_since)
             if T_pred is None:
                 self.stats["prior_no_chain"] = self.stats.get("prior_no_chain", 0) + 1
@@ -833,8 +853,6 @@ class LoopClosureVerifier:
                     if consistent and len(self._ratio) >= 20:
                         self.scale_ratio = float(np.median(self._ratio))
                         self.stats["scale_ratio"] = round(self.scale_ratio, 4)
-            else:
-                self._map_guard_sample(int(kf.id), Tm, last_kf_id, Ts)
             self.scale = self.scales[kind]
             cov0 = cov / max(self.cfg.noise.gate_inflation, 1e-6) ** 2      # un-inflated chain covariance
             if self.anisotropic:
@@ -871,6 +889,7 @@ class LoopClosureVerifier:
             if c2 > self.thr:
                 self.stats["prior_rejected"] += 1
             oks.append(bool(c2 <= self.thr)); chis.append(c2)
+        self._map_fix_sample(int(last_kf_id), Ts)
         self._guard_flush()
         self.last_loop_flags = loops
         self.stats["loop_candidates"] = self.stats.get("loop_candidates", 0) + sum(1 for l, o in zip(loops, oks) if l and o is not None)

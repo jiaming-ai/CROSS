@@ -232,9 +232,9 @@ class LoopClosureConfig:
     # fades when the odometry is healthy again (|1 - m| ~ 0.02-0.05).
     odom_guard_inflate: bool = True
     # relocalization sessions: the references are the stored map's keyframes, so the session-span samples above never
-    # occur.  A map measurement gives the distance moved since the session anchor (the latest map fix) independently of
-    # the odometry; its ratio to the odometry chain's distance over the same span is a guard sample when the span is
-    # long against the map fixes' noise (translation sigma <= log(f) / 3 of the distance).  Metric estimators only
+    # occur.  The map measurements of an observation give its position in the stored map (a fix, when two references
+    # agree); the distance between two fixes against the odometry chain's distance between the two frames is a guard
+    # sample when it is long against the fixes' noise (sigma <= log(f) / 3 of the distance).  Metric estimators only
     # (stereo / depth): in mono the map measurements' scale follows the odometry, and on ROVER night the samples made
     # the guard rescale the wrong way.
     odom_guard_map: bool = True

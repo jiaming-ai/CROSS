@@ -524,26 +524,27 @@ def _reloc_session(odom_factor, session_start=50, n=120):
     return hm, gt, v
 
 
-def _localize(v, gt, ref, last):
-    return v.prior_gate([v.system.hypothesis_manager.nodes[ref]], [_lie(gt[ref].between(gt[last]))], last, gtsam.Pose3(), 1)
+def _localize(v, gt, refs, last):
+    """One observation of session keyframe `last` against map keyframes `refs` (true measurements)."""
+    hm = v.system.hypothesis_manager
+    return v.prior_gate([hm.nodes[r] for r in refs], [_lie(gt[r].between(gt[last])) for r in refs], last, gtsam.Pose3(), 1)
 
 
 @pytest.mark.parametrize("factor", [3.0, 1.0])
 def test_map_guard_samples_detect_a_runaway_in_a_relocalization_session(factor):
-    """Relocalization session anchored at session keyframe 52 (map keyframe 47): true map measurements against an
-    odometry chain that claims 3x the motion fire the guard (odometry scale -> 1/3, the chain since the anchor is
-    inflated); with a healthy chain nothing happens."""
+    """Relocalization session: true map measurements (three agreeing references per observation) against an odometry
+    chain that claims 3x the motion fire the guard (odometry scale -> 1/3, the chain over the sampled spans is
+    inflated); with a healthy chain nothing happens.  No session anchor is needed."""
     hm, gt, v = _reloc_session(factor)
     v.update_anchor(47, 52, _lie(gt[47].between(gt[52])))
     for last in range(53, 120):
-        for ref in (40, 45, 48):
-            _localize(v, gt, ref, last)
+        _localize(v, gt, (40, 45, 48), last)
     if factor == 1.0:
         assert v.odom_scale == 1.0 and v.odom_fault == 0.0
         return
     assert v.stats.get("odom_guard_updates", 0) >= 1
     assert abs(v.odom_scale - 1.0 / 3.0) < 0.05, v.odom_scale
-    assert all(getattr(e, "odom_fault", 0.0) > 0.5 for (a, _), e in hm.odom_edges.items() if a >= 52)
+    assert any(getattr(e, "odom_fault", 0.0) > 0.5 for e in hm.odom_edges.values())
 
 
 def test_map_guard_samples_off():
@@ -551,8 +552,7 @@ def test_map_guard_samples_off():
     v.guard_map = False
     v.update_anchor(47, 52, _lie(gt[47].between(gt[52])))
     for last in range(53, 120):
-        for ref in (40, 45, 48):
-            _localize(v, gt, ref, last)
+        _localize(v, gt, (40, 45, 48), last)
     assert v.odom_scale == 1.0
 
 
@@ -592,8 +592,7 @@ def test_map_guard_samples_need_a_metric_estimator():
     v.guard_metric = False
     v.update_anchor(47, 52, _lie(gt[47].between(gt[52])))
     for last in range(53, 120):
-        for ref in (40, 45, 48):
-            _localize(v, gt, ref, last)
+        _localize(v, gt, (40, 45, 48), last)
     assert v.odom_scale == 1.0
 
 
@@ -613,3 +612,17 @@ def test_guard_counts_observations_not_references():
             v._guard_sample(0.25, 60)
         v._guard_flush()
     assert abs(v.odom_scale - 0.25) < 1e-9
+
+
+def test_map_fix_needs_two_agreeing_references():
+    """One reference per observation, or references that disagree (an aliased one 20 m off): no map fix, no sample."""
+    hm, gt, v = _reloc_session(3.0)
+    for last in range(53, 120):
+        _localize(v, gt, (45,), last)
+    assert v.odom_scale == 1.0 and not v._fix_hist
+    hm2 = v.system.hypothesis_manager
+    off = gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(20.0, 0, 0))
+    for last in range(53, 120):
+        v.prior_gate([hm2.nodes[45], hm2.nodes[30]], [_lie(gt[45].between(gt[last])), _lie(gt[30].between(gt[last]).compose(off))],
+                     last, gtsam.Pose3(), 1)
+    assert v.odom_scale == 1.0 and not v._fix_hist
