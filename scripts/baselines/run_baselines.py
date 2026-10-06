@@ -234,9 +234,9 @@ def full_view(seq: Path, out: Path, odom_file=None) -> Path:
 
 
 def run(cmd, log, cwd=None, timeout=None):
-    # BASELINE_TIMEOUT: the replay traces run whole 2300-frame traversals in one process, which takes
-    # RTAB-Map far longer than the 100-frame evaluation trials the default hour was chosen for.
-    timeout = timeout or float(os.environ.get("BASELINE_TIMEOUT", 3600))
+    # BASELINE_TIMEOUT (s): the protocol's 2 h per session (PROTOCOL.md section 5); it was 1 h before 2026-10-06, which
+    # killed RTAB-Map with an IMU on the 4000-10000-frame KITTI / ROVER sessions (its visual odometry alone needs ~35 min)
+    timeout = timeout or float(os.environ.get("BASELINE_TIMEOUT", 7200))
     with open(log, "w") as f:
         t0 = time.time()
         try:
