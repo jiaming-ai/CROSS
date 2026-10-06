@@ -259,7 +259,10 @@ def run_orbslam3(args, out: Path):
         rd += ["--right-dir", json.loads((m / "calib.json").read_text())["right_dirs"][f"{args.baseline:.2f}"]]
     if args.orb_sensor == "rgbd":
         rd += ["--depth-dir", "depth_mm"]          # the views expose uint16 millimetre depth as depth_mm/
+    # real-time feed (ORB-SLAM3's examples do the same): its local mapping / loop closing / merging threads get the time
+    # they would get on the robot, which matters for the causal query poses
     orb = binary("orbslam3_reloc")
+    rd += ["--realtime"]
     if not (out / "atlas.osa").is_file() or not map_poses.is_file() or not _map_run_ok(out):
         if args.require_map:
             sys.exit(f"no stored ORB-SLAM3 atlas in {out} (--require-map)")
@@ -358,18 +361,34 @@ def apply_final_trajectory(poses, poses_file, fps):
     return poses
 
 
-def evaluate_trials(map_poses_file, query_files, map_seq, query_seq, out: Path, sim3=False, r_d=2.0):
-    """Evaluate every trial with the map-relative metric and aggregate the relocalization success."""
+def final_map_poses(system, map_poses_file, fps):
+    """The stored map's trajectory that the query sessions localize against: ORB-SLAM3's final (post-BA) trajectory
+    of its largest map (apply_final_trajectory), RTAB-Map's final optimized graph (<map_poses>.final, `idx state T`),
+    else the online poses."""
+    from eval_traj import load_poses
+    poses = load_poses(map_poses_file)
+    fin = Path(str(map_poses_file) + ".final")
+    if system == "orbslam3":
+        return apply_final_trajectory(poses, map_poses_file, fps)
+    if fin.is_file() and fin.stat().st_size > 0:
+        return load_poses(fin)
+    return poses
+
+
+def evaluate_trials(map_poses_file, query_files, map_seq, query_seq, out: Path, sim3=False, r_d=2.0, system="orbslam3"):
+    """Evaluate every trial with the map-relative metric and aggregate the relocalization success.  Query frames are
+    scored with the system's online (causal) output: the pose it reported at that frame (PROTOCOL.md, T2 / T3), not a
+    trajectory written after the session ended."""
     from eval_traj import evaluate, load_poses
     from reloc_metrics import summarize_trials, summarize_errors
     gt_map = np.loadtxt(Path(map_seq) / "poses_left.txt").reshape(-1, 4, 4)
     gt_query = np.loadtxt(Path(query_seq) / "poses_left.txt").reshape(-1, 4, 4)
     fps = json.loads((Path(map_seq) / "calib.json").read_text()).get("fps", 10.0)
-    mp = apply_final_trajectory(load_poses(map_poses_file), map_poses_file, fps)
+    mp = final_map_poses(system, map_poses_file, fps)
     all_rows = []
     for ti, (a, b, qp) in enumerate(query_files):
         try:
-            qposes = apply_final_trajectory(load_poses(qp), qp, fps)
+            qposes = load_poses(qp)
         except Exception:
             qposes = {}
         # frames in the chunk are renumbered from 0 -> shift back
@@ -415,7 +434,7 @@ def main():
         trials = build_trials(n_q, args.trial_len, args.trial_stride)
         qp = [(a, b, out / f"query_poses_t{ti}.txt") for ti, (a, b) in enumerate(trials)]
         evaluate_trials(out / "map_poses.txt", qp, args.map, args.query, out,
-                        sim3=args.system == "orbslam3" and args.orb_sensor == "mono", r_d=args.r_d)
+                        sim3=args.system == "orbslam3" and args.orb_sensor == "mono", r_d=args.r_d, system=args.system)
         return
     if args.system == "orbslam3":
         mp, qp, sim3 = run_orbslam3(args, out)
@@ -423,7 +442,7 @@ def main():
         mp, qp, sim3 = run_rtabmap(args, out)
     (out / "args.json").write_text(json.dumps(vars(args), indent=1))
     if not args.map_only:
-        evaluate_trials(mp, qp, args.map, args.query, out, sim3=sim3, r_d=args.r_d)
+        evaluate_trials(mp, qp, args.map, args.query, out, sim3=sim3, r_d=args.r_d, system=args.system)
 
 
 if __name__ == "__main__":

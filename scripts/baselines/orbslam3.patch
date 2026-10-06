@@ -214,10 +214,30 @@ index 1cf802c..c940c11 100644
  
  void MapPoint::PostLoad(map<long unsigned int, KeyFrame*>& mpKFid, map<long unsigned int, MapPoint*>& mpMPid)
 diff --git a/src/System.cc b/src/System.cc
-index 60d9c51..f9a6037 100644
+index 60d9c51..ab2efa0 100644
 --- a/src/System.cc
 +++ b/src/System.cc
-@@ -1547,3 +1547,43 @@ string System::CalculateCheckSum(string filename, int type)
+@@ -523,6 +523,19 @@ void System::Shutdown()
+ 
+     mpLocalMapper->RequestFinish();
+     mpLoopCloser->RequestFinish();
++    // CROSS benchmark: wait until local mapping, loop closing and a running global BA have stopped before the atlas
++    // is saved (upstream has this wait commented out below, so the atlas was saved while those threads still changed
++    // the map: segfault while saving in about one run in six).  Bounded so that a stuck thread cannot hang the run.
++    {
++        int waited_ms = 0;
++        while((!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA()) && waited_ms < 600000)
++        {
++            usleep(5000);
++            waited_ms += 5;
++        }
++        if(waited_ms >= 600000)
++            cout << "Shutdown: local mapping / loop closing did not stop within 600 s" << endl;
++    }
+     /*if(mpViewer)
+     {
+         mpViewer->RequestFinish();
+@@ -1547,3 +1560,43 @@ string System::CalculateCheckSum(string filename, int type)
  
  } //namespace ORB_SLAM
  
@@ -230,7 +250,7 @@ index 60d9c51..f9a6037 100644
 +namespace ORB_SLAM3 {
 +void System::SaveTrajectoryWithMapId(const string &filename)
 +{
-+    if(mSensor==MONOCULAR) return;
++    // monocular too (as upstream's SaveTrajectoryEuRoC): frame poses relative to their reference keyframe
 +    vector<Map*> vpMaps = mpAtlas->GetAllMaps();
 +    Map* pBigger = nullptr; size_t nBest = 0;
 +    for(Map* pMap : vpMaps) { if(pMap->GetAllKeyFrames().size() > nBest) { nBest = pMap->GetAllKeyFrames().size(); pBigger = pMap; } }

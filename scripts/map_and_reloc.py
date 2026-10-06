@@ -160,6 +160,7 @@ def run_mapping(args, out: Path):
     n = 0
     last_kf = None
     step_times = []
+    kf_frame = {}            # frame index of every keyframe created (temporary ones too: T1 completeness)
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
@@ -170,6 +171,7 @@ def run_mapping(args, out: Path):
         if system.last_added_kf_id != last_kf and system.last_added_kf_id is not None:
             last_kf = system.last_added_kf_id
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
+            kf_frame[int(last_kf)] = args.map_start + idx * args.stride
     elapsed = time.time() - t0
     n_perm = len([k for k in system.hypothesis_manager.nodes.values() if not k.temporary])
     logger.info(f"Mapping done: {n} frames in {elapsed:.1f}s ({n / elapsed:.2f} FPS), "
@@ -193,7 +195,7 @@ def run_mapping(args, out: Path):
     T_gt_from_map = umeyama_se3(src, dst)
     map_ate = float(np.sqrt(np.mean(np.sum(((T_gt_from_map[:3, :3] @ src.T).T + T_gt_from_map[:3, 3] - dst) ** 2, 1))))
     meta = {
-        "kf_gt": kf_gt, "kf_est": kf_est, "T_gt_from_map": T_gt_from_map.tolist(), "map_ate_rmse": map_ate,
+        "kf_gt": kf_gt, "kf_est": kf_est, "kf_frame": kf_frame, "T_gt_from_map": T_gt_from_map.tolist(), "map_ate_rmse": map_ate,
         "n_frames": n, "elapsed": elapsed, **step_time_stats(step_times), "n_keyframes": len(system.hypothesis_manager.nodes), "n_permanent": n_perm,
         "timing": _timing_summary(),
         "map_file_bytes": map_file.stat().st_size,

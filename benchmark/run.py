@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "baselines"))
-from metrics import ate, multisession, wilson  # noqa: E402
+from metrics import COMPLETENESS_RULE, ate, completeness, multisession, wilson  # noqa: E402
 
 PY = sys.executable
 # --odom-source: the odometry file the systems that take odometry read in each sequence folder (None = the dataset's
@@ -107,6 +107,22 @@ def gt_poses(seq: Path) -> np.ndarray:
     return np.loadtxt(seq / "poses_left.txt").reshape(-1, 4, 4)
 
 
+def cross_kf_frames(meta: dict, gt: np.ndarray) -> list:
+    """Frame indices of every keyframe a CROSS session created (permanent and temporary): `kf_frame` of map_meta.json,
+    or, for maps written before it existed, the frames whose ground-truth position equals the keyframe's (`kf_gt`
+    holds the ground truth of every keyframe the session created)."""
+    if meta.get("kf_frame"):
+        return sorted(int(v) for v in meta["kf_frame"].values())
+    from scipy.spatial import cKDTree
+    tree = cKDTree(gt[:, :3, 3])
+    frames = []
+    for g in meta["kf_gt"].values():
+        d, j = tree.query(np.asarray(g, dtype=float).reshape(4, 4)[:3, 3])
+        if d < 1e-3:
+            frames.append(int(j))
+    return sorted(frames)
+
+
 def downsample(a, n=800):
     a = np.asarray(a)
     if len(a) <= n:
@@ -158,6 +174,8 @@ class Job:
             (f"@{a.variant}" if a.variant else "")
         self.run_root = Path(a.out) / a.dataset / a.scene / system_dir / a.setup / f"s{a.seed}"
         self.outdoor = self.dcfg["environment"] == "outdoor"
+        # T1 completeness: a frame is covered within 1 s or within this distance of travelled path of a pose
+        self.path_m = float(self.dcfg.get("completeness_path_m", 2.0 if self.outdoor else 1.0))
         self.snr = self.dcfg.get("snr")
         self.base = {"dataset": a.dataset, "scene": a.scene, "system": a.system, "setup": a.setup, "seed": a.seed,
                      "label": self.scfg["label"], "uses_odometry": self.scfg.get("uses_odometry", False)}
@@ -208,16 +226,22 @@ class Job:
         ids = [k for k in meta["kf_est"] if str(k) in meta["kf_gt"]]
         est = {i: np.asarray(meta["kf_est"][k]).reshape(4, 4) for i, k in enumerate(ids)}
         gt = np.stack([np.asarray(meta["kf_gt"][str(k)]).reshape(4, 4) for k in ids])
-        r = ate(est, gt, sim3=False)
-        r["completeness"] = 1.0              # CROSS reports a pose for every frame; keyframes span the whole run
-        r["failed"] = False
+        r = ate(est, gt, sim3=False)                     # ATE over the permanent map keyframes
+        # completeness with the protocol's rule over every keyframe the session created: the temporary keyframes of
+        # revisits hold poses too, they are only not kept in the map
+        seq_gt = gt_poses(self.seq(seq_name))
+        fps = json.loads((self.seq(seq_name) / "calib.json").read_text()).get("fps", 10.0)
+        frames = cross_kf_frames(meta, seq_gt)
+        r["completeness"] = completeness(frames, seq_gt, fps=fps, path_m=self.path_m)
+        r["failed"] = bool(r["completeness"] < 0.8)
+        r["completeness_rule"] = COMPLETENESS_RULE
         n = meta.get("n_frames")
         T = np.asarray(r["T_gt_from_est"])
         pos_est = (T[:3, :3] @ np.array([est[i][:3, 3] for i in est]).T).T + T[:3, 3]
         return {**self.base, "track": "t1", "sequence": seq_name, **{k: v for k, v in r.items() if k != "T_gt_from_est"},
                 "fps": (n / meta["elapsed"]) if n and meta.get("elapsed") else None, "n_frames": n,
-                "n_keyframes": meta.get("n_permanent"), "map_bytes": meta.get("map_file_bytes"), "wall_s": dt,
-                "traj_est": downsample(pos_est[:, [0, 1, 2]]).round(3), "traj_gt": downsample(gt[:, :3, 3]).round(3)}
+                "n_keyframes": meta.get("n_permanent"), "n_keyframes_all": len(frames), "map_bytes": meta.get("map_file_bytes"),
+                "wall_s": dt, "traj_est": downsample(pos_est[:, [0, 1, 2]]).round(3), "traj_gt": downsample(gt[:, :3, 3]).round(3)}
 
     def cross_query(self, map_dir: Path, q: str, t2: Path, t3: Path):
         a = self.a
@@ -362,7 +386,7 @@ class Job:
                     poses = load_poses(fin)
         est = {i: T for i, (st, T) in poses.items() if st == 2}
         sim3 = self.a.setup in self.scfg.get("sim3_setups", [])
-        r = ate(est, gt, sim3=sim3, fps=fps)
+        r = ate(est, gt, sim3=sim3, fps=fps, path_m=self.path_m)
         res = {**self.base, "track": "t1", "sequence": seq_name, **{k: v for k, v in r.items() if k != "T_gt_from_est"},
                "wall_s": dt}
         mt = out / "map_time.json"

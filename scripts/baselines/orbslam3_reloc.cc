@@ -2,7 +2,10 @@
 //
 //   orbslam3_reloc <voc> <settings.yaml> <sequence_dir> <out_poses.txt> [--localization] [--fps F]
 //                  [--sensor stereo|rgbd|mono|imu_mono] [--left-dir left] [--right-dir right] [--depth-dir depth]
-//                  [--times frame_times.txt] [--imu imu.txt] [--imu-time-offset S]
+//                  [--times frame_times.txt] [--imu imu.txt] [--imu-time-offset S] [--realtime | --pace-ms MS]
+//
+// Frames are fed in real time with --realtime (one frame every 1/fps s, as ORB-SLAM3's examples do; the local mapping
+// and loop closing threads get the time they would get on the robot), else with a fixed sleep of --pace-ms after each.
 //
 // imu_mono: monocular-inertial; needs --times (one camera timestamp per image, seconds) and --imu (rows
 // "t wx wy wz ax ay az" in the IMU frame, '#' comments allowed; the settings carry the IMU.* block).  The IMU
@@ -16,6 +19,10 @@
 // and, with --times, three more: the number of maps in the atlas, whether the active map's IMU is initialized (0/1;
 // always 0 without an IMU), and the active map's id
 // state (Tracking::eTrackingState): -1=SYSTEM_NOT_READY, 0=NO_IMAGES_YET, 1=NOT_INITIALIZED, 2=OK, 3=RECENTLY_LOST, 4=LOST
+// With a loaded atlas (multi-session, not --localization) the state is causal: 2 only while the frame is tracked in the
+// map that holds the loaded atlas's largest map (the session has been merged into it), 6 while it is tracked in a map
+// of its own; the pose of a state-2 frame is expressed in the frame of that map's first keyframe, which is the frame
+// of the map session's exported trajectory (System::SaveTrajectoryWithMapId).
 #include <opencv2/opencv.hpp>
 #include <Eigen/Core>
 #include <chrono>
@@ -74,6 +81,7 @@ int main(int argc, char** argv) {
     std::string times_file, imu_file;
     double imu_time_offset = 0.0;
     int pace_ms = 5;
+    bool realtime = false;
     for (int i = 5; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--localization") localization = true;
@@ -83,6 +91,7 @@ int main(int argc, char** argv) {
         else if (a == "--depth-dir" && i + 1 < argc) depth_dir = argv[++i];
         else if (a == "--sensor" && i + 1 < argc) sensor = argv[++i];
         else if (a == "--pace-ms" && i + 1 < argc) pace_ms = atoi(argv[++i]);
+        else if (a == "--realtime") realtime = true;
         else if (a == "--times" && i + 1 < argc) times_file = argv[++i];
         else if (a == "--imu" && i + 1 < argc) imu_file = argv[++i];
         else if (a == "--imu-time-offset" && i + 1 < argc) imu_time_offset = atof(argv[++i]);
@@ -126,6 +135,22 @@ int main(int argc, char** argv) {
                     : inertial ? ORB_SLAM3::System::IMU_MONOCULAR : ORB_SLAM3::System::STEREO;
     ORB_SLAM3::System SLAM(voc, settings, type, false);
     if (localization) SLAM.ActivateLocalizationMode();
+    // reference keyframe of a multi-session run: the first keyframe of the loaded atlas's largest map
+    ORB_SLAM3::KeyFrame* ref_kf = nullptr;
+    if (atlas_loaded) {
+        size_t n_best = 0;
+        for (ORB_SLAM3::Map* m : SLAM.mpAtlas->GetAllMaps()) {
+            std::vector<ORB_SLAM3::KeyFrame*> kfs = m->GetAllKeyFrames();
+            if (kfs.size() > n_best) {
+                n_best = kfs.size();
+                ref_kf = *std::min_element(kfs.begin(), kfs.end(), ORB_SLAM3::KeyFrame::lId);
+            }
+        }
+        std::cerr << "reference keyframe " << (ref_kf ? long(ref_kf->mnId) : -1L) << " of the loaded atlas (" << n_best
+                  << " keyframes in its largest map)\n";
+    }
+    const auto period = std::chrono::duration<double>(1.0 / fps);
+    const auto t_feed0 = std::chrono::steady_clock::now();
     std::ofstream f(out);
     f << std::setprecision(9);
     double t_total = 0;
@@ -143,11 +168,18 @@ int main(int argc, char** argv) {
         else Tcw = SLAM.TrackStereo(imL, cv::imread(right[i], cv::IMREAD_COLOR), ts);
         t_total += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         int state = SLAM.GetTrackingState();
-        // in a multi-session run the new session lives in its own map until it is merged into the loaded
-        // atlas; only after the merge (atlas back to one map) are its poses expressed in the map frame
+        // in a multi-session run the new session lives in its own map until it is merged into the loaded atlas;
+        // only then (its active map holds the reference keyframe) is it localized in the map frame
         int nmaps = SLAM.GetNumberOfMaps();
-        if (atlas_loaded && !localization && nmaps != 1 && state == 2) state = 6;   // 6 = tracking in an unmerged session
-        Sophus::SE3f Twc = Tcw.inverse();
+        Sophus::SE3f Tc_ref = Tcw;
+        if (atlas_loaded && !localization && state == 2) {
+            ORB_SLAM3::Map* active = SLAM.mpAtlas->GetCurrentMap();
+            if (ref_kf && !ref_kf->isBad() && active && ref_kf->GetMap() == active)
+                Tc_ref = Tcw * ref_kf->GetPoseInverse();     // camera in the reference keyframe's frame
+            else
+                state = 6;                                     // 6 = tracking in an unmerged session
+        }
+        Sophus::SE3f Twc = Tc_ref.inverse();
         Eigen::Matrix4f M = Twc.matrix();
         f << i << " " << state;
         for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) f << " " << M(r, c);
@@ -158,8 +190,10 @@ int main(int argc, char** argv) {
         }
         f << "\n";
         f.flush();
-        // pace slightly so that the local mapping thread keeps up (no real-time constraint in offline eval)
-        std::this_thread::sleep_for(std::chrono::milliseconds(pace_ms));
+        if (realtime)            // next frame at its real-time slot (no sleep when tracking fell behind)
+            std::this_thread::sleep_until(t_feed0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(period * double(i + 1)));
+        else                     // fixed short pause so that the local mapping thread keeps up
+            std::this_thread::sleep_for(std::chrono::milliseconds(pace_ms));
     }
     std::cerr << "tracking time per frame: " << 1000.0 * t_total / left.size() << " ms\n";
     // final (post-merge / post-BA) trajectory of every non-lost frame, in the frame of the largest map: a session
