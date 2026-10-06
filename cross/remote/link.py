@@ -14,7 +14,8 @@ import heapq
 
 import numpy as np
 
-# server seconds per message (RTX A5000, measured on the development split; see outputs/2026-10-06_remote_mode)
+# server seconds per message: a frame, plus an observation of the back end, an own pass of the odometry, learned depth,
+# stereo matching (placeholders until measured; see outputs/2026-10-06_remote_mode)
 COMPUTE_MODEL = {"frame": 0.004, "observe": 0.110, "own_pass": 0.040, "depth": 0.030, "stereo": 0.020}
 
 
@@ -105,7 +106,8 @@ class SimLink:
         self._seq += 1
         self.log.append({"index": msg["index"], "sent": t, "start": start, "done": self.server_free, "arrival": arrival,
                          "bytes": size, "cost": cost, "images": msg.get("rgb") is not None,
-                         "request": msg.get("request") is not None})
+                         "request": msg.get("request") is not None, "measured": float(reply.get("server_seconds", 0.0)),
+                         "work": dict(reply.get("work", {}))})
 
     def poll(self, t):
         out = []
@@ -129,7 +131,16 @@ class SimLink:
         cost = np.array([e["cost"] for e in self.log])
         dur = max(self.log[-1]["sent"] - self.log[0]["sent"], 1e-9)
         up = np.array([e["bytes"] for e in self.log])
+        # the measured server time of each kind of message (this machine): the compute model's evidence
+        kinds = {}
+        for e in self.log:
+            w = e.get("work", {})
+            k = "+".join(n for n in ("observed", "own_pass", "depth", "stereo") if w.get(n)) or "frame"
+            kinds.setdefault(k, []).append(e["measured"])
+        measured = {k: {"n": len(v), "mean": float(np.mean(v)), "p50": float(np.median(v)),
+                        "p95": float(np.percentile(v, 95))} for k, v in kinds.items()}
         return {"rtt": self.rtt, "jitter": self.jitter, "compute": self.compute, "jpeg": self.jpeg,
+                "measured_server_s": measured,
                 "outages": self.outages, "uplink_mbps": None if not self.uplink else self.uplink * 8 / 1e6,
                 "messages": len(self.log), "images": int(sum(e["images"] for e in self.log)),
                 "requests": int(sum(e["request"] for e in self.log)),
