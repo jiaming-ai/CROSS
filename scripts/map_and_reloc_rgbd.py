@@ -145,7 +145,7 @@ def _timing_summary():
 def run_mapping(args, out: Path) -> dict:
     ds = make_loader(args.map, args, args.seed)
     system = new_system(args, ds)
-    kf_gt, n, last_kf = {}, 0, None
+    kf_gt, kf_frame, n, last_kf = {}, {}, 0, None
     t0 = time.time()
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
@@ -155,6 +155,7 @@ def run_mapping(args, out: Path) -> dict:
         if system.last_added_kf_id is not None and system.last_added_kf_id != last_kf:
             last_kf = system.last_added_kf_id
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
+            kf_frame[int(last_kf)] = args.map_start + idx * args.stride   # temporary keyframes too (T1 completeness)
     elapsed = time.time() - t0
     nodes = system.hypothesis_manager.nodes
     n_perm = len([k for k in nodes.values() if not k.temporary])
@@ -172,7 +173,7 @@ def run_mapping(args, out: Path) -> dict:
     src, dst = np.asarray(src), np.asarray(dst)
     T = umeyama_se3(src, dst)
     ate = float(np.sqrt(np.mean(np.sum(((T[:3, :3] @ src.T).T + T[:3, 3] - dst) ** 2, 1))))
-    meta = {"kf_gt": kf_gt, "kf_est": kf_est, "T_gt_from_map": T.tolist(), "map_ate_rmse": ate, "n_frames": n,
+    meta = {"kf_gt": kf_gt, "kf_est": kf_est, "kf_frame": kf_frame, "T_gt_from_map": T.tolist(), "map_ate_rmse": ate, "n_frames": n,
             "elapsed": elapsed, "n_keyframes": len(nodes), "n_permanent": n_perm, "timing": _timing_summary(),
             "map_file_bytes": map_file.stat().st_size}
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))

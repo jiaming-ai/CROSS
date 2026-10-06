@@ -19,8 +19,9 @@ A run is two independent choices:
 | `external` (default) | the dataset's odometry (wheel, OXTS, or simulated from ground truth with `--snr`) |
 | `visual` | DPVO from the images; metric scale from the mode's depth (sensor, stereo, or learned for mono) |
 | `vio` (mono mode) | DPVO with its metric scale from the IMU (visual-inertial; learned depth as a prior) |
+| `vgio` (mono mode with `--mono-estimator ff`, stereo mode) | no DPVO: VGGT-Omega relative poses and the IMU in a local pose graph; metric scale from learned depth (mono) or the stereo pair (stereo) |
 
-All modes run with `external` and `visual`; `vio` is for the mono mode. Visual odometry needs DPVO (`install.sh
+All modes run with `external` and `visual`; `vio` is for the mono mode, `vgio` for the mono (`ff`) and stereo modes. Visual odometry needs DPVO (`install.sh
 --mono`) and its weights in `models/dpvo.pth` (or `--dpvo-checkpoint`, env `CROSS_DPVO_CHECKPOINT`).
 
 **External odometry from a stereo VIO.** A prepared folder can hold several odometry files; `--odom-file NAME`
@@ -59,6 +60,21 @@ Anything 3) as a prior; the gyro bias and the camera-IMU time offset are calibra
 The back end receives the metric DPVO motion as odometry, as with external odometry. Settings: `--mono-args "--imu-config
 key=value"` (fields of `ImuConfig`).
 
+**VGGT-inertial odometry (`--odometry vgio`).** No DPVO: the IMU carries the pose between frames, and every third
+frame a VGGT-Omega forward pass (the back end's own pass when it observes then) measures the relative poses of the
+current frame, the last measured frame and a keyframe ~2 s older. A sliding-window pose graph (`cross/imu/vgi_graph.py`)
+optimizes these relative poses, the preintegrated IMU, gauge links between passes, tracked-corner rotations and the
+online calibration (gyro and accelerometer biases, gravity, the passes' rotation scale, the camera-IMU time offset).
+Each pass has a scale of its own: in the mono mode learned metric depth (DA3) observes it, with a bias state. In the
+stereo mode (`--mode stereo --odometry vgio`) the stereo pair adds two constraints: classical stereo depth (SGBM) of the
+current pair against the pass's depth map observes the pass's scale (no learned depth, no bias state), and the tracked
+corners lifted to 3-D with that depth give the metric motion between measured frames (PnP, with its own covariance).
+Every visual translation is tested against the IMU's prediction (the IMU arbitrates when the visual cues disagree, e.g.
+when vehicles alongside fill the view). The stereo mode needs the IMU next to the stereo folder (`prepare_imu.py
+<dataset> ... --setup stereo` for OpenLORIS and ROVER, whose stereo pair is the T265 with its own IMU). Options:
+`--mono-args "--imu-config key=value"`, e.g. `vgio_stereo_pnp=false`, `vgio_stereo_source=baseline` (the right image as
+one more view of the pass instead of SGBM depth; biased on KITTI).
+
 ## 2. Run one sequence
 
 ```bash
@@ -68,6 +84,7 @@ python run.py data/sim/lonemonk/map --mode stereo --baseline 0.3         # SimCh
 python run.py data/posed/home1-1 --loader posed --odometry visual        # RGB-D, no odometry input
 python run.py data/posed/home1-1 --loader posed --mode mono --odometry visual
 python run.py $BENCH_DATA/openloris/home1-1/rgbd --loader posed --mode mono --mono-estimator ff --odometry vio
+python run.py $BENCH_DATA/kitti/07/stereo --mode stereo --odometry vgio --config configs/outdoor.yaml   # stereo + IMU
 ```
 
 Useful flags: `--no-viz` (no Rerun window; use it on a server), `--frames N`, `--start N`, `--loader` (default:
@@ -158,7 +175,8 @@ A **system** is an entry of `benchmark/configs/systems.yaml`: its runner, setups
 | `cross_mono_odom`, `cross_mono` | CROSS mono mode, external / visual odometry |
 | `cross_mono_vio` | CROSS mono mode, visual-inertial odometry (IMU) |
 | `cross_mono_ff_odom`, `cross_mono_ff`, `cross_mono_ff_vio` | CROSS mono mode with VGGT-Omega (`--mono-estimator ff`), external / visual / visual-inertial odometry |
-| `orbslam3`, `rtabmap` | baselines (drivers in `scripts/baselines/`, built separately) |
+| `orbslam3`, `rtabmap`, `rtabmap_vo` | baselines (drivers in `scripts/baselines/`, built separately); RTAB-Map with the dataset odometry / its own visual odometry |
+| `orbslam3_imu`, `rtabmap_vi` | the same baselines with the setup's IMU: ORB-SLAM3's inertial modes, RTAB-Map's visual odometry with the IMU orientation (stereo setups need `prepare_vio.py <dataset> ... --write-imu imu_vio` first) |
 | `mast3r_slam`, `vggt_slam` | baselines without map persistence (map + query run as one stream) |
 
 To add one, append an entry to `systems.yaml` (runner, `setups`, `uses_odometry`, `map_reuse`, `args`) and, for a new
@@ -181,6 +199,8 @@ python benchmark/collect.py $BENCH_RESULTS && python benchmark/make_tables.py &&
   building its map): retry it later. Finished jobs are skipped; `--force` redoes one.
 - Try a variant of one system without editing its entry: `run.py ... --variant myvariant --args "--max-refs 4"`; results go
   to `<system>@myvariant`. `--args` are extra arguments of the CROSS command line.
+- Re-score stored runs with the current metrics without running the system: `run.py ... --reeval` (map / t1 tasks: the
+  T1 result; query tasks of the baselines: T2 / T3 from their pose files).
 - Outdoor datasets automatically add `configs/outdoor.yaml`. Do not tune per dataset: the protocol forbids it.
 
 ### Quick check of a change: the development split

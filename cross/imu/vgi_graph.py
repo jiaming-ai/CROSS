@@ -21,6 +21,10 @@ Factors:
                    (Huber)
     gauge link     lam_j - lam_k = log of the depth ratio of a frame both passes contain
     learned depth  lam_i + beta = log(learned metric depth / pass depth) of node i's frame
+    stereo         lam_i = the log metres per unit of node i's pass, observed by a stereo pair (metric, so no bias
+                   state; Huber)
+    metric pose    a relative pose in metres with a full 6x6 covariance, independent of the passes' scales (stereo:
+                   corners tracked between two nodes' frames, 3-D from stereo depth; Huber)
     priors         |g|; start-up priors on the first node (gauge) and the biases; the marginalization prior
 
 Gauss-Newton on the stacked tangent-space increment (right perturbations of the rotations); each factor's Jacobian is
@@ -81,6 +85,7 @@ class GraphConfig:
     # prediction the graph does not yet know (session start, poor vision) cannot weaken the measurements
     trans_sigma_bound: bool = False
     robust_links: bool = True
+    debug_costs: bool = False            # solve() also reports the cost of each factor type (diagnostics)
 
 
 def _exp(phi):
@@ -268,6 +273,28 @@ def _rot_block(Ra, Rb, q, jac):
     return r, J
 
 
+def _met_block(Ra, pa, Rb, pb, q, jac):
+    """Metric relative poses (batched): whitened residuals (n, 6) and Jacobians (n, 6, 12) over (rotation and position
+    of a, rotation and position of b).  Residual [Log(Rm^T Ra^T Rb), Ra^T (pb - pa) - tm], whitened by W (W^T W =
+    covariance^-1)."""
+    E = _T(q["Rm"]) @ _T(Ra) @ Rb
+    phi = _log_b(E)
+    u = _mv(_T(Ra), pb - pa)
+    r6 = np.concatenate([phi, u - q["tm"]], 1)
+    r = _mv(q["W"], r6)
+    if not jac:
+        return r, None
+    n = len(phi)
+    Ji = _jr_inv(phi)
+    J = np.zeros((n, 6, 12))
+    J[:, 0:3, 0:3] = -Ji @ _T(Rb) @ Ra
+    J[:, 0:3, 6:9] = Ji
+    J[:, 3:6, 0:3] = _skew(u)
+    J[:, 3:6, 3:6] = -_T(Ra)
+    J[:, 3:6, 9:12] = _T(Ra)
+    return r, q["W"] @ J
+
+
 def _prior_rotation(R_ref, R, std):
     """log(R_ref^T R Exp(d)) / std at d = 0 and its Jacobian (3 x 3)."""
     phi = _log_b(R_ref.T @ R)
@@ -304,6 +331,15 @@ class _Rot:
 
 
 @dataclass
+class _Met:
+    a: int                       # a metric relative pose: b in a's camera frame (metres)
+    b: int
+    R: np.ndarray
+    t: np.ndarray
+    W: np.ndarray                # 6x6 whitening of (rotation, translation)
+
+
+@dataclass
 class _Rel:
     a: int                       # absolute node ids, pose of b in a's camera frame (pass units)
     b: int
@@ -337,8 +373,10 @@ class VgiGraph:
         self.imu: list[_Imu] = []
         self.rel: list[_Rel] = []
         self.rots: list[_Rot] = []
+        self.met: list[_Met] = []
         self.links: list[tuple] = []             # (j, k, log ratio, std): lam_j - lam_k = log ratio
         self.depth: dict[int, tuple] = {}        # node -> (log observation, std)
+        self.stereo: dict[int, tuple] = {}       # node -> (log observation, std): stereo scale of its pass
         self.zrate: dict[int, tuple] = {}        # node -> (gyro mean (IMU frame), std (3,)) over an interval at rest
         self.prior = None                        # (L, node id, x_lin) on (node, globals)
         self.gauge = None
@@ -473,6 +511,14 @@ class VgiGraph:
         if a in self.R and b in self.R:
             self.rots.append(_Rot(a, b, np.asarray(R_ab, dtype=np.float64), float(std)))
 
+    def add_metric_relative(self, a, b, R_ab, t_ab, cov):
+        """A relative pose of the cameras in metres (b in a's frame) with its 6x6 covariance (rotation as a right
+        perturbation of R_ab, translation in a's frame), not subject to the passes' scales."""
+        if a in self.R and b in self.R:
+            cov = 0.5 * (np.asarray(cov, dtype=np.float64) + np.asarray(cov, dtype=np.float64).T) + 1e-12 * np.eye(6)
+            W = np.linalg.inv(np.linalg.cholesky(cov))
+            self.met.append(_Met(a, b, _so3(np.asarray(R_ab, dtype=np.float64)), np.asarray(t_ab, dtype=np.float64), W))
+
     def add_link(self, j, k, log_ratio, std=None):
         if j in self.R and k in self.R and np.isfinite(log_ratio):
             self.links.append((j, k, float(log_ratio), float(std if std is not None else self.cfg.link_std)))
@@ -480,6 +526,11 @@ class VgiGraph:
     def add_depth(self, i, log_obs, std):
         if i in self.R and np.isfinite(log_obs):
             self.depth[i] = (float(log_obs), max(float(std), self.cfg.depth_std_floor))
+
+    def add_stereo(self, i, log_obs, std):
+        """The metric scale of node i's pass from the stereo pair in it: lam_i = log_obs (std in log)."""
+        if i in self.R and np.isfinite(log_obs) and np.isfinite(std) and std > 0:
+            self.stereo[i] = (float(log_obs), float(std))
 
     # ------------------------------------------------------------------ the problem
     # The normal equations are assembled factor type by factor type: each factor's residual is a function of its own
@@ -547,6 +598,14 @@ class VgiGraph:
             P["rots"] = dict(aa=aa, bb=bb, Rm=T(np.stack([f.R for f in fs])), std=np.array([f.std for f in fs]),
                              cols=np.concatenate([10 * aa[:, None] + np.arange(3)[None],
                                                   10 * bb[:, None] + np.arange(3)[None]], axis=1))
+        if self.met:
+            fs = self.met
+            aa = np.array([col[f.a] for f in fs])
+            bb = np.array([col[f.b] for f in fs])
+            P["met"] = dict(aa=aa, bb=bb, Rm=T(np.stack([f.R for f in fs])), tm=T(np.stack([f.t for f in fs])),
+                            W=T(np.stack([f.W for f in fs])),
+                            cols=np.concatenate([10 * aa[:, None] + np.arange(6)[None],
+                                                 10 * bb[:, None] + np.arange(6)[None]], axis=1))
         if self.links:
             P["links"] = dict(jj=np.array([col[l[0]] for l in self.links]), kk=np.array([col[l[1]] for l in self.links]),
                               obs=np.array([l[2] for l in self.links]), std=np.array([l[3] for l in self.links]))
@@ -557,6 +616,10 @@ class VgiGraph:
         if dk:
             P["depth"] = dict(kk=np.array([col[i] for i in dk]), obs=np.array([self.depth[i][0] for i in dk]),
                               std=np.array([self.depth[i][1] for i in dk]))
+        sk = [i for i in self.stereo if i in col]
+        if sk:
+            P["stereo"] = dict(kk=np.array([col[i] for i in sk]), obs=np.array([self.stereo[i][0] for i in sk]),
+                               std=np.array([self.stereo[i][1] for i in sk]))
         return P
 
     def _blocks(self, P, jac=True):
@@ -600,6 +663,10 @@ class VgiGraph:
             q = P["rots"]
             r, J = _rot_block(R[q["aa"]], R[q["bb"]], q, jac)
             out.append((q["cols"], r, J, "rots"))
+        if "met" in P:
+            q = P["met"]
+            r, J = _met_block(R[q["aa"]], p[q["aa"]], R[q["bb"]], p[q["bb"]], q, jac)
+            out.append((q["cols"], r, J, "met"))
         if "links" in P:
             q = P["links"]
             r = ((lam[q["jj"]] - lam[q["kk"]] - q["obs"]) / q["std"])[:, None]
@@ -614,6 +681,10 @@ class VgiGraph:
                 cols.append(np.full(len(q["kk"]), G + 9))
                 Js.append(1.0 / q["std"])
             out.append((np.stack(cols, axis=1), r, np.stack(Js, axis=1)[:, None, :], "depth"))
+        if "stereo" in P:
+            q = P["stereo"]
+            out.append(((10 * q["kk"] + 9)[:, None], ((lam[q["kk"]] - q["obs"]) / q["std"])[:, None],
+                        (1.0 / q["std"])[:, None, None], "stereo"))
         if "zrate" in P:
             q = P["zrate"]
             n = len(q["obs"])
@@ -670,13 +741,13 @@ class VgiGraph:
         return out
 
     def _huber(self, blocks):
-        """Huber weights of the relative-pose, rotation-only and gauge-link factors from their unweighted residuals
-        (a gauge link is a visual measurement too: a pass whose depth of the shared frame jumps by 30-40 % gave links
-        of 10-15 sigma at full weight)."""
+        """Huber weights of the relative-pose, rotation-only, stereo-scale and gauge-link factors from their unweighted
+        residuals (a gauge link is a visual measurement too: a pass whose depth of the shared frame jumps by 30-40 % gave
+        links of 10-15 sigma at full weight)."""
         h = self.cfg.huber
         w = {}
         for _, r, _, kind in blocks:
-            if kind in ("rel", "rots", "zrate") or (kind == "links" and self.cfg.robust_links):
+            if kind in ("rel", "rots", "zrate", "stereo", "met") or (kind == "links" and self.cfg.robust_links):
                 e = np.linalg.norm(r, axis=1) / np.sqrt(r.shape[1])
                 w[kind] = np.where(e <= h, 1.0, np.sqrt(h / np.maximum(e, 1e-12)))
         return w
@@ -754,6 +825,11 @@ class VgiGraph:
                 damping *= 10
                 info = {"cost": cost, "residuals": n_res}
         info["lam_std"] = float("nan")
+        if self.cfg.debug_costs:
+            w = self._huber(self._blocks(P, jac=False))
+            info["costs"] = {}
+            for _, r, _, kind in self._weighted(self._blocks(P, jac=False), w):
+                info["costs"][kind] = round(info["costs"].get(kind, 0.0) + float((r * r).sum()), 2)
         if need_std and H is not None:
             try:
                 k = 10 * (len(self.ids) - 1)
@@ -782,9 +858,9 @@ class VgiGraph:
 
     # ------------------------------------------------------------------ marginalization
     def marginalize(self):
-        """Drop the oldest node: its IMU factor, its relative poses with the next node, its gauge link and learned
-        depth, and the current prior become a Gaussian prior on the next node and the globals (Schur complement);
-        its relative poses with later nodes are dropped."""
+        """Drop the oldest node: its IMU factor, its relative poses with the next node, its gauge link, learned depth
+        and stereo scale, and the current prior become a Gaussian prior on the next node and the globals (Schur
+        complement); its relative poses with later nodes are dropped."""
         if len(self.ids) <= self.cfg.window:
             return
         i0, i1 = self.ids[0], self.ids[1]
@@ -792,17 +868,21 @@ class VgiGraph:
         mar_rel = [f for f in self.rel if (i0 in (f.a, f.b, f.s)) and {f.a, f.b, f.s} <= {i0, i1}]
         keep_rots = [f for f in self.rots if i0 not in (f.a, f.b)]
         mar_rots = [f for f in self.rots if (i0 in (f.a, f.b)) and {f.a, f.b} <= {i0, i1}]
+        keep_met = [f for f in self.met if i0 not in (f.a, f.b)]
+        mar_met = [f for f in self.met if (i0 in (f.a, f.b)) and {f.a, f.b} <= {i0, i1}]
         keep_links = [l for l in self.links if i0 not in (l[0], l[1])]
         mar_links = [l for l in self.links if (i0 in (l[0], l[1])) and {l[0], l[1]} <= {i0, i1}]
         # the factors involving only nodes 0 and 1 (and the globals), on a two-node sub-problem
-        full = (self.ids, self.imu, self.rel, self.links, self.depth, self.zrate)
+        full = (self.ids, self.imu, self.rel, self.links, self.depth, self.zrate, self.stereo)
         self.ids = [i0, i1]
         self.imu = [f for f in self.imu if f.i == i0]
         self.rel = mar_rel
         self.rots = mar_rots
+        self.met = mar_met
         self.links = mar_links
         self.depth = {i: o for i, o in full[4].items() if i == i0}
         self.zrate = {i: o for i, o in full[5].items() if i == i0}
+        self.stereo = {i: o for i, o in full[6].items() if i == i0}
         H, c, _, _, _ = self._system(self._prepare())
         mi = np.arange(10)
         ri = np.arange(10, 20 + self.n_global)
@@ -843,9 +923,11 @@ class VgiGraph:
         self.imu = [f for f in full[1] if f.i != i0]
         self.rel = keep_rel
         self.rots = keep_rots
+        self.met = keep_met
         self.links = keep_links
         self.depth = {i: o for i, o in full[4].items() if i != i0}
         self.zrate = {i: o for i, o in full[5].items() if i != i0}
+        self.stereo = {i: o for i, o in full[6].items() if i != i0}
         self.prior = (L, i1, xl)
         for dct in (self.R, self.p, self.v, self.lam, self.t):
             dct.pop(i0, None)

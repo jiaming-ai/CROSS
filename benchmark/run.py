@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "baselines"))
-from metrics import ate, multisession, wilson  # noqa: E402
+from metrics import COMPLETENESS_RULE, ate, completeness, multisession, wilson  # noqa: E402
 
 PY = sys.executable
 # --odom-source: the odometry file the systems that take odometry read in each sequence folder (None = the dataset's
@@ -107,6 +107,22 @@ def gt_poses(seq: Path) -> np.ndarray:
     return np.loadtxt(seq / "poses_left.txt").reshape(-1, 4, 4)
 
 
+def cross_kf_frames(meta: dict, gt: np.ndarray) -> list:
+    """Frame indices of every keyframe a CROSS session created (permanent and temporary): `kf_frame` of map_meta.json,
+    or, for maps written before it existed, the frames whose ground-truth position equals the keyframe's (`kf_gt`
+    holds the ground truth of every keyframe the session created)."""
+    if meta.get("kf_frame"):
+        return sorted(int(v) for v in meta["kf_frame"].values())
+    from scipy.spatial import cKDTree
+    tree = cKDTree(gt[:, :3, 3])
+    frames = []
+    for g in meta["kf_gt"].values():
+        d, j = tree.query(np.asarray(g, dtype=float).reshape(4, 4)[:3, 3])
+        if d < 1e-3:
+            frames.append(int(j))
+    return sorted(frames)
+
+
 def downsample(a, n=800):
     a = np.asarray(a)
     if len(a) <= n:
@@ -158,6 +174,8 @@ class Job:
             (f"@{a.variant}" if a.variant else "")
         self.run_root = Path(a.out) / a.dataset / a.scene / system_dir / a.setup / f"s{a.seed}"
         self.outdoor = self.dcfg["environment"] == "outdoor"
+        # T1 completeness: a frame is covered within 1 s or within this distance of travelled path of a pose
+        self.path_m = float(self.dcfg.get("completeness_path_m", 2.0 if self.outdoor else 1.0))
         self.snr = self.dcfg.get("snr")
         self.base = {"dataset": a.dataset, "scene": a.scene, "system": a.system, "setup": a.setup, "seed": a.seed,
                      "label": self.scfg["label"], "uses_odometry": self.scfg.get("uses_odometry", False)}
@@ -208,16 +226,22 @@ class Job:
         ids = [k for k in meta["kf_est"] if str(k) in meta["kf_gt"]]
         est = {i: np.asarray(meta["kf_est"][k]).reshape(4, 4) for i, k in enumerate(ids)}
         gt = np.stack([np.asarray(meta["kf_gt"][str(k)]).reshape(4, 4) for k in ids])
-        r = ate(est, gt, sim3=False)
-        r["completeness"] = 1.0              # CROSS reports a pose for every frame; keyframes span the whole run
-        r["failed"] = False
+        r = ate(est, gt, sim3=False)                     # ATE over the permanent map keyframes
+        # completeness with the protocol's rule over every keyframe the session created: the temporary keyframes of
+        # revisits hold poses too, they are only not kept in the map
+        seq_gt = gt_poses(self.seq(seq_name))
+        fps = json.loads((self.seq(seq_name) / "calib.json").read_text()).get("fps", 10.0)
+        frames = cross_kf_frames(meta, seq_gt)
+        r["completeness"] = completeness(frames, seq_gt, fps=fps, path_m=self.path_m)
+        r["failed"] = bool(r["completeness"] < 0.8)
+        r["completeness_rule"] = COMPLETENESS_RULE
         n = meta.get("n_frames")
         T = np.asarray(r["T_gt_from_est"])
         pos_est = (T[:3, :3] @ np.array([est[i][:3, 3] for i in est]).T).T + T[:3, 3]
         return {**self.base, "track": "t1", "sequence": seq_name, **{k: v for k, v in r.items() if k != "T_gt_from_est"},
                 "fps": (n / meta["elapsed"]) if n and meta.get("elapsed") else None, "n_frames": n,
-                "n_keyframes": meta.get("n_permanent"), "map_bytes": meta.get("map_file_bytes"), "wall_s": dt,
-                "traj_est": downsample(pos_est[:, [0, 1, 2]]).round(3), "traj_gt": downsample(gt[:, :3, 3]).round(3)}
+                "n_keyframes": meta.get("n_permanent"), "n_keyframes_all": len(frames), "map_bytes": meta.get("map_file_bytes"),
+                "wall_s": dt, "traj_est": downsample(pos_est[:, [0, 1, 2]]).round(3), "traj_gt": downsample(gt[:, :3, 3]).round(3)}
 
     def cross_query(self, map_dir: Path, q: str, t2: Path, t3: Path):
         a = self.a
@@ -316,12 +340,14 @@ class Job:
                "--out", out, "--snr", self.snr or 10]
         if self.a.setup == "stereo" and self.dcfg.get("baseline"):
             cmd += ["--baseline", self.dcfg["baseline"]]
-        if system == "orbslam3":
-            cmd += ["--system", "orbslam3", "--orb-sensor", self.a.setup]
-        elif system in ("rtabmap", "rtabmap_vo"):
+        if system in ("orbslam3", "orbslam3_imu"):
+            cmd += ["--system", "orbslam3", "--orb-sensor", ("imu_" if system == "orbslam3_imu" else "") + self.a.setup]
+        elif system in ("rtabmap", "rtabmap_vo", "rtabmap_vi"):
             cmd += ["--system", "rtabmap_stereo" if self.a.setup == "stereo" else "rtabmap"]
-            if system == "rtabmap_vo":
+            if system in ("rtabmap_vo", "rtabmap_vi"):
                 cmd += ["--rtab-vo"]
+            if system == "rtabmap_vi":
+                cmd += ["--rtab-imu"]
         cmd += [str(v) for v in self.scfg.get("args", [])]
         if self.odom_file:
             cmd += ["--odom-file", self.odom_file]
@@ -329,8 +355,9 @@ class Job:
 
     def baseline_map(self, map_seq, out: Path):
         """Map with up to two retries: ORB-SLAM3 occasionally crashes while saving its atlas at shutdown."""
-        need = {"orbslam3": ["atlas.osa", "map_poses.txt"], "rtabmap": ["map.db", "map_poses.txt"],
-                "rtabmap_vo": ["map.db", "map_poses.txt"]}[self.a.system]
+        need = {"orbslam3": ["atlas.osa", "map_poses.txt"], "orbslam3_imu": ["atlas.osa", "map_poses.txt"],
+                "rtabmap": ["map.db", "map_poses.txt"], "rtabmap_vo": ["map.db", "map_poses.txt"],
+                "rtabmap_vi": ["map.db", "map_poses.txt"]}[self.a.system]
         total = 0.0
         for attempt in range(3):
             for f in need + ["map_time.json", "map_poses.txt.final"]:
@@ -356,13 +383,13 @@ class Job:
             poses = load_poses(mp)
             fin = Path(str(mp) + ".final")
             if fin.is_file():
-                if self.a.system == "orbslam3":
+                if self.a.system in ("orbslam3", "orbslam3_imu"):
                     poses = {i: v for i, v in apply_final_trajectory({}, mp, fps).items()}
                 else:
                     poses = load_poses(fin)
         est = {i: T for i, (st, T) in poses.items() if st == 2}
         sim3 = self.a.setup in self.scfg.get("sim3_setups", [])
-        r = ate(est, gt, sim3=sim3, fps=fps)
+        r = ate(est, gt, sim3=sim3, fps=fps, path_m=self.path_m)
         res = {**self.base, "track": "t1", "sequence": seq_name, **{k: v for k, v in r.items() if k != "T_gt_from_est"},
                "wall_s": dt}
         mt = out / "map_time.json"
@@ -406,7 +433,7 @@ class Job:
             d.mkdir(parents=True, exist_ok=True)
             if (map_dir / "atlas.osa").exists() and not (d / "atlas.osa").exists():
                 os.symlink((map_dir / "atlas.osa").resolve(), d / "atlas.osa")     # loaded read-only
-            for f in ("map_poses.txt", "map_poses.txt.final", "map_time.json"):
+            for f in ("map_poses.txt", "map_poses.txt.final", "map_poses.txt.times", "map_time.json"):
                 if (map_dir / f).exists() and not (d / f).exists():
                     shutil.copy(map_dir / f, d / f)
             if (map_dir / "map.db").exists() and not (d / "map.db").exists():
@@ -531,6 +558,27 @@ class Job:
                 shutil.rmtree(lock, ignore_errors=True)
         return d
 
+    def reeval_t1(self, seq):
+        """Re-score a stored T1 run with the current metrics (no system run): the map session's files in maps/<seq>,
+        another session's in t1/<seq>/native.  Keeps the run's own fields (time, host, commit, ...)."""
+        _, t1_result, _ = self.runner()
+        res_file = self.run_root / "t1" / seq / "result.json"
+        d = self.run_root / "maps" / seq if seq == self.scene.get("map") else self.run_root / "t1" / seq / "native"
+        if not res_file.is_file() or not d.is_dir():
+            print(f"nothing to re-score: {res_file}", file=sys.stderr)
+            return
+        old = json.loads(res_file.read_text())
+        try:
+            res = t1_result(seq, d, old.get("wall_s"))
+        except Exception as e:        # noqa: BLE001
+            print(f"cannot re-score {d}: {e!r}", file=sys.stderr)
+            return
+        keep = {k: old[k] for k in ("status", "rc", "wall_s", "host", "gpu", "commit", "time", "fps", "error") if k in old}
+        res.update({**keep, "rescored": time.strftime("%Y-%m-%d %H:%M:%S")})
+        write_result(res_file, res)
+        print(f"{seq}: completeness {old.get('completeness')} -> {res.get('completeness')}, failed {old.get('failed')} -> "
+              f"{res.get('failed')}, ATE {old.get('ate_rmse')} -> {res.get('ate_rmse')}")
+
     def ready(self, names) -> bool:
         return all((self.seq(n) / "calib.json").is_file() for n in names)
 
@@ -541,13 +589,15 @@ class Job:
         if not self.ready(need):
             print(f"data not ready: {[str(self.seq(n)) for n in need]}", file=sys.stderr)
             sys.exit(3)                        # the worker releases the job for a later pass
-        if a.task == "map":
+        if a.task == "map" and not a.reeval:
             md = self.ensure_map(self.scene["map"])
             if not self.scene.get("queries") and not a.keep_maps:     # single-session scene: the map is not reused
                 for f in ("map.pkl", "atlas.osa", "map.db"):
                     if (md / f).exists():
                         (md / f).unlink()
                 shutil.rmtree(md / "views_map", ignore_errors=True)
+        elif a.task in ("map", "t1") and a.reeval:
+            self.reeval_t1(self.scene["map"] if a.task == "map" else a.seq)
         elif a.task == "t1":
             seq = a.seq
             if seq == self.scene.get("map"):
@@ -607,7 +657,8 @@ def main():
                     help="T3 trials per query for systems without map persistence (evenly spaced)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--wait-for-map", action="store_true", help="wait while another worker builds the map (default: exit 3)")
-    ap.add_argument("--reeval", action="store_true", help="baselines: re-score existing query runs from their pose files")
+    ap.add_argument("--reeval", action="store_true", help="re-score existing runs from their stored files (query tasks: "
+                                                          "baselines' pose files; map / t1 tasks: the T1 result)")
     ap.add_argument("--redo", nargs="*", default=[], choices=["t2", "t3"], help="query task: re-run these tracks although results exist")
     ap.add_argument("--only", nargs="*", default=[], choices=["t2", "t3"], help="query task: run only these tracks")
     ap.add_argument("--keep-maps", action="store_true")

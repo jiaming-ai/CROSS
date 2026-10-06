@@ -47,6 +47,19 @@ cross_stereo_vo:
          --odometry, visual]
   outdoor_config: [configs/outdoor.yaml]
 
+# stereo + IMU: the VGGT-Omega + IMU local pose graph of cross_mono_ff_vgio with stereo constraints instead of learned
+# depth (the pass's scale from SGBM depth, the tracked corners' metric motion by PnP); no odometry input
+cross_stereo_vgio:
+  label: CROSS (VGGT-Omega, VGGT-inertial odometry)
+  runner: cross_ff
+  setups: [stereo]
+  uses_odometry: false
+  uses_imu: true
+  map_reuse: save/load
+  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3",
+         --odometry, vgio]
+  outdoor_config: [configs/outdoor.yaml]
+
 cross_stereo_fast:
   label: CROSS (VGGT-Omega fast, external odometry)
   runner: cross_ff
@@ -182,6 +195,17 @@ orbslam3:
   sim3_setups: [mono]
   skip: [kitti/rgbd]          # RGB-D* (stereo-matched depth) is a CROSS setup; baselines run KITTI in stereo
 
+# visual-inertial ORB-SLAM3 (IMU_MONOCULAR / IMU_STEREO / IMU_RGBD) with the IMU of the setup's camera:
+# run_baselines.imu_name (stereo folders: the stereo pair's IMU of prepare_vio.py --write-imu; rgbd folders: the D435i)
+orbslam3_imu:
+  label: ORB-SLAM3 (visual-inertial)
+  runner: baseline
+  setups: [rgbd, stereo, mono]
+  uses_odometry: false
+  uses_imu: true
+  map_reuse: atlas load + merge
+  skip: [kitti/rgbd]
+
 rtabmap:
   label: RTAB-Map (external odometry)
   runner: baseline
@@ -195,6 +219,17 @@ rtabmap_vo:
   runner: baseline
   setups: [rgbd, stereo]
   uses_odometry: false
+  map_reuse: database, localization mode
+  skip: [kitti/rgbd]
+
+# RTAB-Map's own visual odometry with the IMU orientation (its complementary filter on the setup's IMU): motion
+# guess and gravity constraints in the odometry's local BA and in the map graph (Optimizer/GravitySigma)
+rtabmap_vi:
+  label: RTAB-Map (visual-inertial odometry)
+  runner: baseline
+  setups: [rgbd, stereo]
+  uses_odometry: false
+  uses_imu: true
   map_reuse: database, localization mode
   skip: [kitti/rgbd]
 

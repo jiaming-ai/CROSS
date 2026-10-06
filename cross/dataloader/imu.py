@@ -98,10 +98,11 @@ class ImuStream:
         return {"imu": samples, "imu_t0": t0, "imu_t1": t1}
 
 
-def write_imu(root, t, gyro, accel, calib: dict, header: str = ""):
-    """Write imu.txt / imu.json (calib: the ImuCalibration fields, T_cam_imu as a 4x4 nested list, plus any notes)."""
+def write_imu(root, t, gyro, accel, calib: dict, header: str = "", name: str = "imu"):
+    """Write <name>.txt / <name>.json (default imu.txt / imu.json; calib: the ImuCalibration fields, T_cam_imu as a 4x4
+    nested list, plus any notes)."""
     root = Path(root)
     data = np.concatenate([np.asarray(t, dtype=np.float64)[:, None], np.asarray(gyro), np.asarray(accel)], axis=1)
     head = "t wx wy wz ax ay az (IMU frame; rad/s, m/s^2 specific force; clock of times.txt)"
-    np.savetxt(root / "imu.txt", data, fmt=["%.6f"] + ["%.8g"] * 6, header=head + (f"\n{header}" if header else ""))
-    (root / "imu.json").write_text(json.dumps(calib, indent=1))
+    np.savetxt(root / f"{name}.txt", data, fmt=["%.6f"] + ["%.8g"] * 6, header=head + (f"\n{header}" if header else ""))
+    (root / f"{name}.json").write_text(json.dumps(calib, indent=1))

@@ -56,6 +56,11 @@ class ImuConfig:
     # each observation counts (front end on six development sequences: scale within 2-3 % on office, cafe, KITTI 07
     # and SimChange; ROVER 1.37x vs 1.86x for learned depth alone; home 0.80x vs 1.04x)
     depth_prior: bool = True
+    # source of these observations in the VGGT + IMU frontend: "da3" (Depth Anything 3 metric depth against the pass's
+    # depth) or "head" (the metric-scale head of a fine-tuned VGGT-Omega checkpoint (vggt_ft), read from the same pass:
+    # no second network), with log-scale std depth_prior_head_std (held-out |log error| of the head ~0.3)
+    depth_prior_source: str = "da3"
+    depth_prior_head_std: float = 0.3
     depth_prior_std_floor: float = 0.15
     depth_prior_independent: bool = True
     window: int = 100                            # frame intervals in the window (10 s at 10 Hz)
@@ -172,6 +177,38 @@ class ImuConfig:
     vgio_max_interval: int = 4
     vgio_min_translation: float = 0.5
     vgio_min_rotation_deg: float = 3.0
+    # stereo + IMU (the stereo mode with --odometry vgio).  The stereo pair observes each pass's metric scale
+    # (VggtImuFrontend._stereo_scale; no bias state).  Source "depth": classical stereo depth (SGBM; pixels with >=
+    # vgio_stereo_min_disparity px) against the pass's depth of the current frame, std floored at vgio_stereo_std.
+    # Source "baseline": the right image as a view of the pass, its left-right translation against the calibrated
+    # baseline (std hypot(vgio_stereo_std, vgio_stereo_depth_k * depth / baseline); not used when the pass's rotation
+    # between the cameras or its baseline direction disagrees with the calibration).  VGGT-Omega places the right camera
+    # too far on KITTI (scale 13 % low on 07, 30 % on 01) while its depths agree with its translations: SGBM depth is
+    # within -4..+4 % on KITTI, ROVER, SimChange and the T265 indoors.  "both": both logged, depth used
+    vgio_stereo_source: str = "depth"
+    vgio_stereo_min_disparity: float = 2.0
+    vgio_stereo_std: float = 0.02
+    vgio_stereo_depth_k: float = 0.001
+    vgio_stereo_rot_gate_deg: float = 3.0
+    vgio_stereo_dir_cos: float = 0.95
+    # stereo + IMU: the corners tracked between measured frames (vgio_klt) lifted to 3-D with the stereo depth of the
+    # earlier frame give the metric motion by PnP, a factor with its own covariance (VggtImuFrontend._stereo_pnp) in
+    # place of their rotation-only factor.  Front end: OpenLORIS office 0.055 -> 0.026 m, cafe 0.36 -> 0.26 m, SimChange
+    # 0.057 -> 0.024 m, KITTI 07 relative error 2.5 -> 1.4 %; it locks onto vehicles alongside on a highway (KITTI 01),
+    # which the translation tests catch
+    vgio_stereo_pnp: bool = True
+    # ... with its rotation: False (its translation only, the corners' rotation from the essential matrix as without it),
+    # True (its full pose, analytic covariance), "calibrated" (full pose, the rotation's noise floored by its own
+    # disagreement with the gyro)
+    vgio_stereo_pnp_rotation: object = False
+    # stereo + IMU: the translation tests with the IMU as the arbiter (VggtImuFrontend._stereo_gate): the pass and the
+    # corners' motion must agree with the IMU's prediction within 4 sigma (vgio_stereo_gate_factor > 1 also accepts
+    # within that factor, the monocular test's tolerance for the learned scale); vgio_stereo_gate_pairs: the pass's
+    # keyframe pairs (~2 s) too, against the graph's motion (KITTI 01: a pass accepted on its short pair pulled every
+    # velocity of the window through its long ones, 24 -> 2 m/s; ATE 266 -> 38 m with the test)
+    vgio_stereo_gate_factor: float = 1.0
+    vgio_stereo_gate_pairs: bool = True
+    vgio_debug_costs: bool = False               # graph: log the cost of each factor type per solve (diagnostics)
 
 
 @dataclass

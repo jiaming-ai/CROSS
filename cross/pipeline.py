@@ -10,9 +10,12 @@ Two independent choices define a run:
                                      (wheel, VIO, simulated); visual: DPVO visual odometry whose metric scale comes
                                      from the mode's depth (sensor depth, stereo depth, or learned metric depth);
                                      vio (mono mode): DPVO with its metric scale from the IMU (cross/imu), learned depth
-                                     as an optional weak prior; vgio (mono mode, ff back end): no DPVO, the IMU carries
-                                     the pose and VGGT-Omega's relative poses correct it (cross/mono/vggt_imu_frontend),
-                                     from the back end's forward passes where it observes
+                                     as an optional weak prior; vgio (mono mode with the ff back end, or the stereo
+                                     mode): no DPVO, the IMU carries the pose and VGGT-Omega's relative poses correct it
+                                     in a local pose graph (cross/mono/vggt_imu_frontend), from the back end's forward
+                                     passes where it observes; mono: learned depth as a prior on the metric scale,
+                                     stereo: stereo depth observes it and the tracked corners' metric motion (PnP)
+                                     is a factor too
 
 The mono mode has two back ends (mono_estimator): da3, the monocular system of cross/mono (learned metric depth,
 two-view / feed-forward DA3 relative poses), and ff, the stereo mode's feed-forward multi-view estimator (VGGT-Omega) on
@@ -317,17 +320,17 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
     from cross.core.types import Camera
     if mode not in MODES or odometry not in ODOMETRY or mono_estimator not in MONO_ESTIMATORS:
         raise ValueError(f"Unknown mode / odometry / mono estimator: {mode} / {odometry} / {mono_estimator}")
-    if odometry in INERTIAL and mode != "mono":
-        raise ValueError("Visual-inertial odometry is implemented for the mono mode")
-    if odometry == "vgio" and mono_estimator != "ff":
+    if odometry == "vio" and mode != "mono" or odometry == "vgio" and mode not in ("mono", "stereo"):
+        raise ValueError("Visual-inertial odometry: vio in the mono mode, vgio in the mono and stereo modes")
+    if odometry == "vgio" and mode == "mono" and mono_estimator != "ff":
         raise ValueError("vgio uses the feed-forward back end's model (--mono-estimator ff)")
     K = np.array(camera.K, dtype=np.float64).copy()        # before System rescales camera.K to its storage size
     size = (int(camera.frame_width), int(camera.frame_height))
     cfg = copy.deepcopy(system_config)
     mc = mono_config
-    if mode == "mono" and odometry in INERTIAL:
+    if odometry in INERTIAL:
         if mc is None:
-            raise ValueError("The mono mode needs a mono_config (mono_config_from_profile)")
+            raise ValueError("Visual-inertial odometry needs a mono_config (mono_config_from_profile; its imu section)")
         mc = copy.deepcopy(mc)
         mc.imu.enabled = True
 
@@ -336,23 +339,7 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
         if odometry == "external":
             return Pipeline(system, None, 1, mode, odometry)
         if odometry == "vgio":
-            from cross.mono.models import DA3MetricDepth
-            from cross.mono.vggt_imu_frontend import VggtImuFrontend
-            metric = _cached(("metric", mc.metric_model, mc.metric_resolution),
-                             lambda: DA3MetricDepth(mc.metric_model, device, mc.metric_resolution)) \
-                if mc.imu.depth_prior else None
-
-            def vgio_factory():
-                frontend = VggtImuFrontend(K, mc, device, metric_model=metric, backend=system.pose_est.backend,
-                                           rgb_transform=system.rgb_transform, depth_transform=system.depth_transform,
-                                           interval=mc.imu.visual_interval, depth_every=mc.imu.depth_every,
-                                           context=mc.imu.vgio_context, keyframe_age=mc.imu.vgio_keyframe_age,
-                                           visual_rotation=mc.imu.vgio_visual_rotation, graph=mc.imu.vgio_graph)
-                frontend.standalone = False
-                return frontend
-            pipeline = Pipeline(system, vgio_factory(), 1, mode, odometry, frontend_factory=vgio_factory)
-            pipeline.continuous_start_in_map = continuous_start
-            return pipeline
+            return _vgio_pipeline(system, mc, K, device, mode, continuous_start)
         if mc is None or mc.frontend != "dpvo":
             raise ValueError("The mono mode's visual odometry needs a mono_config with the dpvo frontend")
         from cross.mono.dpvo_frontend import DPVOFrontend
@@ -377,6 +364,8 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
                         T_right_in_left=T_right_in_left)
         if odometry == "external":
             return Pipeline(system, None, 1, mode, odometry)
+        if odometry == "vgio":
+            return _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_left)
         if vo_config is None:
             raise ValueError("Visual odometry needs vo_config (visual_odometry_config)")
         from cross.mono.dpvo_frontend import DPVOFrontend
@@ -414,6 +403,37 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
     return session
 
 
+def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_left=None) -> Pipeline:
+    """The VGGT-Omega + IMU frontend (cross/mono/vggt_imu_frontend) on the back end's model and image transforms.  The
+    mono mode takes the metric scale from learned depth (DA3, with its bias in the graph), the stereo mode from the
+    current stereo pair (no learned depth)."""
+    from cross.mono.vggt_imu_frontend import VggtImuFrontend
+    stereo = mode == "stereo"
+    if stereo:
+        if T_right_in_left is None:
+            raise ValueError("The stereo mode's VGGT-inertial odometry needs the stereo calibration (T_right_in_left)")
+        mc.imu.depth_prior = False
+        mc.imu.vgio_depth_bias = False
+    metric = None
+    if mc.imu.depth_prior and mc.imu.depth_prior_source != "head":
+        from cross.mono.models import DA3MetricDepth
+        metric = _cached(("metric", mc.metric_model, mc.metric_resolution),
+                         lambda: DA3MetricDepth(mc.metric_model, device, mc.metric_resolution))
+
+    def vgio_factory():
+        frontend = VggtImuFrontend(K, mc, device, metric_model=metric, backend=system.pose_est.backend,
+                                   rgb_transform=system.rgb_transform, depth_transform=system.depth_transform,
+                                   interval=mc.imu.visual_interval, depth_every=mc.imu.depth_every,
+                                   context=mc.imu.vgio_context, keyframe_age=mc.imu.vgio_keyframe_age,
+                                   visual_rotation=mc.imu.vgio_visual_rotation, graph=mc.imu.vgio_graph,
+                                   T_right_in_left=T_right_in_left if stereo else None)
+        frontend.standalone = False
+        return frontend
+    pipeline = Pipeline(system, vgio_factory(), 1, mode, "vgio", frontend_factory=vgio_factory)
+    pipeline.continuous_start_in_map = continuous_start
+    return pipeline
+
+
 # ---------------------------------------------------------------------- command line (scripts/map_and_reloc*.py)
 def add_session_args(ap):
     """Mode / odometry options shared by the map-and-relocalize runners."""
@@ -423,16 +443,19 @@ def add_session_args(ap):
     ap.add_argument("--odometry", choices=ODOMETRY, default="external",
                     help="external: the dataset's odometry; visual: DPVO visual odometry scaled by the mode's depth; "
                          "vio (mono mode): DPVO scaled by the IMU (imu.txt / imu.json next to the images); "
-                         "vgio (mono mode, --mono-estimator ff): IMU odometry corrected by VGGT-Omega relative poses")
+                         "vgio (mono mode with --mono-estimator ff, or stereo mode): IMU odometry corrected by "
+                         "VGGT-Omega relative poses in a local pose graph (stereo: metric scale from the stereo pair)")
     ap.add_argument("--mono-estimator", choices=MONO_ESTIMATORS, default="da3",
                     help="mono mode back end: da3 (learned metric depth, cross/mono) or ff (the stereo mode's "
                          "VGGT-Omega multi-view estimator, metric scale from the odometry and the map)")
     ap.add_argument("--dpvo-checkpoint", default=os.environ.get("CROSS_DPVO_CHECKPOINT", "models/dpvo.pth"))
     ap.add_argument("--mono-profile", default="configs/mono_benchmark_10hz.json",
-                    help="mono mode: cross.mono.run arguments (JSON with an 'arguments' list)")
+                    help="mono mode (and the IMU options of --odometry vgio): cross.mono.run arguments (JSON with an "
+                         "'arguments' list)")
     ap.add_argument("--mono-args", default="",
-                    help="mono mode: extra cross.mono.run arguments after the profile's (one quoted string), e.g. "
-                         "'--cross-config mapping.loop_closure.noise.odom_k_t=0.06'")
+                    help="mono mode / --odometry vgio: extra cross.mono.run arguments after the profile's (one quoted "
+                         "string), e.g. '--cross-config mapping.loop_closure.noise.odom_k_t=0.06' or "
+                         "'--imu-config vgio_stereo_std=0.03'")
     ap.add_argument("--vo-mask-people", action="store_true", help="visual odometry: exclude detected people from DPVO patches")
     ap.add_argument("--fast", action="store_true",
                     help="stereo mode: faster preset (configs/stereo_fast.yaml: 6 images per pass instead of 10, ~35 %% "
@@ -450,7 +473,8 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
     if mono_estimator == "ff":
         mono_ff_config(cfg)
     mono_config = vo_config = None
-    if mode == "mono":
+    if mode == "mono" or odometry == "vgio":
+        # the mono mode's configuration; for the stereo mode's VGGT-inertial odometry only its imu section is used
         import shlex
         extra = shlex.split(args.mono_args or "") + ["--seed", str(seed)] + (["--imu"] if odometry in INERTIAL else [])
         mono_config = mono_config_from_profile(args.mono_profile,

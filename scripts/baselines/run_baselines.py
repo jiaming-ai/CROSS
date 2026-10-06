@@ -116,10 +116,24 @@ def _any_baseline(seq: Path):
     return float(next(iter(dirs))) if dirs and not (seq / "right").exists() else None
 
 
+def imu_name(seq: Path) -> str:
+    """The IMU stream of a sequence folder for the baselines with an IMU: imu_vio (the stereo pair's IMU written by
+    prepare_vio.py --write-imu: KITTI's 100 Hz OXTS, the T265 of OpenLORIS / ROVER) when present, else imu (the IMU of
+    the folder's camera, prepare_imu.py: D435i in the rgbd folders, simulated on SimChange)."""
+    return "imu_vio" if (seq / "imu_vio.txt").is_file() else "imu"
+
+
+def imu_frame_times(seq: Path, n: int, fps: float) -> np.ndarray:
+    """Per-image timestamps on the clock of the sequence's IMU stream."""
+    cal = json.loads((seq / f"{imu_name(seq)}.json").read_text())
+    tf = seq / cal.get("frame_times", "times.txt")
+    return np.loadtxt(tf).reshape(-1)[:n] if tf.is_file() else np.arange(n) / fps
+
+
 def orb_imu_lines(seq: Path, noise_scale: float = 1.0) -> list:
-    """The IMU.* settings of a sequence from its imu.json (x_cam = T_cam_imu x_imu; ORB-SLAM3's IMU.T_b_c1 is the
+    """The IMU.* settings of a sequence from its IMU json (x_cam = T_cam_imu x_imu; ORB-SLAM3's IMU.T_b_c1 is the
     camera pose in the IMU (body) frame; continuous-time noise densities and random walks, as Kalibr reports them)."""
-    cal = json.loads((seq / "imu.json").read_text())
+    cal = json.loads((seq / f"{imu_name(seq)}.json").read_text())
     T_bc = np.linalg.inv(np.asarray(cal["T_cam_imu"], dtype=np.float64))
     return [
         "IMU.T_b_c1: !!opencv-matrix", "  rows: 4", "  cols: 4", "  dt: f",
@@ -220,9 +234,9 @@ def full_view(seq: Path, out: Path, odom_file=None) -> Path:
 
 
 def run(cmd, log, cwd=None, timeout=None):
-    # BASELINE_TIMEOUT: the replay traces run whole 2300-frame traversals in one process, which takes
-    # RTAB-Map far longer than the 100-frame evaluation trials the default hour was chosen for.
-    timeout = timeout or float(os.environ.get("BASELINE_TIMEOUT", 3600))
+    # BASELINE_TIMEOUT (s): the protocol's 2 h per session (PROTOCOL.md section 5); it was 1 h before 2026-10-06, which
+    # killed RTAB-Map with an IMU on the 4000-10000-frame KITTI / ROVER sessions (its visual odometry alone needs ~35 min)
+    timeout = timeout or float(os.environ.get("BASELINE_TIMEOUT", 7200))
     with open(log, "w") as f:
         t0 = time.time()
         try:
@@ -255,21 +269,37 @@ def run_orbslam3(args, out: Path):
     voc = str(ORB_VOC)
     map_poses = out / "map_poses.txt"
     rd = ["--sensor", args.orb_sensor]
+    inertial = args.orb_sensor.startswith("imu_")
+    vis = args.orb_sensor[4:] if inertial else args.orb_sensor
     if args.baseline is not None:
         rd += ["--right-dir", json.loads((m / "calib.json").read_text())["right_dirs"][f"{args.baseline:.2f}"]]
-    if args.orb_sensor == "rgbd":
+    if vis == "rgbd":
         rd += ["--depth-dir", "depth_mm"]          # the views expose uint16 millimetre depth as depth_mm/
+
+    def imu_args(seq: Path, view: Path, start: int, end: int, poses_file: Path):
+        """--times (the view's frames on the IMU clock) and --imu for an inertial run of frames [start, end).  The times
+        are also kept as <poses_file>.times: the final trajectory is stamped with them (apply_final_trajectory)."""
+        if not inertial:
+            return []
+        t = imu_frame_times(seq, n_frames(seq), fps)[start:end]
+        np.savetxt(view / "imu_frame_times.txt", t, fmt="%.6f")
+        np.savetxt(str(poses_file) + ".times", t, fmt="%.6f")
+        return ["--times", str(view / "imu_frame_times.txt"), "--imu", str(seq / f"{imu_name(seq)}.txt")]
+    # real-time feed (ORB-SLAM3's examples do the same): its local mapping / loop closing / merging threads get the time
+    # they would get on the robot, which matters for the causal query poses
     orb = binary("orbslam3_reloc")
+    rd += ["--realtime"]
     if not (out / "atlas.osa").is_file() or not map_poses.is_file() or not _map_run_ok(out):
         if args.require_map:
             sys.exit(f"no stored ORB-SLAM3 atlas in {out} (--require-map)")
         mv = make_chunk(m, out / "views_map", 0, n_frames(m))
-        orb_yaml(m, out / "map.yaml", save_atlas=atlas, fps=fps, baseline=args.baseline)
-        rc, dt = run(orb + [voc, str(out / "map.yaml"), str(mv), str(map_poses), "--fps", str(fps)] + rd, out / "map.log", cwd=str(out))
+        orb_yaml(m, out / "map.yaml", save_atlas=atlas, fps=fps, baseline=args.baseline, imu=inertial)
+        rc, dt = run(orb + [voc, str(out / "map.yaml"), str(mv), str(map_poses), "--fps", str(fps)] + rd +
+                     imu_args(m, mv, 0, n_frames(m), map_poses), out / "map.log", cwd=str(out))
         (out / "map_time.json").write_text(json.dumps({"rc": rc, "seconds": dt, "n_frames": n_frames(m)}))
     if args.map_only:
         return map_poses, [], args.orb_sensor == "mono"
-    orb_yaml(q, out / "query.yaml", load_atlas=atlas, fps=fps, baseline=args.baseline)
+    orb_yaml(q, out / "query.yaml", load_atlas=atlas, fps=fps, baseline=args.baseline, imu=inertial)
     # multi-session mode: the query session starts a new map that ORB-SLAM3 merges into the loaded atlas
     # on place recognition (its localization-only mode never relocalizes against a loaded atlas here)
     n_q = n_frames(q)
@@ -278,7 +308,7 @@ def run_orbslam3(args, out: Path):
     for ti, (a, b) in enumerate(trials):
         chunk = make_chunk(q, out / "trials", a, b)
         qp = out / f"query_poses_t{ti}.txt"
-        cmd = orb + [voc, str(out / "query.yaml"), str(chunk), str(qp), "--fps", str(fps)] + rd
+        cmd = orb + [voc, str(out / "query.yaml"), str(chunk), str(qp), "--fps", str(fps)] + rd + imu_args(q, chunk, a, b, qp)
         rc, dt = run(cmd, out / f"query_t{ti}.log", cwd=str(out))
         for _retry in range(2):
             if rc >= 0:
@@ -313,12 +343,24 @@ def run_rtabmap(args, out: Path):
     if args.rtab_vo:
         extra = ["--vo"] + extra          # RTAB-Map's own visual odometry instead of the given odometry
     rtab = binary("rtabmap_reloc")
+
+    def imu_args(seq: Path, view: Path, start: int, end: int):
+        """--imu / --times (the view's frames on the IMU clock) / --T-cam-imu of a run of frames [start, end)."""
+        if not args.rtab_imu:
+            return []
+        name = imu_name(seq)
+        t = imu_frame_times(seq, n_frames(seq), fps)[start:end]
+        np.savetxt(view / "imu_frame_times.txt", t, fmt="%.6f")
+        np.savetxt(view / "T_cam_imu.txt", np.asarray(json.loads((seq / f"{name}.json").read_text())["T_cam_imu"]), fmt="%.9f")
+        return ["--imu", str(seq / f"{name}.txt"), "--times", str(view / "imu_frame_times.txt"),
+                "--T-cam-imu", str(view / "T_cam_imu.txt")]
     if not db.is_file() or not map_poses.is_file() or not _map_run_ok(out):
         if args.require_map:
             sys.exit(f"no stored RTAB-Map database in {out} (--require-map)")
         mv = make_chunk(m, out / "views_map", 0, n_frames(m), odom_file=odom_m)
         om = mv / "odom.txt"
-        rc, dt = run(rtab + [str(mv), str(om), str(db), str(map_poses)] + extra, out / "map.log", cwd=str(out))
+        rc, dt = run(rtab + [str(mv), str(om), str(db), str(map_poses)] + extra + imu_args(m, mv, 0, n_frames(m)),
+                     out / "map.log", cwd=str(out))
         (out / "map_time.json").write_text(json.dumps({"rc": rc, "seconds": dt, "n_frames": n_frames(m)}))
     if args.map_only:
         return map_poses, [], False
@@ -328,7 +370,8 @@ def run_rtabmap(args, out: Path):
     for ti, (a, b) in enumerate(trials):
         chunk = make_chunk(q, out / "trials", a, b, odom_file=odom_q)
         qp = out / f"query_poses_t{ti}.txt"
-        rc, dt = run(rtab + [str(chunk), str(chunk / "odom.txt"), str(db), str(qp), "--localization"] + extra, out / f"query_t{ti}.log", cwd=str(out))
+        rc, dt = run(rtab + [str(chunk), str(chunk / "odom.txt"), str(db), str(qp), "--localization"] + extra +
+                     imu_args(q, chunk, a, b), out / f"query_t{ti}.log", cwd=str(out))
         (out / f"query_time_t{ti}.json").write_text(json.dumps({"rc": rc, "seconds": dt, "start": a, "end": b}))
         query_files.append((a, b, qp))
         if not args.keep_chunks:
@@ -345,11 +388,20 @@ def apply_final_trajectory(poses, poses_file, fps):
     if not fin.is_file():
         return poses
     poses = dict(poses)
+    # stamps: i / fps, or the frame times of the run (<poses_file>.times; visual-inertial runs use the IMU clock)
+    tfile = Path(str(poses_file) + ".times")
+    times = np.loadtxt(tfile).reshape(-1) if tfile.is_file() else None
     for line in fin.read_text().splitlines():
         v = line.split()
         if len(v) < 8:
             continue
-        idx = int(round(float(v[0]) * fps))
+        if times is not None:
+            k = int(np.clip(np.searchsorted(times, float(v[0])), 1, len(times) - 1))
+            idx = k if abs(times[k] - float(v[0])) < abs(times[k - 1] - float(v[0])) else k - 1
+            if abs(times[idx] - float(v[0])) > 0.5 / fps:
+                continue
+        else:
+            idx = int(round(float(v[0]) * fps))
         in_atlas = len(v) < 10 or v[8] == v[9]
         T = np.eye(4)
         T[:3, :3] = Rotation.from_quat([float(x) for x in v[4:8]]).as_matrix()
@@ -358,18 +410,34 @@ def apply_final_trajectory(poses, poses_file, fps):
     return poses
 
 
-def evaluate_trials(map_poses_file, query_files, map_seq, query_seq, out: Path, sim3=False, r_d=2.0):
-    """Evaluate every trial with the map-relative metric and aggregate the relocalization success."""
+def final_map_poses(system, map_poses_file, fps):
+    """The stored map's trajectory that the query sessions localize against: ORB-SLAM3's final (post-BA) trajectory
+    of its largest map (apply_final_trajectory), RTAB-Map's final optimized graph (<map_poses>.final, `idx state T`),
+    else the online poses."""
+    from eval_traj import load_poses
+    poses = load_poses(map_poses_file)
+    fin = Path(str(map_poses_file) + ".final")
+    if system == "orbslam3":
+        return apply_final_trajectory(poses, map_poses_file, fps)
+    if fin.is_file() and fin.stat().st_size > 0:
+        return load_poses(fin)
+    return poses
+
+
+def evaluate_trials(map_poses_file, query_files, map_seq, query_seq, out: Path, sim3=False, r_d=2.0, system="orbslam3"):
+    """Evaluate every trial with the map-relative metric and aggregate the relocalization success.  Query frames are
+    scored with the system's online (causal) output: the pose it reported at that frame (PROTOCOL.md, T2 / T3), not a
+    trajectory written after the session ended."""
     from eval_traj import evaluate, load_poses
     from reloc_metrics import summarize_trials, summarize_errors
     gt_map = np.loadtxt(Path(map_seq) / "poses_left.txt").reshape(-1, 4, 4)
     gt_query = np.loadtxt(Path(query_seq) / "poses_left.txt").reshape(-1, 4, 4)
     fps = json.loads((Path(map_seq) / "calib.json").read_text()).get("fps", 10.0)
-    mp = apply_final_trajectory(load_poses(map_poses_file), map_poses_file, fps)
+    mp = final_map_poses(system, map_poses_file, fps)
     all_rows = []
     for ti, (a, b, qp) in enumerate(query_files):
         try:
-            qposes = apply_final_trajectory(load_poses(qp), qp, fps)
+            qposes = load_poses(qp)
         except Exception:
             qposes = {}
         # frames in the chunk are renumbered from 0 -> shift back
@@ -403,7 +471,10 @@ def main():
     ap.add_argument("--odom-file", default=None, help="odometry file of the sequence folders to use when present "
                     "(e.g. odom_vio.txt), else odom_left.txt / simulated")
     ap.add_argument("--rtab-vo", action="store_true", help="RTAB-Map: its own visual odometry instead of the dataset odometry")
-    ap.add_argument("--orb-sensor", choices=["stereo", "rgbd", "mono"], default="stereo", help="ORB-SLAM3 input")
+    ap.add_argument("--rtab-imu", action="store_true", help="RTAB-Map: the IMU orientation of the folder's IMU stream "
+                                                            "(imu_name()) with its visual odometry")
+    ap.add_argument("--orb-sensor", choices=["stereo", "rgbd", "mono", "imu_stereo", "imu_rgbd", "imu_mono"], default="stereo",
+                    help="ORB-SLAM3 input (imu_*: visual-inertial, with the folder's IMU stream, imu_name())")
     ap.add_argument("--map-only", action="store_true", help="map the map sequence only (single-session accuracy)")
     ap.add_argument("--keep-chunks", action="store_true", help="keep the per-trial symlink folders")
     ap.add_argument("--require-map", action="store_true", help="fail instead of mapping when --out holds no stored map")
@@ -415,7 +486,7 @@ def main():
         trials = build_trials(n_q, args.trial_len, args.trial_stride)
         qp = [(a, b, out / f"query_poses_t{ti}.txt") for ti, (a, b) in enumerate(trials)]
         evaluate_trials(out / "map_poses.txt", qp, args.map, args.query, out,
-                        sim3=args.system == "orbslam3" and args.orb_sensor == "mono", r_d=args.r_d)
+                        sim3=args.system == "orbslam3" and args.orb_sensor == "mono", r_d=args.r_d, system=args.system)
         return
     if args.system == "orbslam3":
         mp, qp, sim3 = run_orbslam3(args, out)
@@ -423,7 +494,7 @@ def main():
         mp, qp, sim3 = run_rtabmap(args, out)
     (out / "args.json").write_text(json.dumps(vars(args), indent=1))
     if not args.map_only:
-        evaluate_trials(mp, qp, args.map, args.query, out, sim3=sim3, r_d=args.r_d)
+        evaluate_trials(mp, qp, args.map, args.query, out, sim3=sim3, r_d=args.r_d, system=args.system)
 
 
 if __name__ == "__main__":

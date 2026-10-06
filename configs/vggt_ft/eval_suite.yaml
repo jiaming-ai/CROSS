@@ -1,0 +1,27 @@
+# Held-out evaluation suite (never trained on).  python -m vggt_ft.evaluate --ckpt <ckpt> --suite <this> --out <json>
+# Window lists are built once and stored next to this file's name (windows_dir) so every checkpoint sees the same windows.
+root: /mnt/datasets-livsyn/jz/test
+windows_dir: /mnt/datasets-livsyn/jz/test/windows_v1
+sets:
+# CROSS benchmark datasets (vggt_ft/prep/cross_bench.py)
+- {name: openloris_seq, dataset: openloris, protocol: seq, frames: 8, stride: 2, per_seq: 6, aspect: 0.75}
+- {name: openloris_cross, dataset: openloris, protocol: cross, n_ref: 5, n_neg: 2, per_seq: 6, aspect: 0.75, neg_dist: 4.0}
+- {name: simchange_seq, dataset: simchange, protocol: seq, frames: 8, stride: 2, per_seq: 2, aspect: 0.75, max_windows: 200}
+- {name: simchange_cross, dataset: simchange, protocol: cross, n_ref: 5, n_neg: 2, per_seq: 2, aspect: 0.75, max_windows: 200}
+- {name: rover_seq, dataset: rover, protocol: seq, frames: 8, stride: 2, per_seq: 6, aspect: 0.75}
+- {name: rover_cross, dataset: rover, protocol: cross, n_ref: 5, n_neg: 2, per_seq: 6, aspect: 0.75}
+- {name: kitti_seq, dataset: kitti, protocol: seq, frames: 8, stride: 1, per_seq: 8, aspect: 0.5}
+# VGGT-Omega / DA3 benchmarks (vggt_ft/prep/public_bench.py): 10 random frames per window (their protocol)
+- {name: eth3d, dataset: eth3d, protocol: random, frames: 10, per_seq: 10, aspect: 0.67}
+- {name: 7scenes, dataset: 7scenes, protocol: random, frames: 10, per_seq: 2, aspect: 0.75}
+- {name: 7scenes_cross, dataset: 7scenes, protocol: cross, n_ref: 5, n_neg: 2, per_seq: 2, aspect: 0.75, max_windows: 150}
+- {name: nrgbd, dataset: nrgbd, protocol: random, frames: 10, per_seq: 10, aspect: 0.75}
+- {name: dtu, dataset: dtu, protocol: random, frames: 10, per_seq: 5, aspect: 0.75}
+- {name: hiroom, dataset: hiroom, protocol: random, frames: 10, per_seq: 5, aspect: 0.75}
+# monocular metric depth (scale head; single frame)
+- {name: nyuv2, dataset: nyuv2, protocol: single, per_seq: 41, aspect: 0.75}
+- {name: diode, dataset: diode, protocol: single, per_seq: 100, aspect: 0.75, max_windows: 500}
+# dynamic scenes
+- {name: sintel, dataset: sintel, protocol: random, frames: 10, per_seq: 3, aspect: 0.5}
+- {name: tum_dynamic, dataset: tum_dynamic, protocol: seq, frames: 8, stride: 3, per_seq: 10, aspect: 0.75}
+- {name: bonn_dynamic, dataset: bonn_dynamic, protocol: seq, frames: 8, stride: 3, per_seq: 10, aspect: 0.75}
