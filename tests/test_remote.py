@@ -161,3 +161,77 @@ def test_observation_cadence():
     assert [c.frame(big, True) for _ in range(4)] == [False, True, False, True]    # 0.3 m
     assert c.frame(small, False) is False and c.frame(None, False) is False       # frames the back end does not map
     assert c.frame(small, True) is True                    # re-initialization after the missing reading
+
+
+def test_codec_roundtrip():
+    """The wire format: nested dicts / lists, numbers (nan and inf too), None, arrays of any dtype, images (lossless
+    PNG; JPEG close), no other types."""
+    import pytest
+    from cross.remote.codec import decode, encode
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 255, (24, 32, 3), dtype=np.uint8)
+    msg = {"index": 3, "t": 0.25, "x": float("nan"), "big": float("inf"), "none": None, "flag": True,
+           "T": np.eye(4), "corners": rng.random((5, 2)).astype(np.float32), "link": (1.5, 0.01),
+           "nested": {"w": np.arange(3), "s": "ok"}, "rgb": img}
+    out = decode(encode(msg))
+    assert out["index"] == 3 and out["t"] == 0.25 and np.isnan(out["x"]) and out["big"] == float("inf")
+    assert out["none"] is None and out["flag"] is True and out["link"] == [1.5, 0.01] and out["nested"]["s"] == "ok"
+    assert np.array_equal(out["T"], np.eye(4)) and out["corners"].dtype == np.float32
+    assert np.array_equal(out["nested"]["w"], np.arange(3)) and np.array_equal(out["rgb"], img)
+    lossy = decode(encode({"rgb": img}, jpeg=90))["rgb"]
+    assert lossy.shape == img.shape and lossy.dtype == np.uint8
+    with pytest.raises(TypeError):
+        encode({"f": lambda: 0})
+
+
+def test_grpc_link():
+    """A real gRPC stream on localhost: the open message reaches the builder, frames are answered in order with their
+    images intact, an extra delay holds the replies, control messages are answered, close releases the server."""
+    import socket
+    import time
+    import pytest
+    pytest.importorskip("grpc")
+    from cross.remote.grpc_link import GrpcLink, serve
+
+    class Fake:
+        stats = {"messages": 0}
+        released = False
+
+        def handle(self, msg):
+            self.stats["messages"] += 1
+            return {"index": msg["index"], "sum": int(msg["rgb"].sum()) if msg.get("rgb") is not None else None,
+                    "server_seconds": 0.0}
+
+        def save_map(self, path):
+            self.saved = path
+
+        def release(self):
+            Fake.released = True
+    seen = {}
+
+    def build(msg):
+        seen.update(msg)
+        return Fake(), None, {"gpu": "none"}
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    srv = serve(port, build)
+    try:
+        link = GrpcLink(f"127.0.0.1:{port}", {"mode": "stereo", "K": np.eye(3)}, extra_delay=0.2)
+        assert link.opened["gpu"] == "none" and seen["mode"] == "stereo" and np.array_equal(seen["K"], np.eye(3))
+        img = np.full((8, 8, 3), 7, np.uint8)
+        t0 = time.monotonic()
+        for k in range(5):
+            link.send({"index": k, "timestamp": 0.1 * k, "rgb": img if k % 2 == 0 else None}, 0.1 * k)
+        got = []
+        while len(got) < 5 and time.monotonic() - t0 < 10:
+            got += link.poll()
+            time.sleep(0.01)
+        assert time.monotonic() - t0 >= 0.2                          # the emulated round trip
+        assert [r["index"] for r in got] == list(range(5))
+        assert [r["sum"] for r in got] == [7 * 192, None, 7 * 192, None, 7 * 192]
+        assert link.call("save_map", path="/x/map.pkl")["op"] == "saved"
+        assert link.close()["stats"]["messages"] == 5 and Fake.released
+        assert link.summary()["latency_s"]["p50"] >= 0.2
+    finally:
+        srv.stop(0)

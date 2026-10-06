@@ -403,17 +403,38 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
     return session
 
 
-def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_left=None) -> Pipeline:
-    """The VGGT-Omega + IMU frontend (cross/mono/vggt_imu_frontend) on the back end's model and image transforms.  The
-    mono mode takes the metric scale from learned depth (DA3, with its bias in the graph), the stereo mode from the
-    current stereo pair (no learned depth)."""
-    from cross.mono.vggt_imu_frontend import VggtImuFrontend
-    stereo = mode == "stereo"
-    if stereo:
+def _vgio_config(mc, mode, T_right_in_left=None):
+    """(In place) the stereo mode's VGGT-inertial odometry takes the metric scale from the stereo pair: no learned
+    depth and no bias state for it."""
+    if mode == "stereo":
         if T_right_in_left is None:
             raise ValueError("The stereo mode's VGGT-inertial odometry needs the stereo calibration (T_right_in_left)")
         mc.imu.depth_prior = False
         mc.imu.vgio_depth_bias = False
+    return mc
+
+
+def vgio_frontend(K, mc, mode, T_right_in_left=None, device="cuda", system=None, metric=None):
+    """The VGGT-Omega + IMU frontend (cross/mono/vggt_imu_frontend): with the back end (system) its pass service runs
+    in-process on the back end's model and image transforms; without, it has none (the edge of a remote session,
+    cross/remote, whose server holds it)."""
+    from cross.mono.vggt_imu_frontend import VggtImuFrontend
+    service = dict(backend=system.pose_est.backend, rgb_transform=system.rgb_transform,
+                   depth_transform=system.depth_transform, metric_model=metric) if system is not None \
+        else dict(local_service=False)
+    frontend = VggtImuFrontend(K, mc, device, interval=mc.imu.visual_interval, depth_every=mc.imu.depth_every,
+                               context=mc.imu.vgio_context, keyframe_age=mc.imu.vgio_keyframe_age,
+                               visual_rotation=mc.imu.vgio_visual_rotation, graph=mc.imu.vgio_graph,
+                               T_right_in_left=T_right_in_left if mode == "stereo" else None, **service)
+    frontend.standalone = False
+    return frontend
+
+
+def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_left=None) -> Pipeline:
+    """The VGGT-Omega + IMU frontend (cross/mono/vggt_imu_frontend) on the back end's model and image transforms.  The
+    mono mode takes the metric scale from learned depth (DA3, with its bias in the graph), the stereo mode from the
+    current stereo pair (no learned depth)."""
+    _vgio_config(mc, mode, T_right_in_left)
     metric = None
     if mc.imu.depth_prior:
         from cross.mono.models import DA3MetricDepth
@@ -421,17 +442,62 @@ def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_lef
                          lambda: DA3MetricDepth(mc.metric_model, device, mc.metric_resolution))
 
     def vgio_factory():
-        frontend = VggtImuFrontend(K, mc, device, metric_model=metric, backend=system.pose_est.backend,
-                                   rgb_transform=system.rgb_transform, depth_transform=system.depth_transform,
-                                   interval=mc.imu.visual_interval, depth_every=mc.imu.depth_every,
-                                   context=mc.imu.vgio_context, keyframe_age=mc.imu.vgio_keyframe_age,
-                                   visual_rotation=mc.imu.vgio_visual_rotation, graph=mc.imu.vgio_graph,
-                                   T_right_in_left=T_right_in_left if stereo else None)
-        frontend.standalone = False
-        return frontend
+        return vgio_frontend(K, mc, mode, T_right_in_left, device, system=system, metric=metric)
     pipeline = Pipeline(system, vgio_factory(), 1, mode, "vgio", frontend_factory=vgio_factory)
     pipeline.continuous_start_in_map = continuous_start
     return pipeline
+
+
+def edge_session(mode: str, odometry: str, camera, system_config, link_factory, *, T_right_in_left=None,
+                 mono_config=None, mono_estimator: str = "da3", upload: str = "predicted"):
+    """The edge of a remote session behind a real link (cross/remote/grpc_link.py): the odometry only, no GPU model.
+    link_factory(open message) -> link; the open message carries what the server needs to build the same session
+    (build_session): mode, odometry, camera, stereo calibration and the resolved configurations."""
+    from cross.core.config import config_to_dict
+    from cross.core.config import _to_dict
+    from cross.remote.edge import ObservationCadence, RemotePipeline
+    if odometry not in ("external", "vgio"):
+        raise ValueError("Remote sessions: external odometry or VGGT-inertial odometry (--odometry vgio)")
+    K = np.array(camera.K, dtype=np.float64).copy()
+    cfg = copy.deepcopy(system_config)
+    mc = copy.deepcopy(mono_config)
+    frontend = factory = None
+    if odometry == "vgio":
+        mc.imu.enabled = True
+        if mc.imu.vgio_align:
+            raise ValueError("vgio_align (measurements only on the back end's passes) needs a local session")
+        edge_mc = _vgio_config(copy.deepcopy(mc), mode, T_right_in_left)
+
+        def factory():
+            return vgio_frontend(K, edge_mc, mode, T_right_in_left, device="cpu")
+        frontend = factory()
+    open_msg = {"mode": mode, "odometry": odometry, "mono_estimator": mono_estimator,
+                "camera": {"K": K, "width": int(camera.frame_width), "height": int(camera.frame_height)},
+                "T_right_in_left": None if T_right_in_left is None else np.asarray(T_right_in_left, dtype=np.float64),
+                "system_config": config_to_dict(cfg), "mono_config": None if mc is None else _to_dict(mc)}
+    return RemotePipeline(frontend, link_factory(open_msg), mode, odometry, ObservationCadence(cfg.pose_est), 1, upload,
+                          frontend_factory=factory, server=None, continuous_start_in_map=odometry == "vgio", K=K)
+
+
+def server_session(open_msg, device="cuda"):
+    """The server of a remote session from the edge's open message (edge_session): (MapServer, factory of a new pass
+    service for a new session of the edge's odometry, information for the edge)."""
+    from cross.core.config import SystemConfig, _from_dict
+    from cross.core.types import Camera
+    from cross.mono.config import MonoConfig
+    from cross.remote.server import MapServer
+    cam = open_msg["camera"]
+    camera = Camera(K=np.asarray(cam["K"], dtype=np.float64), frame_width=int(cam["width"]),
+                    frame_height=int(cam["height"]))
+    cfg = _from_dict(SystemConfig, open_msg["system_config"])
+    mc = None if open_msg.get("mono_config") is None else _from_dict(MonoConfig, open_msg["mono_config"])
+    p = build_session(open_msg["mode"], open_msg["odometry"], camera, cfg, T_right_in_left=open_msg.get("T_right_in_left"),
+                      mono_config=mc, device=device, mono_estimator=open_msg.get("mono_estimator", "da3"))
+    service = p.frontend.service if p.frontend is not None else None
+    factory = (lambda: p.frontend_factory().service) if p.frontend_factory is not None else None
+    import torch
+    info = {"gpu": torch.cuda.get_device_name() if torch.cuda.is_available() else "cpu"}
+    return MapServer(p.mapper, service, keep_lie=False), factory, info
 
 
 # ---------------------------------------------------------------------- command line (scripts/map_and_reloc*.py)
@@ -480,6 +546,13 @@ def add_session_args(ap):
     g.add_argument("--remote-upload", choices=("predicted", "all"), default="predicted",
                    help="images of the frames the back end will observe and the odometry measures, or of every mapped frame")
     g.add_argument("--remote-seed", type=int, default=0, help="seed of the jitter")
+    g.add_argument("--remote-server", default="",
+                   help="HOST:PORT of a remote-session server (scripts/remote/serve.py): a real gRPC link instead of the "
+                        "simulated one; this process runs only the edge")
+    g.add_argument("--remote-extra-delay", type=float, default=0.0,
+                   help="real link: round-trip delay added on top of the network's (s), half in each direction")
+    g.add_argument("--remote-realtime", action="store_true",
+                   help="real link: feed the frames at their timestamps (wall clock), as a sensor would")
 
 
 FAST_STEREO_PRESET = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "stereo_fast.yaml")
@@ -507,6 +580,14 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
         vo_config = visual_odometry_config(args.dpvo_checkpoint, seed=seed, mask_people=args.vo_mask_people)
 
     def make():
+        if getattr(args, "remote_server", ""):
+            from cross.remote.grpc_link import GrpcLink
+
+            def link(open_msg):
+                return GrpcLink(args.remote_server, open_msg, jpeg=args.remote_jpeg, extra_delay=args.remote_extra_delay,
+                                realtime=args.remote_realtime)
+            return edge_session(mode, odometry, camera, cfg, link, T_right_in_left=T_right_in_left,
+                                mono_config=mono_config, mono_estimator=mono_estimator, upload=args.remote_upload)
         session = build_session(mode, odometry, camera, cfg, T_right_in_left=T_right_in_left, mono_config=mono_config,
                                 vo_config=vo_config, visualize=visualize, mono_estimator=mono_estimator)
         if getattr(args, "remote", False):

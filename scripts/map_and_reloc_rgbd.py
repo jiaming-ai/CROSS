@@ -145,7 +145,7 @@ def _timing_summary():
 def run_mapping(args, out: Path) -> dict:
     ds = make_loader(args.map, args, args.seed)
     system = new_system(args, ds)
-    kf_gt, n, last_kf = {}, 0, None
+    kf_gt, n, last_kf, gts = {}, 0, None, []
     t0 = time.time()
     online = [] if getattr(args, "online_poses", False) else None
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
@@ -156,10 +156,14 @@ def run_mapping(args, out: Path) -> dict:
         if online is not None:               # the pose the session published at this frame (and its odometry's)
             fp = getattr(system, "frontend_pose", None)
             online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
+        gts.append(d["world_pose"])
         if system.last_added_kf_id is not None and system.last_added_kf_id != last_kf:
             last_kf = system.last_added_kf_id
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
     elapsed = time.time() - t0
+    frames = system.keyframe_frames() if hasattr(system, "keyframe_frames") else None
+    if frames is not None:                  # behind a real link the keyframe ids come back late: by their frames
+        kf_gt = {k: gts[f].tolist() for k, f in frames.items() if f < len(gts)}
     nodes = system.hypothesis_manager.nodes
     n_perm = len([k for k in nodes.values() if not k.temporary])
     logger.info(f"Mapping done: {n} frames in {elapsed:.1f}s ({n / elapsed:.2f} FPS), {len(nodes)} keyframes ({n_perm} permanent)")
@@ -178,7 +182,7 @@ def run_mapping(args, out: Path) -> dict:
     ate = float(np.sqrt(np.mean(np.sum(((T[:3, :3] @ src.T).T + T[:3, 3] - dst) ** 2, 1))))
     meta = {"kf_gt": kf_gt, "kf_est": kf_est, "T_gt_from_map": T.tolist(), "map_ate_rmse": ate, "n_frames": n,
             "elapsed": elapsed, "n_keyframes": len(nodes), "n_permanent": n_perm, "timing": _timing_summary(),
-            "map_file_bytes": map_file.stat().st_size}
+            "map_file_bytes": map_file.stat().st_size if map_file.exists() else None}
     if online is not None:
         from reloc_metrics import online_pose_metrics
         meta["online"] = online_pose_metrics(online, T)
@@ -188,7 +192,7 @@ def run_mapping(args, out: Path) -> dict:
     if args.dump_graph:          # pose graph with ground truth, input of scripts/lc/calibrate_noise.py (which ignores the gt)
         from graph_io import dump_graph
         dump_graph(system.mapper, out / "graph_s0.json", kf_gt, session_id=0, meta={"map": str(args.map), "seed": args.seed})
-    logger.info(f"Map ATE vs GT (permanent kfs): {ate:.3f} m, map file {meta['map_file_bytes'] / 2**20:.1f} MB")
+    logger.info(f"Map ATE vs GT (permanent kfs): {ate:.3f} m, map file {(meta['map_file_bytes'] or 0) / 2**20:.1f} MB")
     release(system)
     return meta
 

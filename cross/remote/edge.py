@@ -15,7 +15,7 @@ class ObservationCadence:
     relaxation while one hypothesis dominates (obs_confident_*) is not known to the edge: the strict rule sends more."""
 
     def __init__(self, pose_est_cfg):
-        c = pose_est_cfg
+        c = self.cfg = pose_est_cfg
         self.min_t, self.min_r = float(c.obs_min_translation), float(c.obs_min_rotation)
         self.max_steps, self.warmup = int(c.obs_max_interval_steps), int(c.obs_warmup_steps)
         self.every_frame = self.min_t <= 0 and self.min_r <= 0 and self.max_steps <= 1
@@ -72,6 +72,7 @@ class RemotePipeline:
         self.frontend, self.link, self.server = frontend, link, server
         self.mode, self.odometry = mode, odometry
         self.cadence, self.upload = cadence, upload
+        self._pose_est_cfg = cadence.cfg
         self.mapping_interval = int(mapping_interval)
         self.frontend_factory = frontend_factory
         self.continuous_start_in_map = continuous_start_in_map
@@ -95,37 +96,58 @@ class RemotePipeline:
 
     @property
     def hypothesis_manager(self):
-        return self.server.system.hypothesis_manager
+        if self.server is not None:
+            return self.server.system.hypothesis_manager
+        return _RemoteKeyframes(self.link)
+
+    def keyframe_frames(self):
+        """Behind a real link: the frame index each keyframe was made at (the replies naming it come late), else None."""
+        if self.server is not None:
+            return None
+        self.link.flush()
+        return {int(k): int(v) for k, v in self.link.call("keyframes")["frames"].items()}
 
     @property
     def last_added_kf_id(self):
-        return self.server.system.last_added_kf_id
+        return self.server.system.last_added_kf_id if self.server is not None else self.link.last_added_kf_id
 
     def save_map(self, path):
         self.link.flush()
-        self.server.save_map(str(path))
+        if self.server is not None:
+            self.server.save_map(str(path))
+        else:
+            self.link.call("save_map", path=str(path))
 
     def load_map(self, path):
         """Start a new session in a stored map (fresh frontend, no alignment)."""
+        replaced = False
         if self.frontend is not None and getattr(self.frontend, "index", 0):
             if self.frontend_factory is None:
                 raise RuntimeError("Load a map before processing images of a new session")
             self.frontend.shutdown()
             self.frontend = self.frontend_factory()
+            replaced = True
         self.initialized, self._map, self._fpose, self._odom = False, None, {}, np.eye(4)
         self._sent, self.index = {}, -1
-        self.cadence = ObservationCadence(self.server.system.config.pose_est)
+        self.cadence = ObservationCadence(self._pose_est_cfg)
+        if hasattr(self.link, "flush") and self.server is None:
+            self.link.flush()
         if hasattr(self.link, "reset"):
             self.link.reset()
         if self.frontend is not None:
             self.frontend.continuous_start = self.continuous_start_in_map
-        self.server.load_map(str(path))
+        if self.server is not None:
+            self.server.load_map(str(path))
+        else:
+            self.link.call("load_map", path=str(path), new_service=replaced)
 
     def release(self):
         if self.frontend is not None:
             self.frontend.shutdown()
         if self.server is not None:
             self.server.release()
+        elif hasattr(self.link, "close"):
+            self.link.close()
         self.frontend = self.server = None
 
     # ------------------------------------------------------------------ one frame
@@ -136,6 +158,8 @@ class RemotePipeline:
             frame["timestamp"] = float(self._frames)
         self._frames += 1
         t = float(frame["timestamp"])
+        if hasattr(self.link, "pace"):
+            self.link.pace(t)                    # a real link in real time: the frame is due at its timestamp
         self._receive(t)                         # the replies that arrived since the last frame
         self.index += 1
         i = self.index
@@ -254,6 +278,25 @@ class RemotePipeline:
         if self.frontend is not None:
             out["frontend"] = {k: v for k, v in self.frontend.stats.items() if isinstance(v, (int, float))}
         return out
+
+
+class _RemoteKeyframes:
+    """The server's keyframes as the runners read them (hypothesis_manager.nodes: temporary, pose_mu[0]), behind a
+    real link."""
+
+    def __init__(self, link):
+        self.link = link
+
+    @property
+    def nodes(self):
+        from types import SimpleNamespace
+        import pypose as pp
+        import torch
+        self.link.flush()
+        r = self.link.call("keyframes")
+        return {int(k): SimpleNamespace(temporary=bool(v["temporary"]),
+                                        pose_mu=pp.mat2SE3(torch.as_tensor(np.asarray(v["pose"])[None], dtype=torch.float32)))
+                for k, v in r["nodes"].items()}
 
 
 def remote_session(pipeline, link_factory, upload="predicted"):
