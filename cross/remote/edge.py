@@ -23,6 +23,15 @@ class ObservationCadence:
         self.T = np.eye(4)
         self.missing = False
 
+    def sync(self, state):
+        """Continue from the back end's actual state (MapServer.cadence_state, after a map load)."""
+        self.processed, self.start = int(state["processed"]), int(state["session_start"])
+        self.steps = int(state["steps_since_obs"])
+        T = state.get("T_since_obs")
+        self.T = np.eye(4) if T is None else np.asarray(T, dtype=np.float64)
+        self.unknown = T is None and self.processed > 0       # its motion since the observation is not known: observe
+        self.missing = bool(state.get("kidnap"))
+
     def frame(self, delta, map_frame: bool) -> bool:
         """The motion of this frame (None: missing) and whether the back end steps it; True if it will observe it (or
         initialize on it)."""
@@ -40,7 +49,8 @@ class ObservationCadence:
         if self.every_frame:
             return True
         self.steps += 1
-        if self.processed - self.start <= self.warmup or self.steps >= self.max_steps:
+        if self.processed - self.start <= self.warmup or self.steps >= self.max_steps or getattr(self, "unknown", False):
+            self.unknown = False
             observe = True
         else:
             moved = self.min_t > 0 and float(np.linalg.norm(self.T[:3, 3])) >= self.min_t
@@ -138,8 +148,11 @@ class RemotePipeline:
             self.frontend.continuous_start = self.continuous_start_in_map
         if self.server is not None:
             self.server.load_map(str(path))
+            self.cadence.sync(self.server.cadence_state())
         else:
-            self.link.call("load_map", path=str(path), new_service=replaced)
+            r = self.link.call("load_map", path=str(path), new_service=replaced)
+            if r.get("cadence") is not None:
+                self.cadence.sync(r["cadence"])
 
     def release(self):
         if self.frontend is not None:

@@ -91,6 +91,23 @@ class MapServer:
         self.stats["seconds"] += dt
         return reply
 
+    def cadence_state(self) -> dict:
+        """The back end's observation-cadence state (read only), for the edge's copy (ObservationCadence.sync): a back
+        end reused for a new session (load_map) keeps its frame and step counters and its motion since the last
+        observation."""
+        s = self.system
+        acc = getattr(s, "odom_accumulator", None)
+        means = getattr(acc, "_odoms_means", {}) if acc is not None else {}
+        m_obs, m_step = means.get("since_last_obs"), means.get("since_last_step")
+        T = None
+        if m_obs is not None:
+            from cross.utils.lie_tensor import normalize_se3
+            T = normalize_se3(m_obs.Inv() @ acc._accumulated_odom).matrix().detach().cpu().numpy().astype(np.float64)
+        return {"processed": int(getattr(s, "_processed_frame_num", 0)),
+                "session_start": int(getattr(s, "_session_start_frame", 0)),
+                "steps_since_obs": int(getattr(s, "_steps_since_obs", 0)), "T_since_obs": T,
+                "kidnap": bool(acc is not None and "since_last_step" in means and m_step is None)}
+
     # ------------------------------------------------------------------ session
     def save_map(self, path):
         self.system.save_map(str(path))

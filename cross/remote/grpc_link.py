@@ -65,7 +65,8 @@ def serve(port: int, build, max_sessions: int = 4):
                     server.service = factory()
                 server.load_map(msg["path"])
                 kf_frames, last_kf = {}, server.system.last_added_kf_id
-                yield encode({"op": "loaded", "n_keyframes": len(server.system.hypothesis_manager.nodes)})
+                yield encode({"op": "loaded", "n_keyframes": len(server.system.hypothesis_manager.nodes),
+                              "cadence": server.cadence_state()})
             elif op == "keyframes":
                 from .server import pose_matrix
                 nodes = server.system.hypothesis_manager.nodes
