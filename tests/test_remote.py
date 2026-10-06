@@ -120,11 +120,13 @@ def test_failed_late_measurement_restarts_the_chain():
 
 class _Server:
     def __init__(self):
-        self.seen = []
+        self.seen, self.stale = [], []
 
-    def handle(self, msg):
+    def handle(self, msg, stale=False):
         self.seen.append(msg["index"])
-        return {"index": msg["index"], "work": {"observed": msg.get("observe", False)}, "server_seconds": 0.0}
+        self.stale.append(stale)
+        return {"index": msg["index"], "work": {"observed": msg.get("observe", False) and not stale, "stale": stale},
+                "server_seconds": 0.0}
 
 
 def test_sim_link_timing():
@@ -235,3 +237,23 @@ def test_grpc_link():
         assert link.summary()["latency_s"]["p50"] >= 0.2
     finally:
         srv.stop(0)
+
+
+def test_overload_policy():
+    """A server slower than the frames (0.25 s per observation at 10 Hz): without a budget the queue and the replies'
+    lag grow without bound; with a 0.3 s budget the frames that waited longer are stepped without their observation
+    and the lag stays bounded."""
+    from cross.remote.link import SimLink
+
+    def run(budget):
+        srv = _Server()
+        link = SimLink(srv, rtt=0.0, compute="model", costs={"frame": 0.01, "observe": 0.25}, measure_bytes=False,
+                       max_backlog=budget)
+        for k in range(100):
+            link.send({"index": k, "timestamp": 0.1 * k, "observe": True}, 0.1 * k)
+        lag = [e["arrival"] - e["sent"] for e in link.log]
+        return srv, lag
+    srv, lag = run(None)
+    assert not any(srv.stale) and lag[-1] > 10 * lag[5]
+    srv, lag = run(0.3)
+    assert 0 < sum(srv.stale) < 100 and max(lag) < 0.3 + 0.26 + 1e-9
