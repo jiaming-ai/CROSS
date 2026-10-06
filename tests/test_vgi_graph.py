@@ -364,7 +364,7 @@ def test_stereo_scale_of_a_simulated_drive():
 
 
 def test_stereo_depth_scale_observation():
-    """The stereo-depth scale of a pass (VggtImuFrontend._stereo_depth_scale): a textured slanted plane rendered as a
+    """The stereo-depth scale of a pass (VgioPassService._stereo_depth_scale): a textured slanted plane rendered as a
     rectified pair (0.1 m baseline), the pass's depth at half the true depth: SGBM depth against it gives log 2."""
     import cv2
     import torch
@@ -385,9 +385,8 @@ def test_stereo_depth_scale_observation():
     T_rl = np.eye(4)
     T_rl[0, 3] = b
     fe = VggtImuFrontend(K, MonoConfig(), device="cpu", depth_transform=lambda x: x, T_right_in_left=T_rl)
-    fe._frame, fe._right = (0, 0.0, left), right
-    obs, info = fe._stereo_depth_scale(torch.from_numpy((depth / 2.0).astype(np.float32)))
-    assert obs is not None, info
+    obs, info, sgbm = fe.service._stereo_depth_scale(torch.from_numpy((depth / 2.0).astype(np.float32)), left, right)
+    assert obs is not None and sgbm.shape == left.shape[:2], info
     assert abs(obs[0] - np.log(2.0)) < 0.03 and obs[1] < 0.1, (obs, info)
 
 
@@ -419,9 +418,9 @@ def test_metric_relative_factor_jacobians():
 
 
 def test_stereo_pnp_motion():
-    """The metric motion of tracked corners with the stereo depth of the earlier frame (VggtImuFrontend._stereo_pnp): a
-    known motion is recovered, its covariance shrinks with the pixel noise, and a rotation that disagrees with the gyro
-    is not used."""
+    """The metric motion of tracked corners with the stereo depth of the earlier frame (VggtImuFrontend._stereo_pnp, the
+    depth sampled at the corners by VgioPassService.corner_depth): a known motion is recovered, its covariance shrinks
+    with the pixel noise, and a rotation that disagrees with the gyro is not used."""
     from cross.mono.config import MonoConfig
     from cross.mono.vggt_imu_frontend import VggtImuFrontend
     rng = np.random.default_rng(1)
@@ -439,16 +438,17 @@ def test_stereo_pnp_motion():
     depth = np.zeros((h, w))
     depth[uv[:, 1].astype(int), uv[:, 0].astype(int)] = z
     fe = VggtImuFrontend(K, MonoConfig(), device="cpu", T_right_in_left=T_rl)
-    fe.m = {"sgbm": depth}
-    fe.klt_m = uv.astype(np.float32)[:, None]
-    fe.klt_cur = ub.astype(np.float32)[:, None]
-    out, info = fe._stereo_pnp(R_mb, 0.1)
+    fe.service._last_sgbm = (7, depth)
+    corner_z = fe.service.corner_depth(7, uv.astype(np.float32))
+    keep = np.arange(200)[::2]                                    # the corners still tracked (ids among the detected)
+    tracks = (uv.astype(np.float32)[keep, None], ub.astype(np.float32)[keep, None], keep, [], 7)
+    out, info = fe._stereo_pnp(R_mb, 0.1, tracks, corner_z)
     assert out is not None, info
     R, t, cov = out
     assert np.degrees(np.linalg.norm(Rotation.from_matrix(R.T @ R_mb).as_rotvec())) < 0.2
     assert np.linalg.norm(t - t_mb) < 0.03 and np.all(np.linalg.eigvalsh(cov) > 0)
     assert np.sqrt(np.trace(cov[3:6, 3:6])) < 0.05, cov
-    out, info = fe._stereo_pnp(Rotation.from_rotvec([0.0, 0.2, 0.0]).as_matrix() @ R_mb, 0.1)
+    out, info = fe._stereo_pnp(Rotation.from_rotvec([0.0, 0.2, 0.0]).as_matrix() @ R_mb, 0.1, tracks, corner_z)
     assert out is None and info["reason"] == "gyro"
 
 

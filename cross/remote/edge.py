@@ -1,0 +1,286 @@
+"""The edge half of a remote CROSS session (cross.remote): the odometry, the messages to the server, and the map-frame
+pose from the server's late replies."""
+
+import numpy as np
+
+from cross.pipeline import _inverse, restrict_inputs
+
+
+class ObservationCadence:
+    """The back end's observation cadence (cross.core.system.System._should_skip_observation: every frame for
+    obs_warmup_steps frames after an initialization, then after obs_min_translation m, obs_min_rotation rad or
+    obs_max_interval_steps mapped frames since the last observation) on the edge's own odometry: the frames whose images
+    the server needs.  The back end decides on the same motion (the deltas the edge sends), so the two agree up to
+    rounding; a frame the back end wants without its image is observed at the next one that has it.  Its adaptive
+    relaxation while one hypothesis dominates (obs_confident_*) is not known to the edge: the strict rule sends more."""
+
+    def __init__(self, pose_est_cfg):
+        c = pose_est_cfg
+        self.min_t, self.min_r = float(c.obs_min_translation), float(c.obs_min_rotation)
+        self.max_steps, self.warmup = int(c.obs_max_interval_steps), int(c.obs_warmup_steps)
+        self.every_frame = self.min_t <= 0 and self.min_r <= 0 and self.max_steps <= 1
+        self.processed = self.start = self.steps = 0
+        self.T = np.eye(4)
+        self.missing = False
+
+    def frame(self, delta, map_frame: bool) -> bool:
+        """The motion of this frame (None: missing) and whether the back end steps it; True if it will observe it (or
+        initialize on it)."""
+        if delta is None:
+            self.missing = True                  # the back end re-initializes at its next step (kidnapped)
+        else:
+            self.T = self.T @ np.asarray(delta, dtype=np.float64)
+        if not map_frame:
+            return False
+        self.processed += 1
+        if self.processed == 1 or self.missing:
+            self.missing = False
+            self.start, self.steps, self.T = self.processed, 0, np.eye(4)
+            return True
+        if self.every_frame:
+            return True
+        self.steps += 1
+        if self.processed - self.start <= self.warmup or self.steps >= self.max_steps:
+            observe = True
+        else:
+            moved = self.min_t > 0 and float(np.linalg.norm(self.T[:3, 3])) >= self.min_t
+            angle = float(np.arccos(np.clip((np.trace(self.T[:3, :3]) - 1.0) / 2.0, -1.0, 1.0)))
+            observe = moved or (self.min_r > 0 and angle >= self.min_r)
+        if observe:
+            self.steps, self.T = 0, np.eye(4)
+        return observe
+
+
+class RemotePipeline:
+    """A CROSS session whose back end runs behind a link (cross.remote.link): the edge's side, with the interface of
+    cross.pipeline.Pipeline (process, belief, save_map, load_map, release).
+
+    frontend  the VGGT-inertial odometry without its pass service (VggtImuFrontend(local_service=False)), or None:
+              the frames' external odometry (delta_pose) is the motion
+    link      send(message, t), poll(t) -> replies that have arrived by the dataset time t
+    upload    "predicted": images only on the frames the back end will observe (ObservationCadence) or the odometry
+              measures; "all": on every mapped frame (the local session's inputs exactly)
+    server    the in-process server of a simulated link (keyframes, map files), or None
+
+    The pose of frame t in the map frame is the back end's pose of the last replied mapped frame b carried to t by the
+    odometry: T_map(b) T_odom(b)^-1 T_odom(t)."""
+
+    def __init__(self, frontend, link, mode, odometry, cadence, mapping_interval=1, upload="predicted",
+                 frontend_factory=None, server=None, continuous_start_in_map=False, depth_model=None, K=None):
+        if upload not in ("predicted", "all"):
+            raise ValueError(f"Unknown upload policy {upload}")
+        self.frontend, self.link, self.server = frontend, link, server
+        self.mode, self.odometry = mode, odometry
+        self.cadence, self.upload = cadence, upload
+        self.mapping_interval = int(mapping_interval)
+        self.frontend_factory = frontend_factory
+        self.continuous_start_in_map = continuous_start_in_map
+        self.depth_model, self.K = depth_model, K
+        self.initialized = self.mapped_now = False
+        self.index = -1                          # frames processed in this session
+        self._frames = 0
+        self._fpose = {}                         # frame index -> odometry pose reported at that frame
+        self._odom = np.eye(4)
+        self._map = None                         # the last map reply
+        self._sent = {}                          # frame index -> dataset time it was sent
+        self.last_estimate = None
+        self.frontend_pose = None
+        self.stats = dict(frames=0, uploads=0, requests=0, replies=0, map_lag_frames=[], measurement_lag_s=[],
+                          map_lag_s=[])
+
+    # ------------------------------------------------------------------ server passthroughs (simulated link)
+    @property
+    def mapper(self):
+        return None if self.server is None else self.server.system
+
+    @property
+    def hypothesis_manager(self):
+        return self.server.system.hypothesis_manager
+
+    @property
+    def last_added_kf_id(self):
+        return self.server.system.last_added_kf_id
+
+    def save_map(self, path):
+        self.link.flush()
+        self.server.save_map(str(path))
+
+    def load_map(self, path):
+        """Start a new session in a stored map (fresh frontend, no alignment)."""
+        if self.frontend is not None and getattr(self.frontend, "index", 0):
+            if self.frontend_factory is None:
+                raise RuntimeError("Load a map before processing images of a new session")
+            self.frontend.shutdown()
+            self.frontend = self.frontend_factory()
+        self.initialized, self._map, self._fpose, self._odom = False, None, {}, np.eye(4)
+        self._sent, self.index = {}, -1
+        self.cadence = ObservationCadence(self.server.system.config.pose_est)
+        if hasattr(self.link, "reset"):
+            self.link.reset()
+        if self.frontend is not None:
+            self.frontend.continuous_start = self.continuous_start_in_map
+        self.server.load_map(str(path))
+
+    def release(self):
+        if self.frontend is not None:
+            self.frontend.shutdown()
+        if self.server is not None:
+            self.server.release()
+        self.frontend = self.server = None
+
+    # ------------------------------------------------------------------ one frame
+    def process(self, frame: dict):
+        if self.frontend is not None or self.mode == "mono":
+            frame = restrict_inputs(frame, self.mode, self.odometry)
+        if self.frontend is not None and frame.get("timestamp") is None:
+            frame["timestamp"] = float(self._frames)
+        self._frames += 1
+        t = float(frame["timestamp"])
+        self._receive(t)                         # the replies that arrived since the last frame
+        self.index += 1
+        i = self.index
+        rgb = frame["rgb"]
+        estimate = None
+        if self.frontend is not None:
+            import cv2
+            estimate = self.frontend.track(frame)
+            valid = bool(estimate.diagnostics.get("valid", True))
+            observable = valid or bool(estimate.diagnostics.get("unknown_motion", False))
+            index = getattr(self.frontend, "index", 1) - 1
+            map_now = observable and (not self.initialized or index % self.mapping_interval == 0)
+            req, self.frontend.request = self.frontend.request, None
+            if req is not None:
+                req["anchor"] = bool(map_now and req["m"] is not None)
+            delta, cov, fpose = estimate.delta_pose, estimate.motion_covariance, estimate.pose.copy()
+            depth = right = None
+            if map_now or req is not None:
+                depth = frame.get("depth")
+                if depth is None:
+                    depth = estimate.depth
+                if depth is None and self.depth_model is not None and map_now:
+                    depth = self.depth_model.predict_metric(rgb, self.K, rgb.shape[:2])
+                if depth is not None and depth.shape[:2] != rgb.shape[:2]:
+                    depth = cv2.resize(depth, (rgb.shape[1], rgb.shape[0]))
+                right = frame.get("rgb_right")
+            chart = fpose.copy() if map_now and not self.initialized else None
+        else:
+            map_now, req = True, None
+            delta, cov = frame.get("delta_pose"), frame.get("motion_covariance")
+            if delta is not None and i > 0:
+                self._odom = self._odom @ np.asarray(delta, dtype=np.float64)
+            fpose = self._odom.copy()
+            depth, right, chart = frame.get("depth"), frame.get("rgb_right"), None
+        observe = self.cadence.frame(delta, map_now)
+        send_images = (map_now and (observe or self.upload == "all")) or req is not None
+        msg = {"index": i, "timestamp": t, "delta_pose": delta, "motion_covariance": cov, "map_frame": map_now,
+               "initial_chart_pose": chart, "request": req}
+        if send_images:
+            msg.update(rgb=rgb, rgb_right=right, depth=depth)
+            self.stats["uploads"] += 1
+        self.stats["requests"] += int(req is not None)
+        self.stats["frames"] += 1
+        self._fpose[i] = fpose
+        self._sent[i] = t
+        self.link.send(msg, t)
+        self._receive(t)                         # a reply that arrived at once (no latency)
+        if map_now:
+            self.initialized = True
+        self.mapped_now = map_now
+        self.frontend_pose = fpose
+        if estimate is not None:
+            estimate.diagnostics["frontend_pose"] = fpose.tolist()
+            A0, _ = self._alignment()
+            estimate.pose = A0 @ fpose
+        self.last_estimate = estimate
+        self._prune()
+        return estimate
+
+    def _receive(self, t):
+        for r in self.link.poll(t):
+            self.stats["replies"] += 1
+            sent = self._sent.pop(r["index"], None)
+            if r.get("summary") is not None or "token" in r:
+                if self.frontend is not None:
+                    self.frontend.close(r["token"], r.get("summary"))
+                if sent is not None:
+                    self.stats["measurement_lag_s"].append(t - sent)
+            if r.get("map") is not None:
+                self._map = r["map"]
+                self.stats["map_lag_frames"].append(self.index - r["index"])
+                if sent is not None:
+                    self.stats["map_lag_s"].append(t - sent)
+
+    def _alignment(self):
+        """T_map T_odom^-1 of the last replied mapped frame (hypothesis 0, most likely hypothesis); identity before."""
+        m = self._map
+        if m is None or m["index"] not in self._fpose:
+            return np.eye(4), np.eye(4)
+        F_inv = _inverse(self._fpose[m["index"]])
+        return m["T0"] @ F_inv, m["Tbest"] @ F_inv
+
+    def belief(self, to_mat):
+        """(pose of hypothesis 0, pose of the most likely hypothesis, weights) in the map frame, as 4x4 arrays: the back
+        end's belief when it replied for this frame already (a zero-latency link), else that of its last reply carried
+        by the odometry since."""
+        m = self._map
+        if m is None:
+            pose = self._fpose[self.index] if self.index in self._fpose else np.eye(4)
+            return pose, pose, np.ones(1)
+        if m["index"] == self.index and self.mapped_now:
+            if m.get("mu0") is not None:
+                return to_mat(m["mu0"]), to_mat(m["mubest"]), m["w"]
+            return m["B0"], m["Bbest"], m["w"]
+        A0, Ab = self._alignment()
+        F = self._fpose[self.index]
+        return A0 @ F, Ab @ F, m["w"]
+
+    def _prune(self):
+        keep = min([self._map["index"] if self._map is not None else 0] + list(self._sent))
+        for k in [k for k in self._fpose if k < keep and k != self.index]:
+            del self._fpose[k]
+
+    def remote_stats(self) -> dict:
+        """Uploads, lags (dataset seconds from sending a frame to the reply), the link's and the server's counts."""
+        out = {k: v for k, v in self.stats.items() if not isinstance(v, list)}
+        for k in ("map_lag_frames", "measurement_lag_s", "map_lag_s"):
+            v = np.asarray(self.stats[k], dtype=np.float64)
+            out[k] = {"n": int(len(v)), "mean": float(v.mean()) if len(v) else None,
+                      "p50": float(np.median(v)) if len(v) else None,
+                      "p95": float(np.percentile(v, 95)) if len(v) else None, "max": float(v.max()) if len(v) else None}
+        if hasattr(self.link, "summary"):
+            out["link"] = self.link.summary()
+        if self.server is not None:
+            out["server"] = dict(self.server.stats)
+        if self.frontend is not None:
+            out["frontend"] = {k: v for k, v in self.frontend.stats.items() if isinstance(v, (int, float))}
+        return out
+
+
+def remote_session(pipeline, link_factory, upload="predicted"):
+    """A local session (cross.pipeline.build_session: a Pipeline with external or VGGT-inertial odometry) split into a
+    server (its back end and the odometry's pass service) and an edge behind the link link_factory(server)."""
+    from .server import MapServer
+    from cross.pipeline import Pipeline
+    if not isinstance(pipeline, Pipeline):
+        raise ValueError("Remote sessions: the rgbd / stereo modes and the mono mode with the ff back end")
+    if pipeline.odometry not in ("external", "vgio"):
+        raise ValueError("Remote sessions: external odometry or VGGT-inertial odometry (--odometry vgio); DPVO runs on "
+                         "the GPU")
+    frontend = pipeline.frontend
+    service = None
+    if frontend is not None:
+        if frontend.config.imu.vgio_align:
+            raise ValueError("vgio_align (measurements only on the back end's passes) needs a local session")
+        service, frontend.service = frontend.service, None
+    server = MapServer(pipeline.mapper, service)
+    factory = None
+    if pipeline.frontend_factory is not None:
+        def factory():
+            f = pipeline.frontend_factory()
+            server.service, f.service = f.service, None
+            return f
+    return RemotePipeline(frontend, link_factory(server), pipeline.mode, pipeline.odometry,
+                          ObservationCadence(pipeline.mapper.config.pose_est), pipeline.mapping_interval, upload,
+                          frontend_factory=factory, server=server,
+                          continuous_start_in_map=pipeline.continuous_start_in_map,
+                          depth_model=pipeline.depth_model, K=pipeline.K)

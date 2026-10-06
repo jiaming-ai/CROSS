@@ -864,7 +864,9 @@ class System:
             self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"),
                                               source_factor=obs.get('motion_source_factor'))
         
-        if obs.get("rgb", None) is not None:
+        # a remote session (cross.remote) steps every frame the edge maps, but sends the image only of the frames it
+        # expects the back end to observe (remote_frame without rgb: the step without an observation)
+        if obs.get("rgb", None) is not None or obs.get("remote_frame", False):
 
             # push obs to queue if rgb image is not None
             if self.async_update:
@@ -937,7 +939,9 @@ class System:
  
         
         ############ preprocess the image ############
-        if self.use_depth_pred:
+        if rgb_image is None and (self._processed_frame_num == 1 or self.hypothesis_manager.dist is None):
+            raise ValueError("A remote session must send the image of its first mapped frame")
+        if self.use_depth_pred and rgb_image is not None:
             pred_depth, confidence, output_dict = self.depth_pred.predict(rgb_image)
             depth_image = pred_depth.cpu().numpy()
 
@@ -945,7 +949,8 @@ class System:
             if 'data' in kwargs:
                 kwargs['data']['depth'] = depth_image
         
-        rgb_image = self.rgb_transform(rgb_image) # (3, H, W)
+        if rgb_image is not None:
+            rgb_image = self.rgb_transform(rgb_image) # (3, H, W)
         if rgb_right is not None:
             rgb_right = self.rgb_transform(rgb_right)
         if depth_image is not None:
@@ -968,7 +973,8 @@ class System:
 
         ret = self._construct_motion_dist()
 
-        self._prev_obs = (rgb_image, depth_image, confidence_map)
+        if rgb_image is not None:
+            self._prev_obs = (rgb_image, depth_image, confidence_map)
 
         #################################
         # Build pose update mask based on filter mode
@@ -1009,6 +1015,8 @@ class System:
             # and when not supplied, it's kidnapped event.
             # We might add logic to handle temporary no sensor readings due to sensor failure in the future.
             logger.info(f"Kidnapped event detected at step {self._processed_frame_num} - resetting tracking state")
+            if rgb_image is None:
+                raise ValueError("A remote session must send the image of a frame after missing odometry")
 
             # Reset hypothesis manager tracking state (metadata, evidence)
             self.hypothesis_manager.reset_tracking_state()
@@ -1034,7 +1042,12 @@ class System:
         # Skip the observation until the robot moved enough (or N steps elapsed) and
         # let the motion model carry the belief in between.
         ################################
-        if self._should_skip_observation():
+        skip = self._should_skip_observation()
+        if not skip and rgb_image is None:
+            # a remote session's edge did not send this frame's image: the observation waits for the next one
+            skip = True
+            self.last_step_diagnostics["observation_deferred"] = True
+        if skip:
             current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
             ret['current_mu'] = current_mu
             ret['current_sigma'] = current_sigma

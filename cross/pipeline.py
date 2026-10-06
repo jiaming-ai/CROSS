@@ -460,6 +460,26 @@ def add_session_args(ap):
     ap.add_argument("--fast", action="store_true",
                     help="stereo mode: faster preset (configs/stereo_fast.yaml: 6 images per pass instead of 10, ~35 %% "
                          "less time per observation; relocalization within noise on OpenLORIS, maps slightly less accurate)")
+    g = ap.add_argument_group("remote session (cross/remote): the back end and the GPU work on a server, the odometry "
+                              "on the edge, behind a simulated network on the dataset's clock")
+    g.add_argument("--remote", action="store_true",
+                   help="split the session (external or --odometry vgio): with the defaults below the replies come back "
+                        "after the server's modelled compute time; --remote-compute zero with --remote-rtt 0 reproduces "
+                        "the local session")
+    g.add_argument("--remote-rtt", type=float, default=0.0, help="network round-trip time (s)")
+    g.add_argument("--remote-jitter", type=float, default=0.0, help="mean of an exponential extra delay per direction (s)")
+    g.add_argument("--remote-compute", choices=("model", "measured", "zero"), default="model",
+                   help="server time per message: model (cross/remote/link.py COMPUTE_MODEL, --remote-costs), the measured "
+                        "wall time of this machine, or zero")
+    g.add_argument("--remote-costs", default="", help="compute model overrides, e.g. 'observe=0.08,own_pass=0.03'")
+    g.add_argument("--remote-outage", default="",
+                   help="link outages, seconds after the session's first frame: 'start:duration[,start:duration]' or "
+                        "'every:period:duration' (from one period on)")
+    g.add_argument("--remote-jpeg", type=int, default=0, help="JPEG quality of the uploaded images (0: lossless)")
+    g.add_argument("--remote-uplink-mbps", type=float, default=0.0, help="uplink bandwidth (0: unlimited)")
+    g.add_argument("--remote-upload", choices=("predicted", "all"), default="predicted",
+                   help="images of the frames the back end will observe and the odometry measures, or of every mapped frame")
+    g.add_argument("--remote-seed", type=int, default=0, help="seed of the jitter")
 
 
 FAST_STEREO_PRESET = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "stereo_fast.yaml")
@@ -487,7 +507,36 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
         vo_config = visual_odometry_config(args.dpvo_checkpoint, seed=seed, mask_people=args.vo_mask_people)
 
     def make():
-        return build_session(mode, odometry, camera, cfg, T_right_in_left=T_right_in_left, mono_config=mono_config,
-                             vo_config=vo_config, visualize=visualize, mono_estimator=mono_estimator)
+        session = build_session(mode, odometry, camera, cfg, T_right_in_left=T_right_in_left, mono_config=mono_config,
+                                vo_config=vo_config, visualize=visualize, mono_estimator=mono_estimator)
+        if getattr(args, "remote", False):
+            from cross.remote import remote_session
+            session = remote_session(session, remote_link_factory(args), upload=args.remote_upload)
+        return session
+    return make
+
+
+def _parse_outages(spec: str, horizon: float = 7200.0):
+    out = []
+    for part in [p for p in spec.split(",") if p.strip()]:
+        f = part.split(":")
+        if f[0] == "every":
+            period, duration = float(f[1]), float(f[2])
+            out += [(k * period, duration) for k in range(1, int(horizon / period) + 1)]
+        else:
+            out.append((float(f[0]), float(f[1])))
+    return out
+
+
+def remote_link_factory(args):
+    """server -> the simulated link of the runner's --remote-* options (cross/remote/link.py)."""
+    from cross.remote.link import SimLink
+    costs = {k: float(v) for k, v in (kv.split("=") for kv in args.remote_costs.split(",") if kv.strip())}
+    outages = _parse_outages(args.remote_outage)
+
+    def make(server):
+        return SimLink(server, rtt=args.remote_rtt, jitter=args.remote_jitter, compute=args.remote_compute,
+                       costs=costs, outages=outages, jpeg=args.remote_jpeg, uplink_mbps=args.remote_uplink_mbps,
+                       seed=args.remote_seed)
     return make
 

@@ -147,11 +147,15 @@ def run_mapping(args, out: Path) -> dict:
     system = new_system(args, ds)
     kf_gt, n, last_kf = {}, 0, None
     t0 = time.time()
+    online = [] if getattr(args, "online_poses", False) else None
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
         system.process(d)
         n += 1
+        if online is not None:               # the pose the session published at this frame (and its odometry's)
+            fp = getattr(system, "frontend_pose", None)
+            online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
         if system.last_added_kf_id is not None and system.last_added_kf_id != last_kf:
             last_kf = system.last_added_kf_id
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
@@ -175,6 +179,11 @@ def run_mapping(args, out: Path) -> dict:
     meta = {"kf_gt": kf_gt, "kf_est": kf_est, "T_gt_from_map": T.tolist(), "map_ate_rmse": ate, "n_frames": n,
             "elapsed": elapsed, "n_keyframes": len(nodes), "n_permanent": n_perm, "timing": _timing_summary(),
             "map_file_bytes": map_file.stat().st_size}
+    if online is not None:
+        from reloc_metrics import online_pose_metrics
+        meta["online"] = online_pose_metrics(online, T)
+    if hasattr(system, "remote_stats"):
+        meta["remote"] = system.remote_stats()
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
     if args.dump_graph:          # pose graph with ground truth, input of scripts/lc/calibrate_noise.py (which ignores the gt)
         from graph_io import dump_graph
@@ -189,7 +198,7 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
     T_gt_from_map = np.asarray(meta["T_gt_from_map"])
     q_start, q_end = args.query_start, args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
-    rows, n_obs = [], 0
+    rows, n_obs, remote_trials = [], 0, []
     t0 = time.time()
     t_steps = 0.0
     for ti, (ts_, te_) in enumerate(trials):
@@ -214,6 +223,8 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
             row["best_k"] = int(np.argmax(w))
             rows.append(row)
         logger.info(f"trial {ti}/{len(trials)}: final c0 err {rows[-1]['c0_t_err']:.2f} m / {rows[-1]['c0_r_err']:.1f} deg")
+        if hasattr(system, "remote_stats"):
+            remote_trials.append(system.remote_stats())
         release(system)
     elapsed = time.time() - t0
     rel = map_relative_errors(rows, meta)
@@ -232,6 +243,8 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
         "step_time_mean_s": float(np.mean([r["dt"] for r in rows])),
         "timing": _timing_summary(),
     }
+    if remote_trials:
+        summary["remote"] = remote_trials[0] if len(remote_trials) == 1 else {"trials": remote_trials}
     (out / "reloc_rows.json").write_text(json.dumps(rows))
     (out / "reloc_summary.json").write_text(json.dumps(summary, indent=1))
     logger.info(f"RS {summary['RS']:.3f} (1 m / 5 deg {summary['RS_1m_5deg']:.3f}) over {len(trials)} trials, "
@@ -262,6 +275,8 @@ def main():
     ap.add_argument("--query-end", type=int, default=None)
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
+    ap.add_argument("--online-poses", action="store_true",
+                    help="map run: score the pose published at every frame (map_meta.json 'online')")
     ap.add_argument("--skip-reloc", action="store_true")
     ap.add_argument("--dump-graph", action="store_true", help="write the mapping pose graph (graph_s0.json) for the noise calibration")
     add_session_args(ap)

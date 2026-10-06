@@ -160,6 +160,7 @@ def run_mapping(args, out: Path):
     n = 0
     last_kf = None
     step_times = []
+    online = [] if getattr(args, "online_poses", False) else None
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
@@ -167,6 +168,9 @@ def run_mapping(args, out: Path):
         system.process(d)
         step_times.append(time.perf_counter() - ts)
         n += 1
+        if online is not None:               # the pose the session published at this frame (and its odometry's)
+            fp = getattr(system, "frontend_pose", None)
+            online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
         if system.last_added_kf_id != last_kf and system.last_added_kf_id is not None:
             last_kf = system.last_added_kf_id
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
@@ -198,8 +202,13 @@ def run_mapping(args, out: Path):
         "timing": _timing_summary(),
         "map_file_bytes": map_file.stat().st_size,
     }
+    if online is not None:
+        from reloc_metrics import online_pose_metrics
+        meta["online"] = online_pose_metrics(online, T_gt_from_map)
+    if hasattr(system, "remote_stats"):
+        meta["remote"] = system.remote_stats()
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
-    logger.info(f"Map ATE vs GT (permanent kfs): {map_ate:.3f} m")
+    logger.info(f"Map ATE vs GT (permanent kfs): {map_ate:.3f} m" + (f", online {meta['online']}" if online else ""))
     system.release()          # shuts down and releases the GPU models (`atexit` keeps a reference to the system)
     del system
     gc.collect()
@@ -273,6 +282,7 @@ def run_reloc(args, out: Path, meta: dict):
                             f"best(k={row['best_k']}) {row['best_t_err']:.2f} m, w0={row['w0']:.2f}")
     elapsed = time.time() - t0
     n_new = len(system.hypothesis_manager.nodes) - n_map_kfs
+    remote = system.remote_stats() if hasattr(system, "remote_stats") else None
     system.release()
 
     from reloc_metrics import map_relative_errors, summarize_errors, summarize_trials
@@ -319,6 +329,8 @@ def run_reloc(args, out: Path, meta: dict):
         **step_time_stats([r["dt"] for r in rows]),
         "timing": _timing_summary(),
     }
+    if remote is not None:
+        summary["remote"] = remote
     (out / "reloc_rows.json").write_text(json.dumps(rows))
     (out / "reloc_summary.json").write_text(json.dumps(summary, indent=1))
     logger.info(json.dumps({k: v for k, v in summary.items() if k != "timing"}, indent=1))
@@ -356,6 +368,8 @@ def main():
     ap.add_argument("--obs-min-rotation", type=float, default=0.0)
     ap.add_argument("--obs-max-interval", type=int, default=1)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
+    ap.add_argument("--online-poses", action="store_true",
+                    help="map run: score the pose published at every frame (map_meta.json 'online')")
     ap.add_argument("--skip-reloc", action="store_true")
     ap.add_argument("--no-intra-lc", action="store_true", help="ablation: disable the intra-hypothesis loop closure (PGO of hypothesis 0)")
     ap.add_argument("--seed", type=int, default=None, help="seed of the odometry noise (reproducible runs)")
