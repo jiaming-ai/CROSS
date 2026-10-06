@@ -9,15 +9,19 @@ while true; do
   for run in "$@"; do
     for ck in $(ls $RUNS/$run/${CKPT_GLOB:-ckpt_*_bf16.pt} 2>/dev/null); do
       tag=$(basename $ck .pt | sed 's/^ckpt_//; s/_bf16$//'); out=$EVAL/${run}_${tag}.json
-      if [ ! -e $out.done ]; then
+      # <out>.lock (atomic mkdir): several watchers can share runs without evaluating the same checkpoint twice
+      if [ ! -e $out.done ] && mkdir $out.lock 2>/dev/null; then
         echo "$(date +%F_%T) eval $run $tag"
         CUDA_VISIBLE_DEVICES=$GPU python -m vggt_ft.evaluate --ckpt $ck --suite configs/vggt_ft/eval_suite.yaml --out $out \
           > /data0/jz/logs/eval_${run}_${tag}.log 2>&1 && touch $out.done
+        rmdir $out.lock
       fi
       # validation split of the training datasets (checkpoint selection) for runs trained with data.val_mod
-      if [ -n "$VAL_RUNS" ] && echo " $VAL_RUNS " | grep -q " $run " && [ ! -e ${out%.json}_val.json.done ]; then
+      vo=${out%.json}_val.json
+      if [ -n "$VAL_RUNS" ] && echo " $VAL_RUNS " | grep -q " $run " && [ ! -e $vo.done ] && mkdir $vo.lock 2>/dev/null; then
         CUDA_VISIBLE_DEVICES=$GPU python -m vggt_ft.evaluate --ckpt $ck --suite configs/vggt_ft/val_suite.yaml \
-          --out ${out%.json}_val.json > /data0/jz/logs/eval_${run}_${tag}_val.log 2>&1 && touch ${out%.json}_val.json.done
+          --out $vo > /data0/jz/logs/eval_${run}_${tag}_val.log 2>&1 && touch $vo.done
+        rmdir $vo.lock
       fi
     done
   done
