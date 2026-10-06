@@ -433,7 +433,7 @@ class Job:
             d.mkdir(parents=True, exist_ok=True)
             if (map_dir / "atlas.osa").exists() and not (d / "atlas.osa").exists():
                 os.symlink((map_dir / "atlas.osa").resolve(), d / "atlas.osa")     # loaded read-only
-            for f in ("map_poses.txt", "map_poses.txt.final", "map_time.json"):
+            for f in ("map_poses.txt", "map_poses.txt.final", "map_poses.txt.times", "map_time.json"):
                 if (map_dir / f).exists() and not (d / f).exists():
                     shutil.copy(map_dir / f, d / f)
             if (map_dir / "map.db").exists() and not (d / "map.db").exists():

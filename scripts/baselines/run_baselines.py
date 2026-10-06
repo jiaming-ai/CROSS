@@ -276,12 +276,14 @@ def run_orbslam3(args, out: Path):
     if vis == "rgbd":
         rd += ["--depth-dir", "depth_mm"]          # the views expose uint16 millimetre depth as depth_mm/
 
-    def imu_args(seq: Path, view: Path, start: int, end: int):
-        """--times (the view's frames on the IMU clock) and --imu for an inertial run of frames [start, end)."""
+    def imu_args(seq: Path, view: Path, start: int, end: int, poses_file: Path):
+        """--times (the view's frames on the IMU clock) and --imu for an inertial run of frames [start, end).  The times
+        are also kept as <poses_file>.times: the final trajectory is stamped with them (apply_final_trajectory)."""
         if not inertial:
             return []
         t = imu_frame_times(seq, n_frames(seq), fps)[start:end]
         np.savetxt(view / "imu_frame_times.txt", t, fmt="%.6f")
+        np.savetxt(str(poses_file) + ".times", t, fmt="%.6f")
         return ["--times", str(view / "imu_frame_times.txt"), "--imu", str(seq / f"{imu_name(seq)}.txt")]
     # real-time feed (ORB-SLAM3's examples do the same): its local mapping / loop closing / merging threads get the time
     # they would get on the robot, which matters for the causal query poses
@@ -293,7 +295,7 @@ def run_orbslam3(args, out: Path):
         mv = make_chunk(m, out / "views_map", 0, n_frames(m))
         orb_yaml(m, out / "map.yaml", save_atlas=atlas, fps=fps, baseline=args.baseline, imu=inertial)
         rc, dt = run(orb + [voc, str(out / "map.yaml"), str(mv), str(map_poses), "--fps", str(fps)] + rd +
-                     imu_args(m, mv, 0, n_frames(m)), out / "map.log", cwd=str(out))
+                     imu_args(m, mv, 0, n_frames(m), map_poses), out / "map.log", cwd=str(out))
         (out / "map_time.json").write_text(json.dumps({"rc": rc, "seconds": dt, "n_frames": n_frames(m)}))
     if args.map_only:
         return map_poses, [], args.orb_sensor == "mono"
@@ -306,7 +308,7 @@ def run_orbslam3(args, out: Path):
     for ti, (a, b) in enumerate(trials):
         chunk = make_chunk(q, out / "trials", a, b)
         qp = out / f"query_poses_t{ti}.txt"
-        cmd = orb + [voc, str(out / "query.yaml"), str(chunk), str(qp), "--fps", str(fps)] + rd + imu_args(q, chunk, a, b)
+        cmd = orb + [voc, str(out / "query.yaml"), str(chunk), str(qp), "--fps", str(fps)] + rd + imu_args(q, chunk, a, b, qp)
         rc, dt = run(cmd, out / f"query_t{ti}.log", cwd=str(out))
         for _retry in range(2):
             if rc >= 0:
@@ -386,11 +388,20 @@ def apply_final_trajectory(poses, poses_file, fps):
     if not fin.is_file():
         return poses
     poses = dict(poses)
+    # stamps: i / fps, or the frame times of the run (<poses_file>.times; visual-inertial runs use the IMU clock)
+    tfile = Path(str(poses_file) + ".times")
+    times = np.loadtxt(tfile).reshape(-1) if tfile.is_file() else None
     for line in fin.read_text().splitlines():
         v = line.split()
         if len(v) < 8:
             continue
-        idx = int(round(float(v[0]) * fps))
+        if times is not None:
+            k = int(np.clip(np.searchsorted(times, float(v[0])), 1, len(times) - 1))
+            idx = k if abs(times[k] - float(v[0])) < abs(times[k - 1] - float(v[0])) else k - 1
+            if abs(times[idx] - float(v[0])) > 0.5 / fps:
+                continue
+        else:
+            idx = int(round(float(v[0]) * fps))
         in_atlas = len(v) < 10 or v[8] == v[9]
         T = np.eye(4)
         T[:3, :3] = Rotation.from_quat([float(x) for x in v[4:8]]).as_matrix()
