@@ -340,12 +340,14 @@ class Job:
                "--out", out, "--snr", self.snr or 10]
         if self.a.setup == "stereo" and self.dcfg.get("baseline"):
             cmd += ["--baseline", self.dcfg["baseline"]]
-        if system == "orbslam3":
-            cmd += ["--system", "orbslam3", "--orb-sensor", self.a.setup]
-        elif system in ("rtabmap", "rtabmap_vo"):
+        if system in ("orbslam3", "orbslam3_imu"):
+            cmd += ["--system", "orbslam3", "--orb-sensor", ("imu_" if system == "orbslam3_imu" else "") + self.a.setup]
+        elif system in ("rtabmap", "rtabmap_vo", "rtabmap_vi"):
             cmd += ["--system", "rtabmap_stereo" if self.a.setup == "stereo" else "rtabmap"]
-            if system == "rtabmap_vo":
+            if system in ("rtabmap_vo", "rtabmap_vi"):
                 cmd += ["--rtab-vo"]
+            if system == "rtabmap_vi":
+                cmd += ["--rtab-imu"]
         cmd += [str(v) for v in self.scfg.get("args", [])]
         if self.odom_file:
             cmd += ["--odom-file", self.odom_file]
@@ -353,8 +355,9 @@ class Job:
 
     def baseline_map(self, map_seq, out: Path):
         """Map with up to two retries: ORB-SLAM3 occasionally crashes while saving its atlas at shutdown."""
-        need = {"orbslam3": ["atlas.osa", "map_poses.txt"], "rtabmap": ["map.db", "map_poses.txt"],
-                "rtabmap_vo": ["map.db", "map_poses.txt"]}[self.a.system]
+        need = {"orbslam3": ["atlas.osa", "map_poses.txt"], "orbslam3_imu": ["atlas.osa", "map_poses.txt"],
+                "rtabmap": ["map.db", "map_poses.txt"], "rtabmap_vo": ["map.db", "map_poses.txt"],
+                "rtabmap_vi": ["map.db", "map_poses.txt"]}[self.a.system]
         total = 0.0
         for attempt in range(3):
             for f in need + ["map_time.json", "map_poses.txt.final"]:
@@ -380,7 +383,7 @@ class Job:
             poses = load_poses(mp)
             fin = Path(str(mp) + ".final")
             if fin.is_file():
-                if self.a.system == "orbslam3":
+                if self.a.system in ("orbslam3", "orbslam3_imu"):
                     poses = {i: v for i, v in apply_final_trajectory({}, mp, fps).items()}
                 else:
                     poses = load_poses(fin)

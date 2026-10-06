@@ -1,13 +1,13 @@
 // ORB-SLAM3 driver for image-folder sequences (SimChange / benchmark layout: left/, right/, depth/ PNG folders).
 //
 //   orbslam3_reloc <voc> <settings.yaml> <sequence_dir> <out_poses.txt> [--localization] [--fps F]
-//                  [--sensor stereo|rgbd|mono|imu_mono] [--left-dir left] [--right-dir right] [--depth-dir depth]
+//                  [--sensor stereo|rgbd|mono|imu_mono|imu_stereo|imu_rgbd] [--left-dir left] [--right-dir right] [--depth-dir depth]
 //                  [--times frame_times.txt] [--imu imu.txt] [--imu-time-offset S] [--realtime | --pace-ms MS]
 //
 // Frames are fed in real time with --realtime (one frame every 1/fps s, as ORB-SLAM3's examples do; the local mapping
 // and loop closing threads get the time they would get on the robot), else with a fixed sleep of --pace-ms after each.
 //
-// imu_mono: monocular-inertial; needs --times (one camera timestamp per image, seconds) and --imu (rows
+// imu_mono / imu_stereo / imu_rgbd: visual-inertial; need --times (one camera timestamp per image, seconds) and --imu (rows
 // "t wx wy wz ax ay az" in the IMU frame, '#' comments allowed; the settings carry the IMU.* block).  The IMU
 // samples in (t_{i-1}, t_i] go with image i; --imu-time-offset S is added to the IMU timestamps (camera clock =
 // IMU clock + S).  --times also replaces the i / fps timestamps of the other sensors.
@@ -96,11 +96,12 @@ int main(int argc, char** argv) {
         else if (a == "--imu" && i + 1 < argc) imu_file = argv[++i];
         else if (a == "--imu-time-offset" && i + 1 < argc) imu_time_offset = atof(argv[++i]);
     }
-    const bool inertial = sensor == "imu_mono";
+    const bool inertial = sensor == "imu_mono" || sensor == "imu_stereo" || sensor == "imu_rgbd";
+    const std::string vis = inertial ? sensor.substr(4) : sensor;     // the visual sensor: mono / stereo / rgbd
     auto left = listPng(seq + "/" + left_dir);
     std::vector<std::string> right;
-    if (sensor == "stereo") right = listPng(seq + "/" + right_dir);
-    else if (sensor == "rgbd") right = listPng(seq + "/" + depth_dir);
+    if (vis == "stereo") right = listPng(seq + "/" + right_dir);
+    else if (vis == "rgbd") right = listPng(seq + "/" + depth_dir);
     else right = left;
     if (left.empty() || left.size() != right.size()) {
         std::cerr << "bad sequence " << seq << " (" << left.size() << "/" << right.size() << ")\n";
@@ -116,7 +117,7 @@ int main(int argc, char** argv) {
     std::vector<ORB_SLAM3::IMU::Point> imu;
     if (inertial) {
         if (times.empty() || imu_file.empty()) {
-            std::cerr << "imu_mono needs --times and --imu\n";
+            std::cerr << sensor << " needs --times and --imu\n";
             return 1;
         }
         for (auto& r : readRows(imu_file))
@@ -130,9 +131,9 @@ int main(int argc, char** argv) {
         cv::FileStorage fs(settings, cv::FileStorage::READ);
         atlas_loaded = !fs["System.LoadAtlasFromFile"].empty();
     }
-    const auto type = sensor == "rgbd" ? ORB_SLAM3::System::RGBD
-                    : sensor == "mono" ? ORB_SLAM3::System::MONOCULAR
-                    : inertial ? ORB_SLAM3::System::IMU_MONOCULAR : ORB_SLAM3::System::STEREO;
+    const auto type = vis == "rgbd" ? (inertial ? ORB_SLAM3::System::IMU_RGBD : ORB_SLAM3::System::RGBD)
+                    : vis == "mono" ? (inertial ? ORB_SLAM3::System::IMU_MONOCULAR : ORB_SLAM3::System::MONOCULAR)
+                    : (inertial ? ORB_SLAM3::System::IMU_STEREO : ORB_SLAM3::System::STEREO);
     ORB_SLAM3::System SLAM(voc, settings, type, false);
     if (localization) SLAM.ActivateLocalizationMode();
     // reference keyframe of a multi-session run: the first keyframe of the loaded atlas's largest map
@@ -162,10 +163,9 @@ int main(int argc, char** argv) {
             while (next_imu < imu.size() && imu[next_imu].t <= ts) meas.push_back(imu[next_imu++]);
         auto t0 = std::chrono::steady_clock::now();
         Sophus::SE3f Tcw;
-        if (sensor == "rgbd") Tcw = SLAM.TrackRGBD(imL, cv::imread(right[i], cv::IMREAD_UNCHANGED), ts);
-        else if (sensor == "mono") Tcw = SLAM.TrackMonocular(imL, ts);
-        else if (inertial) Tcw = SLAM.TrackMonocular(imL, ts, meas);
-        else Tcw = SLAM.TrackStereo(imL, cv::imread(right[i], cv::IMREAD_COLOR), ts);
+        if (vis == "rgbd") Tcw = SLAM.TrackRGBD(imL, cv::imread(right[i], cv::IMREAD_UNCHANGED), ts, meas);
+        else if (vis == "mono") Tcw = SLAM.TrackMonocular(imL, ts, meas);
+        else Tcw = SLAM.TrackStereo(imL, cv::imread(right[i], cv::IMREAD_COLOR), ts, meas);
         t_total += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         int state = SLAM.GetTrackingState();
         // in a multi-session run the new session lives in its own map until it is merged into the loaded atlas;

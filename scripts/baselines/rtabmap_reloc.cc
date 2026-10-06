@@ -1,6 +1,7 @@
 // RTAB-Map RGB-D mapping / localization driver for SimChange-style sequences.
 //
-//   rtabmap_reloc <sequence_dir> <odom.txt> <database.db> <out_poses.txt> [--localization] [--vo] [--fps F] [--Param value ...]
+//   rtabmap_reloc <sequence_dir> <odom.txt> <database.db> <out_poses.txt> [--localization] [--vo] [--fps F]
+//                 [--imu imu.txt --times frame_times.txt --T-cam-imu T.txt] [--Param value ...]
 //
 // sequence_dir: left/*.png, depth_mm/*.png (16-bit millimetres), calib.json (fx fy cx cy read from calib_pinhole.txt)
 // odom.txt    : per-frame odometry camera-to-world (OpenCV convention), 16 values per row (noisy, as given to CROSS)
@@ -9,6 +10,11 @@
 // --vo        : RTAB-Map's own visual odometry (Odom/Strategy, default frame-to-map) instead of odom.txt (still read for
 //               the frame count); after a frame without odometry it resets to its latest pose (Odom/ResetCountdown 1)
 //               and frames without odometry are written with state 0.
+// --imu       : the camera's IMU (rows "t wx wy wz ax ay az" in the IMU frame, '#' comments; --times: one timestamp per
+//               image on the IMU clock; --T-cam-imu: 16 values, x_cam = T x_imu).  RTAB-Map's complementary filter turns
+//               the samples up to each image into an orientation, attached to the image's SensorData with the IMU's pose
+//               in the base frame: the visual odometry uses it for its motion guess and gravity, the map graph for its
+//               gravity constraints (Optimizer/GravitySigma).
 // Every frame writes:  idx  state  t00 ... t33  (camera-to-world in the map frame; state 3 once localized)
 #include <rtabmap/core/Rtabmap.h>
 #include <rtabmap/core/Odometry.h>
@@ -18,6 +24,8 @@
 #include <rtabmap/core/StereoCameraModel.h>
 #include <rtabmap/core/Parameters.h>
 #include <rtabmap/core/Transform.h>
+#include <rtabmap/core/IMU.h>
+#include <rtabmap/core/IMUFilter.h>
 #include <rtabmap/utilite/ULogger.h>
 #include <opencv2/opencv.hpp>
 #include <dirent.h>
@@ -61,6 +69,7 @@ int main(int argc, char** argv) {
     bool localization = false, visualOdometry = false;
     double fps = 10.0;
     std::string stereo_dir;          // stereo mode: directory with the right images (rectified, same intrinsics)
+    std::string imu_file, times_file, tci_file;
     double baseline = 0.0;
     for (int i = 5; i < argc; ++i) {
         std::string a = argv[i];
@@ -68,6 +77,9 @@ int main(int argc, char** argv) {
         else if (a == "--vo") visualOdometry = true;
         else if (a == "--fps" && i + 1 < argc) fps = atof(argv[++i]);
         else if (a == "--stereo" && i + 2 < argc) { stereo_dir = argv[++i]; baseline = atof(argv[++i]); }
+        else if (a == "--imu" && i + 1 < argc) imu_file = argv[++i];
+        else if (a == "--times" && i + 1 < argc) times_file = argv[++i];
+        else if (a == "--T-cam-imu" && i + 1 < argc) tci_file = argv[++i];
     }
     ParametersMap params = Parameters::parseArguments(argc, argv, true);
     params.insert(ParametersPair(Parameters::kRGBDEnabled(), "true"));
@@ -114,6 +126,43 @@ int main(int argc, char** argv) {
         std::cerr << "odometry rows " << odom.size() << " != frames " << left.size() << "\n";
         return 1;
     }
+    // IMU stream (optional)
+    auto readRows = [](const std::string& path) {
+        std::vector<std::vector<double>> rows;
+        std::ifstream f(path);
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.empty() || line[0] == '#') continue;
+            std::istringstream ss(line);
+            std::vector<double> v;
+            double x;
+            while (ss >> x) v.push_back(x);
+            if (!v.empty()) rows.push_back(v);
+        }
+        return rows;
+    };
+    std::vector<std::vector<double>> imu;
+    std::vector<double> times;
+    Transform imuLocal;            // the IMU in the base frame
+    std::unique_ptr<IMUFilter> imuFilter;
+    if (!imu_file.empty()) {
+        for (auto& r : readRows(imu_file)) if (r.size() >= 7) imu.push_back(r);
+        for (auto& r : readRows(times_file)) times.push_back(r[0]);
+        std::vector<double> T;
+        for (auto& r : readRows(tci_file)) T.insert(T.end(), r.begin(), r.end());
+        if (imu.empty() || times.size() < left.size() || T.size() < 12) {
+            std::cerr << "--imu needs IMU rows, one time per image (--times) and --T-cam-imu (" << imu.size() << " / "
+                      << times.size() << " / " << T.size() << ")\n";
+            return 1;
+        }
+        Transform Tci((float)T[0], (float)T[1], (float)T[2], (float)T[3], (float)T[4], (float)T[5], (float)T[6], (float)T[7],
+                      (float)T[8], (float)T[9], (float)T[10], (float)T[11]);
+        imuLocal = CameraModel::opticalRotation() * Tci;
+        imuFilter.reset(IMUFilter::create(IMUFilter::kComplementaryFilter, params));
+        std::cerr << imu.size() << " IMU samples, IMU in base frame: " << imuLocal.prettyPrint() << "\n";
+    }
+    size_t nextImu = 0;
+    while (!imu.empty() && nextImu < imu.size() && imu[nextImu][0] < times[0] - 1.0) ++nextImu;   // 1 s of filter warm-up
     if (!localization) remove(db.c_str());
     Rtabmap rtabmap;
     rtabmap.init(params, db);
@@ -131,10 +180,25 @@ int main(int argc, char** argv) {
             cv::Mat l8, r8;
             cv::cvtColor(rgb, l8, cv::COLOR_BGR2GRAY);
             cv::cvtColor(cv::imread(depth[i], cv::IMREAD_COLOR), r8, cv::COLOR_BGR2GRAY);
-            data = SensorData(l8, r8, stereoModel, (int)i + 1, i / fps);
+            data = SensorData(l8, r8, stereoModel, (int)i + 1, imuFilter ? times[i] : i / fps);
         } else {
             cv::Mat d16 = cv::imread(depth[i], cv::IMREAD_UNCHANGED);
-            data = SensorData(rgb, d16, model, (int)i + 1, i / fps);
+            data = SensorData(rgb, d16, model, (int)i + 1, imuFilter ? times[i] : i / fps);
+        }
+        if (imuFilter) {            // samples up to this image -> orientation of the IMU
+            const std::vector<double>* last = nullptr;
+            while (nextImu < imu.size() && imu[nextImu][0] <= times[i]) {
+                const auto& r = imu[nextImu++];
+                imuFilter->update(r[1], r[2], r[3], r[4], r[5], r[6], r[0]);
+                last = &r;
+            }
+            if (last) {
+                double qx, qy, qz, qw;
+                imuFilter->getOrientation(qx, qy, qz, qw);
+                cv::Mat cov = cv::Mat::eye(3, 3, CV_64FC1) * 0.01;
+                data.setIMU(IMU(cv::Vec4d(qx, qy, qz, qw), cov, cv::Vec3d((*last)[1], (*last)[2], (*last)[3]), cov,
+                                cv::Vec3d((*last)[4], (*last)[5], (*last)[6]), cov, imuLocal));
+            }
         }
         Transform odomBase = odom[i] * optical.inverse();        // camera c2w -> base c2w
         int lc = 0;
