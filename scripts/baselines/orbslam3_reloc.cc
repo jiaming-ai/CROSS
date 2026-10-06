@@ -24,6 +24,7 @@
 // of its own; the pose of a state-2 frame is expressed in the frame of that map's first keyframe, which is the frame
 // of the map session's exported trajectory (System::SaveTrajectoryWithMapId).
 #include <opencv2/opencv.hpp>
+#include <cstdlib>
 #include <Eigen/Core>
 #include <chrono>
 #include <fstream>
@@ -74,6 +75,8 @@ int main(int argc, char** argv) {
         std::cerr << "usage: orbslam3_reloc <voc> <settings.yaml> <sequence_dir> <out_poses.txt> [--localization] [--fps F]\n";
         return 1;
     }
+    // OpenCV's TBB backend ignores OPENCV_FOR_THREADS_NUM and starts one spinning worker per core in every process
+    if (const char* e = std::getenv("OPENCV_FOR_THREADS_NUM")) cv::setNumThreads(std::atoi(e));
     std::string voc = argv[1], settings = argv[2], seq = argv[3], out = argv[4];
     bool localization = false, atlas_loaded = false;
     double fps = 10.0;

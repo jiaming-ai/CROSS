@@ -28,6 +28,7 @@
 #include <rtabmap/core/IMUFilter.h>
 #include <rtabmap/utilite/ULogger.h>
 #include <opencv2/opencv.hpp>
+#include <cstdlib>
 #include <dirent.h>
 #include <algorithm>
 #include <fstream>
@@ -63,6 +64,8 @@ int main(int argc, char** argv) {
         std::cerr << "usage: rtabmap_reloc <sequence_dir> <odom.txt> <database.db> <out_poses.txt> [--localization] [--fps F] [--Param value]\n";
         return 1;
     }
+    // OpenCV's TBB backend ignores OPENCV_FOR_THREADS_NUM and starts one spinning worker per core in every process
+    if (const char* e = std::getenv("OPENCV_FOR_THREADS_NUM")) cv::setNumThreads(std::atoi(e));
     ULogger::setType(ULogger::kTypeConsole);
     ULogger::setLevel(ULogger::kWarning);
     std::string seq = argv[1], odomFile = argv[2], db = argv[3], out = argv[4];
