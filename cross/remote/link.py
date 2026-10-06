@@ -146,4 +146,7 @@ class SimLink:
                 "requests": int(sum(e["request"] for e in self.log)),
                 "latency_s": {"mean": float(lat.mean()), "p50": float(np.median(lat)), "p95": float(np.percentile(lat, 95)),
                               "max": float(lat.max())},
-                "server_busy": float(cost.sum() / dur), "uplink_kBps": float(up.sum() / dur / 1e3)}
+                "server_busy": float(cost.sum() / dur), "uplink_kBps": float(up.sum() / dur / 1e3),
+                # per message: dataset time sent, reply arrival - sent, modelled and measured server seconds, bytes
+                "timeline": [[round(e["sent"] - self.log[0]["sent"], 3), round(e["arrival"] - e["sent"], 4),
+                              round(e["cost"], 4), round(e["measured"], 4), int(e["bytes"])] for e in self.log]}

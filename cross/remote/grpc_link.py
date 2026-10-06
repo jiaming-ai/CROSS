@@ -207,4 +207,8 @@ class GrpcLink:
         if len(lat):
             out["latency_s"] = {"mean": float(lat.mean()), "p50": float(np.median(lat)),
                                 "p95": float(np.percentile(lat, 95)), "max": float(lat.max())}
+        t0 = self.log[0]["sent"] if self.log else 0.0
+        # per message: wall time sent, reply arrival - sent (None: none yet), server seconds, bytes up
+        out["timeline"] = [[round(e["sent"] - t0, 3), None if e.get("arrival") is None else round(e["arrival"] - e["sent"], 4),
+                            None if e.get("server_s") is None else round(e["server_s"], 4), int(e["bytes"])] for e in self.log]
         return out
