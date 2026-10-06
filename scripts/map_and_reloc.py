@@ -108,7 +108,8 @@ def make_config(args) -> SystemConfig:
 
 def odom_kwargs(args) -> dict:
     """Systematic odometry error of the simulated odometry (cross/dataloader/dataloader.py): scale bias, heading drift."""
-    return {"odom_scale_bias": args.odom_scale_bias, "odom_yaw_drift_deg_per_m": args.odom_yaw_drift}
+    return {"odom_scale_bias": args.odom_scale_bias, "odom_yaw_drift_deg_per_m": args.odom_yaw_drift,
+            "odom_file": getattr(args, "odom_file", None)}
 
 
 def pose_to_mat(p) -> np.ndarray:
@@ -154,11 +155,13 @@ def run_mapping(args, out: Path):
     if getattr(args, "dump_obs", False):          # every observation of the mapping run (offline back-end studies)
         from lc.obs_recorder import ObsRecorder
         recorder = ObsRecorder(system.mapper, out / "obs.jsonl")
-    kf_gt = {}
+    kf_gt, gts = {}, []
     t0 = time.time()
     n = 0
     last_kf = None
     step_times = []
+    kf_frame = {}            # frame index of every keyframe created (temporary ones too: T1 completeness)
+    online = [] if getattr(args, "online_poses", False) else None
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
@@ -166,10 +169,19 @@ def run_mapping(args, out: Path):
         system.process(d)
         step_times.append(time.perf_counter() - ts)
         n += 1
+        if online is not None:               # the pose the session published at this frame (and its odometry's)
+            fp = getattr(system, "frontend_pose", None)
+            online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
+        gts.append(d["world_pose"])
         if system.last_added_kf_id != last_kf and system.last_added_kf_id is not None:
             last_kf = system.last_added_kf_id
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
+            kf_frame[int(last_kf)] = args.map_start + idx * args.stride
     elapsed = time.time() - t0
+    frames = system.keyframe_frames() if hasattr(system, "keyframe_frames") else None
+    if frames is not None:                  # behind a real link the keyframe ids come back late: by their frames
+        kf_gt = {k: gts[f].tolist() for k, f in frames.items() if f < len(gts)}
+        kf_frame = {k: args.map_start + f * args.stride for k, f in frames.items()}
     n_perm = len([k for k in system.hypothesis_manager.nodes.values() if not k.temporary])
     logger.info(f"Mapping done: {n} frames in {elapsed:.1f}s ({n / elapsed:.2f} FPS), "
                 f"{len(system.hypothesis_manager.nodes)} keyframes ({n_perm} permanent)")
@@ -192,13 +204,18 @@ def run_mapping(args, out: Path):
     T_gt_from_map = umeyama_se3(src, dst)
     map_ate = float(np.sqrt(np.mean(np.sum(((T_gt_from_map[:3, :3] @ src.T).T + T_gt_from_map[:3, 3] - dst) ** 2, 1))))
     meta = {
-        "kf_gt": kf_gt, "kf_est": kf_est, "T_gt_from_map": T_gt_from_map.tolist(), "map_ate_rmse": map_ate,
+        "kf_gt": kf_gt, "kf_est": kf_est, "kf_frame": kf_frame, "T_gt_from_map": T_gt_from_map.tolist(), "map_ate_rmse": map_ate,
         "n_frames": n, "elapsed": elapsed, **step_time_stats(step_times), "n_keyframes": len(system.hypothesis_manager.nodes), "n_permanent": n_perm,
         "timing": _timing_summary(),
-        "map_file_bytes": map_file.stat().st_size,
+        "map_file_bytes": map_file.stat().st_size if map_file.exists() else None,
     }
+    if online is not None:
+        from reloc_metrics import online_pose_metrics
+        meta["online"] = online_pose_metrics(online, T_gt_from_map)
+    if hasattr(system, "remote_stats"):
+        meta["remote"] = system.remote_stats()
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
-    logger.info(f"Map ATE vs GT (permanent kfs): {map_ate:.3f} m")
+    logger.info(f"Map ATE vs GT (permanent kfs): {map_ate:.3f} m" + (f", online {meta['online']}" if online else ""))
     system.release()          # shuts down and releases the GPU models (`atexit` keeps a reference to the system)
     del system
     gc.collect()
@@ -272,6 +289,7 @@ def run_reloc(args, out: Path, meta: dict):
                             f"best(k={row['best_k']}) {row['best_t_err']:.2f} m, w0={row['w0']:.2f}")
     elapsed = time.time() - t0
     n_new = len(system.hypothesis_manager.nodes) - n_map_kfs
+    remote = system.remote_stats() if hasattr(system, "remote_stats") else None
     system.release()
 
     from reloc_metrics import map_relative_errors, summarize_errors, summarize_trials
@@ -318,6 +336,8 @@ def run_reloc(args, out: Path, meta: dict):
         **step_time_stats([r["dt"] for r in rows]),
         "timing": _timing_summary(),
     }
+    if remote is not None:
+        summary["remote"] = remote
     (out / "reloc_rows.json").write_text(json.dumps(rows))
     (out / "reloc_summary.json").write_text(json.dumps(summary, indent=1))
     logger.info(json.dumps({k: v for k, v in summary.items() if k != "timing"}, indent=1))
@@ -355,6 +375,8 @@ def main():
     ap.add_argument("--obs-min-rotation", type=float, default=0.0)
     ap.add_argument("--obs-max-interval", type=int, default=1)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
+    ap.add_argument("--online-poses", action="store_true",
+                    help="map run: score the pose published at every frame (map_meta.json 'online')")
     ap.add_argument("--skip-reloc", action="store_true")
     ap.add_argument("--no-intra-lc", action="store_true", help="ablation: disable the intra-hypothesis loop closure (PGO of hypothesis 0)")
     ap.add_argument("--seed", type=int, default=None, help="seed of the odometry noise (reproducible runs)")
@@ -366,6 +388,8 @@ def main():
     ap.add_argument("--dump-obs", action="store_true", help="write every observation of the mapping run to obs.jsonl (scripts/lc/obs_recorder.py)")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (e.g. 0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift of the odometry (deg per metre)")
+    ap.add_argument("--odom-file", default=None, help="odometry file of the prepared folders to use instead of "
+                    "odom_left.txt when present (e.g. odom_vio.txt from benchmark/datasets/prepare_vio.py)")
     ap.add_argument("--ff-meas-std", type=float, nargs=6, default=None, help="base measurement std [tx ty tz rx ry rz] of the FF estimator")
     args = ap.parse_args()
     if args.snr is not None and args.snr <= 0:

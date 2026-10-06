@@ -147,9 +147,15 @@ def imu_config_from_args(args):
     cfg = ImuConfig(enabled=bool(getattr(args, "imu", False)))
     for item in getattr(args, "imu_config", None) or []:
         key, _, value = item.partition("=")
-        if not hasattr(cfg, key.strip()):
+        key = key.strip()
+        if not hasattr(cfg, key):
             raise ValueError(f"Unknown ImuConfig key: {key}")
-        setattr(cfg, key.strip(), yaml.safe_load(value))
+        parsed = yaml.safe_load(value)
+        default = getattr(cfg, key)
+        # YAML reads exponents without a decimal point ("1e-5") as strings: numeric fields take numbers
+        if isinstance(default, float) and not isinstance(default, bool) and isinstance(parsed, (str, int)):
+            parsed = float(parsed)
+        setattr(cfg, key, parsed)
     return cfg
 
 

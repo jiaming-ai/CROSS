@@ -23,33 +23,60 @@ def umeyama(src: np.ndarray, dst: np.ndarray, with_scale: bool = False):
     return s, R, t
 
 
+COMPLETENESS_RULE = "time-or-path"      # recorded in every T1 result (PROTOCOL.md section 4, T1)
+
+
+def completeness(frames, gt: np.ndarray, fps: float = 10.0, window_s: float = 1.0, path_m: float = 1.0) -> float:
+    """Fraction of the sequence's frames covered by the poses at `frames` (frame indices of one map).
+
+    A frame is covered when one of these poses lies within `window_s` of it, or within `path_m` of it along the
+    travelled ground-truth path (arc length).  The time window catches lost tracking; the path distance tolerates
+    sparse keyframes of a slow or standing robot.  Path distance, not straight-line distance: on a revisit the poses
+    of the first pass are close in space but a whole loop away along the path, so a session that lost tracking on
+    its second pass is still flagged."""
+    n = len(gt)
+    ids = np.unique(np.asarray([i for i in frames if 0 <= i < n], dtype=int))
+    if n == 0 or len(ids) == 0:
+        return 0.0
+    covered = np.zeros(n, bool)
+    w = int(round(window_s * fps))
+    for i in ids:
+        covered[max(0, i - w):min(n, i + w + 1)] = True
+    if path_m > 0:
+        p = gt[:, :3, 3]
+        step = np.linalg.norm(np.diff(p, axis=0), axis=1)
+        s = np.concatenate([[0.0], np.cumsum(np.where(np.isfinite(step), step, 0.0))])
+        k = np.searchsorted(ids, np.arange(n))           # nearest pose before / after each frame along the path
+        before = np.abs(s - s[ids[np.clip(k - 1, 0, len(ids) - 1)]])
+        after = np.abs(s - s[ids[np.clip(k, 0, len(ids) - 1)]])
+        covered |= np.minimum(before, after) <= path_m
+    return float(covered.mean())
+
+
 def ate(est: dict, gt: np.ndarray, sim3: bool = False, fps: float = 10.0, window_s: float = 1.0,
-        min_completeness: float = 0.8) -> dict:
+        min_completeness: float = 0.8, path_m: float = 1.0, cover_frames=None) -> dict:
     """ATE RMSE of `est` (final trajectory, possibly keyframes only) against ground truth.
 
-    completeness: fraction of the sequence's frames within `window_s` of an evaluated pose; below
-    `min_completeness` the run counts as a tracking failure."""
+    completeness (see completeness()): fraction of the sequence's frames within `window_s` or `path_m` of travelled
+    path of an evaluated pose (or of `cover_frames`, when the system holds poses it does not export for the ATE, such
+    as CROSS's temporary keyframes on revisits); below `min_completeness` the run counts as a tracking failure."""
     ids = sorted(i for i in est if 0 <= i < len(gt) and np.isfinite(gt[i]).all())
     n = len(gt)
+    cov_ids = ids if cover_frames is None else sorted(set(ids) | {int(i) for i in cover_frames})
+    comp = completeness(cov_ids, gt, fps, window_s, path_m)
     if len(ids) < 3:
-        return {"ate_rmse": None, "completeness": len(ids) / max(n, 1), "n_poses": len(ids), "failed": True,
-                "align": "sim3" if sim3 else "se3"}
+        return {"ate_rmse": None, "completeness": comp, "n_poses": len(ids), "failed": True,
+                "align": "sim3" if sim3 else "se3", "completeness_rule": COMPLETENESS_RULE}
     src = np.array([est[i][:3, 3] for i in ids])
     dst = np.array([gt[i][:3, 3] for i in ids])
     s, R, t = umeyama(src, dst, with_scale=sim3)
     err = np.linalg.norm(s * (R @ src.T).T + t - dst, axis=1)
-    covered = np.zeros(n, bool)
-    w = int(round(window_s * fps))
-    idx = np.asarray(ids)
-    for i in idx:
-        covered[max(0, i - w):min(n, i + w + 1)] = True
-    comp = float(covered.mean())
     T = np.eye(4)
     T[:3, :3] = s * R
     T[:3, 3] = t
     return {"ate_rmse": float(np.sqrt(np.mean(err ** 2))), "ate_median": float(np.median(err)), "ate_max": float(err.max()),
             "completeness": comp, "n_poses": len(ids), "n_frames": n, "scale": s, "align": "sim3" if sim3 else "se3",
-            "failed": bool(comp < min_completeness), "T_gt_from_est": T.tolist()}
+            "failed": bool(comp < min_completeness), "completeness_rule": COMPLETENESS_RULE, "T_gt_from_est": T.tolist()}
 
 
 def first_stable(ok: np.ndarray, hold: int = 5):

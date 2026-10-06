@@ -35,6 +35,7 @@ import copy
 from pathlib import Path
 
 import pickle
+
 import os
 import queue
 
@@ -48,6 +49,18 @@ torch.set_printoptions(
     sci_mode=False,        # turn off 1.23e+04 style
     linewidth=300,
 )
+
+def _scale_translation(delta, s: float):
+    """An odometry reading (4x4 array or pypose SE3, translation first) with its translation multiplied by s."""
+    if isinstance(delta, np.ndarray):
+        out = np.array(delta, dtype=np.float64, copy=True)
+        out[:3, 3] *= s
+        return out
+    t = delta.tensor().clone()
+    t[..., :3] *= s
+    return pp.SE3(t)
+
+
 class System:
     """Pose-aware topological mapping system.
     Important: everything is in OPENCV convention.
@@ -241,6 +254,10 @@ class System:
                 logger.info(f"Loop closure noise model loaded from {lc_cfg.noise_file}")
             from cross.core.lc_verify import LoopClosureVerifier
             self._lc_verifier = LoopClosureVerifier(self, lc_cfg)
+            # the odometry scale guard needs translations that are metric without the odometry: PnP on depth, or the
+            # feed-forward estimator with a stereo rig (not the monocular mode, whose scale comes from the odometry)
+            self._lc_verifier.guard_metric = self.pose_est_type == PoseEstType.PNP or (
+                self.pose_est_type == PoseEstType.FF and T_right_in_left is not None)
             # calibrated metric scale of the feed-forward estimator (measured / true translation, from the odometry)
             if float(getattr(lc_cfg.noise, "visual_scale", 1.0) or 1.0) != 1.0 and hasattr(self, "pose_est"):
                 self.pose_est.metric_scale_correction = float(lc_cfg.noise.visual_scale)
@@ -839,12 +856,17 @@ class System:
         """
 
 
-        # first accumulate the odometry
+        # first accumulate the odometry (translations rescaled by the odometry scale guard when it has fired)
         if self.use_odometry:
+            v = getattr(self, "_lc_verifier", None)       # absent in test stubs built without __init__
+            if v is not None and v.odom_scale != 1.0 and obs.get("delta_pose") is not None:
+                obs = dict(obs, delta_pose=_scale_translation(obs["delta_pose"], v.odom_scale))
             self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"),
                                               source_factor=obs.get('motion_source_factor'))
         
-        if obs.get("rgb", None) is not None:
+        # a remote session (cross.remote) steps every frame the edge maps, but sends the image only of the frames it
+        # expects the back end to observe (remote_frame without rgb: the step without an observation)
+        if obs.get("rgb", None) is not None or obs.get("remote_frame", False):
 
             # push obs to queue if rgb image is not None
             if self.async_update:
@@ -917,7 +939,9 @@ class System:
  
         
         ############ preprocess the image ############
-        if self.use_depth_pred:
+        if rgb_image is None and (self._processed_frame_num == 1 or self.hypothesis_manager.dist is None):
+            raise ValueError("A remote session must send the image of its first mapped frame")
+        if self.use_depth_pred and rgb_image is not None:
             pred_depth, confidence, output_dict = self.depth_pred.predict(rgb_image)
             depth_image = pred_depth.cpu().numpy()
 
@@ -925,7 +949,8 @@ class System:
             if 'data' in kwargs:
                 kwargs['data']['depth'] = depth_image
         
-        rgb_image = self.rgb_transform(rgb_image) # (3, H, W)
+        if rgb_image is not None:
+            rgb_image = self.rgb_transform(rgb_image) # (3, H, W)
         if rgb_right is not None:
             rgb_right = self.rgb_transform(rgb_right)
         if depth_image is not None:
@@ -948,7 +973,8 @@ class System:
 
         ret = self._construct_motion_dist()
 
-        self._prev_obs = (rgb_image, depth_image, confidence_map)
+        if rgb_image is not None:
+            self._prev_obs = (rgb_image, depth_image, confidence_map)
 
         #################################
         # Build pose update mask based on filter mode
@@ -989,6 +1015,8 @@ class System:
             # and when not supplied, it's kidnapped event.
             # We might add logic to handle temporary no sensor readings due to sensor failure in the future.
             logger.info(f"Kidnapped event detected at step {self._processed_frame_num} - resetting tracking state")
+            if rgb_image is None:
+                raise ValueError("A remote session must send the image of a frame after missing odometry")
 
             # Reset hypothesis manager tracking state (metadata, evidence)
             self.hypothesis_manager.reset_tracking_state()
@@ -1014,7 +1042,12 @@ class System:
         # Skip the observation until the robot moved enough (or N steps elapsed) and
         # let the motion model carry the belief in between.
         ################################
-        if self._should_skip_observation():
+        skip = self._should_skip_observation()
+        if not skip and rgb_image is None:
+            # a remote session's edge did not send this frame's image: the observation waits for the next one
+            skip = True
+            self.last_step_diagnostics["observation_deferred"] = True
+        if skip:
             current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
             ret['current_mu'] = current_mu
             ret['current_sigma'] = current_sigma
@@ -1839,6 +1872,10 @@ class System:
         if delta_pose is not None:
             last_kf = self.hypothesis_manager.nodes.get(self.last_added_kf_id)
             last_step = getattr(last_kf, "step_created", None) if last_kf is not None else None
+            meta = {"n_frames": max(int(self._processed_frame_num) - int(last_step), 1) if last_step is not None else None}
+            v = getattr(self, "_lc_verifier", None)
+            if v is not None and getattr(v, "odom_fault", 0.0) > 0:   # the odometry scale guard has measured an odometry fault
+                meta["odom_fault"] = v.odom_fault
             self.hypothesis_manager.add_edge(
                 id1=self.last_added_kf_id, # since odom edge is from last added kf to current kf
                 id2=current_kf_id,
@@ -1846,7 +1883,7 @@ class System:
                 rel_pose_std=std,
                 type=EdgeType.ODOMETRY,
                 conditional_pose=conditional_motion,
-                meta={"n_frames": max(int(self._processed_frame_num) - int(last_step), 1) if last_step is not None else None},
+                meta=meta,
             )
         self.odom_accumulator.reset_item("since_last_add_kf")
         self.last_added_kf_id = current_kf_id
@@ -2283,7 +2320,7 @@ class System:
     def _map_anchor_pairs(self, keyframes):
         """Pairs of references with their metric relative pose from the map (component-0 means), used as
         long-baseline scale anchors by the feed-forward estimator.  Pairs are chosen by decreasing distance
-        within [map_anchor_min_dist, map_anchor_max_dist]."""
+        within [map_anchor_min_dist, map_anchor_max_dist] (all of them with map_anchor_min_pair_covis)."""
         ffc = self.config.pose_est.ff
         if not ffc.use_map_anchors or len(keyframes) < 2:
             return None
@@ -2296,7 +2333,9 @@ class System:
                 if ffc.map_anchor_min_dist <= d <= ffc.map_anchor_max_dist:
                     pairs.append((d, i, j, T_ij))
         pairs.sort(key=lambda x: -x[0])
-        return [(i, j, T) for _, i, j, T in pairs[:ffc.map_anchor_max_pairs]] or None
+        # with the pair-covisibility filter every pair is a candidate (the estimator keeps the longest that pass)
+        n = None if getattr(ffc, "map_anchor_min_pair_covis", 0.0) > 0 else ffc.map_anchor_max_pairs
+        return [(i, j, T) for _, i, j, T in pairs[:n]] or None
 
     def _construct_observation_dist(
         self,

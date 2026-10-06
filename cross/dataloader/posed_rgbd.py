@@ -50,8 +50,8 @@ class PosedRGBDLoader(Dataloader):
         self.c2w = np.loadtxt(self.root / "poses_left.txt").reshape(-1, 4, 4)
         assert len(self.c2w) == len(self.rgb_paths), f"{root}: {len(self.c2w)} poses, {len(self.rgb_paths)} images"
         self.odom_c2w = None
-        if (self.root / "odom_left.txt").is_file():
-            self.odom_c2w = np.loadtxt(self.root / "odom_left.txt").reshape(-1, 4, 4)
+        if self.odometry_path(self.root) is not None:
+            self.odom_c2w = np.loadtxt(self.odometry_path(self.root)).reshape(-1, 4, 4)
             assert len(self.odom_c2w) == len(self.rgb_paths)
             self.snr = None                   # real odometry: no simulated noise
             self.odom_scale_bias = self.odom_yaw_drift = 0.0

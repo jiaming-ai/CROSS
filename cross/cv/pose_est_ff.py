@@ -193,6 +193,19 @@ class _VGGTOmegaBackend(_Backend):
         self._head_stream.wait_stream(main)
         with torch.cuda.stream(self._head_stream), torch.autocast(device_type="cuda", enabled=False):
             pose_enc = m.camera_head(tokens, patch_token_start=start)
+        if k == 0:
+            # no view needs depth (covis_source=head without a frontend observation): the dense head is skipped
+            H, W = x.shape[-2:]
+            depth = conf = x.new_zeros((x.shape[0], 0, H, W))
+        else:
+            sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
+            with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
+                depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
+        main.wait_stream(self._head_stream)
+        # the fine-tune's covisibility / scale heads (small) run on the main stream after the join: on the side stream,
+        # concurrently with the dense head, they made the side-stream race (illegal memory access with CUDA graphs)
+        # frequent (H20 benchmark, 2026-10-06)
+        with torch.autocast(device_type="cuda", enabled=False):
             final = tokens[-1]
             covis = self.covis_head(final[:, :, :start]) if self.covis_head is not None else pose_enc.new_zeros(0)
             if getattr(self, "_scale_multilayer", False):
@@ -216,10 +229,6 @@ class _VGGTOmegaBackend(_Backend):
                 log_scale = (self.scale_head(final, start, pose_enc[:, 0, 8] if getattr(self.scale_head, "canonical_f",
                                                                                         None) else None)
                              if self.scale_head is not None else pose_enc.new_zeros(0))
-        sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
-        with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
-            depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
-        main.wait_stream(self._head_stream)
         return pose_enc, depth.float(), conf.float(), covis, log_scale
 
     def _forward(self, x: torch.Tensor, k: int, patch_tokens: Optional[torch.Tensor] = None):
@@ -376,6 +385,80 @@ def _load_scale_encoder(sd: dict, patch_embed, scale_head_cfg: Optional[dict], d
             raise RuntimeError(f"scale encoder adapters missing in the checkpoint, e.g. {[k for k in missing if 'lora_' in k][:3]}")
     logger.info(f"loaded the fine-tune's scale encoder ({'fully fine-tuned' if enc.full else f'{enc.n_lora} LoRA layers'})")
     return enc.eval().to(device)
+
+
+def pairwise_covisibility(pred: FFPrediction, views: List[int], grid: int = 48, rel_depth_tol: float = 0.15,
+                          min_conf_quantile: float = 0.3) -> np.ndarray:
+    """covisibility_scores for every ordered pair of the given views in one batched pass (one device
+    synchronisation): C[a, b] = score of source views[a] in destination views[b]; the diagonal is 1."""
+    n = len(views)
+    C = np.ones((n, n))
+    if n < 2:
+        return C
+    device = pred.depth.device
+    S, H, W = pred.depth.shape
+    pa, pb = np.nonzero(~np.eye(n, dtype=bool))                         # ordered pairs (source a, destination b)
+    vi = torch.as_tensor(views, device=device)
+    ys = torch.linspace(0, H - 1, grid, device=device)
+    xs = torch.linspace(0, W - 1, grid, device=device)
+    gy, gx = torch.meshgrid(ys, xs, indexing="ij")
+    gy, gx = gy.reshape(-1), gx.reshape(-1)
+    norm = torch.stack([gx / (W - 1) * 2 - 1, gy / (H - 1) * 2 - 1], dim=-1).view(1, 1, -1, 2).expand(n, 1, -1, 2)
+    depth = pred.depth[vi]
+    d = F.grid_sample(depth[:, None], norm, align_corners=True).view(n, -1)       # each view as a source, once
+    valid = torch.isfinite(d) & (d > 1e-6)
+    if pred.depth_conf is not None:
+        conf = pred.depth_conf[vi]
+        c = F.grid_sample(conf[:, None], norm, align_corners=True).view(n, -1)
+        thr = torch.quantile(conf.flatten(1)[:, :: max(1, (H * W) // 20000)], min_conf_quantile, dim=1)
+        valid &= c >= thr[:, None]
+    c2w = torch.from_numpy(pred.c2w).to(device=device, dtype=torch.float32)[vi]
+    K = torch.from_numpy(pred.K).to(device=device, dtype=torch.float32)[vi]
+    x = (gx - K[:, 0, 2:3]) / K[:, 0, 0:1] * d
+    y = (gy - K[:, 1, 2:3]) / K[:, 1, 1:2] * d
+    P = torch.stack([x, y, d, torch.ones_like(d)], dim=1)                          # (n,4,N) in the source cameras
+    a, b = torch.as_tensor(pa, device=device), torch.as_tensor(pb, device=device)
+    Pd = (torch.linalg.inv(c2w[b]) @ c2w[a] @ P[a])[:, :3]                         # into the destination cameras
+    z = Pd[:, 2]
+    Kd = K[b]
+    u = Kd[:, 0, 0:1] * Pd[:, 0] / z.clamp(min=1e-6) + Kd[:, 0, 2:3]
+    v = Kd[:, 1, 1:2] * Pd[:, 1] / z.clamp(min=1e-6) + Kd[:, 1, 2:3]
+    inside = (z > 1e-6) & (u >= 0) & (u <= W - 1) & (v >= 0) & (v <= H - 1)
+    un = torch.stack([u / (W - 1) * 2 - 1, v / (H - 1) * 2 - 1], dim=-1)[:, None]
+    zd = F.grid_sample(depth[b][:, None], un, align_corners=True).view(len(pa), -1)
+    ok = inside & ((z - zd).abs() <= rel_depth_tol * zd.clamp(min=1e-6)) & valid[a]
+    n_valid = valid[a].sum(dim=1)
+    scores = torch.where(n_valid >= 16, ok.sum(dim=1).double() / n_valid.clamp(min=1).double(),
+                         torch.zeros_like(n_valid, dtype=torch.float64))
+    C[pa, pb] = scores.cpu().numpy()
+    return C
+
+
+def filter_map_anchors(pred: FFPrediction, anchors: List[ScaleAnchor], min_covis: float, max_pairs: int,
+                       source: str = "geometric", grid: int = 48, rel_depth_tol: float = 0.15) -> List[ScaleAnchor]:
+    """Map anchors only between references that overlap each other: covisibility >= min_covis both ways, from the
+    predicted depth and poses ("geometric", needs both views' depth), the covisibility head ("head") or the smaller
+    of the two ("min"); the max_pairs first that pass are kept (the system lists them longest first).  Other anchors
+    are kept as they are."""
+    maps = [a for a in anchors if a.kind == "map"]
+    if not maps:
+        return anchors
+    views = sorted({a.idx_a for a in maps} | {a.idx_b for a in maps})
+    has_depth = pred.depth is not None and pred.depth.shape[0] > views[-1]
+    use_head = pred.covis is not None and (source in ("head", "min") or not has_depth)
+    use_geo = has_depth and (source != "head" or pred.covis is None)
+    if not (use_head or use_geo):
+        return anchors
+    C = np.ones((len(views), len(views)))
+    if use_geo:
+        C = pairwise_covisibility(pred, views, grid=grid, rel_depth_tol=rel_depth_tol)
+    if use_head:
+        C = np.minimum(C, np.asarray(pred.covis, dtype=np.float64)[np.ix_(views, views)])
+    pos = {v: i for i, v in enumerate(views)}
+    keep = [a for a in maps if min(C[pos[a.idx_a], pos[a.idx_b]], C[pos[a.idx_b], pos[a.idx_a]]) >= min_covis]
+    keep = keep[:max_pairs]
+    logger.debug(f"FF map anchors with pair covisibility >= {min_covis}: {len(keep)} of {len(maps)}")
+    return [a for a in anchors if a.kind != "map"] + keep
 
 
 class _DA3Backend(_Backend):
@@ -654,8 +737,15 @@ class PoseEstFeedForward:
         images = self._as_model_input(views)
 
         t_model = time.perf_counter()
-        # depth is used for the current view and the references (and the frontend's anchor view)
-        pred = self.backend.infer(images, n_depth=None if frontend_anchor and prev_idx is not None else 1 + B)
+        # depth is used for the current view and the references (geometric covisibility) and the frontend's anchor
+        # view; with the learned covisibility head and no frontend observation the depth head is not run at all
+        if frontend_anchor and prev_idx is not None:
+            n_depth = None
+        elif getattr(cfg, "covis_source", "geometric") == "head" and getattr(self.backend, "covis_head", None) is not None:
+            n_depth = 0
+        else:
+            n_depth = 1 + B
+        pred = self.backend.infer(images, n_depth=n_depth)
         torch.cuda.synchronize()
         t_model = time.perf_counter() - t_model
         if frontend_anchor and prev_idx is not None:
@@ -663,12 +753,19 @@ class PoseEstFeedForward:
             self.last_frontend_obs = {
                 "token": odom_anchor.get("token"), "c2w_curr": pred.c2w[0], "c2w_prev": pred.c2w[prev_idx],
                 "depth_curr": pred.depth[0], "depth_prev": pred.depth[prev_idx],
-                "conf_curr": None if conf is None else conf[0], "conf_prev": None if conf is None else conf[prev_idx]}
+                "conf_curr": None if conf is None else conf[0], "conf_prev": None if conf is None else conf[prev_idx],
+                "log_scale": pred.log_scale}
             if kf_idx is not None:
                 self.last_frontend_obs.update(c2w_kf=pred.c2w[kf_idx], depth_kf=pred.depth[kf_idx],
                                               conf_kf=None if conf is None else conf[kf_idx])
+            if "curr_R" in view_tags:            # the current stereo pair: the frontend's metric scale of the pass
+                self.last_frontend_obs["c2w_right"] = pred.c2w[view_tags.index("curr_R")]
 
         # ---- metric scale ----
+        if getattr(cfg, "map_anchor_min_pair_covis", 0.0) > 0:
+            anchors = filter_map_anchors(pred, anchors, cfg.map_anchor_min_pair_covis, cfg.map_anchor_max_pairs,
+                                         source=getattr(cfg, "covis_source", "geometric"), grid=cfg.covis_grid,
+                                         rel_depth_tol=cfg.covis_depth_tol)
         scale_est = estimate_scale(
             pred.c2w, anchors, method=cfg.scale_method,
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,

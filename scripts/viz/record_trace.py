@@ -146,8 +146,8 @@ class TraceRecorder:
 
         orig_add_edge = hm.add_edge
 
-        def add_edge_hook(id1, id2, rel_pose_mean, rel_pose_std, type, from_comp_id=0, to_comp_id=0, meta=None):
-            r = orig_add_edge(id1, id2, rel_pose_mean, rel_pose_std, type, from_comp_id, to_comp_id, meta=meta)
+        def add_edge_hook(id1, id2, rel_pose_mean, rel_pose_std, type, from_comp_id=0, to_comp_id=0, meta=None, **kw):
+            r = orig_add_edge(id1, id2, rel_pose_mean, rel_pose_std, type, from_comp_id, to_comp_id, meta=meta, **kw)
             if id1 in hm.nodes and id2 in hm.nodes:
                 t = {EdgeType.ODOMETRY: "odom", EdgeType.VISUAL: "visual"}.get(type, str(type))
                 if t == "visual" and to_comp_id not in hm.hypotheses:
@@ -360,7 +360,8 @@ def main():
     ap.add_argument("--no-frames", action="store_true", help="do not write JPEG frames (the page builder takes them from the dataset)")
     ap.add_argument("--backend", default="vggt_omega")
     ap.add_argument("--checkpoint", default=None)
-    ap.add_argument("--baseline", type=float, default=0.3)
+    ap.add_argument("--baseline", type=float, default=None,
+                    help="rendered stereo baseline of SimChange folders (default: the folder's calib.json)")
     ap.add_argument("--snr", type=float, default=10.0)
     ap.add_argument("--stride", type=int, default=1)
     ap.add_argument("--map-end", type=int, default=None)
@@ -384,6 +385,7 @@ def main():
     ap.add_argument("--lc-mode", choices=["verified", "heuristic"], default=None, help="loop-closure mode (default: config, 'verified')")
     ap.add_argument("--lc-confidence", type=float, default=None, help="chi-square confidence of the verified loop closure (default 0.999)")
     ap.add_argument("--noise-config", default=None, help="YAML from scripts/lc/calibrate_noise.py (calibrated noise model)")
+    ap.add_argument("--odom-file", default=None, help="odometry file of the sequence folders (e.g. odom_vio.txt) instead of odom_left.txt")
     ap.add_argument("--no-inpass", action="store_true", help="ablation: disable the in-pass consistency test")
     ap.add_argument("--no-prior", action="store_true", help="ablation: disable the prior consistency test")
     ap.add_argument("--no-posterior", action="store_true", help="ablation: disable the posterior consistency test")
@@ -409,7 +411,8 @@ def main():
         extra = saved["extra"]
         logger.info("[trace] reusing mapping session from trace_map.json")
     else:
-        ds = StereoSequenceLoader(str(map_dir), depth_source=depth_source, snr=args.snr, baseline=args.baseline, seed=args.seed)
+        ds = StereoSequenceLoader(str(map_dir), depth_source=depth_source, snr=args.snr, baseline=args.baseline, seed=args.seed,
+                                  odom_file=args.odom_file)
         system = new_system(args, ds)
         rec.attach(system)
         n_frames = len(ds) if args.map_end is None else min(len(ds), args.map_end)
@@ -467,11 +470,13 @@ def main():
 
     # ---------------- relocalization sessions
     if args.variants:
-        ds0 = StereoSequenceLoader(str(root / args.variants[0]), depth_source=depth_source, snr=args.snr, baseline=args.baseline)
+        ds0 = StereoSequenceLoader(str(root / args.variants[0]), depth_source=depth_source, snr=args.snr, baseline=args.baseline,
+                                   odom_file=args.odom_file)
         system = new_system(args, ds0)
         rec.attach(system)
         for vi, v in enumerate(args.variants):
             ds = StereoSequenceLoader(str(root / v), depth_source=depth_source, snr=args.snr, baseline=args.baseline,
+                                      odom_file=args.odom_file,
                                       seed=None if args.seed is None else args.seed + 1 + vi)
             system.load_map(str(map_file))   # keeps the hypothesis-manager object, hooks stay attached
             q_end = len(ds) if args.query_end is None else min(len(ds), args.query_end)

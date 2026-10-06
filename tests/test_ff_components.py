@@ -60,3 +60,33 @@ def test_principal_point_rotation():
     assert np.allclose(R @ [0, 0, 1.0], ray / np.linalg.norm(ray))           # model optical axis -> image-centre ray
     assert abs(np.degrees(np.arccos((np.trace(R) - 1) / 2)) - 1.04) < 0.01
     assert np.allclose(R @ R.T, np.eye(3))
+
+
+def test_map_anchor_pair_covisibility_filter():
+    from cross.cv.pose_est_ff import filter_map_anchors
+    from cross.cv.stereo_scale import ScaleAnchor
+    pred = _synthetic_pred()           # views 0 and 1 overlap, view 2 overlaps neither
+    T = np.eye(4)
+    anchors = [ScaleAnchor(1, 2, T, kind="map"), ScaleAnchor(0, 1, T, kind="map"), ScaleAnchor(0, 2, T, kind="map"),
+               ScaleAnchor(0, 1, T, kind="odom")]
+    kept = filter_map_anchors(pred, anchors, 0.15, max_pairs=8, grid=32)
+    assert [(a.kind, a.idx_a, a.idx_b) for a in kept] == [("odom", 0, 1), ("map", 0, 1)]
+    assert len(filter_map_anchors(pred, anchors[:2], 0.15, max_pairs=0, grid=32)) == 0
+    # the covisibility head's matrix when there is no depth for the references (covis_source=head)
+    pred.depth = pred.depth[:0]
+    pred.covis = np.array([[1, .6, .0], [.5, 1, .1], [.0, .2, 1]])
+    kept = filter_map_anchors(pred, anchors, 0.15, max_pairs=8, source="head")
+    assert [(a.kind, a.idx_a, a.idx_b) for a in kept] == [("odom", 0, 1), ("map", 0, 1)]
+
+
+def test_pairwise_covisibility_matches_per_destination_scores():
+    from cross.cv.pose_est_ff import pairwise_covisibility
+    pred = _synthetic_pred()
+    rng = np.random.default_rng(0)
+    pred.depth_conf = torch.from_numpy(rng.uniform(0.5, 2.0, pred.depth.shape).astype(np.float32))
+    views = [0, 1, 2]
+    C = pairwise_covisibility(pred, views, grid=32)
+    for b in views:
+        src = [v for v in views if v != b]
+        assert np.allclose(C[src, b], covisibility_scores(pred, src, b, grid=32), atol=1e-6)
+    assert np.allclose(np.diag(C), 1.0)

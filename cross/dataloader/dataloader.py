@@ -21,9 +21,14 @@ class Dataloader(ABC):
         seed: int | None = None,
         odom_scale_bias: float = 0.0,
         odom_yaw_drift_deg_per_m: float = 0.0,
+        odom_file: str | None = None,
         **kwargs,
     ):
         self.snr = snr
+        # the platform's odometry file in a prepared folder (camera c2w per frame): odom_file when given and present
+        # (e.g. odom_vio.txt of benchmark/datasets/prepare_vio.py), else odom_left.txt; without either the odometry is
+        # simulated from the ground truth (snr, odom_scale_bias, odom_yaw_drift)
+        self.odom_file = odom_file
         # systematic odometry error (wheel / VIO-like drift): translations scaled by (1 + odom_scale_bias) and the heading
         # rotated about the world vertical by odom_yaw_drift_deg_per_m per metre travelled; applied before the white
         # SNR noise.  The world vertical is set by the loader (`odom_vertical_world`, unit vector in the GT world frame).
@@ -40,6 +45,14 @@ class Dataloader(ABC):
         # clamp to [0,1] to avoid surprises
         self.crop_center_h = min(1.0, max(0.0, self.crop_center_h))
         self.crop_center_w = min(1.0, max(0.0, self.crop_center_w))
+
+    def odometry_path(self, root):
+        """The odometry file of a prepared folder (see odom_file), or None."""
+        from pathlib import Path
+        for name in ([self.odom_file] if self.odom_file else []) + ["odom_left.txt"]:
+            if (Path(root) / name).is_file():
+                return Path(root) / name
+        return None
 
     @abstractmethod
     def __len__(self):

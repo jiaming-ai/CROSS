@@ -12,6 +12,9 @@ openloris:
   trial_len: 100
   trial_stride: 50
   odometry: wheel
+  # --odom-source vio keeps the wheel odometry here (no odom_vio.txt): the runs are the external-odometry runs, which the
+  # tables reuse for the VIO rows (make_tables.odom_rows; checked bit-identical on the development split)
+  odom_fallback: {vio: wheel}
   setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
   scenes:
     office:   {map: office1-1,   queries: [office1-2, office1-3, office1-4, office1-5, office1-6, office1-7]}
@@ -148,6 +151,9 @@ val_openloris:
   trial_len: 100
   trial_stride: 50
   odometry: wheel
+  # --odom-source vio keeps the wheel odometry here (no odom_vio.txt): the runs are the external-odometry runs, which the
+  # tables reuse for the VIO rows (make_tables.odom_rows; checked bit-identical on the development split)
+  odom_fallback: {vio: wheel}
   setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
   scenes:
     office: {map: office1-1, queries: [office1-2, office1-3, office1-4, office1-5, office1-6, office1-7]}

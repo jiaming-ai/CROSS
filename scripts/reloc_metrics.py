@@ -135,3 +135,25 @@ def summarize_trials(rows, prefix="c0_rel", r_d=2.0, max_age=10):
     out["median_steps_to_1m"] = float(np.median(ft)) if ft else None
     out["frac_trials_reaching_1m"] = float(len(ft) / len(trials)) if trials else None
     return out
+
+
+def online_pose_metrics(online, T_gt_from_map) -> dict:
+    """The poses a session published while it ran (causal: each from the information of its own frame), against ground
+    truth: online (ground-truth pose, map-frame pose, odometry pose or None) per frame.  The map-frame poses go through
+    the map's ground-truth alignment (T_gt_from_map, from the final keyframes); the odometry's through its own rigid
+    alignment (its drift without the map).  Position errors in metres."""
+    gt = np.stack([np.asarray(g, dtype=np.float64)[:3, 3] for g, _, _ in online])
+    est = np.stack([(T_gt_from_map @ np.asarray(e, dtype=np.float64))[:3, 3] for _, e, _ in online])
+    err = np.linalg.norm(est - gt, axis=1)
+    out = {"n": int(len(err)), "online_ate_rmse": float(np.sqrt(np.mean(err ** 2))),
+           "online_err_median": float(np.median(err)), "online_err_p95": float(np.percentile(err, 95)),
+           "online_err_max": float(err.max())}
+    odo = [o for _, _, o in online]
+    if all(o is not None for o in odo):
+        src = np.stack([np.asarray(o, dtype=np.float64)[:3, 3] for o in odo])
+        mu_s, mu_d = src.mean(0), gt.mean(0)
+        U, _, Vt = np.linalg.svd((src - mu_s).T @ (gt - mu_d))
+        R = Vt.T @ np.diag([1.0, 1.0, np.sign(np.linalg.det(Vt.T @ U.T))]) @ U.T
+        e = np.linalg.norm((src - mu_s) @ R.T + mu_d - gt, axis=1)
+        out["odom_ate_rmse"] = float(np.sqrt(np.mean(e ** 2)))
+    return out

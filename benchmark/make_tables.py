@@ -27,6 +27,47 @@ def load():
     return ds, sy
 
 
+ODOM_LABEL = {"vio": "stereo VIO odometry"}
+
+
+def odom_rows(results, sy, ds=None):
+    """Runs with another odometry source (result["odom"], benchmark/run.py --odom-source) as rows of their own: their
+    system becomes "<system>+<odom>" (in place; idempotent) and sy gets that entry right after the base system, labelled
+    with the odometry source.  On datasets whose config has `odom_fallback: {<odom>: ...}` that source falls back to
+    the dataset's own odometry, so the external-odometry runs are reused for the derived row (marked
+    "odom_fallback").  Returns (results, sy)."""
+    derived = set()
+    for r in results:
+        o = r.get("odom") or "external"
+        if o != "external":
+            if "+" not in r["system"]:
+                r["system"] = f"{r['system']}+{o}"
+            derived.add(r["system"])
+    if not derived:
+        return results, sy
+    if ds:
+        have = {(r["system"], r["dataset"]) for r in results}
+        extra = []
+        for d in sorted(derived):
+            base, o = d.split("+", 1)
+            for name, dc in ds.items():
+                fb = (dc.get("odom_fallback") or {}).get(o)
+                if fb and (d, name) not in have:
+                    extra += [dict(r, system=d, odom=o, odom_fallback=fb) for r in results
+                              if r["system"] == base and r["dataset"] == name and (r.get("odom") or "external") == "external"]
+        results = results + extra
+    out = {}
+    for name, sc in sy.items():
+        out[name] = sc
+        for d in sorted(x for x in derived if x.split("+")[0] == name):
+            o = d.split("+", 1)[1]
+            lab = sc["label"]
+            new = ODOM_LABEL.get(o, o)
+            lab = lab.replace("external odometry", new) if "external odometry" in lab else f"{lab}, {new}"
+            out[d] = {**sc, "label": lab, "hidden": False, "odom": o}
+    return results, out
+
+
 def rows_for(ds_cfg, sy, dataset):
     """(system, setup) rows available for a dataset, in systems.yaml order."""
     out = []
@@ -232,6 +273,7 @@ def scored(r):
 class Tables:
     def __init__(self, results, seed):
         self.ds, self.sy = load()
+        results, self.sy = odom_rows(results, self.sy, self.ds)
         f = ROOT / "benchmark/results/datasets.json"
         self.dstats = json.loads(f.read_text()) if f.is_file() else {}
         self.idx = defaultdict(list)
@@ -581,6 +623,18 @@ T3_DATASETS = ("openloris", "rover", "simchange")
 DS_NAMES = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange": "SimChange"}
 
 
+def old_rule_note(res) -> str:
+    """Names the systems whose T1 cells were scored before the time-or-path completeness rule (no completeness_rule)."""
+    old = {r["system"]: r.get("label") or r["system"] for r in res
+           if r.get("track") == "t1" and r.get("status") == "ok" and not r.get("completeness_rule")}
+    if not old:
+        return ""
+    names = (["the CROSS rows"] if any(k.startswith("cross") for k in old) else []) + \
+        sorted(v for k, v in old.items() if not k.startswith("cross"))
+    return (" Cells of " + ", ".join(names) + " predate this rule (scored before 2026-10-06: CROSS was given 100 %, the "
+            "baselines needed a pose within 1 s) and keep it until they are re-run.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default=str(ROOT / "benchmark/results/results.json"))
@@ -599,7 +653,9 @@ def main():
         "",
         f"Legend: `{PENDING}` not run yet, `{FAIL}` failed (crash, timeout or tracking completeness < 80 %), (xx%) completeness, "
         "⁽ᵒ⁾ the system uses the dataset's odometry (wheel odometry on OpenLORIS, OXTS dead reckoning on KITTI, "
-        "simulated on ROVER and SimChange), ⁽ⁱ⁾ the system uses the IMU of the camera (simulated on SimChange), "
+        "simulated on ROVER and SimChange); rows \"… stereo VIO odometry\": the same system with Basalt stereo-inertial "
+        "odometry (`run.py --odom-source vio`) instead, wheel odometry on OpenLORIS (the external-odometry runs), "
+        "⁽ⁱ⁾ the system uses the IMU of the camera (simulated on SimChange), "
         "RGB-D* = left image + stereo-matched depth (KITTI).",
         "",
         dataset_section(T.ds),
@@ -611,12 +667,17 @@ def main():
         "## T1 — mapping accuracy (ATE RMSE, m)",
         "",
         "Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular systems without metric input). "
-        "OpenLORIS and ROVER cells: mean over the scene's sequences.",
+        "OpenLORIS and ROVER cells: mean over the scene's sequences. Completeness: a frame counts when a pose of the "
+        "evaluated map lies within 1 s of it or within 1 m (indoors) / 2 m (outdoors) of travelled path (PROTOCOL.md)."
+        + old_rule_note(res),
     ]
     for d, title in (("kitti", "KITTI odometry (outdoor)"), ("openloris", "OpenLORIS-Scene (indoor)"), ("rover", "ROVER campus_large (outdoor)")):
         parts += ["", f"### {title}", "", T.t1_table(d)]
     parts += ["", "## T2 — multi-session localization", "",
-              "The query session runs once from its first frame against the stored map of the scene's map session."]
+              "The query session runs once from its first frame against the stored map of the scene's map session. "
+              "Each frame is scored with the pose the system reported at that frame (ORB-SLAM3: localized from the frame "
+              "at which its session has been merged into the stored map); MASt3R-SLAM and VGGT-SLAM 2.0 log their "
+              "keyframe poses only after their final optimization, i.e. in hindsight."]
     for d, title in (("openloris", "OpenLORIS-Scene"), ("rover", "ROVER campus_large")):
         parts += ["", f"### {title}", "", T.t2_table(d)]
     parts += ["", "## T3 — relocalization success", "",

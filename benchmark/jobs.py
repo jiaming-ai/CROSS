@@ -20,11 +20,15 @@ def main():
     ap.add_argument("--scenes", nargs="*", default=None)
     ap.add_argument("--tracks", nargs="*", default=["t1", "t2t3"])
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--odom-source", default="external", help="external | vio (benchmark/run.py --odom-source); "
+                                                                "systems without external odometry are skipped for vio")
     a = ap.parse_args()
     ds = yaml.safe_load((ROOT / "benchmark/configs/datasets.yaml").read_text())[a.dataset]
     sy = yaml.safe_load((ROOT / "benchmark/configs/systems.yaml").read_text())
     maps, t1, queries = [], [], []
     for system in a.systems:
+        if a.odom_source != "external" and not sy[system].get("uses_odometry"):
+            continue
         for setup in sy[system]["setups"]:
             if (a.setups and setup not in a.setups) or setup not in ds["setups"] or \
                     f"{a.dataset}/{setup}" in sy[system].get("skip", []):
@@ -33,6 +37,8 @@ def main():
                 if a.scenes and scene not in a.scenes:
                     continue
                 base = f"--dataset {a.dataset} --scene {scene} --system {system} --setup {setup} --seed {a.seed}"
+                if a.odom_source != "external":
+                    base += f" --odom-source {a.odom_source}"
                 maps.append(f"{base} --task map")
                 if "t1" in a.tracks and ds.get("t1") == "all":
                     for q in sc.get("queries", []):

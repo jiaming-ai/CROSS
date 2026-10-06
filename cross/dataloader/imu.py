@@ -41,7 +41,11 @@ class ImuCalibration:
     def from_dict(cls, d: dict) -> "ImuCalibration":
         keys = {f for f in cls.__dataclass_fields__}
         out = cls(**{k: v for k, v in d.items() if k in keys})
-        out.T_cam_imu = np.asarray(out.T_cam_imu, dtype=np.float64)
+        out.T_cam_imu = np.asarray(out.T_cam_imu, dtype=np.float64).copy()
+        # the nearest rotation: calibration files print the rotation with a few digits (KITTI: singular values 1 -
+        # 9e-8), and estimators that chain it through every frame compound the error
+        U, _, Vt = np.linalg.svd(out.T_cam_imu[:3, :3])
+        out.T_cam_imu[:3, :3] = U @ np.diag([1.0, 1.0, np.sign(np.linalg.det(U @ Vt))]) @ Vt
         return out
 
 
@@ -94,10 +98,11 @@ class ImuStream:
         return {"imu": samples, "imu_t0": t0, "imu_t1": t1}
 
 
-def write_imu(root, t, gyro, accel, calib: dict, header: str = ""):
-    """Write imu.txt / imu.json (calib: the ImuCalibration fields, T_cam_imu as a 4x4 nested list, plus any notes)."""
+def write_imu(root, t, gyro, accel, calib: dict, header: str = "", name: str = "imu"):
+    """Write <name>.txt / <name>.json (default imu.txt / imu.json; calib: the ImuCalibration fields, T_cam_imu as a 4x4
+    nested list, plus any notes)."""
     root = Path(root)
     data = np.concatenate([np.asarray(t, dtype=np.float64)[:, None], np.asarray(gyro), np.asarray(accel)], axis=1)
     head = "t wx wy wz ax ay az (IMU frame; rad/s, m/s^2 specific force; clock of times.txt)"
-    np.savetxt(root / "imu.txt", data, fmt=["%.6f"] + ["%.8g"] * 6, header=head + (f"\n{header}" if header else ""))
-    (root / "imu.json").write_text(json.dumps(calib, indent=1))
+    np.savetxt(root / f"{name}.txt", data, fmt=["%.6f"] + ["%.8g"] * 6, header=head + (f"\n{header}" if header else ""))
+    (root / f"{name}.json").write_text(json.dumps(calib, indent=1))

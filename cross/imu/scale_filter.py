@@ -56,6 +56,11 @@ class ImuConfig:
     # each observation counts (front end on six development sequences: scale within 2-3 % on office, cafe, KITTI 07
     # and SimChange; ROVER 1.37x vs 1.86x for learned depth alone; home 0.80x vs 1.04x)
     depth_prior: bool = True
+    # source of these observations in the VGGT + IMU frontend: "da3" (Depth Anything 3 metric depth against the pass's
+    # depth) or "head" (the metric-scale head of a fine-tuned VGGT-Omega checkpoint (vggt_ft), read from the same pass:
+    # no second network), with log-scale std depth_prior_head_std (held-out |log error| of the head ~0.3)
+    depth_prior_source: str = "da3"
+    depth_prior_head_std: float = 0.3
     depth_prior_std_floor: float = 0.15
     depth_prior_independent: bool = True
     window: int = 100                            # frame intervals in the window (10 s at 10 Hz)
@@ -116,6 +121,7 @@ class ImuConfig:
     vgio_depth_bias: bool = True                 # the graph estimates the learned-depth bias
     vgio_rot_std: float = 0.0087                 # rad, relative rotation of a pass in the graph (0.5 deg)
     vgio_depth_bias_std: float = 0.05            # prior std of the learned-depth log bias in the graph
+    vgio_depth_bias_drift: float = 0.005         # its random walk (log per sqrt(s))
     vgio_rot_rel: float = 0.05                   # graph: rotation noise also grows with the angle (fraction)
     # adaptive measurement times (vgio_adaptive): after the camera moved / turned this much, within these frame counts
     vgio_rot_scale: bool = True                  # graph: calibrate the rotation scale of the passes against the gyro
@@ -137,6 +143,33 @@ class ImuConfig:
     vgio_align: bool = False
     vgio_align_min: int = 2
     vgio_align_max: int = 4
+    # graph: a pass's translation must agree with the IMU's prediction in length within this factor or in velocity
+    # within 4 sigma of the combined uncertainty (cross.mono.vggt_imu_frontend._translation_gate), else the pass is not
+    # used (like a pass whose rotation disagrees with the gyro).  0 or 1: no test.  KITTI 01 without it: VGGT-Omega
+    # reported 10-20 % of the motion for ~6 s on the highway, the graph followed it to 1 m/s at a true 25.7 m/s, and the
+    # IMU (which only measures changes of velocity) kept the wrong speed: map scale 0.3, ATE 411 m
+    vgio_trans_gate: float = 1.5
+    vgio_trans_gate_max_gap: float = 15.0        # s: the longest the IMU may outvote the passes' translations
+    # graph: random walk of the gyro bias (rad/s per sqrt(s)) when vgio_calib_gyro_walk is off.  The window's visual
+    # rotations carry small systematic errors that a loose walk lets the bias follow: on ROVER the gyro alone, with the
+    # bias of the initial standstill, turns 1079.9 deg for a true 1080.2 deg, while the graph's bias wandered 0.05-0.07
+    # deg/s off with 1e-4 (heading drift 26 deg over 600 s, the integrated bias error 21 deg).  1e-5: drift 18 deg, front
+    # end ATE 0.98x in geometric mean over 13 sequences (ROVER 0.91-0.96x, the rest within 3 %); 3e-6 changes nothing more
+    vgio_gyro_bias_walk: float = 1e-5
+    # graph: relative translation noise from the larger of the measured and predicted translation, Huber gauge links
+    # (cross.imu.vgi_graph.GraphConfig.trans_sigma_predicted / robust_links).  ROVER night relocalization (T3 against
+    # one map): the predicted-translation noise costs trials (with it 83, without 105 of 140, gate off), the Huber links
+    # nothing; on KITTI 01 the predicted-translation noise and the gate are what stop the collapse
+    # graph: the gyro bias measured directly while the images show the platform at rest (zero-rate update); the
+    # visual rotations alone pin it to ~0.05 deg/s, and while driving they carry a motion-coupled error of that size
+    # (ROVER: the bias learned at the start drifted 0.2 -> 0.15-0.29 deg/s, heading 15-30 deg)
+    vgio_zero_rate: bool = True
+    vgio_trans_sigma_predicted: bool = True
+    vgio_robust_links: bool = True
+    # ... with the predicted translation lowered by twice its uncertainty (the graph's marginal velocity std): a
+    # prediction the graph does not know yet (session start) cannot weaken the measurements (GraphConfig.trans_sigma_bound;
+    # ROVER night relocalization vs the v4 map 76 -> 91 of 140, KITTI 01 kept)
+    vgio_trans_sigma_bound: bool = True
     vgio_gyro_dt_noise: float = 0.0              # graph: preintegration noise growing with the IMU sampling interval
     vgio_accel_dt_noise: float = 0.0
     vgio_adaptive: bool = False
@@ -144,6 +177,38 @@ class ImuConfig:
     vgio_max_interval: int = 4
     vgio_min_translation: float = 0.5
     vgio_min_rotation_deg: float = 3.0
+    # stereo + IMU (the stereo mode with --odometry vgio).  The stereo pair observes each pass's metric scale
+    # (VggtImuFrontend._stereo_scale; no bias state).  Source "depth": classical stereo depth (SGBM; pixels with >=
+    # vgio_stereo_min_disparity px) against the pass's depth of the current frame, std floored at vgio_stereo_std.
+    # Source "baseline": the right image as a view of the pass, its left-right translation against the calibrated
+    # baseline (std hypot(vgio_stereo_std, vgio_stereo_depth_k * depth / baseline); not used when the pass's rotation
+    # between the cameras or its baseline direction disagrees with the calibration).  VGGT-Omega places the right camera
+    # too far on KITTI (scale 13 % low on 07, 30 % on 01) while its depths agree with its translations: SGBM depth is
+    # within -4..+4 % on KITTI, ROVER, SimChange and the T265 indoors.  "both": both logged, depth used
+    vgio_stereo_source: str = "depth"
+    vgio_stereo_min_disparity: float = 2.0
+    vgio_stereo_std: float = 0.02
+    vgio_stereo_depth_k: float = 0.001
+    vgio_stereo_rot_gate_deg: float = 3.0
+    vgio_stereo_dir_cos: float = 0.95
+    # stereo + IMU: the corners tracked between measured frames (vgio_klt) lifted to 3-D with the stereo depth of the
+    # earlier frame give the metric motion by PnP, a factor with its own covariance (VggtImuFrontend._stereo_pnp) in
+    # place of their rotation-only factor.  Front end: OpenLORIS office 0.055 -> 0.026 m, cafe 0.36 -> 0.26 m, SimChange
+    # 0.057 -> 0.024 m, KITTI 07 relative error 2.5 -> 1.4 %; it locks onto vehicles alongside on a highway (KITTI 01),
+    # which the translation tests catch
+    vgio_stereo_pnp: bool = True
+    # ... with its rotation: False (its translation only, the corners' rotation from the essential matrix as without it),
+    # True (its full pose, analytic covariance), "calibrated" (full pose, the rotation's noise floored by its own
+    # disagreement with the gyro)
+    vgio_stereo_pnp_rotation: object = False
+    # stereo + IMU: the translation tests with the IMU as the arbiter (VggtImuFrontend._stereo_gate): the pass and the
+    # corners' motion must agree with the IMU's prediction within 4 sigma (vgio_stereo_gate_factor > 1 also accepts
+    # within that factor, the monocular test's tolerance for the learned scale); vgio_stereo_gate_pairs: the pass's
+    # keyframe pairs (~2 s) too, against the graph's motion (KITTI 01: a pass accepted on its short pair pulled every
+    # velocity of the window through its long ones, 24 -> 2 m/s; ATE 266 -> 38 m with the test)
+    vgio_stereo_gate_factor: float = 1.0
+    vgio_stereo_gate_pairs: bool = True
+    vgio_debug_costs: bool = False               # graph: log the cost of each factor type per solve (diagnostics)
 
 
 @dataclass
