@@ -175,7 +175,8 @@ A **system** is an entry of `benchmark/configs/systems.yaml`: its runner, setups
 | `cross_mono_odom`, `cross_mono` | CROSS mono mode, external / visual odometry |
 | `cross_mono_vio` | CROSS mono mode, visual-inertial odometry (IMU) |
 | `cross_mono_ff_odom`, `cross_mono_ff`, `cross_mono_ff_vio` | CROSS mono mode with VGGT-Omega (`--mono-estimator ff`), external / visual / visual-inertial odometry |
-| `orbslam3`, `rtabmap` | baselines (drivers in `scripts/baselines/`, built separately) |
+| `orbslam3`, `rtabmap`, `rtabmap_vo` | baselines (drivers in `scripts/baselines/`, built separately); RTAB-Map with the dataset odometry / its own visual odometry |
+| `orbslam3_imu`, `rtabmap_vi` | the same baselines with the setup's IMU: ORB-SLAM3's inertial modes, RTAB-Map's visual odometry with the IMU orientation (stereo setups need `prepare_vio.py <dataset> ... --write-imu imu_vio` first) |
 | `mast3r_slam`, `vggt_slam` | baselines without map persistence (map + query run as one stream) |
 
 To add one, append an entry to `systems.yaml` (runner, `setups`, `uses_odometry`, `map_reuse`, `args`) and, for a new
@@ -198,6 +199,8 @@ python benchmark/collect.py $BENCH_RESULTS && python benchmark/make_tables.py &&
   building its map): retry it later. Finished jobs are skipped; `--force` redoes one.
 - Try a variant of one system without editing its entry: `run.py ... --variant myvariant --args "--max-refs 4"`; results go
   to `<system>@myvariant`. `--args` are extra arguments of the CROSS command line.
+- Re-score stored runs with the current metrics without running the system: `run.py ... --reeval` (map / t1 tasks: the
+  T1 result; query tasks of the baselines: T2 / T3 from their pose files).
 - Outdoor datasets automatically add `configs/outdoor.yaml`. Do not tune per dataset: the protocol forbids it.
 
 ### Quick check of a change: the development split
