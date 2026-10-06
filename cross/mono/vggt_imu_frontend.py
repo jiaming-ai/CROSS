@@ -34,7 +34,7 @@ from cross.imu.vgi_graph import GraphConfig, VgiGraph
 
 from .frontend import MonoEstimate
 from .geometry import inverse, scale_translation_covariance
-from .scale import observe_scale
+from .scale import ScaleObservation, observe_scale
 
 
 def _so3_log(R):
@@ -394,7 +394,8 @@ class VggtImuFrontend:
             pred = self.backend.infer(images, n_depth=None)
         self.stats["own_calls"] += 1
         self.stats["model_seconds"] += perf_counter() - start
-        out = {"c2w_curr": pred.c2w[0], "depth_curr": pred.depth[0], "conf_curr": _conf(pred, 0)}
+        out = {"c2w_curr": pred.c2w[0], "depth_curr": pred.depth[0], "conf_curr": _conf(pred, 0),
+               "log_scale": getattr(pred, "log_scale", None)}
         if self.m is not None:
             out.update(c2w_prev=pred.c2w[1], depth_prev=pred.depth[1], conf_prev=_conf(pred, 1))
         if third == "m_prev":
@@ -540,11 +541,21 @@ class VggtImuFrontend:
         self.stats["hat_deg"] = [round(float(np.sqrt(v)), 3) for v in (var_g, var_k, var_v)]
         return klt[0], float(np.radians(np.sqrt(var_k)) * np.sqrt(n_med / max(inliers, 30)))
 
-    def _learned_depth(self, rgb, pass_depth, index):
+    def _learned_depth(self, rgb, pass_depth, index, log_scale=None):
         """Learned metric depth of this frame against a depth map of it (same pixels): a scale observation, at most
-        every depth_every frames."""
+        every depth_every frames.  With depth_prior_source "head" the observation is the pass's own scale-head estimate
+        (log metres per pass unit, the quantity the depth comparison measures)."""
         every = self.depth_every if self.depth_every else self.config.scale.interval
-        if self.metric is None or not self.config.imu.depth_prior or index - self.last_depth_index < every:
+        if not self.config.imu.depth_prior or index - self.last_depth_index < every:
+            return None
+        if self.config.imu.depth_prior_source == "head":
+            if log_scale is None or not np.isfinite(log_scale):
+                return None
+            self.last_depth_index = index
+            self.stats["depth_priors"] += 1
+            std = float(self.config.imu.depth_prior_head_std)
+            return ScaleObservation(log_scale=float(log_scale), variance=std * std, accepted=True, reason="scale_head")
+        if self.metric is None:
             return None
         self.last_depth_index = index
         t0 = perf_counter()
@@ -734,7 +745,7 @@ class VggtImuFrontend:
             return
         depth_curr = obs["depth_curr"].float()
         conf_curr = obs.get("conf_curr")
-        observed = self._learned_depth(rgb, depth_curr, index)
+        observed = self._learned_depth(rgb, depth_curr, index, obs.get("log_scale"))
         da3 = (float(observed.log_scale), float(np.sqrt(observed.variance))) if observed is not None and observed.accepted \
             else None
         stereo, stereo_info = self._stereo_scale(obs, depth_curr, conf_curr)
@@ -1126,7 +1137,16 @@ class VggtImuFrontend:
         # at the learned-depth interval of the DPVO frontend (metric_interval frames): more frequent independent
         # observations outweigh the IMU (ROVER, where learned depth is 1.9x off: scale 2.1 vs 1.3 without them)
         every = self.depth_every if self.depth_every else self.config.scale.interval
-        if self.metric is not None and cfg.depth_prior and index - self.last_depth_index >= every:
+        if cfg.depth_prior and cfg.depth_prior_source == "head" and index - self.last_depth_index >= every \
+                and obs.get("log_scale") is not None and np.isfinite(obs["log_scale"]):
+            # the pass's scale-head estimate, in chain units (the chain's depth is the pass's times ratio)
+            self.last_depth_index = index
+            observed = ScaleObservation(log_scale=float(obs["log_scale"]) - float(np.log(max(ratio, 1e-12))),
+                                        variance=float(cfg.depth_prior_head_std) ** 2, accepted=True, reason="scale_head")
+            f.update(observed)
+            da3_log_scale = float(observed.log_scale)
+            self.stats["depth_priors"] += 1
+        elif self.metric is not None and cfg.depth_prior and index - self.last_depth_index >= every:
             self.last_depth_index = index
             metric = self.metric.predict_metric(rgb, self.K, rgb.shape[:2])
             metric_v = self.depth_transform(torch.from_numpy(np.asarray(metric, dtype=np.float32))[None])[0]

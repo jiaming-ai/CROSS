@@ -415,7 +415,7 @@ def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_lef
         mc.imu.depth_prior = False
         mc.imu.vgio_depth_bias = False
     metric = None
-    if mc.imu.depth_prior:
+    if mc.imu.depth_prior and mc.imu.depth_prior_source != "head":
         from cross.mono.models import DA3MetricDepth
         metric = _cached(("metric", mc.metric_model, mc.metric_resolution),
                          lambda: DA3MetricDepth(mc.metric_model, device, mc.metric_resolution))

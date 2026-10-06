@@ -193,6 +193,19 @@ class _VGGTOmegaBackend(_Backend):
         self._head_stream.wait_stream(main)
         with torch.cuda.stream(self._head_stream), torch.autocast(device_type="cuda", enabled=False):
             pose_enc = m.camera_head(tokens, patch_token_start=start)
+        if k == 0:
+            # no view needs depth (covis_source=head without a frontend observation): the dense head is skipped
+            H, W = x.shape[-2:]
+            depth = conf = x.new_zeros((x.shape[0], 0, H, W))
+        else:
+            sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
+            with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
+                depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
+        main.wait_stream(self._head_stream)
+        # the fine-tune's covisibility / scale heads (small) run on the main stream after the join: on the side stream,
+        # concurrently with the dense head, they made the side-stream race (illegal memory access with CUDA graphs)
+        # frequent (H20 benchmark, 2026-10-06)
+        with torch.autocast(device_type="cuda", enabled=False):
             final = tokens[-1]
             covis = self.covis_head(final[:, :, :start]) if self.covis_head is not None else pose_enc.new_zeros(0)
             if getattr(self, "_scale_multilayer", False):
@@ -216,10 +229,6 @@ class _VGGTOmegaBackend(_Backend):
                 log_scale = (self.scale_head(final, start, pose_enc[:, 0, 8] if getattr(self.scale_head, "canonical_f",
                                                                                         None) else None)
                              if self.scale_head is not None else pose_enc.new_zeros(0))
-        sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
-        with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
-            depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
-        main.wait_stream(self._head_stream)
         return pose_enc, depth.float(), conf.float(), covis, log_scale
 
     def _forward(self, x: torch.Tensor, k: int, patch_tokens: Optional[torch.Tensor] = None):
@@ -654,8 +663,15 @@ class PoseEstFeedForward:
         images = self._as_model_input(views)
 
         t_model = time.perf_counter()
-        # depth is used for the current view and the references (and the frontend's anchor view)
-        pred = self.backend.infer(images, n_depth=None if frontend_anchor and prev_idx is not None else 1 + B)
+        # depth is used for the current view and the references (geometric covisibility) and the frontend's anchor
+        # view; with the learned covisibility head and no frontend observation the depth head is not run at all
+        if frontend_anchor and prev_idx is not None:
+            n_depth = None
+        elif getattr(cfg, "covis_source", "geometric") == "head" and getattr(self.backend, "covis_head", None) is not None:
+            n_depth = 0
+        else:
+            n_depth = 1 + B
+        pred = self.backend.infer(images, n_depth=n_depth)
         torch.cuda.synchronize()
         t_model = time.perf_counter() - t_model
         if frontend_anchor and prev_idx is not None:
@@ -663,7 +679,8 @@ class PoseEstFeedForward:
             self.last_frontend_obs = {
                 "token": odom_anchor.get("token"), "c2w_curr": pred.c2w[0], "c2w_prev": pred.c2w[prev_idx],
                 "depth_curr": pred.depth[0], "depth_prev": pred.depth[prev_idx],
-                "conf_curr": None if conf is None else conf[0], "conf_prev": None if conf is None else conf[prev_idx]}
+                "conf_curr": None if conf is None else conf[0], "conf_prev": None if conf is None else conf[prev_idx],
+                "log_scale": pred.log_scale}
             if kf_idx is not None:
                 self.last_frontend_obs.update(c2w_kf=pred.c2w[kf_idx], depth_kf=pred.depth[kf_idx],
                                               conf_kf=None if conf is None else conf[kf_idx])

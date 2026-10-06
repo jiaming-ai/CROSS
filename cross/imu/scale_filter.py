@@ -56,6 +56,11 @@ class ImuConfig:
     # each observation counts (front end on six development sequences: scale within 2-3 % on office, cafe, KITTI 07
     # and SimChange; ROVER 1.37x vs 1.86x for learned depth alone; home 0.80x vs 1.04x)
     depth_prior: bool = True
+    # source of these observations in the VGGT + IMU frontend: "da3" (Depth Anything 3 metric depth against the pass's
+    # depth) or "head" (the metric-scale head of a fine-tuned VGGT-Omega checkpoint (vggt_ft), read from the same pass:
+    # no second network), with log-scale std depth_prior_head_std (held-out |log error| of the head ~0.3)
+    depth_prior_source: str = "da3"
+    depth_prior_head_std: float = 0.3
     depth_prior_std_floor: float = 0.15
     depth_prior_independent: bool = True
     window: int = 100                            # frame intervals in the window (10 s at 10 Hz)
