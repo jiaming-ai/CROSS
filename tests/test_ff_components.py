@@ -77,3 +77,16 @@ def test_map_anchor_pair_covisibility_filter():
     pred.covis = np.array([[1, .6, .0], [.5, 1, .1], [.0, .2, 1]])
     kept = filter_map_anchors(pred, anchors, 0.15, max_pairs=8, source="head")
     assert [(a.kind, a.idx_a, a.idx_b) for a in kept] == [("odom", 0, 1), ("map", 0, 1)]
+
+
+def test_pairwise_covisibility_matches_per_destination_scores():
+    from cross.cv.pose_est_ff import pairwise_covisibility
+    pred = _synthetic_pred()
+    rng = np.random.default_rng(0)
+    pred.depth_conf = torch.from_numpy(rng.uniform(0.5, 2.0, pred.depth.shape).astype(np.float32))
+    views = [0, 1, 2]
+    C = pairwise_covisibility(pred, views, grid=32)
+    for b in views:
+        src = [v for v in views if v != b]
+        assert np.allclose(C[src, b], covisibility_scores(pred, src, b, grid=32), atol=1e-6)
+    assert np.allclose(np.diag(C), 1.0)

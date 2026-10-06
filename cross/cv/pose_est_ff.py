@@ -387,6 +387,53 @@ def _load_scale_encoder(sd: dict, patch_embed, scale_head_cfg: Optional[dict], d
     return enc.eval().to(device)
 
 
+def pairwise_covisibility(pred: FFPrediction, views: List[int], grid: int = 48, rel_depth_tol: float = 0.15,
+                          min_conf_quantile: float = 0.3) -> np.ndarray:
+    """covisibility_scores for every ordered pair of the given views in one batched pass (one device
+    synchronisation): C[a, b] = score of source views[a] in destination views[b]; the diagonal is 1."""
+    n = len(views)
+    C = np.ones((n, n))
+    if n < 2:
+        return C
+    device = pred.depth.device
+    S, H, W = pred.depth.shape
+    pa, pb = np.nonzero(~np.eye(n, dtype=bool))                         # ordered pairs (source a, destination b)
+    vi = torch.as_tensor(views, device=device)
+    ys = torch.linspace(0, H - 1, grid, device=device)
+    xs = torch.linspace(0, W - 1, grid, device=device)
+    gy, gx = torch.meshgrid(ys, xs, indexing="ij")
+    gy, gx = gy.reshape(-1), gx.reshape(-1)
+    norm = torch.stack([gx / (W - 1) * 2 - 1, gy / (H - 1) * 2 - 1], dim=-1).view(1, 1, -1, 2).expand(n, 1, -1, 2)
+    depth = pred.depth[vi]
+    d = F.grid_sample(depth[:, None], norm, align_corners=True).view(n, -1)       # each view as a source, once
+    valid = torch.isfinite(d) & (d > 1e-6)
+    if pred.depth_conf is not None:
+        conf = pred.depth_conf[vi]
+        c = F.grid_sample(conf[:, None], norm, align_corners=True).view(n, -1)
+        thr = torch.quantile(conf.flatten(1)[:, :: max(1, (H * W) // 20000)], min_conf_quantile, dim=1)
+        valid &= c >= thr[:, None]
+    c2w = torch.from_numpy(pred.c2w).to(device=device, dtype=torch.float32)[vi]
+    K = torch.from_numpy(pred.K).to(device=device, dtype=torch.float32)[vi]
+    x = (gx - K[:, 0, 2:3]) / K[:, 0, 0:1] * d
+    y = (gy - K[:, 1, 2:3]) / K[:, 1, 1:2] * d
+    P = torch.stack([x, y, d, torch.ones_like(d)], dim=1)                          # (n,4,N) in the source cameras
+    a, b = torch.as_tensor(pa, device=device), torch.as_tensor(pb, device=device)
+    Pd = (torch.linalg.inv(c2w[b]) @ c2w[a] @ P[a])[:, :3]                         # into the destination cameras
+    z = Pd[:, 2]
+    Kd = K[b]
+    u = Kd[:, 0, 0:1] * Pd[:, 0] / z.clamp(min=1e-6) + Kd[:, 0, 2:3]
+    v = Kd[:, 1, 1:2] * Pd[:, 1] / z.clamp(min=1e-6) + Kd[:, 1, 2:3]
+    inside = (z > 1e-6) & (u >= 0) & (u <= W - 1) & (v >= 0) & (v <= H - 1)
+    un = torch.stack([u / (W - 1) * 2 - 1, v / (H - 1) * 2 - 1], dim=-1)[:, None]
+    zd = F.grid_sample(depth[b][:, None], un, align_corners=True).view(len(pa), -1)
+    ok = inside & ((z - zd).abs() <= rel_depth_tol * zd.clamp(min=1e-6)) & valid[a]
+    n_valid = valid[a].sum(dim=1)
+    scores = torch.where(n_valid >= 16, ok.sum(dim=1).double() / n_valid.clamp(min=1).double(),
+                         torch.zeros_like(n_valid, dtype=torch.float64))
+    C[pa, pb] = scores.cpu().numpy()
+    return C
+
+
 def filter_map_anchors(pred: FFPrediction, anchors: List[ScaleAnchor], min_covis: float, max_pairs: int,
                        source: str = "geometric", grid: int = 48, rel_depth_tol: float = 0.15) -> List[ScaleAnchor]:
     """Map anchors only between references that overlap each other: covisibility >= min_covis both ways, from the
@@ -402,14 +449,14 @@ def filter_map_anchors(pred: FFPrediction, anchors: List[ScaleAnchor], min_covis
     use_geo = has_depth and (source != "head" or pred.covis is None)
     if not (use_head or use_geo):
         return anchors
-    C = np.ones((views[-1] + 1, views[-1] + 1))
+    C = np.ones((len(views), len(views)))
     if use_geo:
-        for dst in views:
-            src = [v for v in views if v != dst]
-            C[src, dst] = covisibility_scores(pred, src, dst, grid=grid, rel_depth_tol=rel_depth_tol)
+        C = pairwise_covisibility(pred, views, grid=grid, rel_depth_tol=rel_depth_tol)
     if use_head:
-        C = np.minimum(C, np.asarray(pred.covis, dtype=np.float64)[:C.shape[0], :C.shape[1]])
-    keep = [a for a in maps if min(C[a.idx_a, a.idx_b], C[a.idx_b, a.idx_a]) >= min_covis][:max_pairs]
+        C = np.minimum(C, np.asarray(pred.covis, dtype=np.float64)[np.ix_(views, views)])
+    pos = {v: i for i, v in enumerate(views)}
+    keep = [a for a in maps if min(C[pos[a.idx_a], pos[a.idx_b]], C[pos[a.idx_b], pos[a.idx_a]]) >= min_covis]
+    keep = keep[:max_pairs]
     logger.debug(f"FF map anchors with pair covisibility >= {min_covis}: {len(keep)} of {len(maps)}")
     return [a for a in anchors if a.kind != "map"] + keep
 
