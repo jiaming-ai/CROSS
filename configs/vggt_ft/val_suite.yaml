@@ -1,0 +1,15 @@
+# Validation suite: held-out scenes of the TRAINING datasets (crc32(scene) % 20 == 0, excluded from training when the
+# run sets data.val_mod: 20).  Used to select checkpoints (scale head especially); the test suite is never used for that.
+root: /mnt/datasets-livsyn/jz/cache
+windows_dir: /mnt/datasets-livsyn/jz/test/windows_val_v1
+sets:
+- {name: val_scannetpp, dataset: scannetpp, val_mod: 20, protocol: seq, frames: 8, stride: 4, per_seq: 2, aspect: 0.75, max_windows: 120}
+- {name: val_arkitscenes, dataset: arkitscenes, val_mod: 20, protocol: seq, frames: 8, stride: 4, per_seq: 1, aspect: 0.75, max_windows: 120}
+- {name: val_scannet, dataset: scannet, val_mod: 20, protocol: seq, frames: 8, stride: 3, per_seq: 1, aspect: 0.75, max_windows: 100}
+- {name: val_waymo, dataset: waymo, val_mod: 20, protocol: seq, frames: 8, stride: 2, per_seq: 1, aspect: 0.67, max_windows: 100}
+- {name: val_hypersim, dataset: hypersim, val_mod: 20, protocol: seq, frames: 8, stride: 2, per_seq: 2, aspect: 0.75}
+- {name: val_tartanair2, dataset: tartanair2, val_mod: 20, protocol: seq, frames: 8, stride: 4, per_seq: 2, aspect: 1.0, max_windows: 100}
+- {name: val_tartanair2_cross, dataset: tartanair2, val_mod: 20, protocol: cross, n_ref: 5, n_neg: 2, per_seq: 1, aspect: 1.0, max_windows: 100}
+- {name: val_mapfree_cross, dataset: mapfree, val_mod: 20, protocol: cross, n_ref: 5, n_neg: 2, per_seq: 2, aspect: 0.75}
+- {name: val_dl3dv, dataset: dl3dv, val_mod: 20, protocol: seq, frames: 8, stride: 3, per_seq: 2, aspect: 0.56}
+- {name: val_wildrgbd, dataset: wildrgbd, val_mod: 20, protocol: seq, frames: 8, stride: 3, per_seq: 1, aspect: 0.75, max_windows: 80}

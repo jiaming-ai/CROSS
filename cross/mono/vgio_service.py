@@ -23,7 +23,7 @@ import numpy as np
 import torch
 
 from .geometry import inverse
-from .scale import observe_scale
+from .scale import ScaleObservation, observe_scale
 
 
 class VgioPassService:
@@ -107,7 +107,8 @@ class VgioPassService:
             pred = self.backend.infer(images, n_depth=None)
         self.stats["own_calls"] += 1
         self.stats["model_seconds"] += perf_counter() - start
-        out = {"c2w_curr": pred.c2w[0], "depth_curr": pred.depth[0], "conf_curr": _conf(pred, 0)}
+        out = {"c2w_curr": pred.c2w[0], "depth_curr": pred.depth[0], "conf_curr": _conf(pred, 0),
+               "log_scale": getattr(pred, "log_scale", None)}
         if m is not None:
             out.update(c2w_prev=pred.c2w[1], depth_prev=pred.depth[1], conf_prev=_conf(pred, 1))
         if third == "m_prev":
@@ -136,7 +137,7 @@ class VgioPassService:
         frame = self.frames[b]
         depth_curr = obs["depth_curr"].float()
         conf_curr = obs.get("conf_curr")
-        observed = self._learned_depth(frame["rgb"], depth_curr, b)
+        observed = self._learned_depth(frame["rgb"], depth_curr, b, obs.get("log_scale"))
         out["da3"] = (float(observed.log_scale), float(np.sqrt(observed.variance))) \
             if observed is not None and observed.accepted else None
         out["stereo"], out["stereo_info"], sgbm = self._stereo_scale(obs, depth_curr, conf_curr, frame)
@@ -187,11 +188,21 @@ class VgioPassService:
         return out
 
     # ------------------------------------------------------------------ metric scale of a pass
-    def _learned_depth(self, rgb, pass_depth, index):
+    def _learned_depth(self, rgb, pass_depth, index, log_scale=None):
         """Learned metric depth of this frame against a depth map of it (same pixels): a scale observation, at most
-        every depth_every frames."""
+        every depth_every frames.  With depth_prior_source "head" the observation is the pass's own scale-head estimate
+        (log metres per pass unit, the quantity the depth comparison measures)."""
         every = self.depth_every if self.depth_every else self.config.scale.interval
-        if self.metric is None or not self.config.imu.depth_prior or index - self.last_depth_index < every:
+        if not self.config.imu.depth_prior or index - self.last_depth_index < every:
+            return None
+        if self.config.imu.depth_prior_source == "head":
+            if log_scale is None or not np.isfinite(log_scale):
+                return None
+            self.last_depth_index = index
+            self.stats["depth_priors"] += 1
+            std = float(self.config.imu.depth_prior_head_std)
+            return ScaleObservation(log_scale=float(log_scale), variance=std * std, accepted=True, reason="scale_head")
+        if self.metric is None:
             return None
         self.last_depth_index = index
         t0 = perf_counter()

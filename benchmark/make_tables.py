@@ -623,6 +623,18 @@ T3_DATASETS = ("openloris", "rover", "simchange")
 DS_NAMES = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange": "SimChange"}
 
 
+def old_rule_note(res) -> str:
+    """Names the systems whose T1 cells were scored before the time-or-path completeness rule (no completeness_rule)."""
+    old = {r["system"]: r.get("label") or r["system"] for r in res
+           if r.get("track") == "t1" and r.get("status") == "ok" and not r.get("completeness_rule")}
+    if not old:
+        return ""
+    names = (["the CROSS rows"] if any(k.startswith("cross") for k in old) else []) + \
+        sorted(v for k, v in old.items() if not k.startswith("cross"))
+    return (" Cells of " + ", ".join(names) + " predate this rule (scored before 2026-10-06: CROSS was given 100 %, the "
+            "baselines needed a pose within 1 s) and keep it until they are re-run.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", default=str(ROOT / "benchmark/results/results.json"))
@@ -655,12 +667,17 @@ def main():
         "## T1 — mapping accuracy (ATE RMSE, m)",
         "",
         "Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular systems without metric input). "
-        "OpenLORIS and ROVER cells: mean over the scene's sequences.",
+        "OpenLORIS and ROVER cells: mean over the scene's sequences. Completeness: a frame counts when a pose of the "
+        "evaluated map lies within 1 s of it or within 1 m (indoors) / 2 m (outdoors) of travelled path (PROTOCOL.md)."
+        + old_rule_note(res),
     ]
     for d, title in (("kitti", "KITTI odometry (outdoor)"), ("openloris", "OpenLORIS-Scene (indoor)"), ("rover", "ROVER campus_large (outdoor)")):
         parts += ["", f"### {title}", "", T.t1_table(d)]
     parts += ["", "## T2 — multi-session localization", "",
-              "The query session runs once from its first frame against the stored map of the scene's map session."]
+              "The query session runs once from its first frame against the stored map of the scene's map session. "
+              "Each frame is scored with the pose the system reported at that frame (ORB-SLAM3: localized from the frame "
+              "at which its session has been merged into the stored map); MASt3R-SLAM and VGGT-SLAM 2.0 log their "
+              "keyframe poses only after their final optimization, i.e. in hindsight."]
     for d, title in (("openloris", "OpenLORIS-Scene"), ("rover", "ROVER campus_large")):
         parts += ["", f"### {title}", "", T.t2_table(d)]
     parts += ["", "## T3 — relocalization success", "",

@@ -44,6 +44,8 @@ class FFPrediction:
     depth: torch.Tensor                 # (S, H, W) model-gauge depth
     depth_conf: torch.Tensor            # (S, H, W) or None
     hw: tuple
+    covis: Optional[np.ndarray] = None  # (S, S) covisibility head (vggt_ft fine-tune), probabilities, if present
+    log_scale: Optional[float] = None   # scale head: metric = exp(log_scale) x model gauge, if present
 
 
 class _Backend:
@@ -114,10 +116,19 @@ class _VGGTOmegaBackend(_Backend):
             raise FileNotFoundError(f"VGGT-Omega checkpoint not found: {ckpt}")
         with _no_weight_init():      # every parameter is overwritten by the checkpoint (checked below)
             self.model = VGGTOmega().eval()
-        missing, unexpected = self.model.load_state_dict(
-            torch.load(ckpt, map_location="cpu", mmap=True, weights_only=True), strict=False)
+        sd = torch.load(ckpt, map_location="cpu", mmap=True, weights_only=False)
+        head_cfg = sd.get("scale_head_cfg") if isinstance(sd, dict) else None
+        sd = sd["model"] if "model" in sd and isinstance(sd["model"], dict) else sd
+        missing, unexpected = self.model.load_state_dict(sd, strict=False)
         if missing:
             raise RuntimeError(f"{ckpt.name} lacks {len(missing)} weights of the model, e.g. {missing[:3]}")
+        # heads of the vggt_ft fine-tune (covisibility, metric scale): used when the checkpoint has them
+        self.covis_head, self.scale_head = _load_ft_heads(sd, device, head_cfg)
+        # the multi-layer and dense scale heads also read the DINO tokens and the aggregator layers the dense head keeps
+        self._scale_multilayer = type(self.scale_head).__name__ in ("MultiLayerScaleHead", "DenseScaleHead")
+        # LoRA scale encoder of the dense head (vggt_ft/scale_encoder.py): one extra DINO pass on the first view
+        self.scale_encoder = _load_scale_encoder(sd, self.model.aggregator.patch_embed, head_cfg, device)
+        unexpected = [u for u in unexpected if not u.startswith(("covis_head.", "scale_head.", "scale_encoder."))]
         if unexpected:      # e.g. the text-alignment head of vggt_omega_1b_256_text.pt, unused here
             logger.info(f"{ckpt.name}: ignored {len(unexpected)} weights of heads not in use")
         self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
@@ -172,7 +183,7 @@ class _VGGTOmegaBackend(_Backend):
         """Content keys of the views (the same image always gets the same key, whatever the batch)."""
         return content_keys(images.float())
 
-    def _heads(self, x: torch.Tensor, tokens: list, start: int, k: int):
+    def _heads(self, x: torch.Tensor, tokens: list, start: int, k: int, dino: Optional[torch.Tensor] = None):
         """Camera head (all views) and depth head (first k views); the camera head runs on a side stream, concurrently
         with the depth head (both only read the tokens)."""
         m = self.model
@@ -182,24 +193,62 @@ class _VGGTOmegaBackend(_Backend):
         self._head_stream.wait_stream(main)
         with torch.cuda.stream(self._head_stream), torch.autocast(device_type="cuda", enabled=False):
             pose_enc = m.camera_head(tokens, patch_token_start=start)
-        sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
-        with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
-            depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
+        if k == 0:
+            # no view needs depth (covis_source=head without a frontend observation): the dense head is skipped
+            H, W = x.shape[-2:]
+            depth = conf = x.new_zeros((x.shape[0], 0, H, W))
+        else:
+            sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
+            with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
+                depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
         main.wait_stream(self._head_stream)
-        return pose_enc, depth.float(), conf.float()
+        # the fine-tune's covisibility / scale heads (small) run on the main stream after the join: on the side stream,
+        # concurrently with the dense head, they made the side-stream race (illegal memory access with CUDA graphs)
+        # frequent (H20 benchmark, 2026-10-06)
+        with torch.autocast(device_type="cuda", enabled=False):
+            final = tokens[-1]
+            covis = self.covis_head(final[:, :, :start]) if self.covis_head is not None else pose_enc.new_zeros(0)
+            if getattr(self, "_scale_multilayer", False):
+                B, S = x.shape[:2]
+                p = m.aggregator.patch_size
+                dino = dino.reshape(B, S, -1, dino.shape[-1]) if dino is not None else None
+                kw = {}
+                if getattr(self.scale_head, "canonical_f", None) is not None:
+                    # canonical-camera head: converted with the model's own focal (CROSS passes no intrinsics here)
+                    kw["focal"] = 0.5 / torch.tan(pose_enc[..., 8].float() / 2)
+                if getattr(self, "scale_encoder", None) is not None:
+                    n = min(self.scale_encoder.frames, S)
+                    xe = (x[:, :n] - m.aggregator._resnet_mean) / m.aggregator._resnet_std
+                    with torch.autocast(device_type="cuda", dtype=self.dtype):
+                        enc = self.scale_encoder(xe.reshape(B * n, *x.shape[2:]))
+                    kw["enc"] = enc.reshape(B, n, -1, enc.shape[-1])
+                log_scale = self.scale_head(tokens, start, (x.shape[-2] // p, x.shape[-1] // p), dino, **kw)
+                if isinstance(log_scale, tuple):         # dense head: (log scale, per-patch votes, confidences)
+                    log_scale = log_scale[0]
+            else:
+                log_scale = (self.scale_head(final, start, pose_enc[:, 0, 8] if getattr(self.scale_head, "canonical_f",
+                                                                                        None) else None)
+                             if self.scale_head is not None else pose_enc.new_zeros(0))
+        return pose_enc, depth.float(), conf.float(), covis, log_scale
 
     def _forward(self, x: torch.Tensor, k: int, patch_tokens: Optional[torch.Tensor] = None):
         """VGGTOmega.forward (aggregator, camera head, depth head for the first k views).  patch_tokens: the views'
         DINO tokens, computed beforehand (the aggregator then skips its patch embedding)."""
         if patch_tokens is not None:
             self.token_cache.override = patch_tokens
+        dino, hook = {}, None
+        if getattr(self, "_scale_multilayer", False):
+            hook = self.model.aggregator.patch_embed.register_forward_hook(
+                lambda mod, inp, out: dino.__setitem__("x", out["x_norm_patchtokens"] if isinstance(out, dict) else out))
         try:
             with torch.autocast(device_type="cuda", dtype=self.dtype):
                 tokens, start = self.model.aggregator(x)
         finally:
             if patch_tokens is not None:
                 self.token_cache.override = None
-        return self._heads(x, tokens, start, k)
+            if hook is not None:
+                hook.remove()
+        return self._heads(x, tokens, start, k, dino.get("x"))
 
     def _capture(self, fn):
         """CUDA graph of fn() (after two warm-up calls on a side stream); all graphs share one memory pool."""
@@ -281,7 +330,7 @@ class _VGGTOmegaBackend(_Backend):
                 if self.token_cache is not None:
                     self.token_cache.keys = keys
                 out = self._forward(x, k)
-        pose_enc, depth, conf = out
+        pose_enc, depth, conf, covis, log_scale = out
         hw = tuple(images.shape[-2:])
         extr, intr = self._decode(pose_enc, hw)                  # (1,S,3,4) w2c, (1,S,3,3)
         w2c = extr[0].float().cpu().numpy().astype(np.float64)
@@ -292,7 +341,50 @@ class _VGGTOmegaBackend(_Backend):
         conf = conf[0]
         if conf.dim() == 4:
             conf = conf[..., 0]
-        return FFPrediction(c2w=c2w, K=intr[0].float().cpu().numpy(), depth=depth, depth_conf=conf, hw=hw)
+        return FFPrediction(c2w=c2w, K=intr[0].float().cpu().numpy(), depth=depth, depth_conf=conf, hw=hw,
+                            covis=torch.sigmoid(covis[0]).cpu().numpy() if covis.numel() else None,
+                            log_scale=float(log_scale[0]) if log_scale.numel() else None)
+
+
+def _load_ft_heads(sd: dict, device: str, scale_head_cfg: Optional[dict] = None):
+    """Covisibility / scale heads of a vggt_ft checkpoint (vggt_ft/heads.py), or None where absent."""
+    heads = []
+    for prefix, name in (("covis_head.", "CovisHead"), ("scale_head.", "ScaleHead")):
+        sub = {k[len(prefix):]: v.float() for k, v in sd.items() if k.startswith(prefix)}
+        if not sub:
+            heads.append(None)
+            continue
+        from vggt_ft import heads as ft_heads
+        cfg = dict(scale_head_cfg or {})
+        if cfg.pop("encoder", None) and name == "ScaleHead":
+            cfg["enc_dim"] = sub["proj_enc.1.weight"].shape[1]
+        h = ft_heads.build_scale_head(cfg) if name == "ScaleHead" else getattr(ft_heads, name)()
+        h.load_state_dict(sub)
+        heads.append(h.eval().to(device))
+        logger.info(f"loaded the fine-tune's {type(h).__name__}")
+    return tuple(heads)
+
+
+def _load_scale_encoder(sd: dict, patch_embed, scale_head_cfg: Optional[dict], device: str):
+    """LoRA scale encoder of a vggt_ft checkpoint: base weights from the model's patch embedding, adapters from the
+    checkpoint; None if the scale head has none."""
+    enc_cfg = (scale_head_cfg or {}).get("encoder")
+    if not enc_cfg:
+        return None
+    from vggt_ft.scale_encoder import ScaleEncoder
+    enc = ScaleEncoder(patch_embed, **enc_cfg)
+    if enc.full:      # fully fine-tuned copy: all of its weights come from the checkpoint
+        own = {k[len("scale_encoder.dino."):]: v.float() for k, v in sd.items() if k.startswith("scale_encoder.dino.")}
+        enc.dino.load_state_dict(own, strict=True)
+    else:             # LoRA: base = the patch embedding, adapters from the checkpoint
+        enc.base_state_from(patch_embed)
+        lora = {k[len("scale_encoder.dino."):]: v.float() for k, v in sd.items()
+                if k.startswith("scale_encoder.") and "lora_" in k}
+        missing, _ = enc.dino.load_state_dict(lora, strict=False)
+        if any("lora_" in k for k in missing):
+            raise RuntimeError(f"scale encoder adapters missing in the checkpoint, e.g. {[k for k in missing if 'lora_' in k][:3]}")
+    logger.info(f"loaded the fine-tune's scale encoder ({'fully fine-tuned' if enc.full else f'{enc.n_lora} LoRA layers'})")
+    return enc.eval().to(device)
 
 
 class _DA3Backend(_Backend):
@@ -571,8 +663,15 @@ class PoseEstFeedForward:
         images = self._as_model_input(views)
 
         t_model = time.perf_counter()
-        # depth is used for the current view and the references (and the frontend's anchor view)
-        pred = self.backend.infer(images, n_depth=None if frontend_anchor and prev_idx is not None else 1 + B)
+        # depth is used for the current view and the references (geometric covisibility) and the frontend's anchor
+        # view; with the learned covisibility head and no frontend observation the depth head is not run at all
+        if frontend_anchor and prev_idx is not None:
+            n_depth = None
+        elif getattr(cfg, "covis_source", "geometric") == "head" and getattr(self.backend, "covis_head", None) is not None:
+            n_depth = 0
+        else:
+            n_depth = 1 + B
+        pred = self.backend.infer(images, n_depth=n_depth)
         torch.cuda.synchronize()
         t_model = time.perf_counter() - t_model
         if frontend_anchor and prev_idx is not None:
@@ -580,7 +679,8 @@ class PoseEstFeedForward:
             self.last_frontend_obs = {
                 "token": odom_anchor.get("token"), "c2w_curr": pred.c2w[0], "c2w_prev": pred.c2w[prev_idx],
                 "depth_curr": pred.depth[0], "depth_prev": pred.depth[prev_idx],
-                "conf_curr": None if conf is None else conf[0], "conf_prev": None if conf is None else conf[prev_idx]}
+                "conf_curr": None if conf is None else conf[0], "conf_prev": None if conf is None else conf[prev_idx],
+                "log_scale": pred.log_scale}
             if kf_idx is not None:
                 self.last_frontend_obs.update(c2w_kf=pred.c2w[kf_idx], depth_kf=pred.depth[kf_idx],
                                               conf_kf=None if conf is None else conf[kf_idx])
@@ -593,6 +693,11 @@ class PoseEstFeedForward:
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
             weight_by_baseline=cfg.anchor_weight_by_baseline,
         )
+        src = getattr(cfg, "scale_source", "anchors")
+        if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
+            # the scale head's metric scale of the model gauge (translations scale with it, frame 0 at the origin)
+            scale_est = ScaleEstimate(scale=float(np.exp(pred.log_scale)), valid=True, n_anchors=scale_est.n_anchors,
+                                      n_used=0, method="head")
         self.last_scale = scale_est
         if not scale_est.valid:
             logger.debug(f"FF pose est: no valid scale anchor ({scale_est.n_anchors} anchors)")
@@ -607,11 +712,20 @@ class PoseEstFeedForward:
 
         # ---- per-reference confidence (covisibility / geometric consistency) ----
         ref_idx = list(range(1, 1 + B))
-        covis = covisibility_scores(pred, ref_idx, 0, grid=cfg.covis_grid, rel_depth_tol=cfg.covis_depth_tol)
-        if cfg.covis_symmetric:
-            covis_back = np.asarray([covisibility_scores(pred, [0], r, grid=cfg.covis_grid,
-                                                         rel_depth_tol=cfg.covis_depth_tol)[0] for r in ref_idx])
-            covis = np.minimum(covis, covis_back)
+        source = getattr(cfg, "covis_source", "geometric")
+        if source != "geometric" and pred.covis is None:
+            raise ValueError(f"covis_source={source} needs a checkpoint with a covisibility head (vggt_ft)")
+        if source == "head":
+            # learned overlap fraction of the current view with each reference (same definition as the geometric score)
+            covis = np.asarray(pred.covis[0, ref_idx], dtype=np.float64)
+        else:
+            covis = covisibility_scores(pred, ref_idx, 0, grid=cfg.covis_grid, rel_depth_tol=cfg.covis_depth_tol)
+            if cfg.covis_symmetric:
+                covis_back = np.asarray([covisibility_scores(pred, [0], r, grid=cfg.covis_grid,
+                                                             rel_depth_tol=cfg.covis_depth_tol)[0] for r in ref_idx])
+                covis = np.minimum(covis, covis_back)
+            if source == "min":
+                covis = np.minimum(covis, np.asarray(pred.covis[0, ref_idx], dtype=np.float64))
 
         # ---- relative poses T_ref_cam = X_ref^-1 X_curr ----
         poses, confs, valid = [], [], []

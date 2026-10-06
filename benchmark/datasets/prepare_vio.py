@@ -19,6 +19,13 @@ Inputs per dataset (the stereo pair is the one of the benchmark's stereo setup; 
              Kalibr extrinsics / noise of calibration/calib_t265.yaml; the rgbd folder (D435i colour) gets the same
              odometry, interpolated to its frame times and moved to its camera through the prism calibration
   simchange  rendered pair (baseline of the benchmark config) + the simulated BMI055 IMU of prepare_imu.py (200 Hz)
+  openloris  (--write-imu only: OpenLORIS keeps its wheel odometry) T265 fisheye pair rectified as in
+             prepare_openloris.py + the T265's BMI055 IMU (gyroscope 200 Hz, accelerometer 62 Hz interpolated to the
+             gyroscope times; factory intrinsics of sensors.yaml applied, extrinsics of trans_matrix.yaml)
+
+--write-imu NAME writes the stereo pair's IMU stream without running a VIO: <seq>/NAME.txt / NAME.json (format of
+cross/dataloader/imu.py; T_cam_imu = pose of the IMU in the rectified left camera) and NAME_frames.txt (the frames'
+times on the IMU clock), for the baselines that run with an IMU (ORB-SLAM3 inertial, RTAB-Map with IMU).
 
 VIO back ends (built by scripts/vio/install_basalt.sh, scripts/vio/install_okvis2.sh):
 
@@ -29,6 +36,7 @@ VIO back ends (built by scripts/vio/install_basalt.sh, scripts/vio/install_okvis
   python benchmark/datasets/prepare_vio.py rover  $BENCH_DATA/rover  --raw /path/rover
   python benchmark/datasets/prepare_vio.py simchange $BENCH_DATA/simchange --baseline 0.3
       [--vio basalt|okvis2] [--seqs ...] [--work /tmp/vio_work] [--out-name odom_vio.txt]
+  python benchmark/datasets/prepare_vio.py openloris $BENCH_DATA/openloris --raw /path/openloris --write-imu imu_vio
 """
 from __future__ import annotations
 
@@ -178,6 +186,59 @@ def rover(bench: Path, raw: Path, seqs):
                               {"imu": f"realsense_T265/imu ({1 / np.median(np.diff(t)):.0f} Hz), calib_t265.yaml"},
                               targets))
     return out
+
+
+# ---------------------------------------------------------------------------------------------------- OpenLORIS
+def openloris(bench: Path, raw: Path, seqs):
+    from prepare_imu import _openloris_intrinsic
+    from prepare_openloris import fisheye_rectifier, read_child_extrinsic
+    from cross.imu.simulate import BMI055
+    names = seqs or sorted(p.name for p in bench.iterdir() if (p / "stereo" / "times.txt").is_file())
+    out = []
+    for name in names:
+        folder = bench / name / "stereo"
+        src = raw / name
+        if not (folder / "times.txt").is_file() or not (src / "t265_gyroscope.txt").is_file():
+            print(f"openloris {name}: no prepared stereo folder or no T265 IMU, skipped")
+            continue
+        gyro = np.loadtxt(src / "t265_gyroscope.txt", comments="#", dtype=np.float64)
+        acc = np.loadtxt(src / "t265_accelerometer.txt", comments="#", dtype=np.float64)
+        S_g, b_g = _openloris_intrinsic(src, "t265_gyroscope")
+        S_a, b_a = _openloris_intrinsic(src, "t265_accelerometer")
+        tg = gyro[:, 0]
+        inside = (tg >= acc[0, 0]) & (tg <= acc[-1, 0])
+        a_raw = np.stack([np.interp(tg, acc[:, 0], acc[:, k]) for k in (1, 2, 3)], axis=1)
+        w = gyro[:, 1:4] @ S_g.T - b_g
+        a = a_raw @ S_a.T - b_a
+        t, w, a = _clean_imu(tg[inside], w[inside], a[inside])
+        _, K, baseline, T_cam1_rect = fisheye_rectifier(src)          # rectified left camera in the fisheye1 frame
+        T_fish1_imu = read_child_extrinsic(src, "t265_fisheye1_optical_frame", "t265_gyroscope")
+        T_rect_imu = np.linalg.inv(T_cam1_rect) @ T_fish1_imu
+        calib = json.loads((folder / "calib.json").read_text())
+        left = sorted((folder / "left").iterdir())
+        right = sorted((folder / "right").iterdir())
+        tf = np.loadtxt(folder / "times.txt", dtype=np.float64).reshape(-1)
+        assert len(left) == len(right) == len(tf)
+        out.append(ViSequence(f"openloris/{name}", folder, left, right, tf, np.asarray(calib["K"], float),
+                              (int(calib["width"]), int(calib["height"])), float(calib["baseline"]), T_rect_imu,
+                              t, w, a, dict(BMI055),
+                              {"imu": f"OpenLORIS {name} T265 IMU ({1 / np.median(np.diff(t)):.0f} Hz, factory intrinsics)"}))
+    return out
+
+
+def write_imu_stream(seq: ViSequence, name: str):
+    """The stereo pair's IMU as <name>.txt / <name>.json + <name>_frames.txt (frame times on the IMU clock)."""
+    from cross.dataloader.imu import write_imu
+    keep = (seq.imu_t >= seq.t_frames[0] - 1.0) & (seq.imu_t <= seq.t_frames[-1] + 1.0)
+    np.savetxt(seq.out / f"{name}_frames.txt", np.asarray(seq.t_frames, dtype=np.float64), fmt="%.6f")
+    write_imu(seq.out, seq.imu_t[keep], seq.gyro[keep], seq.acc[keep],
+              {"T_cam_imu": np.asarray(seq.T_cam_imu).tolist(), **seq.noise, "rate_hz": _imu_rate(seq),
+               "frame_times": f"{name}_frames.txt", "source": seq.source.get("imu", ""),
+               "camera": "rectified left camera of the stereo folder"}, name=name)
+    g = np.linalg.norm(seq.acc[keep], axis=1)
+    print(f"{seq.name}: {int(keep.sum())} IMU samples ({_imu_rate(seq):.0f} Hz), |a| median {np.median(g):.3f}, "
+          f"frames {seq.t_frames[0]:.3f}-{seq.t_frames[-1]:.3f}, IMU {seq.imu_t[keep][0]:.3f}-{seq.imu_t[keep][-1]:.3f}",
+          flush=True)
 
 
 # ---------------------------------------------------------------------------------------------------- SimChange
@@ -497,9 +558,12 @@ def drift_stats(est: np.ndarray, gt: np.ndarray, window=100, stride=50):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("dataset", choices=["kitti", "rover", "simchange"])
+    ap.add_argument("dataset", choices=["kitti", "rover", "simchange", "openloris"])
     ap.add_argument("bench", help="prepared benchmark root of the dataset ($BENCH_DATA/<dataset>)")
-    ap.add_argument("--raw", help="kitti: raw root with <date>/<drive>_sync; rover: root with <name>.zip, calibration/")
+    ap.add_argument("--raw", help="kitti: raw root with <date>/<drive>_sync; rover: root with <name>.zip, calibration/; "
+                                  "openloris: raw root with <seq>/t265_*.txt, sensors.yaml, trans_matrix.yaml")
+    ap.add_argument("--write-imu", default=None, metavar="NAME", help="only write the stereo pair's IMU stream as "
+                                                                     "NAME.txt / NAME.json (no VIO run)")
     ap.add_argument("--extract", help="kitti: root with <date>/<drive>_extract/oxts (fetch_kitti_oxts.py)")
     ap.add_argument("--baseline", type=float, default=0.3, help="simchange: rendered stereo baseline (m)")
     ap.add_argument("--seqs", nargs="*", default=None)
@@ -523,8 +587,16 @@ def main():
         seqs = kitti(bench, Path(a.raw), Path(a.extract), a.seqs)
     elif a.dataset == "rover":
         seqs = rover(bench, Path(a.raw), a.seqs)
+    elif a.dataset == "openloris":
+        if not a.write_imu:
+            sys.exit("openloris: only --write-imu (OpenLORIS keeps its wheel odometry)")
+        seqs = openloris(bench, Path(a.raw), a.seqs)
     else:
         seqs = simchange(bench, a.baseline, a.seqs)
+    if a.write_imu:
+        for s in seqs:
+            write_imu_stream(s, a.write_imu)
+        return
     if a.jobs > 1:
         with ThreadPoolExecutor(a.jobs) as ex:
             list(ex.map(lambda s: process(s, a), seqs))

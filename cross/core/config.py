@@ -637,6 +637,12 @@ class FeedForwardConfig:
     covis_depth_tol: float = 0.15
     covis_symmetric: bool = False
     min_covis: float = 0.15              # validity threshold on the covisibility confidence
+    # covisibility of the current view with each reference: "geometric" (reprojection consistency of the predicted
+    # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint) or "min" of the two
+    covis_source: str = "geometric"
+    # metric scale of a pass: "anchors" (stereo / odometry anchors), "head" (scale head of a vggt_ft checkpoint) or
+    # "head_fallback" (the head only when no anchor is valid, e.g. monocular passes without odometry)
+    scale_source: str = "anchors"
     max_rel_distance: float = 40.0       # reject relative poses further than this (m)
     kf_conf_threshold_new_kf: float = 0.35  # covis below this -> current view is novel -> permanent keyframe
     scale_std_inflation: bool = True     # inflate translation std by |t| * relative scale std
