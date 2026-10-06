@@ -27,17 +27,34 @@ def serve(port: int, build, max_sessions: int = 4):
     def session(request_iterator, context):
         server = factory = None
         kf_frames, last_kf = {}, None
-        for raw in request_iterator:
+        max_backlog = None
+        inbox = queue.Queue()                    # (time received, payload): a message's wait on this server
+
+        def read():
+            try:
+                for raw in request_iterator:
+                    inbox.put((time.monotonic(), raw))
+            finally:
+                inbox.put(None)
+        threading.Thread(target=read, daemon=True).start()
+        while True:
+            item = inbox.get()
+            if item is None:
+                break
+            received, raw = item
             msg = decode(raw)
             op = msg.pop("op")
             if op == "frame":
-                r = server.handle(msg)
+                stale = max_backlog is not None and time.monotonic() - received > max_backlog
+                r = server.handle(msg, stale=stale) if stale else server.handle(msg)
                 if r.get("last_added_kf_id") is not None and r["last_added_kf_id"] != last_kf:
                     last_kf = r["last_added_kf_id"]
                     kf_frames[int(last_kf)] = int(msg["index"])
                 r.pop("timestamp", None)
                 yield encode({"op": "reply", **r})
             elif op == "open":
+                mb = msg.pop("max_backlog", None)
+                max_backlog = None if mb is None or mb <= 0 else float(mb)
                 server, factory, info = build(msg)
                 yield encode({"op": "opened", **info})
             elif op == "save_map":

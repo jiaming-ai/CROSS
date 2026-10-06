@@ -215,7 +215,40 @@ python benchmark/dev.py compare cross_stereo cross_stereo@views7                
 
 Compare runs from the same GPU only, and read single-query T2 swings and single T3 flips as noise.
 
-## 6. Programmatic use
+## 6. Remote sessions: the GPU work on a server, the odometry on the robot
+
+A session can be split (`cross/remote/`): the **server** runs the back end (retrieval, the VGGT-Omega passes,
+hypotheses, loop closure, the map) and the GPU side of the VGGT-inertial odometry (its own passes, learned / stereo
+depth scale, depth ratios); the **edge** (the robot's computer, no GPU) runs the IMU propagation, the tracked corners
+and the local pose graph, or forwards the external odometry.  Every frame the edge sends its motion, and images only
+on the frames the back end will observe or the odometry measures; the replies come back late.  A late measurement
+joins the local graph at its frame's time and the IMU carries the state to the current frame again; the published map
+pose is the back end's pose of the last replied frame carried by the odometry since.  Supported: external odometry
+(rgbd / stereo / mono with `--mono-estimator ff`) and `--odometry vgio` (mono ff, stereo).
+
+Simulated network, on the dataset's clock (deterministic; any runner or benchmark variant):
+
+```bash
+python scripts/map_and_reloc.py ... --odometry vgio --remote --remote-rtt 0.1           # 100 ms round trip
+#   --remote-compute model|measured|zero   server time (model: cross/remote/link.py, --remote-costs to override)
+#   --remote-jitter 0.05  --remote-outage every:30:3  --remote-jpeg 90  --remote-uplink-mbps 5
+#   --remote --remote-compute zero --remote-upload all   reproduces the local session exactly
+python benchmark/dev.py run --systems cross_stereo_vgio --variant rtt100 --args "--remote --remote-rtt 0.1 --online-poses"
+```
+
+Real network (gRPC; `pip install grpcio` on both machines):
+
+```bash
+python scripts/remote/serve.py --port 50051                                              # GPU machine
+python scripts/map_and_reloc.py ... --remote-server gpu-host:50051 --remote-realtime      # edge: frames at their timestamps
+#   --remote-extra-delay 0.1   emulate a longer round trip;  --remote-jpeg 90   lossy uploads
+```
+
+Map files are written on the server at the paths the edge names.  `--online-poses` (map runs) scores the pose the
+session published at every frame (`map_meta.json` `online`), the number latency changes; `remote` in `map_meta.json` /
+`reloc_summary.json` holds the link's statistics (latency, uploads, server time per kind of message, timeline).
+
+## 7. Programmatic use
 
 ```python
 from cross.pipeline import build_session, mono_config_from_profile

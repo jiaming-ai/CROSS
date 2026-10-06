@@ -38,8 +38,10 @@ def image_bytes(img, quality=0):
 
 class SimLink:
     def __init__(self, server, rtt=0.0, jitter=0.0, compute="model", costs=None, outages=(), jpeg=0,
-                 uplink_mbps=None, seed=0, measure_bytes=True):
+                 uplink_mbps=None, seed=0, measure_bytes=True, max_backlog=None):
         self.server = server
+        # a message that would start more than max_backlog s after it reached the server is stale (MapServer.handle)
+        self.max_backlog = None if max_backlog is None or max_backlog <= 0 else float(max_backlog)
         self.rtt, self.jitter = float(rtt), float(jitter)
         self.compute = compute
         self.costs = dict(COMPUTE_MODEL, **(costs or {}))
@@ -93,8 +95,10 @@ class SimLink:
         if msg.get("depth") is not None:
             size += int(np.asarray(msg["depth"]).nbytes // 2)
         t_up = self._up(t) + self._delay() + (size / self.uplink if self.uplink else 0.0)
-        reply = self.server.handle(msg)
-        start = max(self._up(t_up), self.server_free)
+        at_server = self._up(t_up)
+        start = max(at_server, self.server_free)
+        stale = self.max_backlog is not None and start - at_server > self.max_backlog
+        reply = self.server.handle(msg, stale=stale) if stale else self.server.handle(msg)
         cost = self._cost(reply)
         self.server_free = start + cost
         arrival = self._up(self.server_free) + self._delay()
@@ -140,6 +144,7 @@ class SimLink:
         measured = {k: {"n": len(v), "mean": float(np.mean(v)), "p50": float(np.median(v)),
                         "p95": float(np.percentile(v, 95))} for k, v in kinds.items()}
         return {"rtt": self.rtt, "jitter": self.jitter, "compute": self.compute, "jpeg": self.jpeg,
+                "max_backlog": self.max_backlog, "stale": int(sum(e["work"].get("stale", False) for e in self.log)),
                 "measured_server_s": measured,
                 "outages": self.outages, "uplink_mbps": None if not self.uplink else self.uplink * 8 / 1e6,
                 "messages": len(self.log), "images": int(sum(e["images"] for e in self.log)),

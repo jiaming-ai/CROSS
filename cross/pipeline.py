@@ -546,6 +546,9 @@ def add_session_args(ap):
     g.add_argument("--remote-upload", choices=("predicted", "all"), default="predicted",
                    help="images of the frames the back end will observe and the odometry measures, or of every mapped frame")
     g.add_argument("--remote-seed", type=int, default=0, help="seed of the jitter")
+    g.add_argument("--remote-max-backlog", type=float, default=0.0,
+                   help="overload policy (s, 0: off): a frame that waited longer than this on the server is stepped "
+                        "without its observation (the back end observes the next fresh frame); measurements are kept")
     g.add_argument("--remote-server", default="",
                    help="HOST:PORT of a remote-session server (scripts/remote/serve.py): a real gRPC link instead of the "
                         "simulated one; this process runs only the edge")
@@ -584,8 +587,8 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
             from cross.remote.grpc_link import GrpcLink
 
             def link(open_msg):
-                return GrpcLink(args.remote_server, open_msg, jpeg=args.remote_jpeg, extra_delay=args.remote_extra_delay,
-                                realtime=args.remote_realtime)
+                return GrpcLink(args.remote_server, dict(open_msg, max_backlog=args.remote_max_backlog),
+                                jpeg=args.remote_jpeg, extra_delay=args.remote_extra_delay, realtime=args.remote_realtime)
             return edge_session(mode, odometry, camera, cfg, link, T_right_in_left=T_right_in_left,
                                 mono_config=mono_config, mono_estimator=mono_estimator, upload=args.remote_upload)
         session = build_session(mode, odometry, camera, cfg, T_right_in_left=T_right_in_left, mono_config=mono_config,
@@ -618,6 +621,6 @@ def remote_link_factory(args):
     def make(server):
         return SimLink(server, rtt=args.remote_rtt, jitter=args.remote_jitter, compute=args.remote_compute,
                        costs=costs, outages=outages, jpeg=args.remote_jpeg, uplink_mbps=args.remote_uplink_mbps,
-                       seed=args.remote_seed)
+                       seed=args.remote_seed, max_backlog=args.remote_max_backlog)
     return make
 

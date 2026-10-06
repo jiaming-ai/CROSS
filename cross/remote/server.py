@@ -29,7 +29,10 @@ class MapServer:
         self.keep_lie = keep_lie                 # in-process: the replies keep the pypose beliefs (exact conversion)
         self.stats = dict(messages=0, images=0, observed=0, deferred=0, own_passes=0, seconds=0.0)
 
-    def handle(self, msg: dict) -> dict:
+    def handle(self, msg: dict, stale: bool = False) -> dict:
+        """Step one message.  stale: it waited longer than the backlog budget (the server is behind the edge): the back
+        end steps its motion but not its image (the observation waits for a fresh frame); the odometry's measurement
+        is still made."""
         t0 = perf_counter()
         system, sv = self.system, self.service
         req = msg.get("request")
@@ -39,6 +42,9 @@ class MapServer:
         if req is not None and sv is not None:
             sv.prune(req.get("keep_from"))
             sv.add_frame(req["index"], msg["rgb"], msg.get("rgb_right"))
+        if stale and msg.get("rgb") is not None and system.hypothesis_manager.dist is not None:
+            msg = dict(msg, rgb=None, rgb_right=None, depth=None)
+            self.stats["shed"] = self.stats.get("shed", 0) + 1
         anchor = sv.anchor(req) if (sv is not None and req is not None and map_frame) else None
         own0 = sv.stats["own_calls"] if sv is not None else 0
         da30 = sv.stats.get("depth_priors", 0) if sv is not None else 0
@@ -73,7 +79,7 @@ class MapServer:
                 wn = reply["map"]["w"]
                 reply["map"].update(mu0=mu[0].clone(), mubest=mu[int(np.argmax(wn))].clone())
         own = (sv.stats["own_calls"] - own0) if sv is not None else 0
-        reply["work"] = {"observed": bool(observed), "deferred": deferred, "own_pass": bool(own),
+        reply["work"] = {"observed": bool(observed), "deferred": deferred, "own_pass": bool(own), "stale": bool(stale),
                          "depth": bool(sv is not None and sv.stats.get("depth_priors", 0) > da30),
                          "stereo": bool(req is not None and sv is not None and sv.T_rl is not None)}
         dt = perf_counter() - t0
