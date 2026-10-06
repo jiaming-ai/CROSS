@@ -674,6 +674,9 @@ class FeedForwardConfig:
     # metric scale of a pass: "anchors" (stereo / odometry anchors), "head" (scale head of a vggt_ft checkpoint) or
     # "head_fallback" (the head only when no anchor is valid, e.g. monocular passes without odometry)
     scale_source: str = "anchors"
+    # focal of a canonical-camera scale head (vggt_ft DenseScaleHead with canonical_hfov): "calibrated" (the camera's
+    # intrinsics, set by the system) or "predicted" (the model's own FoV). Heads without a canonical camera ignore it.
+    scale_focal: str = "calibrated"
     max_rel_distance: float = 40.0       # reject relative poses further than this (m)
     kf_conf_threshold_new_kf: float = 0.35  # covis below this -> current view is novel -> permanent keyframe
     scale_std_inflation: bool = True     # inflate translation std by |t| * relative scale std
