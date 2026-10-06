@@ -255,6 +255,13 @@ failure of that run, not dropped. ORB-SLAM3 carries bug fixes only (`scripts/bas
 loading atlases with culled keyframes; two crashes while saving the atlas at shutdown (`Map::PreSave` erased map points
 from the set it was iterating over, in about one run in six, and the atlas was saved while the mapping and loop-closing
 threads still changed the map); and the trajectory export of the largest map with each frame's map id (monocular too).
+Two declared deviations from its defaults, for the visual-inertial rows only: its inertial modes start a map only after
+an acceleration change of 0.5 m/s² between frames and run place recognition (the only way back into a stored map) only
+after their second inertial BA, ~15 s after the IMU initialisation — gates built for long sessions, which a 10 s
+relocalization trial never passes. The visual-inertial runs set `IMU.fastInit: 1` (ORB-SLAM3's own option, which its
+v1.0 settings loader no longer read) and `LoopClosing.mergeAfterImuInit: 1` (place recognition once the IMU is
+initialised; its merge already completes the inertial initialisation of a map that merges before the second BA, and
+merges are still verified on three consecutive keyframes).
 
 ## 6. Run rules
 
