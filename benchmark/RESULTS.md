@@ -232,7 +232,7 @@ Cells: mean ATE over the dataset's sequences. Overall: ATE / ground-truth path l
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 2.059 | 0.671 | 0.095 | 0.34 % |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 3.303 | 0.671 | 6.535 | 1.14 % |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 17.054 | 3.123 | 11.611 | 2.70 % |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 49.710 | 0.678 | 6.926 | 1.95 % |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 16.381 | 0.700 | 5.777 | 1.40 % |
 | ORB-SLAM3 · RGB-D |  | 0.470 (9/22 ✗) | 0.732 (4/8 ✗) |  |
 | ORB-SLAM3 · stereo | 3.585 | 0.588 (8/22 ✗) | 1.193 (2/8 ✗) | 0.52 % (10/40 ✗) |
 | ORB-SLAM3 · mono | 94.343 | 5.732 (11/22 ✗) | 8/8 ✗ | 19/40 ✗ |
@@ -264,7 +264,7 @@ Overall: mean over the three datasets of the pooled recall at each dataset's sma
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.67 / 0.80 | 0.97 / 0.98 | 0.97 / 0.97 | 0.87 / 0.92 |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.67 / 0.80 | 0.96 / 0.98 | 0.96 / 0.98 | 0.86 / 0.92 |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.33 / 0.53 | 0.19 / 0.30 | 0.66 / 0.89 | 0.39 / 0.57 |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.55 / 0.65 | 0.54 / 0.82 | 0.97 / 0.98 | 0.69 / 0.82 |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.53 / 0.66 | 0.71 / 0.86 | 0.97 / 0.98 | 0.74 / 0.83 |
 | ORB-SLAM3 · RGB-D | 0.20 / 0.27 | 0.46 / 0.55 | 0.82 / 0.84 | 0.49 / 0.55 |
 | ORB-SLAM3 · stereo | 0.22 / 0.36 | 0.19 / 0.24 | 0.80 / 0.82 | 0.40 / 0.47 |
 | ORB-SLAM3 · mono | 0.05 / 0.06 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.11 / 0.12 (21/76 ✗) | 0.05 / 0.06 (37/100 ✗) |
@@ -296,7 +296,7 @@ Overall: mean over the three datasets of the pooled success at each dataset's sm
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.90 / 0.92 | 0.96 / 0.98 | 0.85 / 0.89 |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.89 / 0.91 | 0.96 / 0.98 | 0.85 / 0.89 |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.56 / 0.67 | 0.51 / 0.58 | 0.93 / 0.94 | 0.66 / 0.73 |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.64 / 0.75 | 0.67 / 0.79 | 0.96 / 0.98 | 0.76 / 0.84 |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.61 / 0.73 | 0.79 / 0.83 | 0.97 / 0.98 | 0.79 / 0.85 |
 | ORB-SLAM3 · RGB-D | 0.17 / 0.23 | 0.08 / 0.08 | 0.66 / 0.66 | 0.30 / 0.32 |
 | ORB-SLAM3 · stereo | 0.20 / 0.27 | 0.08 / 0.09 | 0.54 / 0.54 | 0.28 / 0.30 |
 | ORB-SLAM3 · mono | 0.04 / 0.08 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.08 / 0.09 (21/76 ✗) | 0.04 / 0.06 (37/100 ✗) |
@@ -330,7 +330,7 @@ Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular 
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 2.875 | 2.823 | 6.382 | 0.322 | 1.677 | 0.389 | 0.341 | 3.221 | 1.725 | 0.831 | 2.059 |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 3.880 | 11.722 | 3.648 | 1.674 | 1.785 | 2.704 | 0.767 | 3.298 | 2.103 | 1.449 | 3.303 |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 5.395 | 111.701 | 8.219 | 8.318 | 3.012 | 7.608 | 2.388 | 10.275 | 4.726 | 8.896 | 17.054 |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 10.909 | 411.210 | 25.010 | 3.039 | 6.700 | 1.857 | 1.816 | 16.363 | 10.765 | 9.431 | 49.710 |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 8.747 | 76.837 | 27.708 | 3.013 | 7.560 | 1.822 | 1.851 | 17.281 | 11.185 | 7.807 | 16.381 |
 | ORB-SLAM3 · stereo | 2.333 | 16.939 | 4.250 | 0.971 | 1.332 | 1.716 | 0.700 | 3.867 | 2.306 | 1.436 | 3.585 |
 | ORB-SLAM3 · mono | 47.317 | 609.878 (99%) | 32.383 | 1.020 | 28.576 | 27.125 | 16.301 | 128.006 | 44.401 | 8.426 | 94.343 |
 | RTAB-Map (external odometry) · stereo ⁽ᵒ⁾ | 7.574 | 1.715 | 3.843 | 0.321 | 6.931 (98%) | 1.507 | 0.747 (98%) | 3.206 | 3.290 | 0.807 | 2.994 |
@@ -356,7 +356,7 @@ Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular 
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.060 | 0.648 | 0.115 | 0.338 | 3.281 | 0.671 |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.060 | 0.648 | 0.115 | 0.338 | 3.281 | 0.671 |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.090 | 11.453 | 0.772 | 1.539 | 1.289 | 3.123 |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.090 | 1.539 | 0.263 | 0.470 | 1.442 | 0.678 |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.091 | 1.674 | 0.268 | 0.507 | 1.345 | 0.700 |
 | ORB-SLAM3 · RGB-D | 0.077 | 1.896 (4/5 ✗) | 0.176 (3/5 ✗) | 0.465 | 2.399 (2/3 ✗) | 0.470 (9/22 ✗) |
 | ORB-SLAM3 · stereo | 0.057 | 0.856 (4/5 ✗) | 0.179 (4/5 ✗) | 0.256 | 2.097 | 0.588 (8/22 ✗) |
 | ORB-SLAM3 · mono | 0.315 (2/7 ✗) | 16.477 (3/5 ✗) | 0.292 (4/5 ✗) | 3.661 (1/2 ✗) | 12.283 (1/3 ✗) | 5.732 (11/22 ✗) |
@@ -386,7 +386,7 @@ Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular 
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.095 | 0.095 |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 6.535 | 6.535 |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 11.611 | 11.611 |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 6.926 | 6.926 |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 5.777 | 5.777 |
 | ORB-SLAM3 · RGB-D | 0.732 (4/8 ✗) | 0.732 (4/8 ✗) |
 | ORB-SLAM3 · stereo | 1.193 (2/8 ✗) | 1.193 (2/8 ✗) |
 | ORB-SLAM3 · mono | 8/8 ✗ | 8/8 ✗ |
@@ -422,7 +422,7 @@ Cells: LR@1 m / LR@2 m and MS-ATE (m), pooled over the covered frames of the sce
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.70 / 0.79, 2.39 m | 0.65 / 0.79, 14.22 m | 0.99 / 0.99, 0.99 m | 0.89 / 0.97, 1.66 m | 0.16 / 0.48, 3.29 m | 0.67 / 0.80, 8.59 m |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.70 / 0.79, 2.39 m | 0.65 / 0.79, 14.22 m | 0.99 / 0.99, 0.99 m | 0.89 / 0.97, 1.66 m | 0.16 / 0.48, 3.29 m | 0.67 / 0.80, 8.59 m |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.53 / 0.53, 3.56 m | 0.00 / 0.00, 42.68 m | 0.45 / 0.98, 1.57 m | 0.87 / 0.89, 2.21 m | 0.44 / 0.83, 1.33 m | 0.33 / 0.53, 25.27 m |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.80 / 0.80, 2.27 m | 0.05 / 0.19, 16.22 m | 0.98 / 0.98, 1.27 m | 0.96 / 0.97, 1.67 m | 0.58 / 0.87, 12.49 m | 0.55 / 0.65, 10.96 m |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.80 / 0.81, 2.26 m | 0.08 / 0.23, 16.18 m | 0.89 / 0.98, 1.38 m | 0.96 / 0.97, 1.65 m | 0.53 / 0.83, 12.06 m | 0.53 / 0.66, 10.86 m |
 | ORB-SLAM3 · RGB-D | 0.24 / 0.24, 2.73 m | 0.00 / 0.03, 22.60 m | 0.32 / 0.35, 4.09 m | 1.00 / 1.00, 0.45 m | 0.02 / 0.37, 2.81 m | 0.20 / 0.27, 10.60 m |
 | ORB-SLAM3 · stereo | 0.18 / 0.20, 3.21 m | 0.00 / 0.05, 37.58 m | 0.34 / 0.65, 1.02 m | 1.00 / 1.00, 0.31 m | 0.15 / 0.46, 2.39 m | 0.22 / 0.36, 18.46 m |
 | ORB-SLAM3 · mono | 0.20 / 0.20, 0.07 m | 0.00 / 0.00, · m (4/4 ✗) | 0.00 / 0.00, · m (4/4 ✗) | 0.00 / 0.00, · m (1/1 ✗) | 0.06 / 0.14, 2.03 m | 0.05 / 0.06, 1.55 m (9/17 ✗) |
@@ -454,7 +454,7 @@ Cells: LR@3 m / LR@5 m and MS-ATE (m), pooled over the covered frames of the sce
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.97 / 0.98, 5.02 m | 0.97 / 0.98, 5.02 m |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.96 / 0.98, 10.91 m | 0.96 / 0.98, 10.91 m |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.19 / 0.30, 15.00 m | 0.19 / 0.30, 15.00 m |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.54 / 0.82, 7.45 m | 0.54 / 0.82, 7.45 m |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.71 / 0.86, 7.88 m | 0.71 / 0.86, 7.88 m |
 | ORB-SLAM3 · RGB-D | 0.46 / 0.55, 4.12 m | 0.46 / 0.55, 4.12 m |
 | ORB-SLAM3 · stereo | 0.19 / 0.24, 2.23 m | 0.19 / 0.24, 2.23 m |
 | ORB-SLAM3 · mono | 0.00 / 0.00, · m (7/7 ✗) | 0.00 / 0.00, · m (7/7 ✗) |
@@ -490,7 +490,7 @@ Overall = mean over the three datasets of the pooled success at each dataset's s
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.90 / 0.92 | 0.96 / 0.98 | 0.85 / 0.89 |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.69 / 0.78 | 0.89 / 0.91 | 0.96 / 0.98 | 0.85 / 0.89 |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.56 / 0.67 | 0.51 / 0.58 | 0.93 / 0.94 | 0.66 / 0.73 |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.64 / 0.75 | 0.67 / 0.79 | 0.96 / 0.98 | 0.76 / 0.84 |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.61 / 0.73 | 0.79 / 0.83 | 0.97 / 0.98 | 0.79 / 0.85 |
 | ORB-SLAM3 · RGB-D | 0.17 / 0.23 | 0.08 / 0.08 | 0.66 / 0.66 | 0.30 / 0.32 |
 | ORB-SLAM3 · stereo | 0.20 / 0.27 | 0.08 / 0.09 | 0.54 / 0.54 | 0.28 / 0.30 |
 | ORB-SLAM3 · mono | 0.04 / 0.08 (9/17 ✗) | 0.00 / 0.00 (7/7 ✗) | 0.08 / 0.09 (21/76 ✗) | 0.04 / 0.06 (37/100 ✗) |
@@ -522,7 +522,7 @@ Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m 
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.58 / 0.67 | 0.66 / 0.66 | 0.94 / 0.94 | 1.00 / 1.00 | 0.45 / 0.83 | 0.69 / 0.78 [218, 0.72–0.83] |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.58 / 0.67 | 0.66 / 0.66 | 0.94 / 0.94 | 1.00 / 1.00 | 0.45 / 0.83 | 0.69 / 0.78 [218, 0.72–0.83] |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.56 / 0.56 | 0.47 / 0.49 | 0.63 / 0.75 | 1.00 / 1.00 | 0.48 / 0.88 | 0.56 / 0.67 [218, 0.60–0.72] |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.61 / 0.64 | 0.49 / 0.53 | 0.94 / 0.96 | 1.00 / 1.00 | 0.48 / 0.90 | 0.64 / 0.75 [218, 0.69–0.80] |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.61 / 0.64 | 0.46 / 0.54 | 0.88 / 0.90 | 0.92 / 1.00 | 0.45 / 0.88 | 0.61 / 0.73 [218, 0.67–0.79] |
 | ORB-SLAM3 · RGB-D | 0.17 / 0.17 | 0.08 / 0.08 | 0.13 / 0.13 | 0.50 / 0.50 | 0.29 / 0.62 | 0.17 / 0.23 [218, 0.18–0.29] |
 | ORB-SLAM3 · stereo | 0.08 / 0.08 | 0.07 / 0.08 | 0.19 / 0.19 | 0.58 / 0.58 | 0.47 / 0.82 | 0.20 / 0.27 [216, 0.22–0.34] |
 | ORB-SLAM3 · mono | 0.08 / 0.08 | 0.00 / 0.00 (4/4 ✗) | 0.00 / 0.00 (4/4 ✗) | 0.00 / 0.00 (1/1 ✗) | 0.12 / 0.36 | 0.04 / 0.08 [218, 0.05–0.13] (9/17 ✗) |
@@ -554,7 +554,7 @@ Cells: RS@3 m / RS@5 m, the fraction of trials whose final pose lies within 3 m 
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.90 / 0.92 | 0.90 / 0.92 [1028, 0.90–0.93] |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.89 / 0.91 | 0.89 / 0.91 [1028, 0.89–0.93] |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.51 / 0.58 | 0.51 / 0.58 [1028, 0.55–0.61] |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.67 / 0.79 | 0.67 / 0.79 [1028, 0.76–0.81] |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.79 / 0.83 | 0.79 / 0.83 [1028, 0.81–0.85] |
 | ORB-SLAM3 · RGB-D | 0.08 / 0.08 | 0.08 / 0.08 [1028, 0.06–0.10] |
 | ORB-SLAM3 · stereo | 0.08 / 0.09 | 0.08 / 0.09 [1019, 0.07–0.11] |
 | ORB-SLAM3 · mono | 0.00 / 0.00 (7/7 ✗) | 0.00 / 0.00 [1028, 0.00–0.00] (7/7 ✗) |
@@ -586,7 +586,7 @@ Cells: RS@1 m / RS@2 m, the fraction of trials whose final pose lies within 1 m 
 | CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾ | 0.98 / 0.98 | 0.96 / 0.98 | 1.00 / 1.00 | 0.92 / 0.94 | 0.96 / 0.98 [1134, 0.96–0.98] |
 | CROSS (VGGT-Omega mono, stereo VIO odometry) · mono ⁽ᵒ⁾ | 0.98 / 0.98 | 0.97 / 0.99 | 1.00 / 1.00 | 0.92 / 0.94 | 0.96 / 0.98 [1134, 0.97–0.98] |
 | CROSS (VGGT-Omega mono, visual-inertial odometry) · mono ⁽ⁱ⁾ | 0.97 / 0.98 | 0.88 / 0.90 | 0.97 / 1.00 | 0.93 / 0.94 | 0.93 / 0.94 [1134, 0.92–0.95] |
-| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.97 / 0.98 | 0.97 / 0.98 | 1.00 / 1.00 | 0.92 / 0.95 | 0.96 / 0.98 [1134, 0.97–0.98] |
+| CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾ | 0.97 / 0.98 | 0.98 / 0.98 | 1.00 / 1.00 | 0.92 / 0.95 | 0.97 / 0.98 [1134, 0.97–0.98] |
 | ORB-SLAM3 · RGB-D | 0.71 / 0.73 | 0.60 / 0.60 | 0.92 / 0.92 | 0.65 / 0.65 | 0.66 / 0.66 [1134, 0.64–0.69] |
 | ORB-SLAM3 · stereo | 0.50 / 0.50 | 0.56 / 0.57 | 0.85 / 0.85 | 0.48 / 0.48 | 0.54 / 0.54 [1134, 0.51–0.57] |
 | ORB-SLAM3 · mono | 0.00 / 0.00 (21/21 ✗) | 0.00 / 0.00 | 0.92 / 0.95 | 0.27 / 0.34 | 0.08 / 0.09 [1134, 0.08–0.11] (21/76 ✗) |
