@@ -98,14 +98,32 @@ def serialize_keyframes(keyframes, path: str, method: str = "pickle"):
     else:
         raise ValueError(f"Unknown method {method}")
     
+class _ImageField:
+    """A keyframe image field: holds a tensor, None, or a reference into a map's image pack
+    (cross.db.store.ImageRef), which is decoded on access (cached).  `Keyframe.stored_image(name)` returns what is
+    held without decoding."""
+
+    def __set_name__(self, owner, name):
+        self._attr = "_" + name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return None                     # the dataclass default
+        v = obj.__dict__.get(self._attr)
+        return v.load() if getattr(type(v), "_cross_image_ref", False) else v
+
+    def __set__(self, obj, value):
+        obj.__dict__[self._attr] = value
+
+
 @dataclass
 class Keyframe:
     pose_mu: pp.LieTensor # SE3 (K, 7) mean of K SE3 components, use pose_mu.tensor() to get the tensor
     pose_std: pp.LieTensor # se3 (K, 6) std of K se3 components, assuming isotropic (diagonal)
     pose_weights: torch.Tensor # (K,) weights of K se3 components
-    raw_rgb_image: torch.Tensor = None
-    depth_image: torch.Tensor = None
-    raw_rgb_right: torch.Tensor = None # right stereo image (3, H, W), used as a metric scale anchor
+    raw_rgb_image: torch.Tensor = _ImageField()
+    depth_image: torch.Tensor = _ImageField()
+    raw_rgb_right: torch.Tensor = _ImageField() # right stereo image (3, H, W), used as a metric scale anchor
     atlas: Atlas = None # the atlas of the keyframe
     timestamp: float = None # the timestamp of the keyframe
     id: int = field(init=False)
@@ -125,6 +143,13 @@ class Keyframe:
     def __post_init__(self):
         self.id = Keyframe._next_id
         Keyframe._next_id += 1
+
+    def stored_image(self, name: str):
+        """The tensor, store reference or None held by an image field, without decoding it."""
+        return self.__dict__.get("_" + name)
+
+    def has_image(self, name: str) -> bool:
+        return self.__dict__.get("_" + name) is not None
 
     def __hash__(self):
         return self.id
@@ -177,15 +202,18 @@ class Edge:
         """
         self.mean: pp.LieTensor = mean
         self.std: pp.LieTensor = std
-        # pypose's optimizer uses the information matrix (inverse of covariance) for weighting.
-        # We ensure the diagonal is non-zero to prevent division by zero errors.
-        self.information: torch.Tensor = torch.diag(1.0 / (std.tensor().flatten() + 1e-9))
         self.type = type
         self._cost = cost
         self.conditional_pose = None
         # measurement metadata used by the calibrated noise model (see cross/core/lc_verify.py)
         self.n_frames: Optional[int] = None   # odometry: number of integrated readings
         self.conf: Optional[float] = None     # visual: estimator confidence (covisibility)
+
+    @property
+    def information(self) -> torch.Tensor:
+        """Diagonal information matrix (inverse std; the diagonal kept non-zero), computed on access: a map holds
+        millions of edges and nothing on the pipeline's path reads it (it cost a third of an edge's memory)."""
+        return torch.diag(1.0 / (self.std.tensor().flatten() + 1e-9))
 
     @property
     def cost(self) -> float:

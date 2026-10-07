@@ -805,6 +805,36 @@ class VisualizationConfig:
 
 
 @dataclass
+class StorageConfig:
+    """How a saved map stores its keyframes (cross/db/store.py).  Format v2: `map.pkl` holds the graph as numpy
+    columns, the images and descriptors go to `map.pkl.store/` and are read on demand."""
+    format: str = "v2"                   # v2 | pickle (the old single file: every image and descriptor inside)
+    # colour keyframe images: png / webp_lossless (exact) or jpeg / webp (lossy, image_quality); raw = uncompressed
+    image_codec: str = "webp_lossless"
+    image_quality: int = 95              # jpeg / webp quality
+    png_level: int = 3                   # png / png16 compression level (0-9)
+    depth_codec: str = "png16"           # png16 (fp16 bit pattern in a 16-bit PNG, exact) | zstd | raw
+    depth_drop_bits: int = 0             # png16: drop this many fp16 mantissa bits (3: <= 0.4 % error, 35 % smaller)
+    # retrieval descriptors on disk: float16 (half the bytes; dev split full tier: every metric unchanged, scores differ
+    # ~1e-7) | float32 (exact)
+    descriptor_dtype: str = "float16"
+    decode_cache: int = 1024             # decoded keyframe images kept in memory (LRU, process-wide)
+    # where keyframe images are held: "cpu" (host RAM; the references of an observation are copied to the GPU for its
+    # pass) or "" (the compute device, the old behaviour: GPU memory grows with the map, ~0.6 MB per image)
+    image_device: str = "cpu"
+    # live run: keep the images of the newest N keyframes as tensors, encode older ones into a spool file and drop
+    # them from memory (decoded again on access, exact with the lossless codecs); 0: every keyframe image stays in
+    # memory (~0.6 MB each).  NCLT 2012-01-08 (4300 keyframes) with 500: identical map, same run time, host RAM
+    # 4.3 vs 6.3 GB
+    max_ram_images: int = 2000
+    # encode every new keyframe's images in the background as it is added (format v2), so saving a large map copies
+    # bytes instead of encoding; the images in memory are unchanged
+    encode_ahead: bool = True
+    spill_dir: Optional[str] = None      # spool directory of max_ram_images (default: a temporary directory)
+    encode_workers: int = 4              # threads that encode images when a map is saved
+
+
+@dataclass
 class SystemConfig:
     """Root configuration for the CROSS system."""
     async_update: bool = False
@@ -819,6 +849,7 @@ class SystemConfig:
     pose_est: PoseEstConfig = field(default_factory=PoseEstConfig)
     depth_pred: DepthPredConfig = field(default_factory=DepthPredConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
 
 
 # ---------------------------------------------------------------------------

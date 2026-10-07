@@ -50,6 +50,26 @@ torch.set_printoptions(
     linewidth=300,
 )
 
+class _LazyImages:
+    """The float images of one field of a list of keyframes, decoded only when read (stored right images: the
+    estimator uses the first n_ref_anchors that exist)."""
+
+    def __init__(self, keyframes, field: str, device=None):
+        self.keyframes, self.field, self.device = list(keyframes), field, device
+
+    def __len__(self):
+        return len(self.keyframes)
+
+    def __getitem__(self, i):
+        from cross.db.db import as_float_image
+        t = getattr(self.keyframes[i], self.field)
+        return as_float_image(t.to(self.device) if (t is not None and self.device is not None) else t)
+
+    def __iter__(self):
+        for i in range(len(self.keyframes)):
+            yield self[i]
+
+
 def _scale_translation(delta, s: float):
     """An odometry reading (4x4 array or pypose SE3, translation first) with its translation multiplied by s."""
     if isinstance(delta, np.ndarray):
@@ -111,7 +131,8 @@ class System:
         self._cur_obs_lock = threading.Lock()
 
         self.device = device
-        self.storage_device = device
+        # keyframe images: host RAM by default (storage.image_device); an observation copies its references to `device`
+        self.storage_device = torch.device(self.config.storage.image_device or device)
         self.state_device = torch.device(self.config.state_device or device)
         self.visualize = visualize
         self.debug = debug
@@ -224,6 +245,7 @@ class System:
             device=device,
             config=self.config.retrieval,
         )
+        self.db.image_device = self.storage_device
 
         # hypothesis manager
         self.hypothesis_manager : HypothesisManager = HypothesisManager(
@@ -455,15 +477,17 @@ class System:
         # insert the initial keyframe
         kf = self.db.insert(
             self._processed_frame_num,
-            rgb_image.to(self.storage_device), 
-            depth_image.to(self.storage_device) if depth_image is not None else None,
+            # on the compute device, as before: the descriptor is computed there (the database then moves the stored
+            # copy to storage.image_device); a CPU image changes the descriptor at the 1e-5 level
+            rgb_image.to(self.device),
+            depth_image.to(self.device) if depth_image is not None else None,
             mu=mu,
             sigma=sigma,
             weights=weights,
             atlas=new_atlas,
             timestamp=timestamp,
             temporary=False,
-            raw_rgb_right=rgb_right.to(self.storage_device) if (rgb_right is not None and self._store_right_images) else None,
+            raw_rgb_right=rgb_right.to(self.device) if (rgb_right is not None and self._store_right_images) else None,
             pose_charts=self.hypothesis_manager.get_active_charts(),
             metric_source=getattr(self, "_current_metric_source", None),
         )
@@ -733,8 +757,42 @@ class System:
                 logger.warning(f"map consistency model failed: {ex}")
 
         # --- 5. Save to Disk ---
-        with open(save_path, "wb") as f:
-            pickle.dump(save_data, f)
+        # format v2 (cross/db/store.py): the graph as numpy columns in save_path, images (encoded) and descriptors in
+        # the sidecar directory save_path.store/; "pickle": the old single file with every tensor
+        from cross.db import store as map_store
+        scfg = self.config.storage
+        if scfg.format == "pickle":
+            with open(save_path, "wb") as f:
+                pickle.dump(map_store.materialize(save_data), f)
+            map_store.remove_sidecar(save_path)
+        elif scfg.format == "v2":
+            # images the live spool (storage.max_ram_images) encoded are copied into the map once and re-pointed to
+            # it, and later spills go there: a long session saved repeatedly does not copy its images again
+            spool = getattr(self.db, "_spool", None)
+            on_written = None
+            if spool is not None:
+                by_id = {kf.id: kf for kf in self.db.get_all_keyframes()}
+                rows = [r["id"] for r in save_data["db_data"]["keyframes"]]
+
+                def on_written(row, field, ref):
+                    kf = by_id.get(rows[row])
+                    if kf is None:
+                        return
+                    old = kf.stored_image(field)
+                    if map_store.is_ref(old) and old.pack.uid != ref.pack.uid:
+                        setattr(kf, field, ref.to(old.device))
+                    pre = kf.__dict__.get("_pre_" + field)          # background-encoded image of a resident tensor
+                    if pre is not None and pre.pack.uid != ref.pack.uid:
+                        kf.__dict__["_pre_" + field] = ref.to(pre.device)
+            st = map_store.write_map(save_path, save_data, scfg, on_written=on_written)
+            if spool is not None:
+                spool.retarget(st["pack"])
+            logger.info(f"Map storage: graph {st['graph_bytes'] / 1e6:.2f} MB, images {st['pack_bytes'] / 1e6:.1f} MB "
+                        f"({scfg.image_codec}; {st['encoded']} encoded, {st['copied']} copied, {st['kept']} kept), "
+                        f"descriptors {st.get('descriptor_bytes', 0) / 1e6:.1f} MB, {st['write_s']:.2f} s")
+            self.last_save_stats = st
+        else:
+            raise ValueError(f"storage.format: v2 | pickle, not {scfg.format}")
 
         logger.info(f"Map saved successfully to {save_path}")
         logger.info(f"  - Saved {len(db_data['keyframes'])} permanent keyframes")
@@ -786,8 +844,9 @@ class System:
         logger.info(f"Loading map from {load_path}...")
 
         # --- 1. Load Data from Disk ---
-        with open(load_path, "rb") as f:
-            save_data = pickle.load(f)
+        # format v2 or the old single pickle; v2 keyframe images stay in the store until they are used
+        from cross.db import store as map_store
+        save_data = map_store.read_map(load_path)
         if save_data.get("coordinate_charts_version", 0) and not self.hypothesis_manager.chart_aware:
             raise ValueError("This map contains coordinate charts; enable chart-aware mapping to load it")
         if bool(save_data.get('conditional_sources_version',0)) != self.config.mapping.hypothesis.conditional_sources:
@@ -849,13 +908,17 @@ class System:
             self.visualizer.reset(new_session=False)
 
         if self.pose_est_type == PoseEstType.FF and hasattr(self.pose_est, "precompute"):
-            # tokens of every map image now (exact, a few seconds once per process: the cache keeps them across map
-            # reloads), instead of a slower pass whenever a map keyframe is retrieved for the first time
+            # tokens of the map images now (exact, a few seconds once per process: the cache keeps them across map
+            # reloads), instead of a slower pass whenever a map keyframe is retrieved for the first time.  Only as many
+            # as the token cache holds (the first ones, as before); the others are not decoded here
             from cross.db.db import as_float_image
             kfs = self.db.get_all_keyframes()
-            images = [as_float_image(k.raw_rgb_image) for k in kfs if k.raw_rgb_image is not None]
-            images += [as_float_image(k.raw_rgb_right) for k in kfs if getattr(k, "raw_rgb_right", None) is not None]
-            self.pose_est.precompute(images)
+            slots = [(k, "raw_rgb_image") for k in kfs if k.has_image("raw_rgb_image")]
+            slots += [(k, "raw_rgb_right") for k in kfs if k.has_image("raw_rgb_right")]
+            cache = getattr(getattr(self.pose_est, "backend", None), "token_cache", None)
+            cap = cache.capacity if cache is not None else 0
+            if cap > 0:
+                self.pose_est.precompute([as_float_image(getattr(k, f).to(self.device)) for k, f in slots[:cap]])
 
         logger.info(f"Map loaded successfully from {load_path}")
         logger.info(f"  - Loaded {len(save_data['db_data']['keyframes'])} permanent keyframes")
@@ -1850,15 +1913,15 @@ class System:
             # insert kf into the database for permanent kf
             keyframe = self.db.insert(
                 self._processed_frame_num,
-                rgb_image.to(self.storage_device), 
-                depth_image.to(self.storage_device) if depth_image is not None else None, 
+                rgb_image.to(self.device),               # descriptor on the compute device (see _init_system)
+                depth_image.to(self.device) if depth_image is not None else None,
                 mu=mu.to(self.state_device), 
                 sigma=sigma.to(self.state_device), 
                 weights=weights.to(self.state_device),    
                 atlas=self.current_atlas,
                 timestamp=timestamp,
                 temporary=is_temp_kf,
-                raw_rgb_right=rgb_right.to(self.storage_device) if (rgb_right is not None and self._store_right_images) else None,
+                raw_rgb_right=rgb_right.to(self.device) if (rgb_right is not None and self._store_right_images) else None,
                 pose_charts=pose_charts,
                 metric_source=getattr(self, "_current_metric_source", None),
             )
@@ -2453,8 +2516,9 @@ class System:
             retrieval_scores = retrieval_scores[:max_refs]
             keyframes = keyframes[:max_refs]
         from cross.db.db import as_float_image
-        ref_rgbs = [as_float_image(p.raw_rgb_image) for p in keyframes]
-        ref_depths = [as_float_image(p.depth_image) for p in keyframes] if depth_image is not None else None
+        # stored images (host RAM by default) copied to the compute device for this pass only
+        ref_rgbs = [as_float_image(p.raw_rgb_image.to(self.device)) for p in keyframes]
+        ref_depths = [as_float_image(p.depth_image.to(self.device)) for p in keyframes] if depth_image is not None else None
 
         # insert VO pose est
         if self._prev_obs is not None and self.use_VO:
@@ -2478,7 +2542,7 @@ class System:
             valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
                 ref_rgbs, None, rgb_image, None,
                 curr_image_right=rgb_right,
-                ref_images_right=[as_float_image(p.raw_rgb_right) for p in keyframes],
+                ref_images_right=_LazyImages(keyframes, "raw_rgb_right", self.device),
                 odom_anchor=odom_anchor,
                 ref_rel_poses=self._map_anchor_pairs(keyframes),
                 **source_context,
