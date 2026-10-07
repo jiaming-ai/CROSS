@@ -49,8 +49,71 @@ def load_set(path):
                 session=np.asarray(session), name=os.path.basename(path.rstrip("/")))
 
 
+def gps_sigma_model(t_frames, gnss_t, fix_dt, max_dt=0.5, gap=2.0, young=5.0, sigma_ok=8.0, sigma_young=40.0):
+    """Consumer GPS without a quality field (NCLT Garmin): sigma from the age of the fix since the receiver
+    reacquired (a gap > `gap` s without rows): the first `young` s after a reacquisition are much worse (NCLT
+    2012-01-08: median 11 m / p90 66 m vs 4 / 15 m later).  No fix within max_dt: NaN."""
+    starts = gnss_t[np.r_[0, np.where(np.diff(gnss_t) > gap)[0] + 1]]
+    i = np.searchsorted(starts, t_frames, side="right") - 1
+    age = t_frames - starts[np.clip(i, 0, len(starts) - 1)]
+    sig = np.where(age < young, sigma_young, sigma_ok).astype(float)
+    sig[~(fix_dt < max_dt)] = np.nan
+    return sig
+
+
+def load_nclt(desc_root, prepared_root, sessions, cams):
+    """NCLT descriptor sets (benchmark/datasets/nclt_descriptors.py): positions = ground-truth camera positions
+    (local NED), GPS = the nearest consumer fix in the same frame with gps_sigma_model."""
+    sets = []
+    for si, ses in enumerate(sessions):
+        g = np.loadtxt(os.path.join(prepared_root, ses, "gnss.txt"))
+        for cam in cams:
+            f = os.path.join(desc_root, ses, f"Cam{cam}.npy")
+            if not os.path.exists(f):
+                continue
+            desc = np.load(f, mmap_mode="r")
+            m = np.load(os.path.join(desc_root, ses, f"Cam{cam}_meta.npz"))
+            pos = m["T_world_cam"][:, :3, 3]
+            gps = np.asarray(m["gps_xyz"], float)
+            sig = gps_sigma_model(np.asarray(m["t"], float), g[:, 0], np.asarray(m["gps_dt"], float))
+            gps[~np.isfinite(sig)] = np.nan
+            ok = np.isfinite(pos).all(1)
+            sets.append(dict(desc=MultiRows([(desc, np.where(ok)[0])]), pos=pos[ok], gps=gps[ok],
+                             gps_sigma=sig[ok], session=np.full(int(ok.sum()), si), name=f"{ses}/Cam{cam}"))
+    return sets
+
+
+class MultiRows:
+    """Rows of several (memory-mapped) arrays as one indexable array, without loading them."""
+
+    def __init__(self, parts):
+        self.parts = []                          # (array, rows)
+        for arr, rows in parts:
+            if isinstance(arr, MultiRows):
+                self.parts += [(a, r[rows] if rows is not None else r) for a, r in arr.parts]
+            else:
+                self.parts.append((arr, np.arange(arr.shape[0]) if rows is None else np.asarray(rows)))
+        self.offsets = np.cumsum([0] + [len(r) for _, r in self.parts])
+        self.shape = (int(self.offsets[-1]), self.parts[0][0].shape[1])
+
+    def __getitem__(self, idx):
+        idx = np.asarray(idx)
+        out = np.empty((len(idx), self.shape[1]), dtype=self.parts[0][0].dtype)
+        which = np.searchsorted(self.offsets, idx, side="right") - 1
+        for k in np.unique(which):
+            sel = which == k
+            arr, rows = self.parts[k]
+            local = rows[idx[sel] - self.offsets[k]]
+            order = np.argsort(local)
+            got = np.asarray(arr[local[order]])
+            tmp = np.empty_like(got)
+            tmp[order] = got
+            out[sel] = tmp
+        return out
+
+
 def concat(sets):
-    out = dict(desc=np.concatenate([s["desc"] for s in sets]) if len(sets) > 1 else sets[0]["desc"])
+    out = dict(desc=MultiRows([(s["desc"], None) for s in sets]) if len(sets) > 1 else sets[0]["desc"])
     for k in ("pos", "session"):
         out[k] = np.concatenate([s[k] for s in sets])
     for k in ("gps", "gps_sigma"):
@@ -141,11 +204,19 @@ def main():
     ap.add_argument("--latency-cpu-threads", type=int, default=8)
     ap.add_argument("--no-latency", action="store_true")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--nclt", default="", help="NCLT desc root: --db / --queries are then session names")
+    ap.add_argument("--nclt-prepared", default="")
+    ap.add_argument("--db-cams", nargs="+", type=int, default=[1, 2, 3, 4, 5])
+    ap.add_argument("--q-cams", nargs="+", type=int, default=[5])
     a = ap.parse_args()
     dev = "cuda"
     rng = np.random.default_rng(0)
-    DB = concat([load_set(p) for p in a.db])
-    QS = concat([load_set(p) for p in a.queries])
+    if a.nclt:
+        DB = concat(load_nclt(a.nclt, a.nclt_prepared, a.db, a.db_cams))
+        QS = concat(load_nclt(a.nclt, a.nclt_prepared, a.queries, a.q_cams))
+    else:
+        DB = concat([load_set(p) for p in a.db])
+        QS = concat([load_set(p) for p in a.queries])
     N = DB["desc"].shape[0]
     global dbpos_full_cache
     dbpos_full_cache = DB["pos"]

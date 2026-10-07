@@ -91,11 +91,12 @@ def main():
                     cent_cpu = ivf.centroids.float().cpu()
                 else:
                     ivf = None
-                Ccpu = C.float().cpu() if n * d * 4 <= a.cpu_mem_gb * 1e9 else None
+                Ccpu = C.cpu().float() if n * d * 4 <= a.cpu_mem_gb * 1e9 else None
                 del C
                 torch.cuda.empty_cache()
-            else:
-                Ccpu, ivf = None, None
+            else:   # too large for the GPU budget: CPU only (exact)
+                Ccpu = rand_unit(n, d, "cpu", torch.float32) if n * d * 4 <= a.cpu_mem_gb * 1e9 else None
+                ivf = None
             if Ccpu is not None:
                 qc = Ccpu[0].clone()
                 row[f"code{d}_fp32_cpu"] = timed(lambda: (Ccpu @ qc).topk(10), 20 if n >= 1e6 else 100, cuda=False)
