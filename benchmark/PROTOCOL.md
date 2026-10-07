@@ -105,14 +105,17 @@ the ground truth's own heading error (heading from the direction of travel), exc
 SimChange 0.09–0.27 m (simulated SNR 10: 0.27–0.46 m).
 
 A real VIO can fail: on ROVER's night session Basalt's velocity runs away to ~30× the true one over the last 500 frames.
-CROSS's odometry scale guard (`mapping.loop_closure.odom_guard_factor`, on by default; RGB-D and stereo modes, whose
-visual translations are metric without the odometry) rescales the odometry when the measured / odometry translation
-ratio of short spans leaves [½, 2]× its long-run value in two consecutive windows of 30 samples. It cannot tell a
-failing visual estimator from a failing odometry: with VIO odometry it fires on KITTI 01 and 04, where PnP on depth and
-VGGT-Omega stereo lose the motion at car speed. The KITTI VIO cells were run before the guard existed. The options
-`odom_guard_per_observation` and `odom_guard_attribute` (off by default) remove those firings. Two more options, also
-off by default, extend the guard: `odom_guard_inflate` (the odometry's uncertainty after a firing) and
-`odom_guard_map` (relocalization sessions). See `mapping.loop_closure` in `cross/core/config.py`.
+CROSS's odometry scale guard (`mapping.loop_closure.odom_guard_factor`, on by default) applies to the RGB-D and stereo
+modes, whose visual translations are metric without the odometry. It compares the measured and the odometry
+translations of short spans, one sample per frame, and fires when their ratio leaves [½, 2]× its long-run value in two
+consecutive windows of 30 frames.
+- **Attribution.** A departure counts only when the odometry's own speed changed in the matching direction. A visual
+  estimator that loses the motion at car speed (PnP on depth and VGGT-Omega stereo on KITTI 01 / 04 with VIO) leaves
+  the odometry's pace unchanged, so the guard does not fire.
+- **After a firing.** The odometry is rescaled. Its translations become as uncertain as the measured error, over the
+  stretch that departed and from then on, so the visual measurements and loop closures correct the map. The guard then
+  follows the fault window by window.
+- **Relocalization sessions** (`odom_guard_map`): the map measurements' fixes feed the guard too.
 
 **IMU.** The monocular visual-inertial setups (CROSS mono with `--odometry vio`) get the IMU rigidly attached to the
 monocular camera, at its native rate, with its calibrated extrinsics and noise (`benchmark/datasets/prepare_imu.py`,
