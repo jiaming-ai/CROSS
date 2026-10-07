@@ -122,9 +122,10 @@ alike, so they get retrieved at the wrong place. Such a frame becomes a temporar
 with no image and no descriptor. The test is the share of the view that shows textured, well-exposed scene content
 at a normal distance. The near field comes from sensor depth, or from stereo matching in the stereo mode; people are
 found by a small detector. Thresholds are relative to the session's running medians.
-`--set mapping.keyframe_quality.enabled=true`; `skip_observation=true` also skips observing with such a frame (not
-recommended: it lost relocalization in tests). The injected test set is `benchmark/datasets/inject_junk.py`
-(`benchmark/dev.py ... --tier occ`).
+A view that is only textureless (a white wall) is kept unless it shows no structure above the sensor noise. On by
+default; `--set mapping.keyframe_quality.enabled=false` turns it off, and `skip_observation=true` also skips observing
+with such a frame (not recommended: it lost relocalization in tests). The test set with injected junk views is
+`benchmark/datasets/inject_junk.py` (`benchmark/dev.py ... --tier occ`).
 
 **Camera mounting and the vertical.** Relocalization proposals are clustered, and matched to hypotheses, in place
 coordinates: position on the horizontal plane plus heading (`mapping.projection`). The default assumes a

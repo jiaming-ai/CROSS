@@ -583,8 +583,11 @@ class KeyframeQualityConfig:
     """Keyframe quality filter (cross/core/kf_quality.py): a frame whose view is mostly blocked by something close to
     the camera (a person, an object, a wall at arm's length), clipped, or without texture (blank surface, blur, covered
     lens) is not stored as a permanent keyframe (it becomes a temporary node: odometry chain kept, no image, no
-    descriptor).  Decided by the informative fraction of the view against the session's running medians."""
-    enabled: bool = False
+    descriptor).  Decided by the informative fraction of the view against the session's running medians.
+    On by default: on the dev OpenLORIS scenes T2 / T3 were identical per query in the stereo, RGB-D and mono modes
+    (T1 within 4 mm), and with injected junk views (benchmark/datasets/inject_junk.py) 52-68 % fewer junk keyframes
+    were stored."""
+    enabled: bool = True
     # also do not observe (retrieve + estimate) with a junk frame: the odometry carries the belief, as on a frame the
     # observation cadence skips
     skip_observation: bool = False

@@ -33,6 +33,7 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
+from loguru import logger
 
 CAUSES = ("near", "person", "clipped", "flat")
 
@@ -110,11 +111,17 @@ class KeyframeQuality:
 
     def _person_cells(self, rgb: torch.Tensor, gh: int, gw: int) -> tuple:
         """Cells mostly inside a person box (score >= person_score); (cells or None, count)."""
-        if not getattr(self.cfg, "person", True):
+        if not getattr(self.cfg, "person", True) or self._detector is False:
             return None, 0
         if self._detector is None:
-            from cross.mono.person_detector import make_person_detector
-            self._detector = make_person_detector(rgb.device)
+            try:
+                from cross.mono.person_detector import make_person_detector
+                self._detector = make_person_detector(rgb.device)
+            except Exception as err:          # noqa: BLE001  e.g. no weights offline: the other cues still work
+                logger.warning(f"keyframe quality: person detector unavailable ({type(err).__name__}: {err}); "
+                               "continuing without the person cue")
+                self._detector = False
+                return None, 0
         with torch.inference_mode():
             res = self._detector([rgb.float().clamp(0, 1)])[0]
         keep = (res["labels"] == 1) & (res["scores"] >= float(getattr(self.cfg, "person_score", 0.5)))
