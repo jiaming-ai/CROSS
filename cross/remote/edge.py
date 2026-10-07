@@ -96,7 +96,7 @@ class RemotePipeline:
 
     def __init__(self, frontend, link, mode, odometry, cadence, mapping_interval=1, upload="predicted",
                  frontend_factory=None, server=None, continuous_start_in_map=False, depth_model=None, K=None,
-                 obs_cap=0.0):
+                 obs_cap=0.0, send_right=True):
         if upload not in ("predicted", "all"):
             raise ValueError(f"Unknown upload policy {upload}")
         self.frontend, self.link, self.server = frontend, link, server
@@ -107,6 +107,7 @@ class RemotePipeline:
         self.frontend_factory = frontend_factory
         self.continuous_start_in_map = continuous_start_in_map
         self.depth_model, self.K = depth_model, K
+        self.send_right = bool(send_right)       # False: the back end observes on the left image only (ff.right_image)
         self.initialized = self.mapped_now = False
         self.index = -1                          # frames processed in this session
         self._frames = 0
@@ -238,7 +239,7 @@ class RemotePipeline:
         send_images = (map_now and (observe or self.upload == "all")) or req is not None
         depth = right = None
         if send_images:
-            depth, right = frame.get("depth"), frame.get("rgb_right")
+            depth, right = frame.get("depth"), frame.get("rgb_right") if self.send_right else None
             if self.frontend is not None:
                 import cv2
                 if depth is None:
@@ -401,4 +402,5 @@ def remote_session(pipeline, link_factory, upload="predicted", obs_cap=0.0):
                           ObservationCadence(pipeline.mapper.config.pose_est), pipeline.mapping_interval, upload,
                           frontend_factory=factory, server=server,
                           continuous_start_in_map=pipeline.continuous_start_in_map,
-                          depth_model=pipeline.depth_model, K=pipeline.K, obs_cap=obs_cap)
+                          depth_model=pipeline.depth_model, K=pipeline.K, obs_cap=obs_cap,
+                          send_right=pipeline.mapper.config.pose_est.ff.right_image != "left" or pipeline.odometry == "vgio")

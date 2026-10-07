@@ -34,7 +34,7 @@ cross_stereo:
   setups: [stereo]
   uses_odometry: true
   map_reuse: save/load
-  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3"]
+  args: [--estimator, ff]
   outdoor_config: [configs/outdoor.yaml]
 
 cross_stereo_vo:
@@ -43,8 +43,7 @@ cross_stereo_vo:
   setups: [stereo]
   uses_odometry: false
   map_reuse: save/load
-  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3",
-         --odometry, visual]
+  args: [--estimator, ff, --odometry, visual]
   outdoor_config: [configs/outdoor.yaml]
 
 # stereo + IMU: the VGGT-Omega + IMU local pose graph of cross_mono_ff_vgio with stereo constraints instead of learned
@@ -56,8 +55,7 @@ cross_stereo_vgio:
   uses_odometry: false
   uses_imu: true
   map_reuse: save/load
-  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3",
-         --odometry, vgio]
+  args: [--estimator, ff, --odometry, vgio]
   outdoor_config: [configs/outdoor.yaml]
 
 cross_stereo_fast:
@@ -68,7 +66,7 @@ cross_stereo_fast:
   setups: [stereo]
   uses_odometry: true
   map_reuse: save/load
-  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3", --fast]
+  args: [--estimator, ff, --fast]
   outdoor_config: [configs/outdoor.yaml]
 
 cross_stereo_vo_fast:
@@ -78,8 +76,7 @@ cross_stereo_vo_fast:
   setups: [stereo]
   uses_odometry: false
   map_reuse: save/load
-  args: [--estimator, ff, --obs-min-translation, "0.3", --obs-min-rotation, "0.15", --obs-max-interval, "3",
-         --odometry, visual, --fast]
+  args: [--estimator, ff, --odometry, visual, --fast]
   outdoor_config: [configs/outdoor.yaml]
 
 cross_mono_odom:

@@ -647,6 +647,14 @@ class FeedForwardConfig:
     n_ref_anchors: int = 2               # stored right images of the best references used as extra anchors
     use_curr_anchor: bool = True         # include the current right image (ablation switch)
     store_right_images: bool = False     # keep right images of keyframes even when n_ref_anchors == 0
+    # the right image in the stereo mode's back end: "pair" anchors each pass's metric scale (the current pair, stored
+    # right images of the references: use_curr_anchor, n_ref_anchors); "left": the back end observes on the left image
+    # alone, with the metric scale from the previous observation and the odometry between them (use_odom_anchor) and
+    # from pairs of map references (use_map_anchors), set by cross.pipeline.apply_right_image; the right image is not
+    # stored and, in remote sessions, not sent.  configs/stereo_odom.yaml (external odometry, which carries the scale)
+    # sets left: development split, wheel / OXTS odometry, left vs pair T1 0.139 / 0.157 m, T2 0.895 / 0.885, T3 28 / 29
+    # of 33, half the uplink (outputs/2026-10-07_remote_cadence)
+    right_image: str = "pair"
     use_odom_anchor: bool = False        # previous frame + odometry as an additional metric anchor
     odom_anchor_min_translation: float = 0.15
     odom_anchor_weight: float = 0.5

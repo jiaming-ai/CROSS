@@ -142,12 +142,19 @@ class Pipeline:
         self.mapper.load_map(str(path))
 
     # ------------------------------------------------------------------ one frame
+    def _left_only(self) -> bool:
+        """The back end observes on the left image alone (pose_est.ff.right_image)."""
+        pe = getattr(getattr(self.mapper, "config", None), "pose_est", None)
+        return getattr(getattr(pe, "ff", None), "right_image", "pair") == "left"
+
     def process(self, frame: dict):
         """Process one frame (loader dict: rgb, timestamp, and depth / rgb_right / delta_pose as the mode allows).
         (MonocularSystem.step(rgb, timestamp) is the monocular CLI's per-image entry point.)"""
         if self.frontend is None:
             if self.mode == "mono":           # (rgbd / stereo: frames unchanged, as before the pipeline existed)
                 frame = restrict_inputs(frame, self.mode, self.odometry)
+            elif self.mode == "stereo" and frame.get("rgb_right") is not None and self._left_only():
+                frame = dict(frame, rgb_right=None)   # the back end observes on the left image (pose_est.ff.right_image)
             self.mapper.step(obs=frame, data=frame)
             self.mapped_now = True
             return None
@@ -184,7 +191,8 @@ class Pipeline:
                 depth = self.depth_model.predict_metric(rgb, self.K, rgb.shape[:2])
             if depth is not None and depth.shape[:2] != rgb.shape[:2]:
                 depth = cv2.resize(depth, (rgb.shape[1], rgb.shape[0]))
-            right = frame.get("rgb_right")
+            if not self._left_only():
+                right = frame.get("rgb_right")
         # Every input increment is accumulated; image retrieval / filtering runs every mapping_interval frames.
         self.mapper.step({
             "rgb": rgb if map_now else None,
@@ -307,6 +315,36 @@ def mono_ff_config(cfg):
     return cfg
 
 
+def mode_config_files(mode: str, odometry: str, fast: bool = False) -> list:
+    """The configuration files shipped for a mode and odometry (layered in this order, before the user's --config):
+    the stereo mode configs/stereo.yaml (+ configs/stereo_odom.yaml with external odometry: left image, half the
+    observation rate; + configs/stereo_fast.yaml with --fast).  Other modes: none (their presets are in code:
+    mono_ff_config, mono profiles)."""
+    files = []
+    if mode == "stereo":
+        files.append(os.path.join(CONFIG_DIR, "stereo.yaml"))
+        if odometry == "external":
+            files.append(os.path.join(CONFIG_DIR, "stereo_odom.yaml"))
+        if fast:
+            files.append(FAST_STEREO_PRESET)
+    return files
+
+
+def apply_right_image(cfg):
+    """(In place) pose_est.ff.right_image "left": no stereo anchors; the scale from the odometry anchor and pairs of
+    map references (the mono mode's feed-forward estimator, mono_ff_config, without its cadence)."""
+    ff = cfg.pose_est.ff
+    if ff.right_image not in ("left", "pair"):
+        raise ValueError(f"pose_est.ff.right_image: left | pair, not {ff.right_image}")
+    if ff.right_image == "left":
+        ff.use_curr_anchor = False
+        ff.n_ref_anchors = 0
+        ff.store_right_images = False
+        ff.use_odom_anchor = True
+        ff.use_map_anchors = True
+    return cfg
+
+
 def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in_left=None, mono_config=None,
                   vo_config=None, device="cuda", visualize=False, mono_estimator: str = "da3",
                   continuous_start: bool = True) -> Pipeline:
@@ -326,7 +364,7 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
         raise ValueError("vgio uses the feed-forward back end's model (--mono-estimator ff)")
     K = np.array(camera.K, dtype=np.float64).copy()        # before System rescales camera.K to its storage size
     size = (int(camera.frame_width), int(camera.frame_height))
-    cfg = copy.deepcopy(system_config)
+    cfg = apply_right_image(copy.deepcopy(system_config))
     mc = mono_config
     if odometry in INERTIAL:
         if mc is None:
@@ -409,7 +447,10 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
 
 def _vgio_config(mc, mode, T_right_in_left=None):
     """(In place) the stereo mode's VGGT-inertial odometry takes the metric scale from the stereo pair: no learned
-    depth and no bias state for it."""
+    depth and no bias state for it; it measures on the back end's passes (imu.vgio_align: None = on in the stereo mode,
+    off in the mono mode, where the passes' map references cost scale accuracy)."""
+    if mc.imu.vgio_align is None:
+        mc.imu.vgio_align = mode == "stereo"
     if mode == "stereo":
         if T_right_in_left is None:
             raise ValueError("The stereo mode's VGGT-inertial odometry needs the stereo calibration (T_right_in_left)")
@@ -463,7 +504,7 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
     if odometry not in ("external", "vgio"):
         raise ValueError("Remote sessions: external odometry or VGGT-inertial odometry (--odometry vgio)")
     K = np.array(camera.K, dtype=np.float64).copy()
-    cfg = copy.deepcopy(system_config)
+    cfg = apply_right_image(copy.deepcopy(system_config))
     mc = copy.deepcopy(mono_config)
     frontend = factory = None
     if odometry == "vgio":
@@ -479,7 +520,7 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
                 "system_config": config_to_dict(cfg), "mono_config": None if mc is None else _to_dict(mc)}
     return RemotePipeline(frontend, link_factory(open_msg), mode, odometry, ObservationCadence(cfg.pose_est), 1, upload,
                           frontend_factory=factory, server=None, continuous_start_in_map=odometry == "vgio", K=K,
-                          obs_cap=obs_cap)
+                          obs_cap=obs_cap, send_right=cfg.pose_est.ff.right_image != "left" or odometry == "vgio")
 
 
 def server_session(open_msg, device="cuda"):
@@ -569,7 +610,8 @@ def add_session_args(ap):
                    help="real link: feed the frames at their timestamps (wall clock), as a sensor would")
 
 
-FAST_STEREO_PRESET = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "stereo_fast.yaml")
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs")
+FAST_STEREO_PRESET = os.path.join(CONFIG_DIR, "stereo_fast.yaml")
 
 
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):

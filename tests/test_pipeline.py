@@ -129,3 +129,42 @@ def test_odometry_frontend_composes_dataset_motion():
     frontend = OdometryFrontend()
     poses = [frontend.track(frame(i)).pose for i in range(3)]
     assert np.allclose([p[0, 3] for p in poses], [0.0, 0.5, 1.0])      # the first frame's motion is ignored
+
+
+def test_mode_config_files_and_left_image():
+    """The shipped configuration of each mode and odometry: the stereo mode with external odometry observes on the left
+    image (no stereo anchors) and half as often; its VGGT-inertial and visual odometries keep the pair and the cadence."""
+    from cross.core.config import load_config
+    from cross.pipeline import apply_right_image, mode_config_files
+    ext = apply_right_image(load_config(*mode_config_files("stereo", "external")))
+    own = apply_right_image(load_config(*mode_config_files("stereo", "vgio")))
+    assert mode_config_files("rgbd", "external") == [] and mode_config_files("mono", "external") == []
+    assert [p.rsplit("/", 1)[-1] for p in mode_config_files("stereo", "visual", fast=True)] == ["stereo.yaml", "stereo_fast.yaml"]
+    pe = ext.pose_est
+    assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.6, 0.3, 6)
+    assert pe.ff.right_image == "left" and not pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
+    assert pe.ff.use_odom_anchor and pe.ff.use_map_anchors and not pe.ff.store_right_images
+    pe = own.pose_est
+    assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
+    assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 2
+
+
+def test_left_image_session_drops_the_right_image():
+    mapper = FakeMapper()
+    mapper.config = SimpleNamespace(pose_est=SimpleNamespace(ff=SimpleNamespace(right_image="left")))
+    session = Pipeline(mapper, None, mode="stereo", odometry="external")
+    f = frame(0)
+    session.process(f)
+    assert mapper.calls[0]["rgb_right"] is None and mapper.calls[0]["rgb"] is f["rgb"]
+    assert f["rgb_right"] is not None      # the loader's frame is not modified
+
+
+def test_vgio_align_by_mode():
+    from cross.mono.config import MonoConfig
+    from cross.pipeline import _vgio_config
+    stereo = _vgio_config(MonoConfig(), "stereo", np.eye(4))
+    mono = _vgio_config(MonoConfig(), "mono")
+    assert stereo.imu.vgio_align is True and mono.imu.vgio_align is False
+    explicit = MonoConfig()
+    explicit.imu.vgio_align = False
+    assert _vgio_config(explicit, "stereo", np.eye(4)).imu.vgio_align is False

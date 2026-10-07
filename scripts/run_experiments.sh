@@ -42,7 +42,7 @@ fi
 
 if [[ "$MODE" == "reloc" || "$MODE" == "all" ]]; then
   SNR=10
-  FF="--estimator ff --obs-min-translation 0.5 --obs-min-rotation 0.15 --obs-max-interval 3"
+  FF="--estimator ff --obs-min-translation 0.5 --obs-min-rotation 0.15 --obs-max-interval 3 --set pose_est.ff.right_image=pair"
   # --- vKITTI2: map clone once per estimator, relocalize under every other condition
   run $PY scripts/map_and_reloc.py --map $VK/clone --query $VK/clone --out outputs/reloc/vk01_ff/clone $FF --snr $SNR
   run $PY scripts/map_and_reloc.py --map $VK/clone --query $VK/clone --out outputs/reloc/vk01_pnp/clone --estimator pnp --snr $SNR

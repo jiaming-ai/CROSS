@@ -150,7 +150,7 @@ Options:
 | `--no-viz` | Disable Rerun visualization |
 | `--frames N` | Process only the first N frames |
 | `--start N` | Start from frame N |
-| `--mode {rgbd,stereo,mono}` | Sensor mode: PnP on depth (default), the stereo mode (layers `configs/stereo.yaml`), or colour only |
+| `--mode {rgbd,stereo,mono}` | Sensor mode: PnP on depth (default), the stereo mode (layers `configs/stereo.yaml`, + `configs/stereo_odom.yaml` with external odometry), or colour only |
 | `--odometry {external,visual,vio}` | Motion source: the dataset's odometry (default), DPVO visual odometry, or (mono) DPVO with IMU scale |
 | `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
 | `--config A.yaml B.yaml` | Config layers on top of the defaults, merged left to right |
@@ -200,14 +200,12 @@ multi-session localization, T3 relocalization success; KITTI, OpenLORIS-Scene, R
 python scripts/datasets/convert_openloris.py data/openloris/home1-1 data/posed/home1-1
 python scripts/datasets/convert_openloris.py data/openloris/home1-2 data/posed/home1-2
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home
-# the same in the stereo mode, monocular (metric scale from the wheel odometry and map keyframe pairs)
-python scripts/map_and_reloc.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_ff --estimator ff \
-    --obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3 \
-    --set pose_est.ff.use_odom_anchor=true pose_est.ff.use_map_anchors=true pose_est.ff.n_ref_anchors=0 pose_est.ff.use_curr_anchor=false
+# the same in the stereo mode: with external odometry it observes on the left image (metric scale from the wheel
+# odometry and map keyframe pairs; configs/stereo_odom.yaml), so a posed RGB-D folder without a right camera works
+python scripts/map_and_reloc.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_ff --estimator ff
 # stereo mode on a SimChange scene (0.3 m baseline)
 python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/hssd_house/light_night --out outputs/house_ff \
-    --estimator ff --baseline 0.3 --snr 10 --obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3 \
-    --trial-len 100 --trial-stride 50 --noise-config configs/noise/hssd_house_600.yaml
+    --estimator ff --baseline 0.3 --snr 10 --trial-len 100 --trial-stride 50 --noise-config configs/noise/hssd_house_600.yaml
 # TUM RGB-D: scripts/datasets/convert_tum.py (simulated noisy odometry: --snr 10 --seed 0)
 ```
 

@@ -58,7 +58,7 @@ Notes.
 | setup | input | CROSS mode |
 |---|---|---|
 | **RGB-D** | colour + depth (+ odometry) | RGB-D mode: XFeat + LightGlue + PnP-RANSAC on keyframe depth (`--mode rgbd`, shipped `configs/default.yaml`) |
-| **stereo** | rectified stereo pair (+ odometry) | stereo mode: VGGT-Omega multi-view relative pose, stereo-baseline scale (`--mode stereo`, `configs/stereo.yaml`) |
+| **stereo** | rectified stereo pair (+ odometry) | stereo mode: VGGT-Omega multi-view relative pose, metric scale from the stereo pair, or with external odometry from the odometry on the left image (`--mode stereo`, `configs/stereo.yaml` + `stereo_odom.yaml`) |
 | **mono** | colour only (+ odometry) | monocular mode (in development) |
 
 Outdoor sequences (KITTI, ROVER) add `configs/outdoor.yaml`. It is an environment preset that coarsens clustering and the

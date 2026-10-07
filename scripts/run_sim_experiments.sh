@@ -11,9 +11,9 @@ M=$D/${MAP_NAME:-map}          # map sequence (MAP_NAME=map_loop: closed-loop ma
 OUT=${OUT_ROOT:-outputs/sim}/$SCENE      # OUT_ROOT: alternative output tree (e.g. a local disk for the CPU baselines)
 SNR=10
 TRIAL="--trial-len ${TRIAL_LEN:-40} --trial-stride ${TRIAL_STRIDE:-20} --r-d ${R_D:-2.0}"
-FF="--estimator ff --obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3 ${FF_EXTRA:-}"
+FF="--estimator ff --obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3 --set pose_est.ff.right_image=pair ${FF_EXTRA:-}"
 VARIANTS=${VARIANTS_OVERRIDE:-$(ls $D | grep -v "^map$" | grep -v "^map_loop$" | grep -v assets)}
-FF="--estimator ff --obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3 ${FF_EXTRA:-}"
+FF="--estimator ff --obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3 --set pose_est.ff.right_image=pair ${FF_EXTRA:-}"
 mkdir -p $OUT logs
 run() { echo "[$(date +%H:%M:%S)] $*"; "$@" > /dev/null 2> logs/last_stderr.txt || { echo "FAILED: $*"; echo "=== $*" >> logs/sim_failures.log; tail -30 logs/last_stderr.txt >> logs/sim_failures.log; }; }
 for spec in $SYSTEMS; do
