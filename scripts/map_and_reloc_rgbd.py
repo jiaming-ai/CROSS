@@ -103,6 +103,8 @@ def make_config(args) -> SystemConfig:
     cfg = load_config(*args.config) if args.config else SystemConfig()
     cfg.async_update = False
     cfg.retrieval.top_k = args.top_k
+    if getattr(args, "gnss", False):
+        cfg.geo.enabled = True
     for kv in args.set or []:            # generic overrides: section.sub.key=value (YAML-parsed value)
         import yaml
         key, val = kv.split("=", 1)
@@ -119,8 +121,11 @@ def make_config(args) -> SystemConfig:
 
 
 def make_loader(path, args, seed):
-    return PosedRGBDLoader(path, snr=args.snr, seed=seed, odom_scale_bias=args.odom_scale_bias,
-                           odom_yaw_drift_deg_per_m=args.odom_yaw_drift, odom_file=args.odom_file)
+    ds = PosedRGBDLoader(path, snr=args.snr, seed=seed, odom_scale_bias=args.odom_scale_bias,
+                         odom_yaw_drift_deg_per_m=args.odom_yaw_drift, odom_file=args.odom_file)
+    from cross.dataloader.geo import attach
+    attach(ds, path, args, query=str(path) == str(args.query))
+    return ds
 
 
 def new_system(args, ds, seed=None):
@@ -289,6 +294,8 @@ def main():
     ap.add_argument("--snr", type=float, default=10.0, help="odometry noise SNR (<= 0: perfect odometry)")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift (deg per metre)")
+    from cross.dataloader.geo import add_args as add_geo_args
+    add_geo_args(ap)
     ap.add_argument("--odom-file", default=None, help="odometry file of the prepared folders to use instead of "
                     "odom_left.txt when present (e.g. odom_vio.txt from benchmark/datasets/prepare_vio.py)")
     ap.add_argument("--seed", type=int, default=0, help="seed of the odometry noise (query sessions use seed + 1)")

@@ -407,5 +407,7 @@ class StereoSequenceLoader(Dataloader):
                 item["delta_pose"] = T
             if self.imu is not None:
                 item.update(self.imu.window(prev_idx, i), imu_calib=self.imu.calib)
+            if getattr(self, "geo", None) is not None:     # GNSS fix / compass sample (cross/dataloader/geo.py)
+                item.update(self.geo.window(prev_idx, i, item["timestamp"]))
             prev_idx = i
             yield item

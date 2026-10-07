@@ -173,6 +173,12 @@ class PoseGraph:
         # Optimization results
         self.optimized_poses: Dict[int, pp.LieTensor] = {}
         self.optimization_cost: float = 0.0
+        # GNSS position factors (cross.geo): [(vertex id, target position in the map frame (3,), covariance (3, 3))],
+        # with a Cauchy kernel of scale robust_c; soft_priors {vertex id: 6x6 covariance (gtsam order r, t)} replace the
+        # hard prior of a gauge vertex whose position and heading the GNSS factors determine
+        self.unary_position_factors: List = []
+        self.unary_robust_c: Optional[float] = None
+        self.soft_priors: Dict[int, np.ndarray] = {}
     
     def _make_between_noise_model(self, factor, gtsam_sigmas: np.ndarray, gtsam_cov: Optional[np.ndarray] = None) -> 'gtsam.noiseModel.Base':
         """
@@ -917,6 +923,20 @@ class PoseGraph:
             graph.add(gtsam.PriorFactorPose3(node_id, fixed_pose_gtsam, prior_noise))
             used.add(node_id)
         
+        for node_id, cov in self.soft_priors.items():
+            if node_id in all_node_ids:
+                graph.add(gtsam.PriorFactorPose3(node_id, initial.atPose3(node_id),
+                                                 gtsam.noiseModel.Gaussian.Covariance(np.asarray(cov, dtype=np.float64))))
+        self.n_unary = 0
+        for (node_id, target, cov) in self.unary_position_factors:
+            if node_id not in all_node_ids:
+                continue
+            base = gtsam.noiseModel.Gaussian.Covariance(np.asarray(cov, dtype=np.float64))
+            nm = base if self.unary_robust_c is None else gtsam.noiseModel.Robust.Create(
+                gtsam.noiseModel.mEstimator.Cauchy.Create(float(self.unary_robust_c)), base)
+            graph.add(gtsam.GPSFactor(node_id, np.asarray(target, dtype=np.float64), nm))
+            self.n_unary += 1
+
         # 3. Add between factors for all edges
         has_edges = False
         conditional_factors = []

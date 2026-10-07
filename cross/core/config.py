@@ -868,6 +868,63 @@ class VisualizationConfig:
 
 
 @dataclass
+class GeoConfig:
+    """GNSS / compass anchoring of the map to physical locations (cross/geo).  Off by default: with no GNSS input the
+    system is unchanged; with `enabled` the fixes of obs["gnss"] are quality-controlled (relative consistency against
+    the robot's own track, stale receivers, reacquisition hold-off, absolute chi-square gate), the map is anchored to a
+    local ENU frame, decimated GNSS factors (one per correlation time of the receiver error, estimated online) enter
+    the pose graph with a Cauchy kernel, and fixes gate retrieval / relocalization proposals.  Thresholds are
+    chi-square levels (`confidence`, default: the verified loop closure's); noise and correlation time adapt online."""
+    enabled: bool = False
+    confidence: Optional[float] = None        # None: mapping.loop_closure.confidence
+    drift_rate: Optional[float] = None        # growth of the prediction's std per metre since the last used fix (None: odom_k_t)
+    pred_floor: float = 0.5                   # metres added to the prediction's std (lever arm, time stamps)
+    uere: float = 3.0                         # receivers that report HDOP only: sigma_h = uere * HDOP
+    # vertical / horizontal noise of a fix without its own vertical accuracy: consumer altitude wanders +-10 m over
+    # minutes (NCLT); 27-session study: vertical error 5.09 (2x) / 4.71 (4x) / 7.34 m (8x, one 26 m outlier), horizontal
+    # unchanged; without altitude the horizontal factors pitch the map (30.7 m)
+    sigma_v_factor: float = 4.0
+    window_s: float = 20.0                    # relative-consistency window (s)
+    min_fixes: int = 5                        # fixes of an epoch before any is used
+    holdoff_s: float = 10.0                   # age of an epoch before its fixes are used (reacquisition)
+    factor_interval_prior_s: float = 20.0     # spacing of GNSS factors until the error model has estimated it
+    anchor_dof: int = 4                       # 4: heading + translation with the map's vertical; 6: free rotation
+    anchor_max_yaw_std_deg: float = 3.0       # the anchor is used once its heading is known this well
+    anchor_refit_every: int = 100             # used fixes between anchor refits
+    max_fix_log: int = 20000
+    gauge_tilt_deg: float = 0.5               # soft prior of the first keyframe's tilt when GNSS fixes the gauge
+    opt_min_factors: int = 3                  # GNSS factors since the last optimisation before a drift test
+    opt_min_keyframes: int = 20               # keyframes between two GNSS-triggered optimisations
+    robust_c: Optional[float] = None          # Cauchy kernel scale (None: sqrt of the 2-dof chi-square at `confidence`)
+    # ablations (all True = the method): `gate` False uses every fix (no consistency tests, no hold-off), `decimate`
+    # False makes every used fix a factor (no correlation-time spacing), `robust` False drops the Cauchy kernel
+    gate: bool = True
+    decimate: bool = True
+    robust: bool = True
+    # factors with the relative test's noise inflation (the gate always uses it); NCLT study: no gain (6 of 21
+    # sessions better), so factors keep the prior noise times the posterior scale
+    inflate_factors: bool = False
+    # rescale the prior noise from the posterior residuals after each optimisation; the residuals are shrunk by the fit
+    # (the trajectory absorbs part of the error), so the rescaled noise overweights GNSS (NCLT 27 sessions: geo RMSE
+    # 3.53 vs 3.40 m, online 6.67 vs 5.49 m, 2.4x the optimisations)
+    posterior_scale: bool = False
+    # GNSS altitude in the factors (vertical noise sigma_v_factor x horizontal); False: horizontal factors only (the
+    # map's vertical from odometry / vision).  Consumer altitude is poor: NCLT 2012-08-04 end to end the vertical error
+    # rose 3.5 -> 8.1 m with it (2012-01-08: 3.0 -> 2.3 m); see the 27-session study
+    use_altitude: bool = True
+    retrieval_gate: bool = True               # the current fix is a location prior of retrieval (System.add_location_prior;
+                                              # acts with retrieval.locality.enabled)
+    proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
+    fix_max_age_s: float = 3.0                # a fix gates proposals / retrieval for this long (odometry carries it)
+    compass_gate: bool = True                 # references whose heading contradicts the compass are dropped (needs the
+                                              # compass offset, calibrated against the GNSS-anchored map)
+    compass_sigma_deg: float = 5.0
+    compass_offset_deg: Optional[float] = None   # compass -> camera heading offset; None: calibrated online
+    compass_frame: str = "frd"                # body frame of raw magnetometer / accelerometer samples
+    compass_hard_iron: bool = False           # online hard-iron calibration of the magnetometer (no gain on NCLT)
+
+
+@dataclass
 class StorageConfig:
     """How a saved map stores its keyframes (cross/db/store.py).  Format v2: `map.pkl` holds the graph as numpy
     columns, the images and descriptors go to `map.pkl.store/` and are read on demand."""
@@ -913,6 +970,7 @@ class SystemConfig:
     depth_pred: DepthPredConfig = field(default_factory=DepthPredConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    geo: GeoConfig = field(default_factory=GeoConfig)
 
 
 # ---------------------------------------------------------------------------
