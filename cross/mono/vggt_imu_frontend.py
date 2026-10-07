@@ -29,6 +29,7 @@ later on a remote GPU server (cross.remote).  A late summary adds its node to th
 IMU carries the state from there to the last tracked frame again (_replay); the correction enters the next reported
 motion, as an in-frame measurement's does."""
 
+import json
 from time import perf_counter
 
 import cv2
@@ -461,6 +462,10 @@ class VggtImuFrontend:
             ok = not snap.get("superseded") and self._measure_graph(snap, summary)
         finally:
             self._frame = frame
+        if self.config.imu.vgio_trace:
+            with open(self.config.imu.vgio_trace, "a") as fh:
+                fh.write(json.dumps({"index": snap["index"], "t": snap["timestamp"], **self.last_info},
+                                    default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)) + "\n")
         if not ok:
             self._close_failed(snap)
             return

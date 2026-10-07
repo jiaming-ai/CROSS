@@ -209,6 +209,7 @@ class ImuConfig:
     vgio_stereo_gate_factor: float = 1.0
     vgio_stereo_gate_pairs: bool = True
     vgio_debug_costs: bool = False               # graph: log the cost of each factor type per solve (diagnostics)
+    vgio_trace: str = ""                         # diagnostics: a JSON line per visual measurement to this file ("": none)
 
 
 @dataclass
