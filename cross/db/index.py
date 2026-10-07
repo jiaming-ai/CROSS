@@ -121,6 +121,85 @@ class PCAProjection:
                    normalize=bool(z["normalize"]) if "normalize" in z.files else False)
 
 
+class ScoreCalibration:
+    """Maps code inner products back to the full-descriptor cosine they approximate, so that a projected database keeps
+    the score semantics CROSS relies on (VPR thresholds, the new-keyframe test, retrieval weights).  Fitted on the map's
+    own pairs (each sampled row's best full-descriptor neighbours outside +-`exclude` rows, plus random rows):
+
+      iso    isotonic map of the code score
+      resid  s + beta r_q r_y cos(z_q, z_y) + c: the residual inner product as a fitted fraction of its bound, with
+             e = |z|^2 the explained energy of a unit descriptor and r = sqrt(1 - e) (uses the query's own energy, so
+             it adapts to queries the projection explains less well, e.g. another season)"""
+
+    def __init__(self, iso_x=None, iso_y=None, beta: float = 0.0, c: float = 0.0, model: str = "resid",
+                 meta: Optional[dict] = None):
+        self.iso_x = None if iso_x is None else np.asarray(iso_x, np.float32)
+        self.iso_y = None if iso_y is None else np.asarray(iso_y, np.float32)
+        self.beta, self.c, self.model = float(beta), float(c), model
+        self.meta = dict(meta or {})
+
+    @classmethod
+    def fit(cls, X: torch.Tensor, Z: torch.Tensor, n_q: int = 2000, k: int = 50, n_rand: int = 50, exclude: int = 20,
+            model: str = "resid") -> "ScoreCalibration":
+        n = X.shape[0]
+        g = torch.Generator(device="cpu").manual_seed(1)
+        qi = torch.randperm(n, generator=g)[: min(n_q, n)].to(X.device)
+        S = X[qi].float() @ X.float().T
+        near = (qi[:, None] - torch.arange(n, device=X.device)[None]).abs() <= exclude
+        S[near] = -9
+        kk = min(k, max(1, n - 2 * exclude - 1))
+        top = S.topk(kk, dim=1).indices
+        rnd = torch.randint(0, n, (len(qi), n_rand), generator=g).to(X.device)
+        xi = torch.cat([top, rnd], 1).reshape(-1)
+        ai = qi[:, None].expand(-1, kk + n_rand).reshape(-1)
+        full = (X[ai].float() * X[xi].float()).sum(1)
+        zq, zy = Z[ai].float(), Z[xi].float()
+        s = (zq * zy).sum(1)
+        # isotonic regression of full on s (pool adjacent violators on the sorted pairs), knots for np.interp
+        o = torch.argsort(s)
+        xs, ys = s[o].cpu().numpy().astype(np.float64), full[o].cpu().numpy().astype(np.float64)
+        vals, wts, ends = [], [], []
+        for i, y in enumerate(ys):
+            vals.append(y); wts.append(1.0); ends.append(i)
+            while len(vals) > 1 and vals[-2] > vals[-1]:
+                v = (vals[-2] * wts[-2] + vals[-1] * wts[-1]) / (wts[-2] + wts[-1])
+                w = wts[-2] + wts[-1]
+                vals[-2:], wts[-2:], ends[-2:] = [v], [w], [ends[-1]]
+        fitted = np.repeat(vals, np.asarray(wts, dtype=int))
+        idx = np.unique(np.linspace(0, len(xs) - 1, 256).astype(int))
+        iso_x, iso_y = xs[idx], fitted[idx]
+        # residual model: full - s ~ beta * r_q r_y cos + c
+        eq, ey = zq.pow(2).sum(1).clamp(0, 1), zy.pow(2).sum(1).clamp(0, 1)
+        f = torch.sqrt((1 - eq) * (1 - ey)) * s / torch.sqrt(eq * ey).clamp_min(1e-6)
+        A = torch.stack([f, torch.ones_like(f)], 1).double()
+        sol = torch.linalg.lstsq(A, (full - s).double()[:, None]).solution.flatten()
+        return cls(iso_x, iso_y, float(sol[0]), float(sol[1]), model,
+                   {"pairs": int(len(s)), "n_rows": int(n)})
+
+    def apply(self, s: torch.Tensor, eq, ey, model: Optional[str] = None) -> torch.Tensor:
+        model = model or self.model
+        if model == "raw":
+            return s
+        if model == "iso" and self.iso_x is not None:
+            return torch.as_tensor(np.interp(s.detach().cpu().numpy(), self.iso_x, self.iso_y),
+                                   dtype=s.dtype, device=s.device)
+        eq = torch.as_tensor(eq, dtype=s.dtype, device=s.device).clamp(0, 1)
+        ey = torch.as_tensor(ey, dtype=s.dtype, device=s.device).clamp(0, 1)
+        f = torch.sqrt((1 - eq) * (1 - ey)) * s / torch.sqrt(eq * ey).clamp_min(1e-6)
+        return s + self.beta * f + self.c
+
+    def state(self) -> dict:
+        return {"iso_x": self.iso_x, "iso_y": self.iso_y, "beta": self.beta, "c": self.c, "model": self.model,
+                "meta": self.meta}
+
+    @classmethod
+    def from_state(cls, st: Optional[dict]) -> Optional["ScoreCalibration"]:
+        if not st:
+            return None
+        return cls(st.get("iso_x"), st.get("iso_y"), st.get("beta", 0.0), st.get("c", 0.0), st.get("model", "resid"),
+                   st.get("meta"))
+
+
 def projection_from_config(spec, dim_in: int) -> Optional[PCAProjection]:
     """None (no projection) or a PCAProjection loaded from a .npz path."""
     if spec in (None, "", "none", False):
