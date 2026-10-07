@@ -12,7 +12,7 @@ import collections
 import threading
 import numpy as np
 
-from cross.core.types import Keyframe, Edge, VisualEdge, EdgeType
+from cross.core.types import Keyframe, Edge, VisualEdge, EdgeType, unpacked
 from cross.utils.lie_tensor import project_SE3, normalize_se3
 from cross.utils.lie_tensor import project_SE3, normalize_SE3
 from cross.core.pgo import (
@@ -2343,7 +2343,7 @@ class HypothesisManager:
             atlas = db.get_atlas(kf_data["atlas_id"]) if kf_data["atlas_id"] is not None else None
 
             kf = Keyframe(
-                pose_mu=to_device(normalize_SE3(kf_data["pose_mu"]), storage_device) if kf_data["pose_mu"] is not None else None,   # maps saved before the renormalization fix carry |q| < 1
+                pose_mu=to_device(normalize_SE3(unpacked(kf_data["pose_mu"])), storage_device) if kf_data["pose_mu"] is not None else None,   # maps saved before the renormalization fix carry |q| < 1
                 pose_std=to_device(kf_data["pose_std"], storage_device),
                 pose_weights=to_device(kf_data["pose_weights"], storage_device),
                 atlas=atlas,
