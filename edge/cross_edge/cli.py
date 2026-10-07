@@ -42,7 +42,8 @@ def build_parser():
     r.add_argument("--config-file", nargs="*", default=[], help="configuration files of the server's configs/ folder "
                    "layered on the mode's (e.g. outdoor.yaml)")
     r.add_argument("--set", nargs="*", action="extend", default=[], help="server configuration overrides key=value")
-    r.add_argument("--obs-cap", type=float, default=0.1, help="rate cap (s; 0: off), as the CROSS runners' default")
+    r.add_argument("--obs-cap", type=float, default=0.1, help="rate cap (s; 0: off), as the CROSS runners' default; "
+                   "with --realtime only (it models the server's queue on the frames' timestamps)")
     r.add_argument("--max-backlog", type=float, default=0.3, help="server overload policy (s; 0: off)")
     r.add_argument("--jpeg", type=int, default=90, help="JPEG quality of the uploads (0: lossless PNG)")
     r.add_argument("--realtime", action="store_true", help="feed the frames at their timestamps")
@@ -66,8 +67,10 @@ def open_session(args, src):
     opened = link.opened
     if int(opened.get("protocol", -1)) != PROTOCOL_VERSION:
         raise RuntimeError(f"server speaks protocol {opened.get('protocol')}, this edge {PROTOCOL_VERSION}")
+    # the rate cap models the server's queue on the frames' timestamps: only meaningful when they arrive in real time
+    obs_cap = args.obs_cap if args.realtime else 0.0
     session = EdgeSession(link, ObservationCadence(cadence_config(opened["cadence"])), mode="stereo",
-                          odometry="external", obs_cap=args.obs_cap, send_right=opened.get("right_image") != "left")
+                          odometry="external", obs_cap=obs_cap, send_right=opened.get("right_image") != "left")
     return session, opened
 
 
