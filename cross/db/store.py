@@ -40,6 +40,8 @@ from typing import Dict, List, Optional
 import numpy as np
 import torch
 
+from cross.core.types import PackedTensor
+
 try:
     import cv2
 except ImportError:          # pragma: no cover - opencv is a dependency of the package
@@ -425,6 +427,9 @@ _LTYPES = {"SE3Type": "SE3_type", "se3Type": "se3_type", "SO3Type": "SO3_type", 
            "Sim3Type": "Sim3_type", "sim3Type": "sim3_type", "RxSO3Type": "RxSO3_type", "rxso3Type": "rxso3_type"}
 
 
+_decode_opts = threading.local()
+
+
 def _tensor_kind(v):
     """('lie', ltype) / ('tensor', None) / None for a value that can go into a stacked numeric column.  The ltype is
     matched by its class: a LieTensor unpickled from an old map carries a copy of the ltype object, decoding gives the
@@ -462,6 +467,8 @@ def to_device(t, device):
     """t.to(device), skipped when t is already there (.to returns t itself then; a LieTensor's .to costs ~60 us)."""
     if t is None:
         return t
+    if type(t) is PackedTensor:
+        return t.to(device)
     if torch.is_tensor(t) and device is not None:
         with _no_torch_function():                       # .device of a LieTensor otherwise costs ~18 us
             same = t.device == torch.device(device)
@@ -509,7 +516,12 @@ def _decode_column(col, n: int) -> list:
     a = col["a"]
     if k in ("tensor", "lie"):
         # one owned tensor per row (no views of a shared buffer: a view would pickle / deep-copy the whole column)
-        if k == "lie":
+        if getattr(_decode_opts, "packed", False):
+            # System.load_map: rows stay numpy arrays (PackedTensor), taken by the compact keyframe / edge fields
+            import pypose as pp
+            lt = getattr(pp, col["ltype"]) if k == "lie" else None
+            vals = [PackedTensor(np.array(x), lt) for x in a]
+        elif k == "lie":
             vals = [lie_tensor(np.array(x), col["ltype"]) for x in a]
         else:
             vals = [torch.from_numpy(np.array(x)) for x in a]
@@ -721,7 +733,144 @@ def _encode_hypo(hypo: dict) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- lazy records (System.load_map of a large map)
+# read_map(packed=True) hands the hypothesis manager its records one at a time, built from the columns as they are
+# iterated: a list of a million record dicts (with their per-row objects) would be a transient as large as the graph
+# itself, and its freed memory stays in the process.  Tensor fields are PackedTensor views of the column arrays.
+
+def _column_getter(col, n: int):
+    """Function row -> value of one encoded column (the same values as _decode_column)."""
+    k = col["k"]
+    if k == "none":
+        return lambda i: None
+    if k == "list":
+        return col["v"].__getitem__
+    a = col["a"]
+    if k in ("tensor", "lie"):
+        import pypose as pp
+        lt = getattr(pp, col["ltype"]) if k == "lie" else None
+        get = lambda j: PackedTensor(a[j], lt)          # noqa: E731  (a view of the column, no copy)
+    elif k == "py":
+        conv = {"bool": bool, "int": int, "float": float}[col["t"]]
+        vals = [conv(x) for x in a.tolist()]
+        get = vals.__getitem__
+    elif k == "cat":
+        cats, codes = col["cats"], a.tolist()
+        get = lambda j: cats[codes[j]]                   # noqa: E731
+    else:
+        raise ValueError(f"unknown column kind {k}")
+    mask = col.get("mask")
+    if mask is None:
+        return get
+    present = mask.tolist()
+    pos = (np.cumsum(mask) - 1).tolist()
+    return lambda i: get(pos[i]) if present[i] else None
+
+
+class LazyRecords:
+    """A list of records (dicts) decoded from columns on access."""
+
+    def __init__(self, enc: dict):
+        self.n, self.keys = enc["n"], list(enc["keys"])
+        self._get = [_column_getter(enc["cols"][k], self.n) for k in self.keys]
+
+    def __len__(self):
+        return self.n
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return [self[j] for j in range(*i.indices(self.n))]
+        if i < 0:
+            i += self.n
+        if not 0 <= i < self.n:
+            raise IndexError(i)
+        return {k: g(i) for k, g in zip(self.keys, self._get)}
+
+    def __iter__(self):
+        for i in range(self.n):
+            yield {k: g(i) for k, g in zip(self.keys, self._get)}
+
+
+def _lazy_records(enc: dict):
+    return LazyRecords(enc) if enc.get("__records__") else enc["v"]
+
+
+def _key_getter(enc):
+    if enc["k"] == "int":
+        a = enc["a"]
+        return len(a), lambda i: int(a[i])
+    if enc["k"] == "tuple":
+        a = enc["a"]
+        return len(a), lambda i: tuple(int(x) for x in a[i])
+    v = enc["v"]
+    return len(v), v.__getitem__
+
+
+class _LazyMap:
+    """Read-only mapping over encoded keys and per-key values (items decoded while iterating)."""
+
+    def __init__(self, n, key, value):
+        self._n, self._key, self._value, self._index = n, key, value, None
+
+    def __len__(self):
+        return self._n
+
+    def __iter__(self):
+        return (self._key(i) for i in range(self._n))
+
+    def keys(self):
+        return list(iter(self))
+
+    def items(self):
+        return ((self._key(i), self._value(i)) for i in range(self._n))
+
+    def values(self):
+        return (self._value(i) for i in range(self._n))
+
+    def __contains__(self, key):
+        return self._lookup().__contains__(key)
+
+    def __getitem__(self, key):
+        return self._value(self._lookup()[key])
+
+    def get(self, key, default=None):
+        i = self._lookup().get(key)
+        return default if i is None else self._value(i)
+
+    def _lookup(self):
+        if self._index is None:
+            self._index = {self._key(i): i for i in range(self._n)}
+        return self._index
+
+
+def _lazy_dict_of_records(enc: dict):
+    n, key = _key_getter(enc["keys"])
+    recs = _lazy_records(enc["recs"])
+    return _LazyMap(n, key, recs.__getitem__)
+
+
+def _lazy_dict_of_lists(enc: dict):
+    if not enc["records"]:
+        return decode_dict_of_lists(enc)
+    n, key = _key_getter(enc["keys"])
+    recs = _lazy_records(enc["items"])
+    starts = np.concatenate([[0], np.cumsum(enc["counts"])]).tolist()
+    return _LazyMap(n, key, lambda i: recs[starts[i]:starts[i + 1]])
+
+
 def _decode_hypo(enc: dict) -> dict:
+    if getattr(_decode_opts, "packed", False):
+        out = dict(enc)
+        out["temp_keyframes"] = _lazy_records(enc["temp_keyframes"])
+        out["odom_edges"] = _lazy_dict_of_records(enc["odom_edges"])
+        hd = {}
+        for k, h in enc["hypotheses_data"].items():
+            h = dict(h)
+            h["visual_edges"] = _lazy_dict_of_lists(h["visual_edges"])
+            h["visual_adjacency"] = decode_dict_of_lists(h["visual_adjacency"])
+            hd[k] = h
+        out["hypotheses_data"] = hd
+        return out
     out = dict(enc)
     out["temp_keyframes"] = decode_records(enc["temp_keyframes"])
     out["odom_edges"] = decode_dict_of_records(enc["odom_edges"])
@@ -830,13 +979,22 @@ def write_map(save_path, save_data: dict, cfg, on_written=None) -> dict:
     return stats
 
 
-def read_map(load_path, descriptor_mmap: bool = False) -> dict:
+def read_map(load_path, descriptor_mmap: bool = False, packed: bool = False) -> dict:
     """Read a map (format v2 or the old single pickle) into the dict System.load_map restores from.  Images of a v2
-    map come back as ImageRefs (decoded on access)."""
+    map come back as ImageRefs (decoded on access).  `packed`: tensor fields of the records come back as
+    PackedTensor (numpy rows) instead of one tensor object each (System.load_map: millions of fields)."""
     with open(load_path, "rb") as f:
         data = pickle.load(f)
     if data.get("__format__") != FORMAT:
         return data                                                    # old single-file map
+    _decode_opts.packed = packed
+    try:
+        return _read_v2(load_path, data, descriptor_mmap)
+    finally:
+        _decode_opts.packed = False
+
+
+def _read_v2(load_path, data: dict, descriptor_mmap: bool) -> dict:
     if int(data.get("__version__", 0)) > FORMAT_VERSION:
         raise ValueError(f"{load_path}: map format {data['__version__']} is newer than this code ({FORMAT_VERSION})")
     side = sidecar_dir(load_path)

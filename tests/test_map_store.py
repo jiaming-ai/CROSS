@@ -267,3 +267,38 @@ def test_encode_ahead_saves_by_copying(monkeypatch, tmp_path):
     for r0, r1 in zip(ref["db_data"]["keyframes"], back["db_data"]["keyframes"]):
         for f in store.IMAGE_FIELDS:
             assert torch.equal(r0[f], r1[f].load())
+
+
+def test_packed_load_restores_the_same_graph(tmp_path, monkeypatch):
+    """read_map(packed=True) (System.load_map) gives numpy rows; the restored graph equals the tensor-record one."""
+    from cross.core.types import PackedTensor
+    data, _ = _state(monkeypatch)
+    store.write_map(tmp_path / "map.pkl", data, StorageConfig(image_codec="png", descriptor_dtype="float32"))
+    packed = store.read_map(tmp_path / "map.pkl", packed=True)
+    assert isinstance(packed["hypo_data"]["temp_keyframes"][0]["pose_mu"], PackedTensor)
+    assert isinstance(next(iter(packed["hypo_data"]["odom_edges"].values()))["mean"], PackedTensor)
+    plain = store.read_map(tmp_path / "map.pkl")
+    assert torch.is_tensor(plain["hypo_data"]["temp_keyframes"][0]["pose_mu"])
+
+    def restore(d):
+        db = _db(monkeypatch)
+        existing = db.load_state(d["db_data"], "cpu", pose_device="cpu")
+        system = SimpleNamespace(device="cpu", topo_map=None, loaded_node_ids=frozenset(), config=SystemConfig())
+        hm = HypothesisManager(system, 3, HypothesisConfig())
+        hm.load_state(d["hypo_data"], db, "cpu", "cpu", existing)
+        return hm
+
+    a, b = restore(plain), restore(packed)
+    assert sorted(a.nodes) == sorted(b.nodes)
+    for k in a.nodes:
+        for f in ("pose_mu", "pose_std", "pose_weights"):
+            x, y = getattr(a.nodes[k], f), getattr(b.nodes[k], f)
+            assert type(x) is type(y)
+            assert torch.equal(x.tensor() if hasattr(x, "ltype") else x, y.tensor() if hasattr(y, "ltype") else y)
+    for key, e in a.odom_edges.items():
+        assert torch.equal(e.mean.tensor(), b.odom_edges[key].mean.tensor()) and e.n_frames == b.odom_edges[key].n_frames
+    va, vb = a.hypotheses[0].visual_edges, b.hypotheses[0].visual_edges
+    assert va.keys() == vb.keys()
+    for key in va:
+        for x, y in zip(va[key], vb[key]):
+            assert torch.equal(x.std.tensor(), y.std.tensor()) and x.conf == y.conf and x.informative == y.informative

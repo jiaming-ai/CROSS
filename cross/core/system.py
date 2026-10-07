@@ -874,7 +874,7 @@ class System:
         # --- 1. Load Data from Disk ---
         # format v2 or the old single pickle; v2 keyframe images stay in the store until they are used
         from cross.db import store as map_store
-        save_data = map_store.read_map(load_path)
+        save_data = map_store.read_map(load_path, packed=True)   # tensor fields as numpy rows (compact keyframes / edges)
         if save_data.get("coordinate_charts_version", 0) and not self.hypothesis_manager.chart_aware:
             raise ValueError("This map contains coordinate charts; enable chart-aware mapping to load it")
         if bool(save_data.get('conditional_sources_version',0)) != self.config.mapping.hypothesis.conditional_sources:
