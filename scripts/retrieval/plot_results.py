@@ -145,3 +145,35 @@ if __name__ == "__main__" and len(sys.argv) > 1:
     nclt_scaling(sys.argv[1], "nclt/nclt_s1_d2048.json", "nclt_recall_vs_size.png", " (2048-d codes)")
     nclt_scaling(sys.argv[1], "nclt/nclt_big.json", "nclt_recall_vs_size_million.png")
     nclt_dims(sys.argv[1])
+
+
+def nclt_combined(pd, files=("nclt/nclt_s1_d2048.json", "nclt/nclt_s4_d2048.json", "nclt/nclt_big.json"),
+                  out="nclt_recall_vs_size_all.png"):
+    """Recall@1 (25 m) vs database size over every NCLT stress run (1, 3, ... map sessions)."""
+    pts = {}
+    for name in files:
+        f = os.path.join(pd, name)
+        if not os.path.exists(f):
+            continue
+        for row in json.load(open(f))["rows"]:
+            for m in ("full", "code", "ivf", "belief:10", "belief:100", "gps"):
+                r = row["recall"].get(f"{m}@25m")
+                if r:
+                    pts.setdefault(m, []).append((row["size"], r["R@1"]))
+    if not pts:
+        return
+    labels = {"full": "full descriptor (exact)", "code": "2048-d map codes", "ivf": "codes, IVF",
+              "belief:10": "codes + belief prior (10 m)", "belief:100": "codes + belief prior (100 m)", "gps": "codes + GPS prior"}
+    fig, ax = plt.subplots(figsize=(7, 4.2), dpi=150, facecolor="white")
+    for i, m in enumerate(["full", "code", "ivf", "belief:10", "belief:100", "gps"]):
+        if m in pts:
+            p = sorted(pts[m])
+            ax.plot([a for a, _ in p], [b for _, b in p], "-o", color=SERIES[i], lw=2, ms=5, label=labels[m])
+    ax.set_xscale("log")
+    style(ax, "NCLT cross-season Recall@1 within 25 m vs database size", "database size (descriptors)", "R@1")
+    ax.legend(frameon=False, fontsize=7, labelcolor=INK2)
+    fig.tight_layout(); fig.savefig(os.path.join(pd, out)); plt.close(fig)
+
+
+if __name__ == "__main__" and len(sys.argv) > 1:
+    nclt_combined(sys.argv[1])
