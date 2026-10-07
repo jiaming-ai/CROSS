@@ -252,7 +252,7 @@ def test_map_projection_refits_when_the_map_doubles_and_before_saving():
     def draw(basis, n):
         return torch.nn.functional.normalize(torch.randn(n, 30, generator=g) @ basis + 0.02 * torch.randn(n, D, generator=g), dim=-1)
     X = torch.cat([draw(A, 300), draw(B, 400)])
-    idx = DescriptorIndex(D, device="cpu", initial_capacity=50, fit_at=200, fit_dim=40, extend=False)
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=50, fit_at=200, fit_dim=64, extend=False)
     for i, x in enumerate(X[:599]):
         idx.add(x, i)
     assert idx.map_fitted and idx.projection.meta["refits"] == 1 and idx.projection.meta["fit_rows"] == 400
