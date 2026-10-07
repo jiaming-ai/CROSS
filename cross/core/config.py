@@ -109,16 +109,17 @@ class DescriptorIndexConfig:
     """Storage and search of the keyframe descriptors (cross/db/index.py).  Default: the full 16384-d BoQ descriptor in
     float32 with an exact search, i.e. the original database (64 KB per keyframe)."""
     # None: full descriptors.  "map": fit an uncentred projection on the map's own descriptors once the database
-    # holds `fit_at` keyframes (smaller maps are unchanged), then store fit_dim float16 codes (1 KB instead of 64 KB per
+    # holds `fit_at` keyframes (smaller maps are unchanged), then store float16 codes (0.5-4 KB instead of 64 KB per
     # keyframe), extending the subspace when the scene changes (cross.db.index.DescriptorIndex).  A path: a fixed
     # projection (.npz, PCAProjection.save).  A map saved with a projection always uses its own.
     projection: Optional[str] = None
     fit_at: int = 4096
-    fit_dim: int = 512
+    fit_dim: int = 0               # 0: the fewest dimensions with held-out explained energy >= fit_energy (<= max_dim)
+    fit_energy: float = 0.9        # (OpenLORIS / ROVER / SimChange: 256-600 dims; NCLT 5 cameras: the cap)
     extend: bool = True            # extend the map projection's subspace when the explained energy drops
     extend_margin: float = 0.05
     extend_dims: int = 64
-    max_dim: int = 1024
+    max_dim: int = 2048            # NCLT cross-season: 2048 dims lossless in recall, 1024 -1.7 pts R@1, 512 -4
     recent: int = 1024             # full descriptors of the latest keyframes kept for an extension
     store_dtype: str = "auto"      # auto: float32 without a projection, float16 with one
     backend: str = "exact"         # exact | ivf: inverted file (k-means cells), trained once ivf_min_rows rows exist

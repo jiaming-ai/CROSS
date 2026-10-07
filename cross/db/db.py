@@ -85,9 +85,9 @@ class KeyframeDatabase:
             self.vpr_model.get_embed_dim(), device=self.device, initial_capacity=self._initial_buffer_size,
             projection=projection, store_dtype=g("store_dtype", "auto"), backend=g("backend", "exact"),
             ivf_nlist=g("ivf_nlist", 0), ivf_nprobe=g("ivf_nprobe", 16), ivf_min_rows=g("ivf_min_rows", 200000),
-            fit_at=g("fit_at", 0) if g("projection", None) == "map" else 0, fit_dim=g("fit_dim", 512),
-            extend=g("extend", True), extend_margin=g("extend_margin", 0.05), extend_dims=g("extend_dims", 64),
-            max_dim=g("max_dim", 1024), recent=g("recent", 1024))
+            fit_at=g("fit_at", 0) if g("projection", None) == "map" else 0, fit_dim=g("fit_dim", 0),
+            fit_energy=g("fit_energy", 0.9), extend=g("extend", True), extend_margin=g("extend_margin", 0.05),
+            extend_dims=g("extend_dims", 64), max_dim=g("max_dim", 2048), recent=g("recent", 1024))
 
     def _extend_buffer(self, min_size: int):
         """Extend the descriptor buffer if needed."""

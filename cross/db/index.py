@@ -153,8 +153,8 @@ class DescriptorIndex:
     def __init__(self, dim_in: int, device: str = "cuda", initial_capacity: int = 1000,
                  projection: Optional[PCAProjection] = None, store_dtype: str = "auto", backend: str = "exact",
                  ivf_nlist: int = 0, ivf_nprobe: int = 16, ivf_min_rows: int = 200000, ann_shortlist: int = 256,
-                 fit_at: int = 0, fit_dim: int = 512, extend: bool = True, extend_margin: float = 0.05,
-                 extend_dims: int = 64, max_dim: int = 1024, recent: int = 1024):
+                 fit_at: int = 0, fit_dim: int = 0, fit_energy: float = 0.9, extend: bool = True,
+                 extend_margin: float = 0.05, extend_dims: int = 64, max_dim: int = 2048, recent: int = 1024):
         self.dim_in = int(dim_in)
         self.device = device
         self.projection = projection
@@ -166,7 +166,7 @@ class DescriptorIndex:
         self.backend = backend
         self.ivf_nlist, self.ivf_nprobe, self.ivf_min_rows = int(ivf_nlist), int(ivf_nprobe), int(ivf_min_rows)
         self.ann_shortlist = int(ann_shortlist)
-        self.fit_at, self.fit_dim = int(fit_at), int(fit_dim)
+        self.fit_at, self.fit_dim, self.fit_energy = int(fit_at), int(fit_dim), float(fit_energy)
         self.extend, self.extend_margin, self.extend_dims = bool(extend), float(extend_margin), int(extend_dims)
         self.max_dim, self.recent_size = int(max_dim), int(recent)
         self._recent: list = []          # (kf_id, full descriptor fp16) of the latest rows, after a map fit
@@ -219,15 +219,25 @@ class DescriptorIndex:
         return row
 
     def fit_projection(self) -> None:
-        """Fit the map projection on the stored full descriptors, re-encode every row (see the class docstring)."""
+        """Fit the map projection on the stored full descriptors, re-encode every row (see the class docstring).
+        fit_dim <= 0: the smallest number of dimensions whose held-out explained energy reaches fit_energy (at most
+        max_dim): a few hundred for a room or a campus seen by one camera, the cap for a diverse outdoor map."""
         X = self.buf[:self.n].float()
         g = torch.Generator(device="cpu").manual_seed(0)
         perm = torch.randperm(self.n, generator=g).to(X.device)
         n_hold = max(1, self.n // 10)
-        dim = min(self.fit_dim, self.n - n_hold - 1)
-        proj = PCAProjection.fit(X[perm[n_hold:]], dim, meta={"map_fit": True})
-        held = proj.apply(X[perm[:n_hold]])
-        proj.meta["e_ref"] = float((held.pow(2).sum(1) / X[perm[:n_hold]].pow(2).sum(1)).mean())
+        held, train = X[perm[:n_hold]], X[perm[n_hold:]]
+        dmax = min(self.fit_dim if self.fit_dim > 0 else self.max_dim, train.shape[0] - 1)
+        proj = PCAProjection.fit(train, dmax, meta={"map_fit": True})
+        Z = proj.apply(held)
+        curve = (Z.pow(2).cumsum(1) / held.pow(2).sum(1, keepdim=True)).mean(0)        # held-out energy vs dims
+        dim = dmax
+        if self.fit_dim <= 0:
+            hit = (curve >= self.fit_energy).nonzero()
+            dim = int(hit[0]) + 1 if hit.numel() else dmax
+            dim = max(dim, min(64, dmax))
+            proj = PCAProjection(proj.mean, proj.components[:, :dim], None, proj.meta)
+        proj.meta["e_ref"] = float(curve[dim - 1])
         proj.meta["fit_rows"] = int(self.n)
         proj.meta["extensions"] = 0
         recent = [(int(self.ids[r]), X[r].half()) for r in range(max(0, self.n - self.recent_size), self.n)]

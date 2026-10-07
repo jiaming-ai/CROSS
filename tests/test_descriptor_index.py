@@ -232,3 +232,14 @@ def test_map_projection_fit_keeps_scores_and_extends_on_scene_change():
     re = DescriptorIndex(D, device="cpu", projection=PCAProjection.from_state(st["projection"]))
     re.set_rows(idx.buf[:idx.n], idx.ids[:idx.n].tolist())
     assert torch.allclose(re.scores(re.encode(qb)), idx.scores(idx.encode(qb)), atol=2e-3)
+
+
+def test_map_projection_auto_dimension_follows_the_data():
+    g = torch.Generator().manual_seed(11)
+    D = 512
+    basis = torch.randn(40, D, generator=g)
+    X = torch.nn.functional.normalize(torch.randn(700, 40, generator=g) @ basis + 0.02 * torch.randn(700, D, generator=g), dim=-1)
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=100, fit_at=600, fit_dim=0, fit_energy=0.9, max_dim=256)
+    for i, x in enumerate(X):
+        idx.add(x, i)
+    assert idx.map_fitted and 30 <= idx.dim <= 64 and idx.projection.meta["e_ref"] >= 0.9
