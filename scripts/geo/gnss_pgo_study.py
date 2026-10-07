@@ -39,7 +39,7 @@ import gtsam  # noqa: E402
 from cross.core.config import NoiseModelConfig  # noqa: E402
 from cross.geo.anchor import Anchor, AnchorConfig, rot_z, wrap  # noqa: E402
 from cross.geo.geodesy import LocalFrame, geojson_linestring  # noqa: E402
-from cross.geo.gnss import GnssErrorModel, GnssFix, GnssGate, GnssGateConfig, GnssNoiseModel, MEDIAN_CHI2_2  # noqa: E402
+from cross.geo.gnss import GnssErrorModel, GnssFix, GnssGate, GnssGateConfig, GnssModelConfig, GnssNoiseModel, MEDIAN_CHI2_2  # noqa: E402
 from scipy.stats import chi2  # noqa: E402
 
 NCLT_LAT0, NCLT_LON0 = math.degrees(0.738167915410646), math.degrees(-1.46098650670922)
@@ -140,7 +140,7 @@ class Replay:
         self.up = np.array([0, 0, -1.0])                                  # z down in the NCLT odometry frame
         self.anchor = Anchor(AnchorConfig(dof=4), vertical_map=self.up)
         gcfg = GnssGateConfig(confidence=args.confidence)
-        self.gate = GnssGate(GnssNoiseModel(), gcfg)
+        self.gate = GnssGate(GnssNoiseModel(GnssModelConfig(sigma_v_factor=args.sigma_v_factor)), gcfg)
         self.err = GnssErrorModel()
         self.drift_flag = False
         self.k2 = float(chi2.ppf(args.confidence, 2))
@@ -461,6 +461,7 @@ def main():
                     help="seconds between GNSS factors (0: every used fix; -1: from the online error model)")
     ap.add_argument("--tag", default="", help="suffix of the variant names in the output")
     ap.add_argument("--no-altitude", action="store_true", help="horizontal GNSS factors only (no altitude)")
+    ap.add_argument("--sigma-v-factor", type=float, default=2.0, help="vertical / horizontal noise of a fix")
     ap.add_argument("--opt-min-kf", type=int, default=25, help="keyframes between two optimisations (rate limit)")
     ap.add_argument("--max-time", type=float, default=0.0, help="seconds of the session to use (0: all)")
     args = ap.parse_args()
