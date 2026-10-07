@@ -193,6 +193,9 @@ def main():
     ap.add_argument("--queries", nargs="+", required=True)
     ap.add_argument("--projection", default="", help=".npz projection; default: fit uc512 on 50k database rows")
     ap.add_argument("--fit-dim", type=int, default=512)
+    ap.add_argument("--fit-first", type=int, default=0,
+                    help="fit the projection on the first N database rows (as the system does at fit_at) instead of a "
+                         "random sample of 50k")
     ap.add_argument("--sizes", nargs="+", type=int, default=[1000, 10000, 100000, 0])
     ap.add_argument("--n-queries", type=int, default=3000)
     ap.add_argument("--radii", nargs="+", type=float, default=[10.0, 25.0])
@@ -229,7 +232,7 @@ def main():
     if a.projection:
         proj = PCAProjection.load(a.projection)
     else:
-        fit = np.sort(rng.choice(N, min(N, 50000), replace=False))
+        fit = np.arange(min(N, a.fit_first)) if a.fit_first else np.sort(rng.choice(N, min(N, 50000), replace=False))
         proj = PCAProjection.fit(to_rows(DB["desc"], fit, dev), a.fit_dim)
     t_fit = time.perf_counter() - t0
     Qc = proj.apply(Qfull)
