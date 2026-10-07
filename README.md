@@ -338,6 +338,13 @@ python scripts/viz/record_trace.py --scene lonemonk --map map --variants light_n
 python scripts/viz/build_trace_page.py --viz-root outputs/viz --scenes lonemonk --out outputs/viz/page --standalone
 ```
 
+## Remote sessions and the robot's edge package
+
+The GPU work (the back end, VGGT-Omega) can run on a server while the robot runs only its odometry: see
+`docs/USAGE.md` (section 6) for the simulated and real (gRPC) links, and [`edge/README.md`](edge/README.md) for
+`cross-edge`, the robot's side as a separate, torch-free package (live Basalt stereo-inertial VIO, the observation
+cadence, the uplink, the map-frame pose).
+
 ## Datasets
 
 ### OpenLORIS

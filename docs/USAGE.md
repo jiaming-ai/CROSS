@@ -256,6 +256,22 @@ python scripts/map_and_reloc.py ... --remote-server gpu-host:50051 --remote-real
 #   --remote-extra-delay 0.1   emulate a longer round trip;  --remote-jpeg 90   lossy uploads
 ```
 
+Standalone edge (the robot's computer, CPU only, no CROSS / torch): the `cross-edge` package in `edge/` (its own
+`pyproject.toml`; `edge/README.md`) runs Basalt's stereo-inertial VIO live (`edge/native/install_basalt_live.sh` builds
+`basalt_live`), copies the back end's observation cadence and publishes the map-frame pose of every frame:
+
+```bash
+pip install ./edge && edge/native/install_basalt_live.sh ~/basalt_build      # on the robot
+python scripts/remote/serve.py --port 50051                                  # GPU machine (full CROSS)
+cross-edge run --server gpu-host:50051 --data <stereo folder> --realtime --save-map /maps/a.pkl --out run_map
+cross-edge run --server gpu-host:50051 --data <stereo folder> --realtime --load-map /maps/a.pkl --out run_query
+```
+
+The server builds the session from its own configuration files for the mode (`configs/stereo.yaml`, plus
+`--config-file` names of its `configs/` folder and `--set` overrides) and sends the cadence settings back; the
+effective configuration equals the benchmark's `cross_stereo` (external odometry).  `cross.remote.edge.RemotePipeline`
+(the CROSS runners' edge, also with the VGGT-inertial frontend) extends the package's `EdgeSession`.
+
 Map files are written on the server at the paths the edge names.  `--online-poses` (map runs) scores the pose the
 session published at every frame (`map_meta.json` `online`), the number latency changes; `remote` in `map_meta.json` /
 `reloc_summary.json` holds the link's statistics (latency, uploads, server time per kind of message, timeline).
