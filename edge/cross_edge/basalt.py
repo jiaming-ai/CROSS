@@ -119,14 +119,17 @@ class BasaltOdometry:
     def _send_imu_until(self, t_ns_frame):
         """The IMU samples up to the frame's time and the first one after it (Basalt integrates up to the frame)."""
         imu, out = self.source.imu, []
+        past = False
         while self._imu_next < len(imu):
             t = _ns(imu[self._imu_next, 0])
             out.append(struct.pack("<cq6d", b"I", t, *imu[self._imu_next, 1:7]))
             self._imu_next += 1
             if t > t_ns_frame:
+                past = True
                 break
         if out:
             self.proc.stdin.write(b"".join(out))
+        return past
 
     def pose(self, frame):
         """The left camera's pose (c2w) at this frame in Basalt's world frame, or None (no estimate yet / in time)."""
@@ -136,15 +139,17 @@ class BasaltOdometry:
         t_read = time.monotonic()
         h, w = gl.shape
         self.proc.stdin.write(struct.pack("<cqII", b"F", t_ns, w, h) + gl.tobytes() + gr.tobytes())
-        self._send_imu_until(t_ns)
+        past = self._send_imu_until(t_ns)
         self.proc.stdin.flush()
         self.stats["frames"] += 1
         t0 = time.monotonic()
         self.stats["read_s"] += t_read - t_in          # the images (a replay: PNG decoding)
         self.stats["send_s"] += t0 - t_read
+        # without an IMU sample after the frame (the end of a recording) Basalt cannot process it: do not wait long
+        wait = self.wait if past else min(self.wait, 0.2)
         with self._cv:
-            while t_ns not in self._states and not self._done and time.monotonic() - t0 < self.wait:
-                self._cv.wait(timeout=self.wait)
+            while t_ns not in self._states and not self._done and time.monotonic() - t0 < wait:
+                self._cv.wait(timeout=wait)
             got = self._states.pop(t_ns, None)
             for k in [k for k in self._states if k < t_ns]:
                 del self._states[k]
