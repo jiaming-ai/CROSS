@@ -37,6 +37,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import torch
 
 from .common import SceneWriter
 from .projection import colour_agreement, drop_see_through, resize_for_cache, zbuffer
@@ -150,6 +151,12 @@ def convert(job):
     return scene, sw.close(), info
 
 
+def _single_thread():
+    """One thread per worker: torch / OpenCV / OpenMP thread pools in every worker oversubscribed the CPUs ~50x."""
+    torch.set_num_threads(1)
+    cv2.setNumThreads(1)
+
+
 def _conv(job):
     try:
         return convert(job)
@@ -183,7 +190,7 @@ def main():
     a = ap.parse_args()
     js = jobs(a.rel, a.ann, a.cam, a.out, a.every, a.min_agree, a.limit)
     print(f"{len(js)} sequences", flush=True)
-    with Pool(a.workers) as p:
+    with Pool(a.workers, initializer=_single_thread) as p:
         for scene, n, info in p.imap_unordered(_conv, js):
             print(scene, n, json.dumps(info) if info else "", flush=True)
 
