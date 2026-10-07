@@ -50,7 +50,7 @@ class FrameQuality:
 
     def summary(self) -> dict:
         return {"info": round(self.info, 3), "thr": round(self.threshold, 3), "junk": bool(self.junk),
-                "reason": self.reason, "stage": self.stage, "ms": round(self.ms, 2),
+                "reason": self.reason, "stage": self.stage, "ms": round(self.ms, 2), "person_checked": self.person_checked,
                 **{k: round(float(v), 3) for k, v in self.fractions.items()}}
 
 

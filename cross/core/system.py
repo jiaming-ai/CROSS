@@ -1834,6 +1834,7 @@ class System:
 
         if not is_temp_kf and self._frame_quality is not None and rgb_image is not None:
             self._frame_quality = self._kf_quality.add_person(self._frame_quality, rgb_image)
+            self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
         if not is_temp_kf and self._frame_quality is not None and self._frame_quality.junk:
             # a junk view (mapping.keyframe_quality) stays a temporary node: odometry chain kept, no image / descriptor
             is_temp_kf = True
