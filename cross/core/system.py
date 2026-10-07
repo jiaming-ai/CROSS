@@ -759,8 +759,14 @@ class System:
         if h0 is None:
             return False
         start, loaded = self._session_start_kf_id, self.loaded_node_ids
-        for kid, nbrs in list(h0.visual_adjacency.items()):
-            if kid >= start and not loaded.isdisjoint(nbrs):
+        # only the session's keyframes (ids from start up to the id counter) can hold the link: look them up instead
+        # of scanning the adjacency of the whole map when the map is much larger than the session
+        adj = h0.visual_adjacency
+        n_session = Keyframe._next_id - start
+        keys = range(start, Keyframe._next_id) if 0 < 4 * n_session < len(adj) else [k for k in adj if k >= start]
+        for kid in keys:
+            nbrs = adj.get(kid)
+            if nbrs is not None and not loaded.isdisjoint(nbrs):
                 self._session_localized = True
                 break
         return self._session_localized
