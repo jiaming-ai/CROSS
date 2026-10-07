@@ -163,6 +163,15 @@ def test_observation_cadence():
     assert [c.frame(big, True) for _ in range(4)] == [False, True, False, True]    # 0.3 m
     assert c.frame(small, False) is False and c.frame(None, False) is False       # frames the back end does not map
     assert c.frame(small, True) is True                    # re-initialization after the missing reading
+    # the adaptive relaxation (obs_confident_*) while the server's last reply says the back end is confident
+    cfg.obs_confident_max_interval_steps, cfg.obs_confident_min_translation, cfg.obs_confident_min_rotation = 10, 0.6, 0.3
+    c = ObservationCadence(cfg)
+    assert all(c.frame(None if k == 0 else small, True) for k in range(11))
+    c.confident = True
+    assert [c.frame(small, True) for _ in range(10)] == [False] * 9 + [True]      # 10 mapped frames
+    assert [c.frame(big, True) for _ in range(3)] == [False, False, True]         # 0.6 m
+    c.confident = False
+    assert [c.frame(small, True) for _ in range(3)] == [False, False, True]       # the strict rule again
 
 
 def test_codec_roundtrip():

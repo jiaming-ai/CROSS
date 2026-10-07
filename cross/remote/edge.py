@@ -12,13 +12,17 @@ class ObservationCadence:
     obs_max_interval_steps mapped frames since the last observation) on the edge's own odometry: the frames whose images
     the server needs.  The back end decides on the same motion (the deltas the edge sends), so the two agree up to
     rounding; a frame the back end wants without its image is observed at the next one that has it.  Its adaptive
-    relaxation while one hypothesis dominates (obs_confident_*) is not known to the edge: the strict rule sends more."""
+    relaxation while one hypothesis dominates (obs_confident_*) follows the server's last reply (confident): exact
+    without latency; with latency the edge sends a few images the back end skips, or the back end observes a frame later."""
 
     def __init__(self, pose_est_cfg):
         c = self.cfg = pose_est_cfg
         self.min_t, self.min_r = float(c.obs_min_translation), float(c.obs_min_rotation)
         self.max_steps, self.warmup = int(c.obs_max_interval_steps), int(c.obs_warmup_steps)
         self.every_frame = self.min_t <= 0 and self.min_r <= 0 and self.max_steps <= 1
+        relax = int(getattr(c, "obs_confident_max_interval_steps", 0))
+        self.relaxed = (relax, float(c.obs_confident_min_translation), float(c.obs_confident_min_rotation)) if relax > 0 else None
+        self.confident = False                   # the back end's state in its last reply (MapServer: map.confident)
         self.processed = self.start = self.steps = 0
         self.T = np.eye(4)
         self.missing = False
@@ -51,12 +55,15 @@ class ObservationCadence:
             return True
         self.steps += 1
         unknown = getattr(self, "unknown", False)
-        if self.processed - self.start <= self.warmup or self.steps >= self.max_steps or unknown:
+        max_steps, min_t, min_r = self.max_steps, self.min_t, self.min_r
+        if self.relaxed is not None and self.confident:
+            max_steps, min_t, min_r = self.relaxed
+        if self.processed - self.start <= self.warmup or self.steps >= max_steps or unknown:
             observe = True
         else:
-            moved = self.min_t > 0 and float(np.linalg.norm(self.T[:3, 3])) >= self.min_t
+            moved = min_t > 0 and float(np.linalg.norm(self.T[:3, 3])) >= min_t
             angle = float(np.arccos(np.clip((np.trace(self.T[:3, :3]) - 1.0) / 2.0, -1.0, 1.0)))
-            observe = moved or (self.min_r > 0 and angle >= self.min_r)
+            observe = moved or (min_r > 0 and angle >= min_r)
         if observe:
             self._undo = (self.steps, self.T, unknown)
             self.steps, self.T, self.unknown = 0, np.eye(4), False
@@ -299,6 +306,7 @@ class RemotePipeline:
                     self.stats["measurement_lag_s"].append(t - sent)
             if r.get("map") is not None:
                 self._map = r["map"]
+                self.cadence.confident = bool(r["map"].get("confident", False))
                 self.stats["map_lag_frames"].append(self.index - r["index"])
                 if sent is not None:
                     self.stats["map_lag_s"].append(t - sent)

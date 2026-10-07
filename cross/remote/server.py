@@ -76,6 +76,11 @@ class MapServer:
                             "Tbest": mu[int(w.argmax())].matrix().detach().cpu().numpy(),
                             "w": w.detach().cpu().numpy(),
                             "B0": pose_matrix(mu[0]), "Bbest": pose_matrix(mu[int(w.argmax())])}
+            cfg = system.config.pose_est
+            if cfg.obs_confident_max_interval_steps > 0:
+                # the back end's adaptive cadence for its next frames (System._should_skip_observation), for the edge
+                reply["map"]["confident"] = bool(getattr(system, "_last_obs_mapped", False)
+                                                 and float(w.max()) >= cfg.obs_confident_weight)
             if self.keep_lie:
                 wn = reply["map"]["w"]
                 reply["map"].update(mu0=mu[0].clone(), mubest=mu[int(np.argmax(wn))].clone())
