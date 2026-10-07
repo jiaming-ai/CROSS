@@ -181,8 +181,11 @@ def run_mapping(args, out: Path):
         n += 1
         if step_log is not None:            # per-step cost vs map size (large-map studies)
             mp = getattr(system, "mapper", system)
+            rss = int(open("/proc/self/statm").read().split()[1]) * 4096 / 1e6 if os.path.exists("/proc/self/statm") else -1
+            gpu = torch.cuda.memory_allocated() / 1e6 if torch.cuda.is_available() else -1
             step_log.write(f"{idx},{step_times[-1]:.5f},{len(mp.hypothesis_manager.nodes)},{mp.db.get_size()},"
-                           f"{int(bool((getattr(mp, 'last_step_diagnostics', None) or {}).get('loop_closure_applied')))}\n")
+                           f"{int(bool((getattr(mp, 'last_step_diagnostics', None) or {}).get('loop_closure_applied')))},"
+                           f"{rss:.0f},{gpu:.0f}\n")
         if online is not None:               # the pose the session published at this frame (and its odometry's)
             fp = getattr(system, "frontend_pose", None)
             online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
