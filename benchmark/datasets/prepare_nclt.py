@@ -187,6 +187,8 @@ _RECT = {}
 
 def _init_worker(u2d_dir, cams, out_dir, quality):
     global _RECT, _OUT, _Q
+    import cv2
+    cv2.setNumThreads(1)
     _RECT = {c: LB3Rectifier(Path(u2d_dir), c, cams) for c in range(1, 6)}
     _OUT, _Q = Path(out_dir), quality
 
