@@ -35,6 +35,10 @@ def make_db(X, dev, projection=None, keep_full=False, backend="exact"):
         db.index.set_rows(codes, range(n))
         if keep_full:      # a mapping session: the full descriptors of every row are in RAM
             db.index._full, db.index._full_ok = X, torch.ones(n, dtype=torch.bool)
+            from cross.db.index import ScoreCalibration
+            sel = torch.linspace(0, n - 1, min(n, 8192)).long()
+            db.index.calibration = ScoreCalibration.fit(X[sel].to(dev).float(), db.index.buf[sel.to(dev)].float(), exclude=0)
+            print("residual ratio q999", db.index.calibration.meta["resid_ratio_q999"], flush=True)
     kfs = [SimpleNamespace(id=i) for i in range(n)]
     db._row_kf, db._id_to_row = kfs, {i: i for i in range(n)}
     db._keyframe_by_atlas, db._index_to_atlas_idx, db._atlas_to_indices = {None: kfs}, {}, {None: []}
@@ -60,6 +64,8 @@ def main():
     ap.add_argument("--sizes", nargs="+", type=float, default=[1e4, 1e5, 1e6])
     ap.add_argument("--dim", type=int, default=2048)
     ap.add_argument("--full-gpu-max", type=float, default=1.2e5)
+    ap.add_argument("--nclt", default="", help="NCLT desc root: real descriptors of --sessions (all cameras)")
+    ap.add_argument("--sessions", nargs="*", default=[])
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     dev = "cuda"
@@ -69,13 +75,26 @@ def main():
     base = torch.randn(256, D, generator=g)
     for size in a.sizes:
         n = int(size)
-        # clustered unit descriptors (realistic score spread), float16 on the CPU
-        X = torch.empty((n, D), dtype=torch.float16)
-        for i in range(0, n, 65536):
-            m = min(65536, n - i)
-            c = torch.randint(0, 256, (m,), generator=g)
-            X[i:i + m] = torch.nn.functional.normalize(base[c] + 2.0 * torch.randn(m, D, generator=g), dim=-1).half()
-        q = torch.nn.functional.normalize(X[7].float() + 0.3 * torch.randn(D, generator=g), dim=-1).to(dev)
+        if a.nclt:
+            if "real" not in locals():
+                parts = [np.load(os.path.join(a.nclt, s_, f"Cam{c}.npy"), mmap_mode="r") for s_ in a.sessions
+                         for c in (1, 2, 3, 4, 5) if os.path.exists(os.path.join(a.nclt, s_, f"Cam{c}.npy"))]
+                real = torch.from_numpy(np.concatenate([np.asarray(p_) for p_ in parts]))
+                print(f"{real.shape[0]} real descriptors", flush=True)
+            if n > real.shape[0]:
+                continue
+            X = real[torch.randperm(real.shape[0], generator=g)[:n]]
+            q = X[n // 3].float().to(dev)
+            X = torch.cat([X[:n // 3], X[n // 3 + 1:]])
+            n = X.shape[0]
+        else:
+            # clustered unit descriptors (pessimistic: little energy in any subspace), float16 on the CPU
+            X = torch.empty((n, D), dtype=torch.float16)
+            for i in range(0, n, 65536):
+                m = min(65536, n - i)
+                c = torch.randint(0, 256, (m,), generator=g)
+                X[i:i + m] = torch.nn.functional.normalize(base[c] + 2.0 * torch.randn(m, D, generator=g), dim=-1).half()
+            q = torch.nn.functional.normalize(X[7].float() + 0.3 * torch.randn(D, generator=g), dim=-1).to(dev)
         proj = PCAProjection.fit(X[torch.randperm(n, generator=g)[:16384]].to(dev).float(), a.dim)
         row = {"n": n, "dim": a.dim}
         if n <= a.full_gpu_max:

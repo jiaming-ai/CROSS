@@ -182,8 +182,15 @@ class ScoreCalibration:
         f = torch.sqrt((1 - eq) * (1 - ey)) * s / torch.sqrt(eq * ey).clamp_min(1e-6)
         A = torch.stack([f, torch.ones_like(f)], 1).double()
         sol = torch.linalg.lstsq(A, (full - s).double()[:, None]).solution.flatten()
+        # how much of its bound |r_q| |r_y| the residual inner product reaches among the best matches (99.9 %): the
+        # re-scoring margin of DescriptorIndex.query_scores
+        rq_ry = torch.sqrt((1 - eq) * (1 - ey)).clamp_min(1e-6)
+        is_top = torch.zeros(len(qi), kk + n_rand, dtype=torch.bool, device=s.device)
+        is_top[:, :kk] = True
+        ratio = ((full - s).abs() / rq_ry)[is_top.reshape(-1)]
+        r999 = float(ratio.quantile(0.999)) if ratio.numel() < 2 ** 24 else float(ratio[:2 ** 24].quantile(0.999))
         return cls(iso_x, iso_y, float(sol[0]), float(sol[1]), model,
-                   {"pairs": int(len(s)), "n_rows": int(n)})
+                   {"pairs": int(len(s)), "n_rows": int(n), "resid_ratio_q999": r999})
 
     def apply(self, s: torch.Tensor, eq, ey, model: Optional[str] = None) -> torch.Tensor:
         model = model or self.model
@@ -514,13 +521,14 @@ class DescriptorIndex:
         return (db.float() @ q.float().unsqueeze(-1)).squeeze(-1)
 
     def query_scores(self, q_full: torch.Tensor, rows: Optional[torch.Tensor] = None, shortlist: int = 0,
-                     need: int = 10, max_rescore: int = 8192) -> torch.Tensor:
+                     need: int = 10, max_rescore: int = 1024) -> torch.Tensor:
         """Scores of a query (full VPR descriptor) with the full-descriptor cosine's meaning: without a projection the
         exact scores; with one, code scores (calibrated if configured), where the full descriptors are in RAM (rows
         added in this process) re-scored exactly for the best `shortlist` rows and for every row that could still
         beat the `need`-th best exact score: exact = code + r_q . r_y with |r_q . r_y| <= |r_q| |r_y| and
-        |r|^2 = 1 - |z|^2 for unit descriptors, so the best `need` rows are those of the full descriptors (at most
-        `max_rescore` rows re-scored per query)."""
+        |r|^2 = 1 - |z|^2 for unit descriptors.  The margin is beta |r_q| |r_y|, beta the 99.9 % quantile of
+        |r_q . r_y| / (|r_q| |r_y|) among the best matches of the map's own pairs (ScoreCalibration; 1 = the hard
+        bound), at most `max_rescore` rows re-scored per query (32 KB each from CPU RAM)."""
         zq = self.encode(q_full)
         s = self.scores(zq, rows)
         if self.projection is None:
@@ -548,7 +556,10 @@ class DescriptorIndex:
         k = min(int(need), int(done.sum()))
         if k > 0:
             kth = s[done].topk(k).values[-1]
-            bound = s + math.sqrt(max(0.0, 1.0 - eq)) * torch.sqrt((1.0 - ey).clamp_min(0.0))
+            beta = 1.0
+            if self.calibration is not None and "resid_ratio_q999" in self.calibration.meta:
+                beta = min(1.0, max(0.05, float(self.calibration.meta["resid_ratio_q999"])))
+            bound = s + beta * math.sqrt(max(0.0, 1.0 - eq)) * torch.sqrt((1.0 - ey).clamp_min(0.0))
             cand = ((bound >= kth) & ~done).nonzero(as_tuple=True)[0]
             if cand.numel():
                 cand = cand[bound[cand].argsort(descending=True)[:max_rescore]]
