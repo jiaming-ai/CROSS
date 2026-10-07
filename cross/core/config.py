@@ -597,7 +597,10 @@ class KeyframeQualityConfig:
     near_rel: float = 0.25
     person: bool = True             # person detections (SSDLite) remove their cells
     person_score: float = 0.5
-    pass_depth: bool = True         # feed-forward modes: add the near cells of the pass's depth of the current view
+    stereo_near: bool = True        # stereo input without depth: the near field from SGBM on the rectified pair
+    # feed-forward modes: add the near cells of the pass's depth of the current view.  Off: VGGT-Omega's depth of a
+    # close occluder follows its apparent size (a pasted person at 0.4-0.75 m came out at 1.6-2.8 m)
+    pass_depth: bool = False
     grid: int = 16                  # cells across the image width
     window: int = 200               # frames of the running medians
     warmup: int = 5                 # the first frames of a session are never junk (the medians are seeded)

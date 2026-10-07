@@ -70,3 +70,27 @@ def test_warmup_never_junk():
     f = _filter()
     q = f.assess(torch.full((3, 240, 320), 0.5))
     assert not q.junk
+
+
+def test_stereo_near_field():
+    import numpy as np
+    f = _filter()
+    f.set_stereo(np.array([[320.0, 0, 160], [0, 320.0, 120], [0, 0, 1]]), np.array([[1, 0, 0, 0.064], [0, 1, 0, 0],
+                                                                                    [0, 0, 1, 0], [0, 0, 0, 1.0]]))
+    g = torch.Generator().manual_seed(3)
+
+    def pair(near_cols):
+        left = torch.rand(1, 240, 320, generator=g).repeat(3, 1, 1)
+        right = torch.roll(left, shifts=-4, dims=2)                       # background: 4 px (5.1 m)
+        if near_cols:
+            right[:, :, :near_cols] = torch.roll(left, shifts=-40, dims=2)[:, :, :near_cols]   # 40 px: 0.5 m
+        return left, right
+
+    for _ in range(6):                                                   # seed the session statistics
+        f.assess(*pair(0)[:1], rgb_right=pair(0)[1])
+    left, right = pair(0)
+    q = f.assess(left, rgb_right=right)
+    assert not q.junk and q.fractions["near"] < 0.1
+    left, right = pair(300)
+    q = f.assess(left, rgb_right=right)
+    assert q.fractions["near"] > 0.6 and q.junk and q.reason == "near"

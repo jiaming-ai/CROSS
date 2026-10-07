@@ -314,6 +314,8 @@ class System:
         self.camera = camera
         if self.pose_est_type == PoseEstType.FF and hasattr(self.pose_est, "set_camera"):
             self.pose_est.set_camera(camera.K, camera.frame_width, camera.frame_height)
+        if self._kf_quality is not None:
+            self._kf_quality.set_stereo(camera.K, T_right_in_left)
 
         ################ visualization ################
         if visualizer is not None:
@@ -1097,7 +1099,7 @@ class System:
         # stored as a permanent keyframe; with skip_observation it is not observed either (as a skipped observation)
         self._frame_quality = None
         if self._kf_quality is not None:
-            self._frame_quality = self._kf_quality.assess(rgb_image, depth_image)
+            self._frame_quality = self._kf_quality.assess(rgb_image, depth_image, rgb_right=rgb_right)
             self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
             if self._frame_quality.junk and self.config.mapping.keyframe_quality.skip_observation:
                 self._kf_quality.stats["skipped_observation"] += 1

@@ -9,7 +9,8 @@ exactly the one the keyframe policy stores as a new permanent keyframe (a "novel
 
 One quantity decides: the *informative fraction* of the view, the share of image cells that show textured,
 well-exposed, static scene content at a normal distance.  A cell is removed when it is
-  - near:    most of its depth (sensor, or the feed-forward pass's own depth of the current view) is closer than
+  - near:    most of its depth (sensor, stereo matching of the rectified pair, or the feed-forward pass's own depth of
+             the current view) is closer than
              d_near = max(near_abs, near_rel * the session's typical depth);
   - person:  mostly inside a person detection (transient content, and the usual close occluder);
   - clipped: mostly under- or over-exposed pixels;
@@ -82,6 +83,14 @@ class KeyframeQuality:
         self.stats = {"assessed": 0, "junk": 0, "rejected_permanent": 0, "skipped_observation": 0,
                       "by_reason": {c: 0 for c in CAUSES}, "ms_total": 0.0}
         self._detector = None
+        self.fx = None              # focal length (px) of the step's images and the stereo baseline (m): SGBM near field
+        self.baseline = None
+
+    def set_stereo(self, K, T_right_in_left):
+        """Calibration of the (transformed) stereo images: the near field from classical stereo matching."""
+        if K is not None and T_right_in_left is not None:
+            self.fx = float(np.asarray(K)[0, 0])
+            self.baseline = float(abs(np.asarray(T_right_in_left)[0, 3]))
 
     # ------------------------------------------------------------------ cues
     def _person_mask(self, rgb: torch.Tensor, hw) -> tuple:
@@ -105,6 +114,31 @@ class KeyframeQuality:
             mask[max(int(y0 * sy), 0):int(np.ceil(y1 * sy)), max(int(x0 * sx), 0):int(np.ceil(x1 * sx))] = True
         return mask, int(boxes.shape[0])
 
+    def _stereo_depth(self, rgb: torch.Tensor, rgb_right: torch.Tensor) -> Optional[torch.Tensor]:
+        """Metric depth of the left view from semi-global matching of the rectified pair at half resolution (an
+        occluder near the camera has a large disparity).  The disparity range covers depths down to near_abs / 2."""
+        import cv2
+        if not self.fx or not self.baseline:
+            return None
+        def gray(t):
+            t = t.float()
+            t = t[0] if t.dim() == 4 else t
+            y = (0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2]) if t.shape[0] == 3 else t[0]
+            return (y.clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
+        L, R = gray(rgb), gray(rgb_right)
+        W = L.shape[1]
+        L, R = cv2.resize(L, (W // 2, L.shape[0] // 2), interpolation=cv2.INTER_AREA), \
+            cv2.resize(R, (W // 2, R.shape[0] // 2), interpolation=cv2.INTER_AREA)
+        fx = self.fx * L.shape[1] / W
+        need = fx * self.baseline / (0.5 * float(getattr(self.cfg, "near_abs", 0.8)))
+        nd = int(min(max(16 * int(np.ceil(need / 16)), 16), 128))
+        sgbm = cv2.StereoSGBM_create(minDisparity=0, numDisparities=nd, blockSize=5, P1=8 * 25, P2=32 * 25,
+                                     uniquenessRatio=10, speckleWindowSize=50, speckleRange=2,
+                                     mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY)
+        disp = sgbm.compute(L, R).astype(np.float32) / 16.0
+        z = np.where(disp > 0.5, fx * self.baseline / np.maximum(disp, 1e-3), 0.0).astype(np.float32)
+        return torch.from_numpy(z)
+
     def _near_cells(self, depth: torch.Tensor, grid_hw, update: bool):
         """Cells whose valid depth is mostly closer than d_near; depth (1, H, W) or (H, W) metric, <= 0 invalid."""
         d = depth.float().reshape(1, 1, *depth.shape[-2:])
@@ -124,8 +158,10 @@ class KeyframeQuality:
 
     # ------------------------------------------------------------------ test
     @torch.inference_mode()
-    def assess(self, rgb: torch.Tensor, depth: Optional[torch.Tensor] = None) -> FrameQuality:
-        """rgb (3, H, W) float in [0, 1] (the transformed image of the step); depth (1, H, W) metric or None."""
+    def assess(self, rgb: torch.Tensor, depth: Optional[torch.Tensor] = None,
+               rgb_right: Optional[torch.Tensor] = None) -> FrameQuality:
+        """rgb (3, H, W) float in [0, 1] (the transformed image of the step); depth (1, H, W) metric or None; without
+        depth, the rectified right image gives the near field by stereo matching (stereo_near)."""
         t0 = time.perf_counter()
         cfg = self.cfg
         x = rgb.float()
@@ -156,6 +192,8 @@ class KeyframeQuality:
         flat = cell_g < float(getattr(cfg, "texture_rel", 0.25)) * g_ref
 
         cells = {"clipped": clipped, "flat": flat & ~clipped}
+        if depth is None and rgb_right is not None and getattr(cfg, "stereo_near", True):
+            depth = self._stereo_depth(x, rgb_right)
         near = self._near_cells(depth.to(x.device), (gh, gw), update=True) if depth is not None else None
         if near is not None:
             cells["near"] = near
