@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from cross.db.index import DescriptorIndex, PCAProjection, SpatialIndex
+from cross.db.index import DescriptorIndex, PCAProjection, ScoreCalibration, SpatialIndex
 
 
 def _unit(n, d, seed=0):
@@ -262,3 +262,29 @@ def test_map_projection_refits_when_the_map_doubles_and_before_saving():
     q = X[550]
     err = (idx.scores(idx.encode(q))[:600] - X[:600] @ q).abs().mean()
     assert float(err) < 0.02                         # both kinds of place are in the subspace after the refits
+
+
+def test_projected_scores_keep_the_full_cosine():
+    """Calibrated code scores, the shortlist re-scored exactly while the full descriptors are in RAM; a reloaded
+    (codes-only) index still gives calibrated scores close to the full cosine."""
+    g = torch.Generator().manual_seed(17)
+    D = 512
+    basis = torch.randn(60, D, generator=g)
+    X = torch.nn.functional.normalize(torch.randn(900, 60, generator=g) @ basis + 0.6 * torch.randn(900, D, generator=g)
+                                      + 3.0 * torch.randn(1, D, generator=g), dim=-1)
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=100, fit_at=800, fit_dim=48)
+    for i, x in enumerate(X[:850]):
+        idx.add(x, i)
+    q = X[860]
+    full = X[:850] @ q
+    raw = idx.scores(idx.encode(q))[:850]
+    s = idx.query_scores(q)
+    top = full.topk(20).indices
+    assert torch.allclose(s[top], full[top], atol=1e-3)                      # exact on the shortlist
+    assert float((s - full).abs().mean()) < float((raw - full).abs().mean())  # calibration helps elsewhere
+    st = idx.state()
+    re = DescriptorIndex(D, device="cpu", projection=PCAProjection.from_state(st["projection"]))
+    re.set_rows(idx.buf[:idx.n], idx.ids[:idx.n].tolist())
+    re.calibration = ScoreCalibration.from_state(st["calibration"])
+    s2 = re.query_scores(q)
+    assert float((s2 - full).abs().mean()) < float((raw - full).abs().mean())

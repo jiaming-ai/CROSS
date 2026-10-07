@@ -1,5 +1,5 @@
 from .boq import BoQ
-from .index import DescriptorIndex, PCAProjection, SpatialIndex, projection_from_config
+from .index import DescriptorIndex, PCAProjection, ScoreCalibration, SpatialIndex, projection_from_config
 import numpy as np
 import torch
 from cross.core.types import Atlas, Keyframe
@@ -373,6 +373,7 @@ class KeyframeDatabase:
                     self.index.projection.components.astype(np.float16), np.asarray(proj_state["components"])):
                 logger.info(f"descriptor index: the map's projection ({proj.dim_in} -> {proj.dim}) replaces the configured one")
             self.index = self._new_index(proj)
+            self.index.calibration = ScoreCalibration.from_state((index_state or {}).get("calibration"))
         elif self.index.projection is not None and codes.shape[0] and codes.shape[1] == self.index.dim_in:
             codes = torch.cat([self.index.encode(c.to(self.device).float()) for c in codes.split(4096)])
         else:
@@ -385,14 +386,16 @@ class KeyframeDatabase:
         want = {int(k) for k in kf_ids}
         if not want or self._current_size == 0:
             return {}
-        q = self.index.encode(self.vpr_model.get_embedding(img))
+        q_full = self.vpr_model.get_embedding(img)
+        q = self.index.encode(q_full)
         out = {}
-        for bi in sorted(self._id_to_row[k] for k in want if k in self._id_to_row):
+        rows = sorted(self._id_to_row[k] for k in want if k in self._id_to_row)
+        if self.index.projection is not None and rows:
+            sc = self.index.query_scores(q_full, torch.tensor(rows, device=self.device), shortlist=len(rows))
+            return {int(self._row_kf[bi].id): float(v) for bi, v in zip(rows, sc.tolist())}
+        for bi in rows:
             kid = int(self._row_kf[bi].id)
-            if self.index.dtype == torch.float32:
-                out[kid] = float(self._embedding_buffer[bi] @ q)
-            else:
-                out[kid] = float(self.index.scores(q, torch.tensor([bi], device=self.device))[0])
+            out[kid] = float(self._embedding_buffer[bi] @ q)
         return out
 
     def _reserved_rows(self, reserved_keyframe_ids) -> torch.Tensor:
@@ -442,7 +445,8 @@ class KeyframeDatabase:
             return empty
 
         # Get query embedding (the stored code of the index: identity without a projection)
-        query_embedding = self.index.encode(self.vpr_model.get_embedding(img))
+        query_full = self.vpr_model.get_embedding(img)
+        query_embedding = self.index.encode(query_full)
 
         # Rows to score (vectorized; same rows in the same order as the original per-keyframe filters)
         valid = None
@@ -463,8 +467,11 @@ class KeyframeDatabase:
         if valid is not None and valid.numel() == 0:
             return empty
 
-        # Compute similarity scores
-        scores = self.index.scores(query_embedding, valid)
+        # Compute similarity scores (projected index: calibrated to the full cosine, the best re-scored exactly)
+        if self.index.projection is None:
+            scores = self.index.scores(query_embedding, valid)
+        else:
+            scores = self.index.query_scores(query_full, valid, shortlist=4 * top_k)
 
         # Filter and sort scores
         # `scores` are similarity scores against the rows `valid` (or all rows)

@@ -257,6 +257,9 @@ class DescriptorIndex:
         self._full_ok: Optional[torch.Tensor] = None
         self._next_refit = 0
         self._refit_ok = self.fit_at > 0 and projection is None    # every row's full descriptor is at hand
+        self.calibration: Optional[ScoreCalibration] = None        # code score -> full cosine (projected rows)
+        self.shortlist = 64                                         # rows re-scored exactly (full descriptors in RAM)
+        self._energy = torch.zeros(int(initial_capacity), device=device)   # |code|^2 per row (projected rows)
         self._e_ema = None
         self._since_extend = 0
         self.buf = torch.zeros((int(initial_capacity), self.dim), device=device, dtype=self.dtype)
@@ -285,7 +288,9 @@ class DescriptorIndex:
         n = min(self.n, self.buf.shape[0])
         nb[:n] = self.buf[:n]
         ni[:n] = self.ids[:n]
-        self.buf, self.ids = nb, ni
+        ne = torch.zeros(new_size, device=self.device)
+        ne[:min(n, self._energy.shape[0])] = self._energy[:n]
+        self.buf, self.ids, self._energy = nb, ni, ne
 
     def add(self, desc: torch.Tensor, kf_id: int) -> int:
         """Append one descriptor (full VPR descriptor) for keyframe kf_id; returns its row."""
@@ -294,6 +299,8 @@ class DescriptorIndex:
         code = self.encode(desc)
         self.buf[row] = code.to(self.dtype)
         self.ids[row] = int(kf_id)
+        if self.projection is not None:
+            self._energy[row] = self.buf[row].float().pow(2).sum()
         self.n += 1
         if self._refit_ok:
             self._keep_full(row, desc)
@@ -361,6 +368,8 @@ class DescriptorIndex:
         codes = torch.cat([proj.apply(self._full_rows(torch.arange(i, min(i + 8192, n))))
                            for i in range(0, n, 8192)])
         self._set_projection(proj, codes)
+        sel = torch.linspace(0, n - 1, min(n, 8192)).long()           # in insertion (time) order
+        self.calibration = ScoreCalibration.fit(self._full_rows(sel), self.buf[sel.to(self.device)].float(), exclude=5)
         self._recent = [(int(self.ids[r]), self._full[r].clone()) for r in range(max(0, n - self.recent_size), n)]
         self._e_ema = proj.meta["e_ref"]
         self._since_extend = 0
@@ -381,6 +390,8 @@ class DescriptorIndex:
         nb = torch.zeros((self.buf.shape[0], self.dim), device=self.device, dtype=self.dtype)
         nb[:codes.shape[0]] = codes.to(self.dtype)
         self.buf = nb
+        self._energy = torch.zeros(self.buf.shape[0], device=self.device)
+        self._energy[:codes.shape[0]] = nb[:codes.shape[0]].float().pow(2).sum(1)
         if self._ivf is not None:
             self._train_ivf()
 
@@ -423,6 +434,8 @@ class DescriptorIndex:
         logger.info(f"descriptor index: scene change (explained energy {self._e_ema:.3f} < {meta.get('e_ref', 1):.3f} - "
                     f"{self.extend_margin}); subspace {self.dim} -> {Vn.shape[1]} dims")
         self._set_projection(proj, codes)
+        Zr = torch.stack([proj.apply(x.float().to(self.device)) for _, x in self._recent])
+        self.calibration = ScoreCalibration.fit(Xr, Zr, exclude=5)
         self._e_ema = proj.meta["e_ref"]
         self._since_extend = 0
 
@@ -436,6 +449,7 @@ class DescriptorIndex:
             return None
         self.buf[row] = self.buf[last]
         self.ids[row] = self.ids[last]
+        self._energy[row] = self._energy[last]
         if self._full is not None and last < self._full.shape[0]:
             self._full[row] = self._full[last]
             self._full_ok[row] = self._full_ok[last]
@@ -454,6 +468,8 @@ class DescriptorIndex:
         self.n = n
         self.buf[:n] = codes.to(self.device, self.dtype)
         self.ids[:n] = torch.as_tensor(list(kf_ids), dtype=torch.long, device=self.device)
+        if self.projection is not None:
+            self._energy[:n] = self.buf[:n].float().pow(2).sum(1)
         self._ivf = None
         self._full = self._full_ok = None
         self._refit_ok = self.fit_at > 0 and self.projection is None
@@ -480,6 +496,29 @@ class DescriptorIndex:
             return (db @ q.to(self.dtype).unsqueeze(-1)).squeeze(-1).float()
         return (db.float() @ q.float().unsqueeze(-1)).squeeze(-1)
 
+    def query_scores(self, q_full: torch.Tensor, rows: Optional[torch.Tensor] = None, shortlist: int = 0) -> torch.Tensor:
+        """Scores of a query (full VPR descriptor) with the full-descriptor cosine's meaning: without a projection the
+        exact scores; with one, calibrated code scores, and the best `shortlist` of them re-scored exactly from the
+        full descriptors where those are in RAM (rows added in this process)."""
+        zq = self.encode(q_full)
+        s = self.scores(zq, rows)
+        if self.projection is None:
+            return s
+        q = q_full.to(self.device).float()
+        eq = float(zq.float().pow(2).sum() / q.pow(2).sum().clamp_min(1e-12))
+        ey = self._energy[:self.n] if rows is None else self._energy[torch.as_tensor(rows, device=self.device)]
+        s = self.calibration.apply(s, eq, ey) if self.calibration is not None else s
+        m = min(int(s.numel()), max(int(shortlist), self.shortlist))
+        if self._full is not None and m > 0:
+            top = s.topk(m).indices
+            rr = top if rows is None else torch.as_tensor(rows, device=self.device)[top]
+            rr_cpu = rr.cpu()
+            ok = (rr_cpu < self._full_ok.shape[0])
+            ok[ok.clone()] &= self._full_ok[rr_cpu[ok]]
+            if bool(ok.any()):
+                s[top[ok.to(top.device)]] = self._full[rr_cpu[ok]].to(self.device).float() @ q
+        return s
+
     def id_mask(self, max_kf_id: Optional[int] = None, min_kf_id: Optional[int] = None) -> torch.Tensor:
         ids = self.ids[:self.n]
         m = torch.ones(self.n, dtype=torch.bool, device=self.device)
@@ -503,6 +542,7 @@ class DescriptorIndex:
     # -------------------------------------------------------------- persistence
     def state(self) -> dict:
         return {"projection": None if self.projection is None else self.projection.state(),
+                "calibration": None if self.calibration is None else self.calibration.state(),
                 "dtype": str(self.dtype).replace("torch.", ""), "dim": self.dim, "backend": self.backend}
 
 
