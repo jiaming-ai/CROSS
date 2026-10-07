@@ -1747,7 +1747,20 @@ class HypothesisManager:
             # the reference-chart anchor selected by the chart join keeps the output coordinates
             fixed_ids = ({k for k in fixed_ids if k != min(original_kf_ids)} | {pg.preferred_fixed_node}) \
                 if session_start > 0 and not global_opt else {pg.preferred_fixed_node}
-        fixed_node_id = pg.preferred_fixed_node if self.chart_aware else min(fixed_ids)
+        # GNSS factors (cross.geo): in a mapping session they determine the map's position and heading, so the first
+        # keyframe gets a soft prior (its tilt only) instead of the hard fix; in a relocalization session the map stays
+        # fixed and the factors pull the session's keyframes
+        geo = getattr(self.system, "_geo", None)
+        if geo is not None and not self.chart_aware and self.source_states is None:
+            pg.unary_position_factors = geo.pgo_factors(self.nodes, set(original_kf_ids))
+            if pg.unary_position_factors:
+                pg.unary_robust_c = geo.robust_c
+                if session_start == 0 and fixed_ids == {min(original_kf_ids)}:
+                    k0 = min(original_kf_ids)
+                    R0 = self.nodes[k0].pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)[:3, :3]
+                    pg.soft_priors = {k0: geo.soft_gauge_cov(R0)}
+                    fixed_ids = set()
+        fixed_node_id = pg.preferred_fixed_node if self.chart_aware else (min(fixed_ids) if fixed_ids else None)
         optim_node_ids = set(original_kf_ids + temp_vertex_ids) - fixed_ids
 
         if self.visualize_pose_graph:

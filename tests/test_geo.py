@@ -155,3 +155,112 @@ def test_compass_tilt_and_offset_and_disturbance():
     for i in range(100):
         assert not c.disturbed(B_ned * (1 + 0.005 * np.sin(i)), a, outdoor_ok=True) or i < 20
     assert c.disturbed(B_ned * 1.5, a)                            # a steel structure nearby
+
+
+def test_manager_factors_correct_a_drifting_chain_in_the_pose_graph():
+    """GeoManager + PoseGraph: a camera-convention odometry chain that drifts in heading is pulled back to the GNSS
+    track by decimated GNSS factors with the soft gauge; indoor (no fix) and stale-receiver stretches are ignored."""
+    import types
+    import pypose as pp
+    import torch
+    from cross.core.config import GeoConfig
+    from cross.core.pgo import PoseGraph
+    from cross.core.types import Edge, EdgeType, Keyframe
+    from cross.geo.manager import GeoManager
+
+    rng = np.random.default_rng(3)
+    n = 900                                       # keyframes 1 m apart, one per second
+    yaw_rate = np.where((np.arange(n) // 150) % 2 == 0, 0.0, 0.02)
+    # true camera poses (map = first camera frame: x right, y down, z forward); turning = rotation about -y
+    def cam_pose(yaw, p):
+        c, s = math.cos(yaw), math.sin(yaw)
+        R = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])
+        T = np.eye(4); T[:3, :3] = R; T[:3, 3] = p
+        return T
+    yaw = np.cumsum(yaw_rate)
+    pos = np.zeros((n, 3))
+    for i in range(1, n):
+        pos[i] = pos[i - 1] + np.array([math.sin(yaw[i - 1]), 0, math.cos(yaw[i - 1])])
+    T_true = [cam_pose(yaw[i], pos[i]) for i in range(n)]
+    # odometry with a heading bias (0.05 deg per metre)
+    T_odo = [np.eye(4)]
+    deltas = []
+    for i in range(1, n):
+        d = np.linalg.inv(T_true[i - 1]) @ T_true[i]
+        d = d @ cam_pose(0.0009, np.zeros(3))
+        deltas.append(d)
+        T_odo.append(T_odo[-1] @ d)
+    # GNSS in ENU: map->ENU = level (up = -y) then yaw 30 deg, then translation
+    a_true = Anchor(AnchorConfig(), vertical_map=np.array([0, -1.0, 0]))
+    R_true = rot_z(math.radians(30)) @ a_true.R_level
+    t_true = np.array([500.0, -200.0, 10.0])
+    frame = LocalFrame(42.29, -83.71, 270.0)
+    enu_true = pos @ R_true.T + t_true
+    # correlated receiver error (Gauss-Markov, tau 30 s, 3 m) + indoor gap + stale stretch
+    err = np.zeros((n, 2))
+    for i in range(1, n):
+        err[i] = math.exp(-1 / 30) * err[i - 1] + math.sqrt(1 - math.exp(-2 / 30)) * rng.normal(0, 3.0, 2)
+    lla = frame.to_lla(np.c_[enu_true[:, :2] + err, enu_true[:, 2]])
+    indoor = (np.arange(n) >= 400) & (np.arange(n) < 480)
+    stale = (np.arange(n) >= 600) & (np.arange(n) < 660)
+    cfg = GeoConfig(enabled=True)
+    geo = GeoManager(cfg)
+    geo.set_vertical(np.array([0, 1.0, 0]))
+    nodes, odom_edges = {}, {}
+    Keyframe._next_id = 0
+    hm = types.SimpleNamespace(nodes=nodes, odom_edges=odom_edges, chart_aware=False, source_states=None,
+                               component_charts=torch.zeros(1), component_generations=[0], system=None,
+                               hypotheses={0: types.SimpleNamespace(visual_edges={}, visual_adjacency={})})
+
+    def solve():
+        pg = PoseGraph(hm, depth=10 ** 7, device="cpu")
+        pg.construct_for_loop_closure(target_node_id=max(nodes), other_hypothesis_id=0)
+        pg.unary_position_factors = geo.pgo_factors(nodes, set(nodes))
+        pg.unary_robust_c = geo.robust_c
+        pg.soft_priors = {0: geo.soft_gauge_cov(nodes[0].pose_mu[0].matrix().numpy()[:3, :3].astype(float))}
+        pg.solve(optim_node_ids=set(nodes), fixed_node_ids=set())
+        for i, p_ in pg.optimized_poses.items():
+            nodes[i].pose_mu[0] = p_
+        return pg
+
+    belief = np.eye(4)
+    n_opt = 0
+    for i in range(n):
+        if i > 0:
+            geo.on_motion(deltas[i - 1])
+            belief = belief @ deltas[i - 1]
+        if not indoor[i]:
+            la = lla[599] if stale[i] else lla[i]
+            geo.observe(float(i), {"t": float(i), "lat": la[0], "lon": la[1], "alt": la[2]}, None, belief, True,
+                        last_kf_id=i - 1 if i > 0 else None, nodes=nodes)
+        q = pp.mat2SE3(torch.tensor(belief, dtype=torch.float32))
+        kf = Keyframe(pose_mu=pp.SE3(q.tensor()[None]), pose_std=pp.se3(torch.full((1, 6), 0.1)),
+                      pose_weights=torch.ones(1))
+        nodes[kf.id] = kf
+        if i > 0:
+            odom_edges[(i - 1, i)] = Edge(pp.mat2SE3(torch.tensor(deltas[i - 1], dtype=torch.float32)),
+                                          pp.se3(torch.tensor([0.02] * 3 + [0.002] * 3)), EdgeType.ODOMETRY)
+        geo.on_keyframe(kf.id)
+        if geo.should_optimize(nodes, geo.n_kf):
+            solve()
+            geo.after_optimize(nodes, geo.n_kf)
+            belief = nodes[kf.id].pose_mu[0].matrix().numpy().astype(float)
+            n_opt += 1
+    assert geo.anchored and n_opt >= 2
+    assert geo.gate.stats["stale"] >= 1
+    pg = solve()
+    geo.after_optimize(nodes, geo.n_kf)
+    n_fac = len(pg.unary_position_factors)
+    P_opt = np.array([nodes[i].pose_mu[0].matrix().numpy()[:3, 3] for i in range(n)])
+    P_odo = np.array([T[:3, 3] for T in T_odo])
+    truth = geo.frame.to_enu(*frame.to_lla(enu_true).T)            # ground truth in the manager's ENU frame
+    e_opt = np.linalg.norm(geo.anchor.to_enu(P_opt)[:, :2] - truth[:, :2], axis=1)
+    a_odo = Anchor(AnchorConfig(), vertical_map=np.array([0, -1.0, 0]))
+    a_odo.fit(P_odo, truth + np.c_[err, np.zeros(n)], np.full(n, 3.0))   # best anchor of the odometry chain
+    e_odo = np.linalg.norm(a_odo.to_enu(P_odo)[:, :2] - truth[:, :2], axis=1)
+    print("rmse opt", np.sqrt((e_opt ** 2).mean()), "odo", np.sqrt((e_odo ** 2).mean()), "factors", n_fac, "opt", n_opt,
+          "tau", geo.err.tau, "scale", geo.noise.scale, geo.gate.stats)
+    assert 15 <= n_fac <= 120                     # decimated: about one per correlation time
+    assert np.sqrt((e_opt ** 2).mean()) < 0.25 * np.sqrt((e_odo ** 2).mean())
+    assert np.sqrt((e_opt ** 2).mean()) < 4.0
+    assert 5.0 < geo.err.tau < 60.0                # the receiver error's correlation time (30 s) from the residuals

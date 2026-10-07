@@ -305,9 +305,14 @@ class GnssGate:
         while self.offsets and len(self.offsets) > cfg.window:
             self.offsets.popleft()
         if len(self.offsets) >= cfg.min_fixes and self.offsets[-1][3] - self.offsets[0][3] >= cfg.window_s / 2:
+            # the offsets follow a smooth (linear in time) trend: the drift of the prediction grows smoothly, a receiver
+            # error that large does not persist while the robot travels further than the offset
             nus = np.array([o[0] for o in self.offsets])
+            ts = np.array([o[3] for o in self.offsets])
+            X = np.c_[np.ones(len(ts)), ts - ts.mean()]
+            coef, *_ = np.linalg.lstsq(X, nus, rcond=None)
             m = nus.mean(0)
-            spread = nus - m
+            spread = nus - X @ coef
             e = np.array([float(d @ np.linalg.solve(o[1] - Pc + 1e-9 * np.eye(2), d)) for d, o in zip(spread, self.offsets)])
             travel = float(np.linalg.norm(self.offsets[-1][2] - self.offsets[0][2]))
             if float(np.median(e)) <= MEDIAN_CHI2_2 * 2.0 and travel >= float(np.linalg.norm(m)):
@@ -320,3 +325,78 @@ class GnssGate:
 
     def state(self) -> dict:
         return {"noise": self.noise.state(), "stats": dict(self.stats)}
+
+
+class GnssErrorModel:
+    """Time correlation of the receiver's error, estimated online without ground truth.
+
+    Consumer receivers' errors wander slowly (satellite geometry, multipath that changes with the robot's position):
+    consecutive fixes repeat almost the same error, so treating every fix as an independent factor overweights GNSS
+    by orders of magnitude (NCLT: autocorrelation 0.8 at 10 s, 0.5 at 30 s against the ground truth).  After an
+    optimisation the residuals of the used fixes against the optimised trajectory are the receiver error (the
+    odometry, accurate over short spans, has removed the drift); `tau` is the lag at which their autocorrelation
+    (within epochs, resampled at 1 Hz) falls below 1/e.  GNSS factors are spaced `tau` apart, so that each carries
+    about one independent sample of the error."""
+
+    LAGS = (1, 2, 3, 5, 7, 10, 15, 20, 30, 45, 60, 90, 120, 180, 240)
+
+    def __init__(self, prior_tau: float = 20.0, max_tau: float = 240.0):
+        self.prior_tau = prior_tau
+        self.tau = prior_tau
+        self.max_tau = max_tau
+        self.sigma2_axis = None
+        self.acf = None
+
+    def update_from_residuals(self, t, r_xy, epoch) -> float:
+        """Posterior residuals (N, 2) of the used fixes at times t (N,), with their epoch ids (gaps split epochs)."""
+        t = np.asarray(t, float)
+        r = np.asarray(r_xy, float)
+        ep = np.asarray(epoch)
+        if len(t) < 30:
+            return self.tau
+        order = np.argsort(t)
+        t, r, ep = t[order], r[order], ep[order]
+        series = []
+        for e in np.unique(ep):
+            m = ep == e
+            if m.sum() < 10 or t[m][-1] - t[m][0] < 10:
+                continue
+            ts = np.arange(t[m][0], t[m][-1], 1.0)
+            rs = np.stack([np.interp(ts, t[m], r[m][:, i]) for i in range(2)], 1)
+            series.append(rs - np.median(rs, 0))
+        if not series:
+            return self.tau
+        var = np.median(np.concatenate([(x ** 2).sum(1) for x in series])) / MEDIAN_CHI2_2      # per-axis, robust
+        if var <= 0:
+            return self.tau
+        self.sigma2_axis = float(var)
+        acf = {}
+        for L in self.LAGS:
+            num, n = 0.0, 0
+            for x in series:
+                if len(x) > L:
+                    num += float((x[:-L] * x[L:]).sum())
+                    n += len(x) - L
+            if n < 30:
+                break
+            acf[L] = num / n / (2.0 * var)
+        self.acf = acf
+        if not acf:
+            return self.tau
+        tau = None
+        prev_L, prev_c = 0, 1.0
+        for L in sorted(acf):
+            c = acf[L]
+            if c < math.exp(-1.0):
+                tau = prev_L + (L - prev_L) * (prev_c - math.exp(-1.0)) / max(prev_c - c, 1e-9)
+                break
+            prev_L, prev_c = L, c
+        if tau is None:
+            tau = float(max(acf))
+        tau = min(max(tau, 1.0), self.max_tau)
+        self.tau = float(math.exp(0.5 * math.log(self.tau) + 0.5 * math.log(tau)))
+        return self.tau
+
+    def state(self) -> dict:
+        return {"tau": self.tau, "sigma2_axis": self.sigma2_axis,
+                "acf": None if self.acf is None else {str(k): float(v) for k, v in self.acf.items()}}

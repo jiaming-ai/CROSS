@@ -373,6 +373,7 @@ class KeyframeDatabase:
         max_kf_id: Optional[int] = None,
         min_kf_id: Optional[int] = None,
         score_threshold: Optional[float] = None,
+        allowed_kf_ids: Optional[set] = None,
     ) -> List[Tuple[float, Keyframe]]:
         """Query the database for the most likely Keyframe.
 
@@ -398,20 +399,21 @@ class KeyframeDatabase:
         query_embedding = self.vpr_model.get_embedding(img)
         
         # Get relevant embeddings
-        if target_atlases is not None or max_kf_id is not None or min_kf_id is not None:
+        if target_atlases is not None or max_kf_id is not None or min_kf_id is not None or allowed_kf_ids is not None:
             if target_atlases is not None:
                 valid_indices = []
                 for atlas in target_atlases:
                     valid_indices.extend(self._atlas_to_indices[atlas])
             else:
                 valid_indices = list(range(self._current_size))
-            if max_kf_id is not None or min_kf_id is not None:
-                # restrict by keyframe id (e.g. keyframes of previous sessions only)
+            if max_kf_id is not None or min_kf_id is not None or allowed_kf_ids is not None:
+                # restrict by keyframe id (e.g. keyframes of previous sessions only; a location prior's keyframes)
                 keep = []
                 for bi in valid_indices:
                     atlas_i, list_i = self._index_to_atlas_idx[bi]
                     kid = self._keyframe_by_atlas[atlas_i][list_i].id
-                    if (max_kf_id is None or kid < max_kf_id) and (min_kf_id is None or kid >= min_kf_id):
+                    if (max_kf_id is None or kid < max_kf_id) and (min_kf_id is None or kid >= min_kf_id) \
+                            and (allowed_kf_ids is None or kid in allowed_kf_ids):
                         keep.append(bi)
                 valid_indices = keep
             target_atlases = valid_indices  # reuse the index-mapping branch below

@@ -232,6 +232,14 @@ class System:
         self._projection_n_nodes = -1
         self.place_projection = self._make_place_projection(self._projection_prior)
 
+        # GNSS / compass anchoring of the map (cross/geo); None without `geo.enabled`: the system is unchanged
+        self._geo = None
+        if self.config.geo.enabled:
+            from cross.geo.manager import GeoManager
+            self._geo = GeoManager(self.config.geo, lc_confidence=self.config.mapping.loop_closure.confidence,
+                                   odom_k_t=self.config.mapping.loop_closure.noise.odom_k_t)
+            self._geo.set_vertical(self._projection_prior.numpy())
+
         # Topological map (odometry + proximity) used for lightweight planning
         topo_cfg = SimpleTopoConfig(
             proximity_distance_thresh=self.config.mapping.topo.proximity_distance_thresh,
@@ -461,6 +469,10 @@ class System:
         kf.step_created = int(self._processed_frame_num)
         self.hypothesis_manager.add_node(kf)
         self.last_added_kf_id = kf.id
+        if getattr(self, "_geo", None) is not None:
+            if self.loaded_node_ids:
+                self._geo.reset_session()
+            self._geo.on_keyframe(kf.id)
         self.odom_accumulator.reset_odom()
         self._steps_since_obs = 0
         self._last_obs_mapped = False
@@ -607,7 +619,8 @@ class System:
         if self._lc_verifier is not None and 0 in self.hypothesis_manager.hypotheses:
             h0 = self.hypothesis_manager.hypotheses[0]
             n_inf = sum(1 for fs in h0.visual_edges.values() for f in fs if getattr(f, "informative", True))
-            if n_inf > 0 and len(self.hypothesis_manager.nodes) >= 10:
+            n_geo = len(self._geo.factors) if (getattr(self, "_geo", None) is not None and self._geo.anchored) else 0
+            if (n_inf > 0 or n_geo > 0) and len(self.hypothesis_manager.nodes) >= 10:
                 t_final = time.perf_counter()
                 try:
                     v = self._lc_verifier
@@ -711,6 +724,10 @@ class System:
             "class_vars": class_vars,
             "current_atlas_id": self.current_atlas.id if hasattr(self, 'current_atlas') else None,
         }
+        if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
+            # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
+            save_data["geo"] = self._geo.state()
+            save_data["geo"]["keyframe_lla"] = self._geo.keyframe_lla(self.hypothesis_manager.nodes)
         # local consistency of the map from its own posterior residuals (no ground truth): the map-consistency
         # model of the verified loop closure in later sessions
         if self._lc_verifier is not None:
@@ -815,6 +832,11 @@ class System:
         self._anchor_pending.clear()
         self._contra_pending.clear()
         self._last_retrieved_results = None
+
+        if getattr(self, "_geo", None) is not None and save_data.get("geo"):
+            self._geo.load_state(save_data["geo"])
+            if self._geo.anchored:
+                logger.info(f"geo: map anchor loaded (origin {self._geo.frame.lat0:.6f}, {self._geo.frame.lon0:.6f})")
 
         # --- 4b. map-consistency model stored with the map (verified loop closure) ---
         if self._lc_verifier is not None and save_data.get("map_consistency"):
@@ -1034,6 +1056,8 @@ class System:
             self.hypothesis_manager.motion_update(ret["delta_pose"], ret["delta_std"],
                                                   source_factor=ret.get('motion_source_factor'))
             logger.debug(f"Updated the current state gmm with odometry at step {self._processed_frame_num}")
+            if self._geo is not None:
+                self._geo_step(ret["delta_pose"], last_obs, timestamp)
         
         else:
             # NOTE: we assumes that the system will always have some odom / imu readings
@@ -1246,6 +1270,8 @@ class System:
                 done = self._maybe_intra_hypothesis_loop_closure(ret, new_kf, edge_mapping)
             if not done:
                 self.hypothesis_manager.maybe_adopt_dominant_hypothesis()
+        if self._geo is not None:
+            self._geo_maybe_optimize(ret)
 
         if self.visualize:
             self.visualizer.visualize_tracking_step(
@@ -1341,6 +1367,10 @@ class System:
                     keep = full_keep[valid_masks]
                 except Exception as ex:
                     logger.warning(f"in-pass consistency test failed: {ex}")
+        if getattr(self, "_geo", None) is not None and self.config.geo.proposal_gate:
+            gk = self._geo_reference_mask(valid_keyframes, valid_poses)
+            if gk is not None:
+                keep = keep & gk
         return keep, h0_ok
 
     def _kf_position(self, kf_id):
@@ -1834,6 +1864,8 @@ class System:
         
         keyframe.step_created = int(self._processed_frame_num)
         self.hypothesis_manager.add_node(keyframe)
+        if self._geo is not None:
+            self._geo.on_keyframe(keyframe.id)
 
         # ---- Add new relative pose measurements to the graph ----
         current_kf_id = keyframe.id
@@ -1914,6 +1946,104 @@ class System:
         self.last_added_kf_id = current_kf_id
 
         return keyframe
+
+    # ------------------------------------------------------------------ geo anchoring (cross/geo)
+    def _geo_step(self, delta_pose, obs: dict, timestamp):
+        """Odometry increment and the frame's GNSS fix / compass sample to the geo manager."""
+        geo = self._geo
+        geo.on_motion(delta_pose.matrix().detach().cpu().numpy().astype(np.float64) if delta_pose is not None else None)
+        geo.tick(float(timestamp))
+        gnss, compass = obs.get("gnss"), obs.get("compass")
+        if gnss is None and compass is None:
+            return
+        if self.place_projection is not None and self.hypothesis_manager.nodes:
+            k0 = min(self.hypothesis_manager.nodes)
+            R0 = self.hypothesis_manager.nodes[k0].pose_mu[0].matrix().detach().cpu().numpy()[:3, :3]
+            geo.set_vertical(self.place_projection.vertical.numpy(), R0)
+        mu = self.hypothesis_manager.dist[0][0]
+        T = mu.matrix().detach().cpu().numpy().astype(np.float64)
+        std_t = float(self.hypothesis_manager.dist[1][0].tensor()[:3].norm()) if self.hypothesis_manager.dist[1] is not None else 0.0
+        in_map = self.session_localized()
+        t = float(gnss.get("t", timestamp)) if gnss is not None else float(timestamp)
+        dec = geo.observe(t, gnss, compass, T, in_map, belief_std_t=std_t, last_kf_id=self.last_added_kf_id,
+                          nodes=self.hypothesis_manager.nodes)
+        if dec is not None:
+            self.last_step_diagnostics["gnss"] = {"used": bool(dec.used), "reason": dec.reason,
+                                                  "sigma_h": float(dec.sigma_h), "anchored": geo.anchored}
+
+    def _geo_maybe_optimize(self, ret: dict):
+        """Optimise hypothesis 0's graph when the GNSS factors added since the last optimisation say the chain drifted
+        (outdoor stretches without loop closures); rate-limited by keyframes."""
+        geo = self._geo
+        hm = self.hypothesis_manager
+        n_kf = geo.n_kf
+        if not geo.should_optimize(hm.nodes, n_kf):
+            return
+        if getattr(hm, "no_pgo_for_lc", False) or 0 not in hm.hypotheses:
+            return
+        t0 = time.perf_counter()
+        info = hm.handle_loop_closure(0)
+        if info.get("success"):
+            geo.after_optimize(hm.nodes, n_kf)
+            pg = info.get("pose_graph")
+            logger.info(f"geo: GNSS-triggered optimisation ({getattr(pg, 'n_unary', 0)} GNSS factors, "
+                        f"{len(getattr(pg, 'vertices', []))} vertices, {time.perf_counter() - t0:.2f} s, "
+                        f"noise scale {geo.noise.scale:.2f}, factor interval {geo.err.tau:.0f} s)")
+            ret["geo_pgo"] = True
+        else:
+            geo.pending = []
+            geo.last_opt_kf = n_kf
+
+    def _geo_reference_mask(self, valid_keyframes, valid_poses):
+        """References whose implied current pose (map frame) contradicts the current GNSS fix are dropped."""
+        geo = self._geo
+        if geo.current is None or not geo.anchored:
+            return None
+        in_map = self.session_localized()
+        keep = np.ones(len(valid_keyframes), dtype=bool)
+        for i, kf in enumerate(valid_keyframes):
+            if not (kf.id < self._session_start_kf_id or in_map):
+                continue                       # a keyframe of an unmerged session lives in its own frame
+            T = (kf.pose_mu[0] @ valid_poses[i]).matrix().detach().cpu().numpy().astype(np.float64)
+            ok = geo.proposal_consistent(T[:3, 3])
+            if ok is False:
+                keep[i] = False
+        if not keep.all():
+            logger.debug(f"geo: {int((~keep).sum())} of {len(keep)} references inconsistent with the GNSS fix")
+        return keep
+
+    def _geo_gated_map_results(self, rgb_image, map_res: dict) -> dict:
+        """Relocalization: map keyframes near the current GNSS fix first (all retrieval slots when there are enough),
+        the appearance-only results after them."""
+        priors = self._geo.location_priors()
+        if not priors:
+            return map_res
+        cache = getattr(self, "_geo_kf_cache", None)
+        if cache is None or cache["session"] != self._session_start_kf_id:
+            kfs = [kf for kf in self.db.get_all_keyframes() if kf.id < self._session_start_kf_id]
+            P = np.stack([kf.pose_mu[0].tensor().detach().cpu().numpy().reshape(-1)[:3] for kf in kfs]).astype(np.float64) \
+                if kfs else np.zeros((0, 3))
+            cache = {"session": self._session_start_kf_id, "ids": np.array([kf.id for kf in kfs]), "p": P}
+            self._geo_kf_cache = cache
+        if not len(cache["ids"]):
+            return map_res
+        up = self._geo.anchor.up_map
+        near = np.zeros(len(cache["ids"]), dtype=bool)
+        for c, sig, _ in priors:
+            d = cache["p"] - c[None]
+            d = d - np.outer(d @ up, up)              # horizontal distance
+            r = math.sqrt(self._geo.k2) * sig + self.config.geo.retrieval_margin_m
+            near |= np.linalg.norm(d, axis=1) <= r
+        if not near.any():
+            return map_res
+        allowed = set(int(i) for i in cache["ids"][near])
+        gated = self.db.query(rgb_image, max_kf_id=self._session_start_kf_id,
+                              score_threshold=self.config.retrieval.map_score_threshold, allowed_kf_ids=allowed)
+        self._geo.stats["retrieval_gated"] += 1
+        ids = {kf.id for kf in gated["keyframes"]}
+        rest = [(sc, kf) for sc, kf in zip(map_res["scores"], map_res["keyframes"]) if kf.id not in ids]
+        return {"scores": list(gated["scores"]) + [r[0] for r in rest],
+                "keyframes": list(gated["keyframes"]) + [r[1] for r in rest]}
 
     def _make_place_projection(self, vertical):
         """SE3Projection for a vertical, or None for the original projection (vertical y, no vertical coordinate)."""
@@ -2231,6 +2361,8 @@ class System:
                     own_slots = self.config.retrieval.own_session_slots
                     map_res = self.db.query(rgb_image, max_kf_id=self._session_start_kf_id,
                                             score_threshold=self.config.retrieval.map_score_threshold)
+                    if self._geo is not None and self.config.geo.retrieval_gate:
+                        map_res = self._geo_gated_map_results(rgb_image, map_res)
                     logger.debug(f"retrieval: map kfs {[(kf.id, round(sc, 3)) for sc, kf in zip(map_res['scores'], map_res['keyframes'])][:6]}, "
                                  f"own {[(kf.id, round(sc, 3)) for sc, kf in zip(results['scores'], results['keyframes']) if kf.id >= self._session_start_kf_id][:3]}")
                     own = [(sc, kf) for sc, kf in zip(results["scores"], results["keyframes"]) if kf.id >= self._session_start_kf_id][:own_slots]

@@ -751,6 +751,42 @@ class VisualizationConfig:
 
 
 @dataclass
+class GeoConfig:
+    """GNSS / compass anchoring of the map to physical locations (cross/geo).  Off by default: with no GNSS input the
+    system is unchanged; with `enabled` the fixes of obs["gnss"] are quality-controlled (relative consistency against
+    the robot's own track, stale receivers, reacquisition hold-off, absolute chi-square gate), the map is anchored to a
+    local ENU frame, decimated GNSS factors (one per correlation time of the receiver error, estimated online) enter
+    the pose graph with a Cauchy kernel, and fixes gate retrieval / relocalization proposals.  Thresholds are
+    chi-square levels (`confidence`, default: the verified loop closure's); noise and correlation time adapt online."""
+    enabled: bool = False
+    confidence: Optional[float] = None        # None: mapping.loop_closure.confidence
+    drift_rate: Optional[float] = None        # growth of the prediction's std per metre since the last used fix (None: odom_k_t)
+    pred_floor: float = 0.5                   # metres added to the prediction's std (lever arm, time stamps)
+    uere: float = 3.0                         # receivers that report HDOP only: sigma_h = uere * HDOP
+    sigma_v_factor: float = 2.0               # vertical / horizontal noise without a reported vertical accuracy
+    window_s: float = 20.0                    # relative-consistency window (s)
+    min_fixes: int = 5                        # fixes of an epoch before any is used
+    holdoff_s: float = 10.0                   # age of an epoch before its fixes are used (reacquisition)
+    factor_interval_prior_s: float = 20.0     # spacing of GNSS factors until the error model has estimated it
+    anchor_dof: int = 4                       # 4: heading + translation with the map's vertical; 6: free rotation
+    anchor_max_yaw_std_deg: float = 3.0       # the anchor is used once its heading is known this well
+    anchor_refit_every: int = 100             # used fixes between anchor refits
+    max_fix_log: int = 20000
+    gauge_tilt_deg: float = 0.5               # soft prior of the first keyframe's tilt when GNSS fixes the gauge
+    opt_min_factors: int = 3                  # GNSS factors since the last optimisation before a drift test
+    opt_min_keyframes: int = 20               # keyframes between two GNSS-triggered optimisations
+    robust_c: Optional[float] = None          # Cauchy kernel scale (None: sqrt of the 2-dof chi-square at `confidence`)
+    retrieval_gate: bool = True               # relocalization: map keyframes far from the fix are not retrieved
+    proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
+    retrieval_margin_m: float = 10.0          # retrieval gate radius beyond the fix's chi-square radius (views of the
+                                              # same place from a few metres away)
+    fix_max_age_s: float = 3.0                # a fix gates proposals / retrieval for this long (odometry carries it)
+    compass_sigma_deg: float = 5.0
+    compass_offset_deg: Optional[float] = None   # compass -> camera heading offset; None: calibrated online
+    compass_frame: str = "frd"                # body frame of raw magnetometer / accelerometer samples
+
+
+@dataclass
 class SystemConfig:
     """Root configuration for the CROSS system."""
     async_update: bool = False
@@ -765,6 +801,7 @@ class SystemConfig:
     pose_est: PoseEstConfig = field(default_factory=PoseEstConfig)
     depth_pred: DepthPredConfig = field(default_factory=DepthPredConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+    geo: GeoConfig = field(default_factory=GeoConfig)
 
 
 # ---------------------------------------------------------------------------
