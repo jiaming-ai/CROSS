@@ -147,7 +147,7 @@ def test_compass_tilt_and_offset_and_disturbance():
             yaw = tilt_compensated_yaw(m, a)
             expect = math.pi / 2 - (b - decl)
             assert abs(((yaw - expect + math.pi) % (2 * math.pi)) - math.pi) < 1e-6
-    c = Compass(CompassConfig(min_offset_samples=10))
+    c = Compass(CompassConfig(min_offset_samples=10, hard_iron=True))
     for i in range(40):
         c.add_offset_sample(0.3 + 0.01 * np.sin(i), 0.1)
     assert abs(c.offset - 0.2) < 0.02

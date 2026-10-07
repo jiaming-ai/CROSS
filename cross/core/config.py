@@ -798,6 +798,7 @@ class GeoConfig:
     compass_sigma_deg: float = 5.0
     compass_offset_deg: Optional[float] = None   # compass -> camera heading offset; None: calibrated online
     compass_frame: str = "frd"                # body frame of raw magnetometer / accelerometer samples
+    compass_hard_iron: bool = False           # online hard-iron calibration of the magnetometer (no gain on NCLT)
 
 
 @dataclass

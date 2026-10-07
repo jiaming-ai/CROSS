@@ -49,7 +49,8 @@ class GeoManager:
                                                         min_fixes=cfg.min_fixes, holdoff_s=cfg.holdoff_s))
         self.err = GnssErrorModel(prior_tau=cfg.factor_interval_prior_s)
         self.compass = Compass(CompassConfig(confidence=conf, sigma_deg=cfg.compass_sigma_deg,
-                                             offset_deg=cfg.compass_offset_deg, frame=cfg.compass_frame))
+                                             offset_deg=cfg.compass_offset_deg, frame=cfg.compass_frame,
+                                             hard_iron=cfg.compass_hard_iron))
         self.anchor = Anchor(AnchorConfig(dof=cfg.anchor_dof, max_yaw_std_deg=cfg.anchor_max_yaw_std_deg))
         self.frame: Optional[LocalFrame] = None
         self.anchor_fixed = False                  # True once a loaded map supplied the anchor

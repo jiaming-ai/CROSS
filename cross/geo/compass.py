@@ -91,6 +91,7 @@ class CompassConfig:
     min_offset_samples: int = 30        # samples needed before the calibrated offset is used
     reference_window: int = 2000        # samples kept for the field reference
     frame: str = "frd"                  # body frame of raw magnetometer / accelerometer samples
+    hard_iron: bool = False             # online hard-iron calibration (NCLT 27 sessions: no gain, p50 4.1 vs 4.0 deg)
 
 
 class Compass:
@@ -146,7 +147,7 @@ class Compass:
                 self.stats["disturbed"] += 1
                 return None
             h = levelled_field(sample["mag"], sample["accel"], self.cfg.frame)
-            if outdoor_ok:
+            if outdoor_ok and self.cfg.hard_iron:
                 self._add_hard_iron_sample(h)
             if self.hard_iron is not None:
                 h = h - self.hard_iron

@@ -43,7 +43,7 @@ def run(d: Path, variant: str, step: int):
     k = np.clip(np.searchsorted(g[:, 0], t), 1, len(g) - 1)
     gap = np.minimum(np.abs(g[k, 0] - t), np.abs(g[k - 1, 0] - t))
     fix = gap <= 1.0
-    c = Compass(CompassConfig(min_offset_samples=30))
+    c = Compass(CompassConfig(min_offset_samples=30, hard_iron=(variant == "full")))
     if variant == "raw":
         c.disturbed = lambda *a, **kw: False
     if variant in ("raw", "no_hard_iron"):
