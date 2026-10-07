@@ -147,6 +147,10 @@ def test_mode_config_files_and_left_image():
     pe = own.pose_est
     assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
     assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 2
+    # the fast preset keeps the pair (its only scale anchor) and the stereo.yaml cadence with external odometry too
+    pe = apply_right_image(load_config(*mode_config_files("stereo", "external", fast=True))).pose_est
+    assert (pe.obs_min_translation, pe.obs_max_interval_steps, pe.ff.right_image, pe.ff.max_refs) == (0.3, 3, "pair", 4)
+    assert pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
 
 
 def test_left_image_session_drops_the_right_image():

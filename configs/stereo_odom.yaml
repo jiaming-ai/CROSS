@@ -7,7 +7,9 @@
 #   Development split (outputs/2026-10-07_remote_cadence; wheel / OXTS / simulated odometry, Basalt VIO on KITTI 07
 #   and SimChange): left image vs pair T1 0.139 / 0.157 m, T2 LR@1 0.895 / 0.885, T3 28 / 29 of 33, half the uplink;
 #   half the observation rate T1 0.143 / 0.157 m, T2 0.880 / 0.885, T3 28 / 29, a third fewer observations
-#   (a quarter of the rate: T3 25, relocalization locks on later).
+#   (a quarter of the rate: T3 25, relocalization locks on later).  Both together: T1 0.144 / 0.157 m, T2 0.886 / 0.885,
+#   T3 27 / 29 (two single trials in different sessions), a third of the uplink.  --fast keeps the pair
+#   (configs/stereo_fast.yaml).
 pose_est:
   obs_min_translation: 0.6
   obs_min_rotation: 0.3

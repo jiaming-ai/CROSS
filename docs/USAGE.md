@@ -106,7 +106,7 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | file | use |
 |---|---|
 | `configs/stereo.yaml` | stereo mode preset (loaded by `--mode stereo`): VGGT-Omega, observation gating |
-| `configs/stereo_odom.yaml` | layered on `stereo.yaml` with external odometry (wheel, INS, a VIO's output): the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) and half as often; `right_image: pair` and the `stereo.yaml` cadence in your own `--config` restore the pair |
+| `configs/stereo_odom.yaml` | layered on `stereo.yaml` with external odometry (wheel, INS, a VIO's output): the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) and half as often; `right_image: pair` and the `stereo.yaml` cadence in your own `--config` restore the pair; the `--fast` preset (`configs/stereo_fast.yaml`) keeps the pair |
 | `configs/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius); `outdoor_noown.yaml` is its variant for the same scale |
 | `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
 | `configs/mono_*.json` | mono profiles: the arguments of `python -m cross.mono.run`. `mono_benchmark_10hz.json` for offline runs at 10 Hz, `mono_streaming_dpvo_v2_20hz.json` for real time; select with `--mono-profile`, extra arguments with `--mono-args` |
