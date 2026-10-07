@@ -11,8 +11,9 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 - [PROTOCOL.md](PROTOCOL.md): datasets, splits, setups, odometry, metrics and run rules.
 - [RESULTS.md](RESULTS.md): result tables, generated from `results/results.json`.
 - [DEV.md](DEV.md): a development split with the same protocol, to test a change in minutes (`dev.py`).
-- [site/index.html](site/index.html): interactive results page with trajectories, localization error curves, trial outcomes
-  and failure cases per system. Open it from the file system, or serve the `site/` folder.
+- [site/index.html](site/index.html): interactive results page with trajectories, localization error curves, trial outcomes,
+  and a failure analysis: what the failed trials have in common across systems, with a video and every system's pose for
+  one representative case per cause. Open it from the file system, or serve the `site/` folder.
 
 ## Layout
 
@@ -27,6 +28,8 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 | `eval/metrics.py` | ATE, completeness, localization recall, Wilson intervals |
 | `make_dataset_assets.py`, `configs/dataset_samples.yaml` | representative images of the Datasets tab: the same place across the sessions of a scene (`site/assets/datasets/`, `results/dataset_samples.json`); run where the prepared data is |
 | `collect.py`, `make_tables.py`, `build_site.py` | merge results, write RESULTS.md, write the page data (`site/data.js`) |
+| `failure_stats.py`, `failure_analysis.py` | Failure cases tab: features of every T3 trial from the data (motion, viewpoint, image statistics, SIFT matchability against the map; run where the data is, `results/failure_trials.json`), and the cause analysis (`results/failure_analysis.json`) |
+| `make_failure_assets.py`, `configs/failure_cases.yaml` | the tab's cases and text: per case a video (`site/assets/failures/`) and every system's per-frame pose from the stored runs (`results/failure_cases.json`; CROSS T3 needs `run.py --keep-rows`) |
 | `results/` | merged results (`results.json`: the newest run of every cell), every run of every code version (`history.json`), and earlier results obtained with other protocols (`legacy.*`) |
 
 ## Running
@@ -45,6 +48,9 @@ while read -r job; do python benchmark/run.py $job; done < queue.txt     # or di
 # 3. tables and page
 python benchmark/make_dataset_assets.py --data $BENCH_DATA     # images of the Datasets tab (optional)
 python benchmark/collect.py $BENCH_RESULTS && python benchmark/make_tables.py && python benchmark/build_site.py
+# 4. failure analysis and cases of the page (optional; where the data and the run folders are)
+python benchmark/failure_stats.py --data $BENCH_DATA --runs $BENCH_RESULTS && python benchmark/failure_analysis.py
+python benchmark/make_failure_assets.py --data $BENCH_DATA --runs $BENCH_RESULTS && python benchmark/build_site.py
 ```
 
 Query jobs build the scene's map themselves when it is missing (with a lock, so parallel workers share one map).

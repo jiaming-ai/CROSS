@@ -1,0 +1,1346 @@
+{
+ "systems": [
+  {
+   "key": "cross_stereo|stereo",
+   "label": "CROSS (VGGT-Omega, external odometry) · stereo ⁽ᵒ⁾"
+  },
+  {
+   "key": "cross_stereo_vgio|stereo",
+   "label": "CROSS (VGGT-Omega, VGGT-inertial odometry) · stereo ⁽ⁱ⁾"
+  },
+  {
+   "key": "cross_rgbd|rgbd",
+   "label": "CROSS (PnP, external odometry) · RGB-D ⁽ᵒ⁾"
+  },
+  {
+   "key": "cross_mono_ff_odom|mono",
+   "label": "CROSS (VGGT-Omega mono, external odometry) · mono ⁽ᵒ⁾"
+  },
+  {
+   "key": "cross_mono_ff_vgio|mono",
+   "label": "CROSS (VGGT-Omega mono, VGGT-inertial odometry) · mono ⁽ⁱ⁾"
+  },
+  {
+   "key": "orbslam3|stereo",
+   "label": "ORB-SLAM3 · stereo"
+  },
+  {
+   "key": "orbslam3|rgbd",
+   "label": "ORB-SLAM3 · RGB-D"
+  },
+  {
+   "key": "orbslam3_imu|stereo",
+   "label": "ORB-SLAM3 (visual-inertial) · stereo ⁽ⁱ⁾"
+  },
+  {
+   "key": "rtabmap|stereo",
+   "label": "RTAB-Map (external odometry) · stereo ⁽ᵒ⁾"
+  },
+  {
+   "key": "rtabmap|rgbd",
+   "label": "RTAB-Map (external odometry) · RGB-D ⁽ᵒ⁾"
+  },
+  {
+   "key": "rtabmap_vo|stereo",
+   "label": "RTAB-Map (visual odometry) · stereo"
+  },
+  {
+   "key": "vggt_slam|mono",
+   "label": "VGGT-SLAM 2.0 · mono"
+  },
+  {
+   "key": "mast3r_slam|mono",
+   "label": "MASt3R-SLAM · mono"
+  }
+ ],
+ "n_trials": 2427,
+ "matchability": {
+  "bins": [
+   "< 10",
+   "10-30",
+   "30-100",
+   "≥ 100"
+  ],
+  "n_trials": [
+   119,
+   893,
+   580,
+   1147
+  ],
+  "fail": {
+   "cross_stereo|stereo": [
+    12.0,
+    13.9,
+    3.8,
+    1.1
+   ],
+   "cross_stereo_vgio|stereo": [
+    6.0,
+    7.5,
+    2.2,
+    2.0
+   ],
+   "cross_rgbd|rgbd": [
+    42.0,
+    40.8,
+    5.6,
+    3.1
+   ],
+   "cross_mono_ff_odom|mono": [
+    25.0,
+    14.5,
+    2.8,
+    1.7
+   ],
+   "cross_mono_ff_vgio|mono": [
+    43.0,
+    20.8,
+    6.7,
+    2.8
+   ],
+   "orbslam3|stereo": [
+    100.0,
+    98.0,
+    79.4,
+    36.8
+   ],
+   "orbslam3|rgbd": [
+    100.0,
+    98.9,
+    80.5,
+    29.2
+   ],
+   "orbslam3_imu|stereo": [
+    100.0,
+    94.8,
+    49.4,
+    10.9
+   ],
+   "rtabmap|stereo": [
+    100.0,
+    97.7,
+    62.2,
+    10.2
+   ],
+   "rtabmap|rgbd": [
+    100.0,
+    96.7,
+    58.0,
+    10.1
+   ],
+   "rtabmap_vo|stereo": [
+    100.0,
+    97.1,
+    61.5,
+    10.5
+   ],
+   "vggt_slam|mono": [
+    83.3,
+    65.1,
+    59.1,
+    57.6
+   ],
+   "mast3r_slam|mono": [
+    100.0,
+    94.1,
+    76.7,
+    67.3
+   ]
+  },
+  "odds_per_10x": {
+   "cross_stereo|stereo": 4.4,
+   "cross_stereo_vgio|stereo": 2.5,
+   "cross_rgbd|rgbd": 8.2,
+   "cross_mono_ff_odom|mono": 4.4,
+   "cross_mono_ff_vgio|mono": 5.1,
+   "orbslam3|stereo": 18.4,
+   "orbslam3|rgbd": 33.0,
+   "orbslam3_imu|stereo": 58.4,
+   "rtabmap|stereo": 122.7,
+   "rtabmap|rgbd": 77.9,
+   "rtabmap_vo|stereo": 104.6,
+   "vggt_slam|mono": 1.2,
+   "mast3r_slam|mono": 2.6
+  }
+ },
+ "causes": [
+  {
+   "id": "night",
+   "group": "appearance",
+   "label": "Night (ROVER)",
+   "rule": "ROVER night and night-light sessions against the day map",
+   "n_trials": 280,
+   "inl_max_median": 13.0,
+   "fail": {
+    "cross_stereo|stereo": 13.6,
+    "cross_stereo_vgio|stereo": 5.0,
+    "cross_rgbd|rgbd": 57.9,
+    "cross_mono_ff_odom|mono": 14.3,
+    "cross_mono_ff_vgio|mono": 30.0,
+    "orbslam3|stereo": 100.0,
+    "orbslam3|rgbd": 100.0,
+    "orbslam3_imu|stereo": 100.0,
+    "rtabmap|stereo": 100.0,
+    "rtabmap|rgbd": 98.2,
+    "rtabmap_vo|stereo": 100.0,
+    "vggt_slam|mono": 90.0
+   },
+   "expected": {
+    "cross_stereo|stereo": 11.8,
+    "cross_stereo_vgio|stereo": 3.8,
+    "cross_rgbd|rgbd": 39.3,
+    "cross_mono_ff_odom|mono": 14.6,
+    "cross_mono_ff_vgio|mono": 27.9,
+    "orbslam3|stereo": 96.4,
+    "orbslam3|rgbd": 98.0,
+    "orbslam3_imu|stereo": 92.6,
+    "rtabmap|stereo": 96.6,
+    "rtabmap|rgbd": 92.7,
+    "rtabmap_vo|stereo": 96.6,
+    "vggt_slam|mono": 92.9
+   },
+   "n": {
+    "cross_stereo|stereo": 280,
+    "cross_stereo_vgio|stereo": 280,
+    "cross_rgbd|rgbd": 280,
+    "cross_mono_ff_odom|mono": 280,
+    "cross_mono_ff_vgio|mono": 280,
+    "orbslam3|stereo": 280,
+    "orbslam3|rgbd": 280,
+    "orbslam3_imu|stereo": 280,
+    "rtabmap|stereo": 280,
+    "rtabmap|rgbd": 280,
+    "rtabmap_vo|stereo": 280,
+    "vggt_slam|mono": 10
+   }
+  },
+  {
+   "id": "season",
+   "group": "appearance",
+   "label": "Other season (ROVER)",
+   "rule": "ROVER summer, autumn, winter and spring sessions against the day map",
+   "n_trials": 654,
+   "inl_max_median": 25.0,
+   "fail": {
+    "cross_stereo|stereo": 8.2,
+    "cross_stereo_vgio|stereo": 2.8,
+    "cross_rgbd|rgbd": 14.0,
+    "cross_mono_ff_odom|mono": 7.4,
+    "cross_mono_ff_vgio|mono": 13.5,
+    "orbslam3|stereo": 94.6,
+    "orbslam3|rgbd": 96.2,
+    "orbslam3_imu|stereo": 79.6,
+    "rtabmap|stereo": 96.0,
+    "rtabmap|rgbd": 89.0,
+    "rtabmap_vo|stereo": 95.5,
+    "vggt_slam|mono": 82.4
+   },
+   "expected": {
+    "cross_stereo|stereo": 8.6,
+    "cross_stereo_vgio|stereo": 2.8,
+    "cross_rgbd|rgbd": 21.2,
+    "cross_mono_ff_odom|mono": 6.8,
+    "cross_mono_ff_vgio|mono": 13.7,
+    "orbslam3|stereo": 91.2,
+    "orbslam3|rgbd": 96.3,
+    "orbslam3_imu|stereo": 79.2,
+    "rtabmap|stereo": 91.7,
+    "rtabmap|rgbd": 88.1,
+    "rtabmap_vo|stereo": 91.1,
+    "vggt_slam|mono": 74.8
+   },
+   "n": {
+    "cross_stereo|stereo": 598,
+    "cross_stereo_vgio|stereo": 598,
+    "cross_rgbd|rgbd": 607,
+    "cross_mono_ff_odom|mono": 607,
+    "cross_mono_ff_vgio|mono": 607,
+    "orbslam3|stereo": 598,
+    "orbslam3|rgbd": 607,
+    "orbslam3_imu|stereo": 598,
+    "rtabmap|stereo": 598,
+    "rtabmap|rgbd": 607,
+    "rtabmap_vo|stereo": 598,
+    "vggt_slam|mono": 17
+   }
+  },
+  {
+   "id": "dusk",
+   "group": "appearance",
+   "label": "Dusk, same season (ROVER)",
+   "rule": "ROVER dusk session (the day before the map)",
+   "n_trials": 141,
+   "inl_max_median": 93.0,
+   "fail": {
+    "cross_stereo|stereo": 0.0,
+    "cross_stereo_vgio|stereo": 0.0,
+    "cross_rgbd|rgbd": 0.0,
+    "cross_mono_ff_odom|mono": 0.7,
+    "cross_mono_ff_vgio|mono": 4.3,
+    "orbslam3|stereo": 51.1,
+    "orbslam3|rgbd": 81.6,
+    "orbslam3_imu|stereo": 22.0,
+    "rtabmap|stereo": 46.1,
+    "rtabmap|rgbd": 45.4,
+    "rtabmap_vo|stereo": 45.4,
+    "vggt_slam|mono": 60.0
+   },
+   "expected": {
+    "cross_stereo|stereo": 1.8,
+    "cross_stereo_vgio|stereo": 2.6,
+    "cross_rgbd|rgbd": 5.9,
+    "cross_mono_ff_odom|mono": 2.5,
+    "cross_mono_ff_vgio|mono": 7.6,
+    "orbslam3|stereo": 72.7,
+    "orbslam3|rgbd": 85.2,
+    "orbslam3_imu|stereo": 38.3,
+    "rtabmap|stereo": 71.1,
+    "rtabmap|rgbd": 60.0,
+    "rtabmap_vo|stereo": 71.0,
+    "vggt_slam|mono": 80.0
+   },
+   "n": {
+    "cross_stereo|stereo": 141,
+    "cross_stereo_vgio|stereo": 141,
+    "cross_rgbd|rgbd": 141,
+    "cross_mono_ff_odom|mono": 141,
+    "cross_mono_ff_vgio|mono": 141,
+    "orbslam3|stereo": 141,
+    "orbslam3|rgbd": 141,
+    "orbslam3_imu|stereo": 141,
+    "rtabmap|stereo": 141,
+    "rtabmap|rgbd": 141,
+    "rtabmap_vo|stereo": 141,
+    "vggt_slam|mono": 5
+   }
+  },
+  {
+   "id": "lighting",
+   "group": "appearance",
+   "label": "Indoor lighting change",
+   "rule": "SimChange light_* traversals, no other change",
+   "n_trials": 236,
+   "inl_max_median": 274.0,
+   "fail": {
+    "cross_stereo|stereo": 1.3,
+    "cross_stereo_vgio|stereo": 0.8,
+    "cross_rgbd|rgbd": 0.0,
+    "cross_mono_ff_odom|mono": 0.8,
+    "cross_mono_ff_vgio|mono": 0.8,
+    "orbslam3|stereo": 50.0,
+    "orbslam3|rgbd": 30.1,
+    "orbslam3_imu|stereo": 12.3,
+    "rtabmap|stereo": 3.4,
+    "rtabmap|rgbd": 3.4,
+    "rtabmap_vo|stereo": 5.5,
+    "vggt_slam|mono": 54.7,
+    "mast3r_slam|mono": 37.5
+   },
+   "expected": {
+    "cross_stereo|stereo": 0.8,
+    "cross_stereo_vgio|stereo": 0.9,
+    "cross_rgbd|rgbd": 1.9,
+    "cross_mono_ff_odom|mono": 0.8,
+    "cross_mono_ff_vgio|mono": 0.7,
+    "orbslam3|stereo": 40.5,
+    "orbslam3|rgbd": 25.9,
+    "orbslam3_imu|stereo": 12.2,
+    "rtabmap|stereo": 5.7,
+    "rtabmap|rgbd": 4.8,
+    "rtabmap_vo|stereo": 6.5,
+    "vggt_slam|mono": 57.4,
+    "mast3r_slam|mono": 61.0
+   },
+   "n": {
+    "cross_stereo|stereo": 236,
+    "cross_stereo_vgio|stereo": 236,
+    "cross_rgbd|rgbd": 236,
+    "cross_mono_ff_odom|mono": 236,
+    "cross_mono_ff_vgio|mono": 236,
+    "orbslam3|stereo": 236,
+    "orbslam3|rgbd": 236,
+    "orbslam3_imu|stereo": 236,
+    "rtabmap|stereo": 236,
+    "rtabmap|rgbd": 236,
+    "rtabmap_vo|stereo": 236,
+    "vggt_slam|mono": 192,
+    "mast3r_slam|mono": 72
+   }
+  },
+  {
+   "id": "objects",
+   "group": "appearance",
+   "label": "Moved or removed objects",
+   "rule": "SimChange rearr / move / remove / background traversals, no other change",
+   "n_trials": 423,
+   "inl_max_median": 551.0,
+   "fail": {
+    "cross_stereo|stereo": 0.0,
+    "cross_stereo_vgio|stereo": 0.2,
+    "cross_rgbd|rgbd": 0.0,
+    "cross_mono_ff_odom|mono": 0.0,
+    "cross_mono_ff_vgio|mono": 0.0,
+    "orbslam3|stereo": 23.9,
+    "orbslam3|rgbd": 10.9,
+    "orbslam3_imu|stereo": 1.9,
+    "rtabmap|stereo": 0.0,
+    "rtabmap|rgbd": 0.0,
+    "rtabmap_vo|stereo": 0.2,
+    "vggt_slam|mono": 58.5,
+    "mast3r_slam|mono": 71.7
+   },
+   "expected": {
+    "cross_stereo|stereo": 0.0,
+    "cross_stereo_vgio|stereo": 0.2,
+    "cross_rgbd|rgbd": 0.4,
+    "cross_mono_ff_odom|mono": 0.0,
+    "cross_mono_ff_vgio|mono": 0.1,
+    "orbslam3|stereo": 30.4,
+    "orbslam3|rgbd": 17.6,
+    "orbslam3_imu|stereo": 4.5,
+    "rtabmap|stereo": 0.7,
+    "rtabmap|rgbd": 0.4,
+    "rtabmap_vo|stereo": 1.3,
+    "vggt_slam|mono": 55.8,
+    "mast3r_slam|mono": 62.9
+   },
+   "n": {
+    "cross_stereo|stereo": 423,
+    "cross_stereo_vgio|stereo": 423,
+    "cross_rgbd|rgbd": 423,
+    "cross_mono_ff_odom|mono": 423,
+    "cross_mono_ff_vgio|mono": 423,
+    "orbslam3|stereo": 423,
+    "orbslam3|rgbd": 423,
+    "orbslam3_imu|stereo": 423,
+    "rtabmap|stereo": 423,
+    "rtabmap|rgbd": 423,
+    "rtabmap_vo|stereo": 423,
+    "vggt_slam|mono": 359,
+    "mast3r_slam|mono": 152
+   }
+  },
+  {
+   "id": "crowds",
+   "group": "appearance",
+   "label": "People and goods (market, cafe)",
+   "rule": "OpenLORIS market and cafe",
+   "n_trials": 54,
+   "inl_max_median": 297.0,
+   "fail": {
+    "cross_stereo|stereo": 9.6,
+    "cross_stereo_vgio|stereo": 13.5,
+    "cross_rgbd|rgbd": 20.4,
+    "cross_mono_ff_odom|mono": 13.0,
+    "cross_mono_ff_vgio|mono": 9.3,
+    "orbslam3|stereo": 25.0,
+    "orbslam3|rgbd": 29.6,
+    "orbslam3_imu|stereo": 28.8,
+    "rtabmap|stereo": 23.1,
+    "rtabmap|rgbd": 24.1,
+    "rtabmap_vo|stereo": 21.2,
+    "vggt_slam|mono": 35.3,
+    "mast3r_slam|mono": 70.6
+   },
+   "expected": {
+    "cross_stereo|stereo": 14.0,
+    "cross_stereo_vgio|stereo": 17.5,
+    "cross_rgbd|rgbd": 24.2,
+    "cross_mono_ff_odom|mono": 18.0,
+    "cross_mono_ff_vgio|mono": 21.2,
+    "orbslam3|stereo": 52.8,
+    "orbslam3|rgbd": 55.3,
+    "orbslam3_imu|stereo": 52.4,
+    "rtabmap|stereo": 46.5,
+    "rtabmap|rgbd": 49.9,
+    "rtabmap_vo|stereo": 42.5,
+    "vggt_slam|mono": 66.5,
+    "mast3r_slam|mono": 91.1
+   },
+   "n": {
+    "cross_stereo|stereo": 52,
+    "cross_stereo_vgio|stereo": 52,
+    "cross_rgbd|rgbd": 54,
+    "cross_mono_ff_odom|mono": 54,
+    "cross_mono_ff_vgio|mono": 54,
+    "orbslam3|stereo": 52,
+    "orbslam3|rgbd": 54,
+    "orbslam3_imu|stereo": 52,
+    "rtabmap|stereo": 52,
+    "rtabmap|rgbd": 54,
+    "rtabmap_vo|stereo": 52,
+    "vggt_slam|mono": 17,
+    "mast3r_slam|mono": 17
+   }
+  },
+  {
+   "id": "opposite",
+   "group": "viewpoint",
+   "label": "Facing away from the map",
+   "rule": "the last frame's view differs by 90 deg or more from every map frame within the near radius",
+   "n_trials": 309,
+   "inl_max_median": 20.0,
+   "fail": {
+    "cross_stereo|stereo": 13.4,
+    "cross_stereo_vgio|stereo": 10.9,
+    "cross_rgbd|rgbd": 47.6,
+    "cross_mono_ff_odom|mono": 15.6,
+    "cross_mono_ff_vgio|mono": 14.9,
+    "orbslam3|stereo": 88.8,
+    "orbslam3|rgbd": 82.9,
+    "orbslam3_imu|stereo": 76.8,
+    "rtabmap|stereo": 75.7,
+    "rtabmap|rgbd": 74.4,
+    "rtabmap_vo|stereo": 76.4,
+    "vggt_slam|mono": 59.9,
+    "mast3r_slam|mono": 92.6
+   },
+   "expected": {
+    "cross_stereo|stereo": 12.0,
+    "cross_stereo_vgio|stereo": 10.5,
+    "cross_rgbd|rgbd": 33.2,
+    "cross_mono_ff_odom|mono": 13.4,
+    "cross_mono_ff_vgio|mono": 14.6,
+    "orbslam3|stereo": 84.4,
+    "orbslam3|rgbd": 80.0,
+    "orbslam3_imu|stereo": 71.0,
+    "rtabmap|stereo": 72.3,
+    "rtabmap|rgbd": 71.6,
+    "rtabmap_vo|stereo": 71.4,
+    "vggt_slam|mono": 62.9,
+    "mast3r_slam|mono": 87.9
+   },
+   "n": {
+    "cross_stereo|stereo": 276,
+    "cross_stereo_vgio|stereo": 276,
+    "cross_rgbd|rgbd": 275,
+    "cross_mono_ff_odom|mono": 275,
+    "cross_mono_ff_vgio|mono": 275,
+    "orbslam3|stereo": 276,
+    "orbslam3|rgbd": 275,
+    "orbslam3_imu|stereo": 276,
+    "rtabmap|stereo": 276,
+    "rtabmap|rgbd": 262,
+    "rtabmap_vo|stereo": 276,
+    "vggt_slam|mono": 197,
+    "mast3r_slam|mono": 81
+   }
+  },
+  {
+   "id": "offset",
+   "group": "viewpoint",
+   "label": "Sideways offset or turned camera",
+   "rule": "SimChange offset / yaw / height traversals (not reversed)",
+   "n_trials": 206,
+   "inl_max_median": 182.0,
+   "fail": {
+    "cross_stereo|stereo": 0.0,
+    "cross_stereo_vgio|stereo": 0.5,
+    "cross_rgbd|rgbd": 1.0,
+    "cross_mono_ff_odom|mono": 0.5,
+    "cross_mono_ff_vgio|mono": 0.5,
+    "orbslam3|stereo": 38.3,
+    "orbslam3|rgbd": 23.8,
+    "orbslam3_imu|stereo": 8.3,
+    "rtabmap|stereo": 10.2,
+    "rtabmap|rgbd": 7.3,
+    "rtabmap_vo|stereo": 11.2,
+    "vggt_slam|mono": 51.4,
+    "mast3r_slam|mono": 59.6
+   },
+   "expected": {
+    "cross_stereo|stereo": 1.6,
+    "cross_stereo_vgio|stereo": 1.3,
+    "cross_rgbd|rgbd": 4.0,
+    "cross_mono_ff_odom|mono": 1.4,
+    "cross_mono_ff_vgio|mono": 1.6,
+    "orbslam3|stereo": 48.8,
+    "orbslam3|rgbd": 33.4,
+    "orbslam3_imu|stereo": 18.9,
+    "rtabmap|stereo": 12.1,
+    "rtabmap|rgbd": 10.4,
+    "rtabmap_vo|stereo": 12.8,
+    "vggt_slam|mono": 58.5,
+    "mast3r_slam|mono": 65.8
+   },
+   "n": {
+    "cross_stereo|stereo": 206,
+    "cross_stereo_vgio|stereo": 206,
+    "cross_rgbd|rgbd": 206,
+    "cross_mono_ff_odom|mono": 206,
+    "cross_mono_ff_vgio|mono": 206,
+    "orbslam3|stereo": 206,
+    "orbslam3|rgbd": 206,
+    "orbslam3_imu|stereo": 206,
+    "rtabmap|stereo": 206,
+    "rtabmap|rgbd": 206,
+    "rtabmap_vo|stereo": 206,
+    "vggt_slam|mono": 179,
+    "mast3r_slam|mono": 52
+   }
+  },
+  {
+   "id": "small_room",
+   "group": "viewpoint",
+   "label": "Small room, close range (office)",
+   "rule": "OpenLORIS office (about 4 m across)",
+   "n_trials": 36,
+   "inl_max_median": 14.0,
+   "fail": {
+    "cross_stereo|stereo": 13.9,
+    "cross_stereo_vgio|stereo": 2.8,
+    "cross_rgbd|rgbd": 63.9,
+    "cross_mono_ff_odom|mono": 33.3,
+    "cross_mono_ff_vgio|mono": 36.1,
+    "orbslam3|stereo": 88.9,
+    "orbslam3|rgbd": 83.3,
+    "orbslam3_imu|stereo": 77.8,
+    "rtabmap|stereo": 72.2,
+    "rtabmap|rgbd": 80.6,
+    "rtabmap_vo|stereo": 69.4,
+    "vggt_slam|mono": 27.8,
+    "mast3r_slam|mono": 94.4
+   },
+   "expected": {
+    "cross_stereo|stereo": 13.6,
+    "cross_stereo_vgio|stereo": 13.7,
+    "cross_rgbd|rgbd": 44.7,
+    "cross_mono_ff_odom|mono": 27.4,
+    "cross_mono_ff_vgio|mono": 29.9,
+    "orbslam3|stereo": 89.3,
+    "orbslam3|rgbd": 93.3,
+    "orbslam3_imu|stereo": 84.5,
+    "rtabmap|stereo": 82.3,
+    "rtabmap|rgbd": 82.9,
+    "rtabmap_vo|stereo": 80.3,
+    "vggt_slam|mono": 57.8,
+    "mast3r_slam|mono": 96.1
+   },
+   "n": {
+    "cross_stereo|stereo": 36,
+    "cross_stereo_vgio|stereo": 36,
+    "cross_rgbd|rgbd": 36,
+    "cross_mono_ff_odom|mono": 36,
+    "cross_mono_ff_vgio|mono": 36,
+    "orbslam3|stereo": 36,
+    "orbslam3|rgbd": 36,
+    "orbslam3_imu|stereo": 36,
+    "rtabmap|stereo": 36,
+    "rtabmap|rgbd": 36,
+    "rtabmap_vo|stereo": 36,
+    "vggt_slam|mono": 36,
+    "mast3r_slam|mono": 36
+   }
+  },
+  {
+   "id": "corridor",
+   "group": "ambiguity",
+   "label": "Straight corridor",
+   "rule": "OpenLORIS corridor trials turning less than 30 deg in total",
+   "n_trials": 22,
+   "inl_max_median": 36.0,
+   "fail": {
+    "cross_stereo|stereo": 50.0,
+    "cross_stereo_vgio|stereo": 59.1,
+    "cross_rgbd|rgbd": 50.0,
+    "cross_mono_ff_odom|mono": 54.5,
+    "cross_mono_ff_vgio|mono": 54.5,
+    "orbslam3|stereo": 100.0,
+    "orbslam3|rgbd": 100.0,
+    "orbslam3_imu|stereo": 90.9,
+    "rtabmap|stereo": 86.4,
+    "rtabmap|rgbd": 81.8,
+    "rtabmap_vo|stereo": 86.4,
+    "vggt_slam|mono": 85.0,
+    "mast3r_slam|mono": 100.0
+   },
+   "expected": {
+    "cross_stereo|stereo": 21.3,
+    "cross_stereo_vgio|stereo": 22.5,
+    "cross_rgbd|rgbd": 38.6,
+    "cross_mono_ff_odom|mono": 25.0,
+    "cross_mono_ff_vgio|mono": 31.4,
+    "orbslam3|stereo": 71.4,
+    "orbslam3|rgbd": 75.7,
+    "orbslam3_imu|stereo": 68.6,
+    "rtabmap|stereo": 63.3,
+    "rtabmap|rgbd": 67.2,
+    "rtabmap_vo|stereo": 60.7,
+    "vggt_slam|mono": 65.8,
+    "mast3r_slam|mono": 96.0
+   },
+   "n": {
+    "cross_stereo|stereo": 22,
+    "cross_stereo_vgio|stereo": 22,
+    "cross_rgbd|rgbd": 22,
+    "cross_mono_ff_odom|mono": 22,
+    "cross_mono_ff_vgio|mono": 22,
+    "orbslam3|stereo": 22,
+    "orbslam3|rgbd": 22,
+    "orbslam3_imu|stereo": 22,
+    "rtabmap|stereo": 22,
+    "rtabmap|rgbd": 22,
+    "rtabmap_vo|stereo": 22,
+    "vggt_slam|mono": 20,
+    "mast3r_slam|mono": 13
+   }
+  },
+  {
+   "id": "standing",
+   "group": "ambiguity",
+   "label": "Standing still",
+   "rule": "the robot moves in fewer than half of the trial's frames (mostly the start of a session)",
+   "n_trials": 25,
+   "inl_max_median": 59.0,
+   "fail": {
+    "cross_stereo|stereo": 28.0,
+    "cross_stereo_vgio|stereo": 24.0,
+    "cross_rgbd|rgbd": 32.0,
+    "cross_mono_ff_odom|mono": 28.0,
+    "cross_mono_ff_vgio|mono": 24.0,
+    "orbslam3|stereo": 96.0,
+    "orbslam3|rgbd": 72.0,
+    "orbslam3_imu|stereo": 60.0,
+    "rtabmap|stereo": 56.0,
+    "rtabmap|rgbd": 47.6,
+    "rtabmap_vo|stereo": 68.0,
+    "vggt_slam|mono": 68.4,
+    "mast3r_slam|mono": 100.0
+   },
+   "expected": {
+    "cross_stereo|stereo": 7.6,
+    "cross_stereo_vgio|stereo": 4.6,
+    "cross_rgbd|rgbd": 21.3,
+    "cross_mono_ff_odom|mono": 9.9,
+    "cross_mono_ff_vgio|mono": 14.3,
+    "orbslam3|stereo": 78.3,
+    "orbslam3|rgbd": 69.2,
+    "orbslam3_imu|stereo": 57.5,
+    "rtabmap|stereo": 55.7,
+    "rtabmap|rgbd": 50.8,
+    "rtabmap_vo|stereo": 55.5,
+    "vggt_slam|mono": 66.2,
+    "mast3r_slam|mono": 79.2
+   },
+   "n": {
+    "cross_stereo|stereo": 25,
+    "cross_stereo_vgio|stereo": 25,
+    "cross_rgbd|rgbd": 25,
+    "cross_mono_ff_odom|mono": 25,
+    "cross_mono_ff_vgio|mono": 25,
+    "orbslam3|stereo": 25,
+    "orbslam3|rgbd": 25,
+    "orbslam3_imu|stereo": 25,
+    "rtabmap|stereo": 25,
+    "rtabmap|rgbd": 21,
+    "rtabmap_vo|stereo": 25,
+    "vggt_slam|mono": 19,
+    "mast3r_slam|mono": 5
+   }
+  },
+  {
+   "id": "fast_turn",
+   "group": "motion",
+   "label": "Fast turns",
+   "rule": "peak turn rate over 1 s in the top 15 % of the dataset's trials",
+   "n_trials": 359,
+   "inl_max_median": 93.0,
+   "fail": {
+    "cross_stereo|stereo": 3.8,
+    "cross_stereo_vgio|stereo": 3.3,
+    "cross_rgbd|rgbd": 15.8,
+    "cross_mono_ff_odom|mono": 5.4,
+    "cross_mono_ff_vgio|mono": 11.0,
+    "orbslam3|stereo": 68.3,
+    "orbslam3|rgbd": 69.3,
+    "orbslam3_imu|stereo": 49.7,
+    "rtabmap|stereo": 49.7,
+    "rtabmap|rgbd": 48.3,
+    "rtabmap_vo|stereo": 49.7,
+    "vggt_slam|mono": 77.6,
+    "mast3r_slam|mono": 83.7
+   },
+   "expected": {
+    "cross_stereo|stereo": 5.8,
+    "cross_stereo_vgio|stereo": 3.9,
+    "cross_rgbd|rgbd": 16.6,
+    "cross_mono_ff_odom|mono": 6.9,
+    "cross_mono_ff_vgio|mono": 10.9,
+    "orbslam3|stereo": 65.9,
+    "orbslam3|rgbd": 60.3,
+    "orbslam3_imu|stereo": 47.4,
+    "rtabmap|stereo": 50.2,
+    "rtabmap|rgbd": 46.2,
+    "rtabmap_vo|stereo": 50.0,
+    "vggt_slam|mono": 59.7,
+    "mast3r_slam|mono": 78.7
+   },
+   "n": {
+    "cross_stereo|stereo": 338,
+    "cross_stereo_vgio|stereo": 338,
+    "cross_rgbd|rgbd": 336,
+    "cross_mono_ff_odom|mono": 336,
+    "cross_mono_ff_vgio|mono": 336,
+    "orbslam3|stereo": 338,
+    "orbslam3|rgbd": 336,
+    "orbslam3_imu|stereo": 338,
+    "rtabmap|stereo": 338,
+    "rtabmap|rgbd": 329,
+    "rtabmap_vo|stereo": 338,
+    "vggt_slam|mono": 161,
+    "mast3r_slam|mono": 43
+   }
+  },
+  {
+   "id": "none",
+   "group": "reference",
+   "label": "None of these",
+   "rule": "",
+   "n_trials": 174,
+   "inl_max_median": 96.0,
+   "fail": {
+    "cross_stereo|stereo": 4.6,
+    "cross_stereo_vgio|stereo": 7.5,
+    "cross_rgbd|rgbd": 12.1,
+    "cross_mono_ff_odom|mono": 8.6,
+    "cross_mono_ff_vgio|mono": 14.9,
+    "orbslam3|stereo": 72.4,
+    "orbslam3|rgbd": 71.3,
+    "orbslam3_imu|stereo": 59.2,
+    "rtabmap|stereo": 48.3,
+    "rtabmap|rgbd": 46.8,
+    "rtabmap_vo|stereo": 43.7,
+    "vggt_slam|mono": 64.8,
+    "mast3r_slam|mono": 89.0
+   },
+   "expected": {},
+   "n": {
+    "cross_stereo|stereo": 174,
+    "cross_stereo_vgio|stereo": 174,
+    "cross_rgbd|rgbd": 174,
+    "cross_mono_ff_odom|mono": 174,
+    "cross_mono_ff_vgio|mono": 174,
+    "orbslam3|stereo": 174,
+    "orbslam3|rgbd": 174,
+    "orbslam3_imu|stereo": 174,
+    "rtabmap|stereo": 174,
+    "rtabmap|rgbd": 173,
+    "rtabmap_vo|stereo": 174,
+    "vggt_slam|mono": 165,
+    "mast3r_slam|mono": 100
+   }
+  },
+  {
+   "id": "all",
+   "group": "reference",
+   "label": "All trials",
+   "rule": "",
+   "n_trials": 2427,
+   "inl_max_median": 82.0,
+   "fail": {
+    "cross_stereo|stereo": 6.2,
+    "cross_stereo_vgio|stereo": 4.0,
+    "cross_rgbd|rgbd": 16.8,
+    "cross_mono_ff_odom|mono": 6.8,
+    "cross_mono_ff_vgio|mono": 10.8,
+    "orbslam3|stereo": 67.2,
+    "orbslam3|rgbd": 63.5,
+    "orbslam3_imu|stereo": 49.0,
+    "rtabmap|stereo": 52.0,
+    "rtabmap|rgbd": 49.6,
+    "rtabmap_vo|stereo": 51.8,
+    "vggt_slam|mono": 59.4,
+    "mast3r_slam|mono": 74.2
+   },
+   "expected": {},
+   "n": {
+    "cross_stereo|stereo": 2369,
+    "cross_stereo_vgio|stereo": 2369,
+    "cross_rgbd|rgbd": 2380,
+    "cross_mono_ff_odom|mono": 2380,
+    "cross_mono_ff_vgio|mono": 2380,
+    "orbslam3|stereo": 2369,
+    "orbslam3|rgbd": 2380,
+    "orbslam3_imu|stereo": 2369,
+    "rtabmap|stereo": 2369,
+    "rtabmap|rgbd": 2361,
+    "rtabmap_vo|stereo": 2369,
+    "vggt_slam|mono": 1184,
+    "mast3r_slam|mono": 504
+   }
+  }
+ ],
+ "modes": {
+  "cross_stereo|stereo": {
+   "n_fail": 148,
+   "no_pose": 0.0,
+   "far": 75.0,
+   "err_median": 29.6
+  },
+  "cross_stereo_vgio|stereo": {
+   "n_fail": 95,
+   "no_pose": 0.0,
+   "far": 47.4,
+   "err_median": 13.2
+  },
+  "cross_rgbd|rgbd": {
+   "n_fail": 400,
+   "no_pose": 0.0,
+   "far": 68.5,
+   "err_median": 26.7
+  },
+  "cross_mono_ff_odom|mono": {
+   "n_fail": 162,
+   "no_pose": 0.0,
+   "far": 68.5,
+   "err_median": 27.0
+  },
+  "cross_mono_ff_vgio|mono": {
+   "n_fail": 256,
+   "no_pose": 0.0,
+   "far": 43.0,
+   "err_median": 15.5
+  },
+  "orbslam3|stereo": {
+   "n_fail": 1593,
+   "no_pose": 99.9,
+   "far": 0.0,
+   "err_median": 2.3
+  },
+  "orbslam3|rgbd": {
+   "n_fail": 1512,
+   "no_pose": 99.8,
+   "far": 0.0,
+   "err_median": 4.3
+  },
+  "orbslam3_imu|stereo": {
+   "n_fail": 1160,
+   "no_pose": 98.5,
+   "far": 0.2,
+   "err_median": 13.2
+  },
+  "rtabmap|stereo": {
+   "n_fail": 1233,
+   "no_pose": 99.0,
+   "far": 0.2,
+   "err_median": 4.3
+  },
+  "rtabmap|rgbd": {
+   "n_fail": 1172,
+   "no_pose": 99.0,
+   "far": 0.1,
+   "err_median": 3.4
+  },
+  "rtabmap_vo|stereo": {
+   "n_fail": 1228,
+   "no_pose": 97.6,
+   "far": 0.8,
+   "err_median": 4.2
+  },
+  "vggt_slam|mono": {
+   "n_fail": 703,
+   "no_pose": 15.8,
+   "far": 33.0,
+   "err_median": 7.5
+  },
+  "mast3r_slam|mono": {
+   "n_fail": 374,
+   "no_pose": 97.6,
+   "far": 0.8,
+   "err_median": 5.1
+  }
+ },
+ "overlap": {
+  "bins": [
+   "a frame within 30 deg",
+   "best 30-90 deg",
+   "no frame within 90 deg"
+  ],
+  "n_trials": [
+   128,
+   62,
+   119
+  ],
+  "fail": {
+   "cross_stereo|stereo": [
+    8.9,
+    19.4,
+    14.7
+   ],
+   "cross_stereo_vgio|stereo": [
+    7.1,
+    19.4,
+    9.8
+   ],
+   "cross_rgbd|rgbd": [
+    15.3,
+    60.7,
+    74.8
+   ],
+   "cross_mono_ff_odom|mono": [
+    9.0,
+    16.4,
+    22.3
+   ],
+   "cross_mono_ff_vgio|mono": [
+    9.0,
+    11.5,
+    23.3
+   ],
+   "orbslam3|stereo": [
+    75.9,
+    98.4,
+    97.1
+   ],
+   "orbslam3|rgbd": [
+    67.6,
+    95.1,
+    92.2
+   ],
+   "orbslam3_imu|stereo": [
+    54.5,
+    91.9,
+    92.2
+   ],
+   "rtabmap|stereo": [
+    51.8,
+    98.4,
+    88.2
+   ],
+   "rtabmap|rgbd": [
+    49.0,
+    98.3,
+    87.0
+   ],
+   "rtabmap_vo|stereo": [
+    52.7,
+    98.4,
+    89.2
+   ],
+   "vggt_slam|mono": [
+    61.3,
+    70.2,
+    49.2
+   ],
+   "mast3r_slam|mono": [
+    95.7,
+    90.5,
+    91.9
+   ]
+  }
+ },
+ "localize": {
+  "cross_mono_ff_odom|mono": {
+   "openloris": {
+    "n": 17,
+    "median_s": 1.9,
+    "within_10s": 88.2,
+    "never": 0.0
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 10.6,
+    "within_10s": 42.9,
+    "never": 0.0
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 0.8,
+    "within_10s": 98.7,
+    "never": 0.0
+   }
+  },
+  "cross_mono_ff_vgio|mono": {
+   "openloris": {
+    "n": 17,
+    "median_s": 3.7,
+    "within_10s": 76.5,
+    "never": 11.8
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 30.7,
+    "within_10s": 14.3,
+    "never": 0.0
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 1.6,
+    "within_10s": 98.7,
+    "never": 0.0
+   }
+  },
+  "cross_rgbd|rgbd": {
+   "openloris": {
+    "n": 17,
+    "median_s": 20.3,
+    "within_10s": 47.1,
+    "never": 17.6
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 9.2,
+    "within_10s": 57.1,
+    "never": 0.0
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 0.8,
+    "within_10s": 93.4,
+    "never": 1.3
+   }
+  },
+  "cross_stereo|stereo": {
+   "openloris": {
+    "n": 17,
+    "median_s": 1.9,
+    "within_10s": 82.4,
+    "never": 0.0
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 9.7,
+    "within_10s": 57.1,
+    "never": 0.0
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 0.8,
+    "within_10s": 98.7,
+    "never": 0.0
+   }
+  },
+  "cross_stereo_vgio|stereo": {
+   "openloris": {
+    "n": 17,
+    "median_s": 4.0,
+    "within_10s": 82.4,
+    "never": 0.0
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 12.7,
+    "within_10s": 42.9,
+    "never": 0.0
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 1.6,
+    "within_10s": 97.4,
+    "never": 0.0
+   }
+  },
+  "mast3r_slam|mono": {
+   "openloris": {
+    "n": 17,
+    "median_s": null,
+    "within_10s": 5.9,
+    "never": 82.4
+   },
+   "simchange": {
+    "n": 75,
+    "median_s": null,
+    "within_10s": 28.0,
+    "never": 58.7
+   }
+  },
+  "orbslam3|rgbd": {
+   "openloris": {
+    "n": 17,
+    "median_s": null,
+    "within_10s": 17.6,
+    "never": 64.7
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 230.1,
+    "within_10s": 0.0,
+    "never": 28.6
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 1.2,
+    "within_10s": 81.6,
+    "never": 10.5
+   }
+  },
+  "orbslam3|stereo": {
+   "openloris": {
+    "n": 17,
+    "median_s": null,
+    "within_10s": 11.8,
+    "never": 64.7
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 363.1,
+    "within_10s": 0.0,
+    "never": 42.9
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 3.4,
+    "within_10s": 73.7,
+    "never": 10.5
+   }
+  },
+  "orbslam3_imu|stereo": {
+   "openloris": {
+    "n": 17,
+    "median_s": null,
+    "within_10s": 23.5,
+    "never": 52.9
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 98.4,
+    "within_10s": 14.3,
+    "never": 42.9
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 3.3,
+    "within_10s": 85.5,
+    "never": 5.3
+   }
+  },
+  "rtabmap|rgbd": {
+   "openloris": {
+    "n": 17,
+    "median_s": null,
+    "within_10s": 23.5,
+    "never": 58.8
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 12.4,
+    "within_10s": 42.9,
+    "never": 0.0
+   },
+   "simchange": {
+    "n": 75,
+    "median_s": 0.1,
+    "within_10s": 90.7,
+    "never": 1.3
+   }
+  },
+  "rtabmap|stereo": {
+   "openloris": {
+    "n": 17,
+    "median_s": null,
+    "within_10s": 23.5,
+    "never": 58.8
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 151.6,
+    "within_10s": 14.3,
+    "never": 42.9
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 0.1,
+    "within_10s": 88.2,
+    "never": 3.9
+   }
+  },
+  "rtabmap_vo|stereo": {
+   "openloris": {
+    "n": 17,
+    "median_s": null,
+    "within_10s": 29.4,
+    "never": 52.9
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 50.2,
+    "within_10s": 28.6,
+    "never": 28.6
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 0.1,
+    "within_10s": 88.2,
+    "never": 1.3
+   }
+  },
+  "vggt_slam|mono": {
+   "openloris": {
+    "n": 17,
+    "median_s": 47.9,
+    "within_10s": 41.2,
+    "never": 41.2
+   },
+   "rover": {
+    "n": 7,
+    "median_s": 38.2,
+    "within_10s": 14.3,
+    "never": 0.0
+   },
+   "simchange": {
+    "n": 76,
+    "median_s": 31.9,
+    "within_10s": 36.8,
+    "never": 13.2
+   }
+  }
+ },
+ "cameras": {
+  "stereo": {
+   "night_bright": 82.6,
+   "night_corners": 251.5,
+   "night_inl_max": 14.0,
+   "dusk_bright": 114.8,
+   "dusk_inl_max": 81.0
+  },
+  "rgbd": {
+   "night_bright": 44.2,
+   "night_corners": 452.2,
+   "night_inl_max": 12.0,
+   "dusk_bright": 93.1,
+   "dusk_inl_max": 105.0
+  }
+ },
+ "orb_turns": {
+  "mono": {
+   "runs": 20,
+   "onsets": 37,
+   "fast_share": 56.8,
+   "median_rate": 24.7
+  },
+  "stereo": {
+   "runs": 20,
+   "onsets": 5,
+   "fast_share": 60.0,
+   "median_rate": 48.8
+  },
+  "rgbd": {
+   "runs": 10,
+   "onsets": 12,
+   "fast_share": 41.7,
+   "median_rate": 18.5
+  }
+ },
+ "cross_unmerged_proxy": {
+  "cross_stereo|stereo": {
+   "n_fail": 148,
+   "same_as_other_variant": 54
+  },
+  "cross_stereo_vgio|stereo": {
+   "n_fail": 95,
+   "same_as_other_variant": 9
+  },
+  "cross_rgbd|rgbd": {
+   "n_fail": 400,
+   "same_as_other_variant": 114
+  },
+  "cross_mono_ff_odom|mono": {
+   "n_fail": 162,
+   "same_as_other_variant": 94
+  },
+  "cross_mono_ff_vgio|mono": {
+   "n_fail": 256,
+   "same_as_other_variant": 31
+  }
+ }
+}

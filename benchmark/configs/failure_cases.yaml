@@ -1,0 +1,403 @@
+# Failure cases of the results page (Failure cases tab): one representative trial or stretch per common failure cause
+# found by the trial analysis (benchmark/failure_analysis.py).  benchmark/make_failure_assets.py renders each case's
+# video and collects every listed system's per-frame pose; build_site.py puts them on the page.
+#   track t3: one relocalization trial (start = its first query frame); t1: a stretch of a mapping session (start, len).
+#   cameras: the camera folders shown in the video, one row each (default: stereo; SimChange: its single camera).
+
+# systems of the analysis tables (benchmark/failure_analysis.py)
+analysis_systems: [cross_stereo|stereo, cross_stereo_vgio|stereo, cross_rgbd|rgbd, cross_mono_ff_odom|mono, cross_mono_ff_vgio|mono,
+                   orbslam3|stereo, orbslam3|rgbd, orbslam3_imu|stereo, rtabmap|stereo, rtabmap|rgbd, rtabmap_vo|stereo,
+                   vggt_slam|mono, mast3r_slam|mono]
+
+# systems shown in the case videos' map views (a case may list its own)
+systems: [cross_stereo|stereo, cross_rgbd|rgbd, orbslam3|stereo, orbslam3|rgbd, orbslam3_imu|stereo, rtabmap|stereo,
+          rtabmap|rgbd, rtabmap_vo|stereo, vggt_slam|mono, mast3r_slam|mono]
+
+cases:
+  - id: corridor_aliasing
+    category: ambiguity
+    track: t3
+    dataset: openloris
+    scene: corridor
+    query: corridor1-2
+    start: 300
+    cameras: [stereo, rgbd]
+  - id: corridor_dark
+    category: ambiguity
+    track: t3
+    dataset: openloris
+    scene: corridor
+    query: corridor1-3
+    start: 400
+    cameras: [stereo, rgbd]
+  - id: rover_standing_start
+    category: ambiguity
+    track: t3
+    dataset: rover
+    scene: campus_large
+    query: campus_large_spring_2024-04-14
+    start: 0
+    cameras: [stereo, rgbd]
+  - id: sim_reverse
+    category: viewpoint
+    track: t3
+    dataset: simchange
+    scene: hssd_house
+    query: hssd_house/reverse
+    start: 250
+  - id: office_opposite
+    category: viewpoint
+    track: t3
+    dataset: openloris
+    scene: office
+    query: office1-2
+    start: 100
+    cameras: [stereo, rgbd]
+  - id: sim_offset
+    category: viewpoint
+    track: t3
+    dataset: simchange
+    scene: hssd_house
+    query: hssd_house/offset_1.0
+    start: 1000
+  - id: rover_night
+    category: appearance
+    track: t3
+    dataset: rover
+    scene: campus_large
+    query: campus_large_night_2024-09-24_3
+    start: 1750
+    cameras: [stereo, rgbd]
+  - id: rover_night_light
+    category: appearance
+    track: t3
+    dataset: rover
+    scene: campus_large
+    query: campus_large_night-light_2024-09-24_4
+    start: 1750
+    cameras: [stereo, rgbd]
+  - id: rover_winter
+    category: appearance
+    track: t3
+    dataset: rover
+    scene: campus_large
+    query: campus_large_winter_2024-01-27
+    start: 5600
+    cameras: [stereo, rgbd]
+  - id: sim_light_evening
+    category: appearance
+    track: t3
+    dataset: simchange
+    scene: hssd_restaurant
+    query: hssd_restaurant/light_evening
+    start: 550
+  - id: sim_combined
+    category: combined
+    track: t3
+    dataset: simchange
+    scene: hssd_restaurant
+    query: hssd_restaurant/rearr_100+light_evening+reverse
+    start: 300
+  - id: kitti01_highway
+    category: motion
+    track: t1
+    dataset: kitti
+    scene: "01"
+    sequence: "01"
+    start: 190
+    len: 120
+    systems: [cross_stereo|stereo, cross_rgbd|rgbd, cross_stereo_vo|stereo, orbslam3|stereo, orbslam3|mono, rtabmap|stereo,
+              rtabmap_vo|stereo, vggt_slam|mono]
+  - id: home_sharp_turn
+    category: motion
+    track: t1
+    dataset: openloris
+    scene: home
+    sequence: home1-1
+    start: 470
+    len: 100
+    cameras: [stereo, rgbd]
+    systems: [cross_stereo|stereo, cross_rgbd|rgbd, cross_stereo_vo|stereo, orbslam3|stereo, orbslam3|rgbd, orbslam3|mono,
+              rtabmap_vo|stereo, rtabmap_vo|rgbd, vggt_slam|mono]
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Text of the Failure cases tab.  Numbers are those of benchmark/results/failure_analysis.json (results of 2026-10-07)
+# and of the CROSS per-frame re-runs described in the case notes; update them when the results change.
+intro:
+  - >-
+    What do the failed relocalization trials have in common, across systems? Every T3 trial (10 s from a cold start
+    against the stored map) was described by what its camera saw and how it moved: how many local features of its
+    frames still match the map session at the true place (SIFT matches surviving RANSAC, called matchability below),
+    how far its view turns away from the map's views, the changes of its session (season, light, objects), image
+    brightness and texture, and its motion. The findings test explanations against these features over all trials;
+    each says how strong its evidence is. Further down, one representative trial per cause shows the camera frames, the
+    map session's frame at the same place, and every system's pose over time on a top-down map.
+findings:
+  - title: "One quantity explains most failures of the feature-based systems: how many local features still match the map."
+    grade: validated
+    figure: matchability
+    systems: [rtabmap|stereo, orbslam3|stereo, cross_rgbd|rgbd, cross_stereo|stereo, vggt_slam|mono]
+    text:
+      - >-
+        ORB-SLAM3 and RTAB-Map recognise a place by matching local features (corners and their descriptors) of the
+        current frames to the map's, and then estimate the pose from those matches. Their failure rate follows the
+        number of SIFT features that still match the map at the true place almost like a switch: below 30 matches in
+        every frame of the trial they fail 95-100 % of the trials, with 100 or more 10-37 %. Each 10x drop in
+        matches multiplies the odds of failure by about 18 (ORB-SLAM3) and 120 (RTAB-Map).
+      - >-
+        CROSS with VGGT-Omega depends on it far less (x4.4; 12-14 % failures below 30 matches, 1-4 % above): the
+        network regresses the relative pose of the current and the retrieved map images as a whole instead of
+        estimating it from matched keypoints. CROSS RGB-D, which estimates the same relative pose by keypoint PnP
+        inside the same back end, lies in between (x8). VGGT-SLAM 2.0 and MASt3R-SLAM fail 58-100 % at every level,
+        so their failures have another cause, not examined here (both must join the map and the trial into one
+        stream within 10 s).
+  - title: "Night, other seasons, opposite views, the small office and fast turns are one problem: each removes matchable features."
+    grade: validated
+    figure: causes
+    systems: [rtabmap|stereo, orbslam3|stereo, cross_rgbd|rgbd, cross_stereo|stereo]
+    text:
+      - >-
+        For each candidate cause, the failure rate a system would have from its trials' matchability alone (its own
+        failure rate per dataset and number of matches) is close to the rate observed. RTAB-Map: night 100 % observed
+        vs 97 % predicted, other seasons 96 vs 92, facing away from the map 76 vs 72, fast turns 50 vs 50. So these are
+        not separate weaknesses: night, a new season, the other side of a room and motion blur all lower the number
+        of local features shared with the map, and the systems fail in proportion. A ROVER trial keeps a median of 25
+        matches to the day map in other seasons and 13 at night (93 at dusk the day before the map), which is why
+        the feature-based systems fail on ROVER almost everywhere.
+      - >-
+        Two causes exceed their prediction for nearly every system (red lines): straight corridors and standing
+        still. They are a different problem (next finding). The opposite deviation is unexplained: the
+        feature-based systems fail less than predicted at ROVER dusk (RTAB-Map 46 % vs 71 %) and in the crowded
+        market and cafe (23 % vs 47 %).
+  - title: "Ambiguity is the second, independent cause: places that look alike, and trials that never see a distinguishing view."
+    grade: validated
+    text:
+      - >-
+        In corridor stretches that turn less than 30 degrees the features do match (median 36), yet CROSS stereo fails 50 % of
+        these trials (21 % predicted from matchability) and ORB-SLAM3 100 % (71 % predicted). The OpenLORIS corridor
+        repeats the same doors, walls and ceiling lights every few metres. The per-frame poses of CROSS stereo show
+        9 of its 11 failures there merging with the wrong place (2 never merge): every wrong place lies on the
+        map's own path (within 2.1 m) 40-70 m away, 7 of them with the map's viewing direction there and 2 looking
+        the other way along the corridor; 4 of the 9 trials had more than 500 SIFT matches at the true place.
+        CROSS RGB-D merges wrongly in 7, 5 of them onto the corridor seen in the opposite direction. Without a
+        turn the trial never sees a view that tells the segments apart.
+      - >-
+        Standing still is the same problem in time: at the start of the ROVER sessions the robot waits 12-19 s
+        before it moves, so a trial sees one view only, and CROSS fails 28 % of such trials (8 % predicted). For
+        CROSS the trace of such a trial shows that this failure is in the code path, not in perception: the
+        hypothesis at the true place collects 40 agreeing observations (log-likelihood ratio 40), but a hypothesis
+        becomes usable ("realized") only by branching the pose graph at a new keyframe
+        (cross/core/hypothesis.py, add_node), and a robot that stands still adds no keyframe (1 in the trial vs 16
+        in a moving one). The session therefore never merges. RTAB-Map RGB-D localizes the same trial in 0.2 s.
+    grade_note: "standing still: traced in one trial; a fix (realize on strong evidence without a new keyframe) is untested"
+    cases: [corridor_aliasing, corridor_dark, rover_standing_start]
+  - title: "Baselines fail by not answering; CROSS fails by answering wrong, or by reporting a pose before it has relocalized."
+    grade: validated
+    figure: modes
+    systems: [cross_stereo|stereo, cross_rgbd|rgbd, cross_mono_ff_odom|mono, orbslam3|stereo, rtabmap|stereo, rtabmap_vo|stereo, vggt_slam|mono, mast3r_slam|mono]
+    text:
+      - >-
+        98-100 % of the failed trials of ORB-SLAM3, RTAB-Map and MASt3R-SLAM end without any pose. CROSS always
+        reports a pose, and its failures are far off (median 27-30 m). The per-frame poses of CROSS show two
+        different reasons. After loading a map, CROSS starts the session in a new coordinate frame placed just
+        outside the map's bounding box (cross/core/atlas.py, new_atlas_center) and reports the pose in that frame
+        until the session merges with the map; the benchmark scores it like a map pose, so "not relocalized yet"
+        appears as an error of tens of metres. In the OpenLORIS re-runs this is half of CROSS stereo's failures
+        (15 of 30) and most of CROSS RGB-D's (27 of 33); the other half merged with the wrong place (aliasing,
+        previous finding).
+      - >-
+        So the dominant failure is the same for all systems: no match within 10 s. CROSS knows when it has not
+        merged and could report "not localized" instead of a pose 30 m away; a robot that trusts the pose cannot
+        tell the difference today.
+  - title: "Robustness to appearance and viewpoint comes from the pose estimator, not from the back end."
+    grade: validated
+    figure: overlap
+    systems: [cross_stereo|stereo, cross_rgbd|rgbd, cross_mono_ff_odom|mono, orbslam3|stereo, rtabmap|stereo, vggt_slam|mono]
+    text:
+      - >-
+        CROSS RGB-D and CROSS stereo share the multi-hypothesis back end and the odometry; only the estimator of the
+        relative pose differs (keypoint PnP with depth vs VGGT-Omega). Facing away from the map they fail 48 % vs
+        13 %; at ROVER night 58 % vs 14 %. CROSS mono uses VGGT-Omega on the same dark colour camera as CROSS
+        RGB-D and fails 14 % at night, so the camera is not the reason. Where the estimator cannot help, the CROSS
+        variants fail together: in straight corridors (50-59 %) and in trials where none of them merged (their
+        final errors are then identical to a few centimetres).
+      - >-
+        Integrating over the trial also matters: when the last frame faces away from the map but an earlier frame
+        saw it within 30 degrees, CROSS stereo fails 9 % and the baselines 49-76 %; odometry carries the pose from
+        the matching frame to the end, while the baselines need the current frames to match.
+  - title: "While mapping, fast turns break feature tracking and fast straight driving breaks the scale of visual odometry."
+    grade: supported
+    text:
+      - >-
+        In ORB-SLAM3's mapping runs, 57 % of the monocular and 42 % of the RGB-D tracking losses (37 and 12 losses)
+        start at a turn rate in the session's top 10 % (10 % expected by chance; median 25 deg/s at the loss): the view changes faster
+        than features can be tracked from frame to frame. Systems that use the robot's odometry (CROSS, RTAB-Map
+        with external odometry) bridge these turns. On the KITTI 01 highway (27 m/s, few close features, guard rails
+        that repeat) purely visual estimates lose the scale: ORB-SLAM3 mono ATE 106 m (tracking lost for a quarter
+        of the drive), VGGT-SLAM 319 m, RTAB-Map with visual odometry 35 m, CROSS with visual odometry 31 m; with
+        the INS dead reckoning CROSS stereo has 1.7 m and RTAB-Map 1.7 m. The highway is one sequence, so the speed
+        explanation is supported, not tested.
+    cases: [home_sharp_turn, kitti01_highway]
+groups:
+  - id: appearance
+    short: appearance
+    title: "Appearance changes: night, seasons, indoor lighting"
+    text:
+      - >-
+        The place is the same but its pixels are not: at night most of the image is dark and noisy, in winter the
+        grass and trees look different, an evening light changes colours and shadows. Local descriptors of the same
+        corner no longer agree, so feature-based relocalization finds too few matches and gives up. ROVER at night
+        keeps a median of 13 SIFT matches to the day map (93 at dusk the day before). VGGT-Omega compares whole
+        images and still finds the relative pose; CROSS stereo fails 14 % at ROVER night, the baselines 90-100 %.
+  - id: viewpoint
+    short: viewpoint
+    title: "Viewpoint changes: facing the other way, sideways offsets, close range"
+    text:
+      - >-
+        A camera facing the other way sees the side of the scene the map never saw, and close range (the office is
+        about 4 m across) makes small changes of position large changes of view. Relocalization then needs either a
+        model that relates views with little overlap (VGGT-Omega relates the map frame and the query frame through
+        the shared room structure) or a frame earlier in the trial that did overlap, carried to the end by the
+        odometry.
+  - id: ambiguity
+    short: ambiguity
+    title: "Ambiguity: places that look alike, a single viewpoint"
+    text:
+      - >-
+        Here the features match, but they match more than one place. A long straight corridor repeats the same
+        doors, walls and lights; a robot that stands still sees one view only. These are the only causes that hurt
+        CROSS more than its matchability predicts, and the cases show its two failure kinds side by side: merging
+        with the wrong corridor segment, and never merging (the pose stays in the start frame CROSS places outside
+        the map).
+  - id: combined
+    short: combined
+    title: "Several changes at once"
+    text:
+      - >-
+        Reversed direction, moved furniture and evening light together leave few matchable features and few
+        overlapping views. This is where CROSS fails most often on SimChange: CROSS stereo fails 19 % of the trials of
+        reversed traversals with light or object changes (3 % when only the direction is reversed), CROSS RGB-D 45 %,
+        RTAB-Map 75 %, ORB-SLAM3 96 %.
+  - id: motion
+    short: motion
+    title: "Motion while mapping: fast turns, fast straight driving"
+    text:
+      - >-
+        Mapping a single session (T1) fails differently: the system must track the camera from frame to frame.
+        Fast turns blur the image and replace the view within a few frames; at highway speed consecutive frames are
+        2.7 m apart and the close structure that fixes the scale of a monocular estimate is missing. Odometry from
+        the robot (wheels, INS) bridges both.
+notes:
+  sim_reverse:
+    title: "Driving the house the other way round: CROSS relocalizes, the feature-based systems never do"
+    text:
+      - >-
+        The traversal runs the map route backwards, so the camera sees the other side of every room (the map frames
+        at the same place look 135-140 degrees away; at most 15 SIFT matches). CROSS stereo merges after 0.5 s,
+        CROSS RGB-D after 1.0 s, both within 0.16 m at the end. ORB-SLAM3 and RTAB-Map give no pose; VGGT-SLAM 2.0
+        places the trial 16 m off.
+  sim_offset:
+    title: "Sideways offset and turning on the spot: a late but correct merge"
+    text:
+      - >-
+        The camera runs 1 m beside the map route and here turns 220 degrees almost on the spot, so most frames look
+        in directions the map never looked (median 102 degrees away). CROSS stereo merges after 3.4 s, CROSS RGB-D
+        only after 9.3 s, just before the end: both end within 5 cm, but RGB-D's keypoint PnP needed the one view
+        that faced the map's way. VGGT-SLAM 2.0 ends 1.3 m off (a success at 2 m); ORB-SLAM3 and RTAB-Map give no
+        pose.
+  sim_light_evening:
+    title: "Evening light in the restaurant: only ORB-SLAM3 and VGGT-SLAM fail"
+    text:
+      - >-
+        Warm, low evening light; the furniture is unchanged and 144 SIFT features still match the map, so RTAB-Map
+        localizes after 0.2-0.5 s, as do CROSS stereo and RGB-D (0.5 s). ORB-SLAM3 gives no pose although the
+        features match: it fails 37 % of all trials with 100 or more matches, a floor that RTAB-Map (10 %) does
+        not have and that this analysis does not explain. VGGT-SLAM 2.0 places the trial 14 m off.
+  sim_combined:
+    title: "Reversed, rearranged and in evening light: CROSS never merges"
+    text:
+      - >-
+        Every piece of furniture has moved, the light is evening light and the route runs backwards: 11 SIFT
+        matches at best, and the final view looks 142 degrees away from the map's. In the published run neither
+        CROSS variant merges within the 10 s; both report their start frame outside the map (31.2 and 31.1 m,
+        equal because they share the odometry). VGGT-SLAM 2.0 ends 16 m off; the others give no pose. This
+        outcome is fragile: a re-run of the trial alone, with a different draw of the simulated odometry noise,
+        merges after 0.7 s and ends 1.7 m off.
+  rover_standing_start:
+    title: "Standing at the start: CROSS has the right answer but never commits to it"
+    text:
+      - >-
+        The robot stands still for the whole trial at the start of the spring session, 1 m from where the map
+        session started. CROSS stereo and CROSS RGB-D both stay in their start frame outside the map (40.7 and
+        41.2 m): CROSS's log shows the hypothesis at the true place collecting 40 agreeing observations, but without
+        a new keyframe it is never realized, so the session never merges. RTAB-Map RGB-D recognizes the place after
+        0.2 s (0.48 m); the other baselines give no pose.
+  rover_night:
+    title: "Night: CROSS merges after 0.8 s, every feature-based system gives no pose"
+    text:
+      - >-
+        Lamps and a dark sky; the colour camera is almost black, the stereo camera (larger pixels, longer exposure)
+        still sees the horizon and the slope. At most one SIFT feature of a frame matches the day map. Both CROSS
+        variants merge with the map after 0.8 s (the jump of 23 m from their start frame) and end within 8 cm.
+        ORB-SLAM3 and RTAB-Map give no pose; VGGT-SLAM 2.0 places 11 keyframes 2-3 m off but has no pose in the
+        last second.
+  rover_night_light:
+    title: "Night with a lamp on the robot: CROSS stereo merges, CROSS RGB-D does not"
+    text:
+      - >-
+        The extra light washes out the stereo camera's near field and lights the grass for the colour camera, a
+        view that resembles nothing in the day map. CROSS stereo merges after 0.6 s (8 cm at the end); CROSS RGB-D's
+        keypoint PnP finds no consistent matches, so it stays in its start frame (28.8 m): the same back end and
+        odometry, a different estimator. VGGT-SLAM 2.0 is 10 m off; the feature-based baselines give no pose.
+  rover_winter:
+    title: "Winter against the September map: only CROSS relocalizes"
+    text:
+      - >-
+        Bare trees, brown grass, low sun. CROSS stereo and CROSS RGB-D merge after 0.5-0.7 s and end 0.6 and 1.1 m
+        from the truth (within the 3 m threshold), with 13-20 SIFT matches to the map at best. ORB-SLAM3 and
+        RTAB-Map give no pose; VGGT-SLAM 2.0 places a few early keyframes 2.3 m off but has no pose at the end.
+  corridor_aliasing:
+    title: "Straight, well-lit corridor: the features match, and still CROSS stereo joins the wrong segment"
+    text:
+      - >-
+        The robot drives 14 m straight down the corridor and turns 15 degrees. The light is good and up to 595
+        SIFT features of a frame match the map at the true place, so this is not a matchability problem: the map
+        frames here look like those of other corridor segments. CROSS stereo merges with the map after 0.5 s, at a
+        segment 55 m away (its arrow leaves the view), and stays there. CROSS RGB-D (0.65 m) and VGGT-SLAM 2.0
+        (1.4 m, from 2 s on) end at the right place; ORB-SLAM3 and RTAB-Map give no pose. Which look-alike segment
+        wins depends on small differences of the estimate, not on a systematic advantage: over the 22
+        straight-corridor trials CROSS stereo and CROSS RGB-D both fail 50 %.
+  corridor_dark:
+    title: "The same corridor with the lights off: aliasing and darkness together"
+    text:
+      - >-
+        Another session drives the corridor almost in the dark (the colour camera's mean grey level is 3); no SIFT
+        feature of the trial matches the map. CROSS stereo still merges after 0.6 s, but with a segment 77 m away,
+        and ends 66.7 m off; CROSS RGB-D never merges and reports its start frame outside the map (40.8 m).
+        ORB-SLAM3 and RTAB-Map give no pose; VGGT-SLAM 2.0 places 11 keyframes 13-14 m off.
+  office_opposite:
+    title: "Small office, facing the other way: CROSS stereo relocalizes, CROSS RGB-D never merges"
+    text:
+      - >-
+        The query session crosses the office facing the opposite way from the map session (no frame of the trial
+        looks within 106 degrees of a map frame nearby; at most 19 SIFT matches) and turns 300 degrees on the spot. CROSS stereo merges after 1.6 s and ends
+        7 cm from the truth. CROSS RGB-D's keypoint PnP finds no consistent matches, so its session never merges:
+        the 5.0 m error is its start frame just outside the 4 m room, moved by the odometry (all of its office
+        failures end 3.4-5.5 m off). VGGT-SLAM 2.0 places some frames right (0.13 m) but has no pose in the last
+        second; ORB-SLAM3 and RTAB-Map give no pose.
+  home_sharp_turn:
+    title: "Mapping a home: ORB-SLAM3 loses tracking in a turn"
+    text:
+      - >-
+        The robot turns 125 degrees in 10 s, up to 32 degrees per second. ORB-SLAM3 loses tracking at frame 517 in
+        all three setups (online, for 32-40 frames) and starts a new map; the RGB-D and mono frames of this stretch
+        are not in the final map. CROSS takes the wheel odometry between observations and stays within 0.4 m;
+        RTAB-Map with visual odometry is 1.3-4.6 m off.
+  kitti01_highway:
+    title: "Highway at 27 m/s: visual estimates lose the scale"
+    text:
+      - >-
+        Consecutive frames are 2.7 m apart and the road side repeats. ORB-SLAM3 mono tracks only 55 of these 120
+        frames (ATE 106 m over the drive); VGGT-SLAM 2.0 is 265-405 m off here; RTAB-Map and CROSS with visual
+        odometry are 32-40 m off. With the INS dead reckoning, CROSS (ATE 1.7 m) and RTAB-Map (1.7 m) stay on the
+        road.
