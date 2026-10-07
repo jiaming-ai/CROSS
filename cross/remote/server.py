@@ -42,9 +42,10 @@ class MapServer:
         if req is not None and sv is not None:
             sv.prune(req.get("keep_from"))
             sv.add_frame(req["index"], msg["rgb"], msg.get("rgb_right"))
-        if stale and msg.get("rgb") is not None and system.hypothesis_manager.dist is not None:
-            msg = dict(msg, rgb=None, rgb_right=None, depth=None)
-            self.stats["shed"] = self.stats.get("shed", 0) + 1
+        if (stale or msg.get("no_observation")) and msg.get("rgb") is not None and system.hypothesis_manager.dist is not None:
+            msg = dict(msg, rgb=None, rgb_right=None, depth=None)     # (the back end defers the observation)
+            key = "shed" if stale else "capped"
+            self.stats[key] = self.stats.get(key, 0) + 1
         anchor = sv.anchor(req) if (sv is not None and req is not None and map_frame) else None
         own0 = sv.stats["own_calls"] if sv is not None else 0
         da30 = sv.stats.get("depth_priors", 0) if sv is not None else 0

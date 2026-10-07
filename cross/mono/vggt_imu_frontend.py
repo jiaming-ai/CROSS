@@ -436,6 +436,19 @@ class VggtImuFrontend:
         req["anchor"] = True
         return self.service.anchor(req) if self.service is not None else req
 
+    def aligned_request(self, observing):
+        """The edge of a remote session with measurements aligned with the back end's observations (vgio_align): a
+        request on a frame the back end will observe (observing: the edge's copy of its cadence), at least align[0]
+        frames after the last one.  The server measures it on the back end's pass, or with a pass of its own if the
+        back end did not observe after all (unlike the local session's conditional request, which is then dropped)."""
+        if self.request is not None or self.align is None or not observing or self._frame is None:
+            return self.request
+        pm = self._pred["m"]
+        if pm is None or self._frame[0] - pm[0] < self.align[0]:
+            return None
+        self.request = self._new_request(self._frame[2], self._right, self._frame[1], conditional=False)
+        return self.request
+
     def after_backend(self, observed):
         """After the back end's step: its forward pass with our anchor (cross.cv.pose_est_ff last_frontend_obs), or
         None.  The request of this frame is measured on it, or with a forward pass of the service's own."""

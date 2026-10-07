@@ -253,15 +253,17 @@ def run_reloc(args, out: Path, meta: dict):
     q_start = args.query_start
     q_end = args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
+    remote_trials = []
     for ti, (ts_, te_) in enumerate(trials):
-        if ti > 0:                                    # every trial is an independent relocalization session
-            try:
-                system.load_map(out / "map.pkl")
-            except RuntimeError:                      # the mono mode loads a map only into a fresh session
-                if hasattr(system, "shutdown"):
-                    system.shutdown()
-                system = new_session(args, ds, args.seed)
-                system.load_map(out / "map.pkl")
+        if ti > 0:
+            # every trial is an independent relocalization session: a fresh one.  load_map on the used session would
+            # keep its belief and step counters, and only a missing first motion (external odometry: delta_pose None)
+            # re-initialized it; with a frontend (VGGT + IMU, DPVO) the trial started from the last trial's belief
+            if hasattr(system, "remote_stats"):
+                remote_trials.append(system.remote_stats())
+            system.release()
+            system = new_session(args, ds, args.seed)
+            system.load_map(out / "map.pkl")
         for idx, d in enumerate(ds.replay_data(start_idx=q_start + ts_, end_idx=q_start + te_, stride=args.stride)):
             if idx == 0:
                 d["delta_pose"] = None
@@ -289,8 +291,10 @@ def run_reloc(args, out: Path, meta: dict):
                             f"best(k={row['best_k']}) {row['best_t_err']:.2f} m, w0={row['w0']:.2f}")
     elapsed = time.time() - t0
     n_new = len(system.hypothesis_manager.nodes) - n_map_kfs
-    remote = system.remote_stats() if hasattr(system, "remote_stats") else None
+    if hasattr(system, "remote_stats"):
+        remote_trials.append(system.remote_stats())
     system.release()
+    remote = remote_trials[0] if len(remote_trials) == 1 else ({"trials": remote_trials} if remote_trials else None)
 
     from reloc_metrics import map_relative_errors, summarize_errors, summarize_trials
     rel = map_relative_errors(rows, meta)          # errors w.r.t. the map (primary metric)

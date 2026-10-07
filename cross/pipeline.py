@@ -449,7 +449,7 @@ def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_lef
 
 
 def edge_session(mode: str, odometry: str, camera, system_config, link_factory, *, T_right_in_left=None,
-                 mono_config=None, mono_estimator: str = "da3", upload: str = "predicted"):
+                 mono_config=None, mono_estimator: str = "da3", upload: str = "predicted", obs_cap: float = 0.0):
     """The edge of a remote session behind a real link (cross/remote/grpc_link.py): the odometry only, no GPU model.
     link_factory(open message) -> link; the open message carries what the server needs to build the same session
     (build_session): mode, odometry, camera, stereo calibration and the resolved configurations."""
@@ -464,8 +464,6 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
     frontend = factory = None
     if odometry == "vgio":
         mc.imu.enabled = True
-        if mc.imu.vgio_align:
-            raise ValueError("vgio_align (measurements only on the back end's passes) needs a local session")
         edge_mc = _vgio_config(copy.deepcopy(mc), mode, T_right_in_left)
 
         def factory():
@@ -476,7 +474,8 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
                 "T_right_in_left": None if T_right_in_left is None else np.asarray(T_right_in_left, dtype=np.float64),
                 "system_config": config_to_dict(cfg), "mono_config": None if mc is None else _to_dict(mc)}
     return RemotePipeline(frontend, link_factory(open_msg), mode, odometry, ObservationCadence(cfg.pose_est), 1, upload,
-                          frontend_factory=factory, server=None, continuous_start_in_map=odometry == "vgio", K=K)
+                          frontend_factory=factory, server=None, continuous_start_in_map=odometry == "vgio", K=K,
+                          obs_cap=obs_cap)
 
 
 def server_session(open_msg, device="cuda"):
@@ -551,6 +550,10 @@ def add_session_args(ap):
                         "without its observation (the back end observes the next fresh frame); measurements are kept.  "
                         "It acts only when the server is behind (outputs/2026-10-06_remote_mode: it never fired where "
                         "the server kept up, and it kept every overloaded case close to the local session)")
+    g.add_argument("--remote-obs-cap", type=float, default=0.0,
+                   help="rate cap (s, 0: off): the edge sends an observation only if the server can start it within "
+                        "this time (a model of the server's queue from the server time of each kind of message, learned "
+                        "from the replies); otherwise the back end observes at the next frame it can")
     g.add_argument("--remote-server", default="",
                    help="HOST:PORT of a remote-session server (scripts/remote/serve.py): a real gRPC link instead of the "
                         "simulated one; this process runs only the edge")
@@ -592,12 +595,14 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
                 return GrpcLink(args.remote_server, dict(open_msg, max_backlog=args.remote_max_backlog),
                                 jpeg=args.remote_jpeg, extra_delay=args.remote_extra_delay, realtime=args.remote_realtime)
             return edge_session(mode, odometry, camera, cfg, link, T_right_in_left=T_right_in_left,
-                                mono_config=mono_config, mono_estimator=mono_estimator, upload=args.remote_upload)
+                                mono_config=mono_config, mono_estimator=mono_estimator, upload=args.remote_upload,
+                                obs_cap=args.remote_obs_cap)
         session = build_session(mode, odometry, camera, cfg, T_right_in_left=T_right_in_left, mono_config=mono_config,
                                 vo_config=vo_config, visualize=visualize, mono_estimator=mono_estimator)
         if getattr(args, "remote", False):
             from cross.remote import remote_session
-            session = remote_session(session, remote_link_factory(args), upload=args.remote_upload)
+            session = remote_session(session, remote_link_factory(args), upload=args.remote_upload,
+                                     obs_cap=args.remote_obs_cap)
         return session
     return make
 

@@ -257,3 +257,38 @@ def test_overload_policy():
     assert not any(srv.stale) and lag[-1] > 10 * lag[5]
     srv, lag = run(0.3)
     assert 0 < sum(srv.stale) < 100 and max(lag) < 0.3 + 0.26 + 1e-9
+
+
+def test_rate_cap():
+    """External odometry, a server slower than the observations asked for (0.5 s each, one every ~3 frames at 10 Hz):
+    without the cap the replies' lag grows for the whole run; with a 0.1 s cap the edge sends an observation only when
+    the server could start it within 0.1 s (by its model of the server's queue, learned from the replies), the back
+    end observes at the next frame instead, and the lag stays bounded."""
+    from types import SimpleNamespace
+    from cross.remote.edge import ObservationCadence, RemotePipeline
+    from cross.remote.link import SimLink
+
+    class Srv:
+        stats = {}
+
+        def handle(self, msg, stale=False):
+            obs = msg.get("rgb") is not None and not msg.get("no_observation") and not stale
+            return {"index": msg["index"], "work": {"observed": obs}, "server_seconds": 0.0}
+
+    def run(cap):
+        cfg = SimpleNamespace(obs_min_translation=0.3, obs_min_rotation=0.15, obs_max_interval_steps=3, obs_warmup_steps=10)
+        link = SimLink(Srv(), rtt=0.05, compute="model", costs={"frame": 0.001, "observe": 0.5}, measure_bytes=False)
+        p = RemotePipeline(None, link, "stereo", "external", ObservationCadence(cfg), obs_cap=cap)
+        step = np.eye(4)
+        step[2, 3] = 0.12
+        for k in range(300):
+            p.process({"rgb": np.zeros((4, 4, 3), np.uint8), "rgb_right": None, "depth": None,
+                       "delta_pose": None if k == 0 else step, "timestamp": 0.1 * k})
+        lag = [e["arrival"] - e["sent"] for e in link.log]
+        observed = sum(e["work"]["observed"] for e in link.log)
+        return lag, observed, p.stats["capped"]
+    lag, obs, capped = run(0.0)
+    assert capped == 0 and lag[-1] > 20.0                  # the queue grows for the whole run
+    lag, obs_c, capped = run(0.1)
+    assert capped > 0 and max(lag[100:]) < 0.1 + 0.5 + 0.06 + 1e-6, max(lag[100:])
+    assert 0.8 * 300 * 0.1 / 0.5 < obs_c < obs                # about as many observations as the server can do
