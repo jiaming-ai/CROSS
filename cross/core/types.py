@@ -202,15 +202,18 @@ class Edge:
         """
         self.mean: pp.LieTensor = mean
         self.std: pp.LieTensor = std
-        # pypose's optimizer uses the information matrix (inverse of covariance) for weighting.
-        # We ensure the diagonal is non-zero to prevent division by zero errors.
-        self.information: torch.Tensor = torch.diag(1.0 / (std.tensor().flatten() + 1e-9))
         self.type = type
         self._cost = cost
         self.conditional_pose = None
         # measurement metadata used by the calibrated noise model (see cross/core/lc_verify.py)
         self.n_frames: Optional[int] = None   # odometry: number of integrated readings
         self.conf: Optional[float] = None     # visual: estimator confidence (covisibility)
+
+    @property
+    def information(self) -> torch.Tensor:
+        """Diagonal information matrix (inverse std; the diagonal kept non-zero), computed on access: a map holds
+        millions of edges and nothing on the pipeline's path reads it (it cost a third of an edge's memory)."""
+        return torch.diag(1.0 / (self.std.tensor().flatten() + 1e-9))
 
     @property
     def cost(self) -> float:
