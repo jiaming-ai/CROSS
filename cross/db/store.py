@@ -631,13 +631,20 @@ def _encode_images(records: list, directory: Path, cfg, stats: dict, on_written=
 
     t0 = time.perf_counter()
     workers = max(1, int(getattr(cfg, "encode_workers", 4)))
-    if workers > 1 and len(jobs) > 8:
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            results = list(ex.map(work, jobs, chunksize=16))
-    else:
-        results = [work(j) for j in jobs]
-    new_blobs = [r[0] for r in results if r[0] is not None]
-    offsets = iter(pack.append(new_blobs)) if new_blobs else iter(())
+    # encoded in batches and appended batch by batch: memory stays at one batch of blobs for any map size
+    results, offsets_list = [], []
+    ex = ThreadPoolExecutor(max_workers=workers) if workers > 1 and len(jobs) > 8 else None
+    try:
+        for b0 in range(0, len(jobs), 1024):
+            batch = jobs[b0:b0 + 1024]
+            res = list(ex.map(work, batch, chunksize=16)) if ex is not None else [work(j) for j in batch]
+            new_blobs = [r[0] for r in res if r[0] is not None]
+            offsets_list += pack.append(new_blobs) if new_blobs else []
+            results += [(None if r[0] is None else True,) + tuple(r[1:]) for r in res]       # drop the blob
+    finally:
+        if ex is not None:
+            ex.shutdown()
+    offsets = iter(offsets_list)
     n = len(jobs)
     idx = {"row": np.zeros(n, np.int64), "field": np.zeros(n, np.uint8), "offset": np.zeros(n, np.int64),
            "length": np.zeros(n, np.int64), "codec": np.zeros(n, np.uint8), "shape": np.zeros((n, 3), np.int32),
