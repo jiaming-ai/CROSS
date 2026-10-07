@@ -272,11 +272,30 @@ def main():
             row["code_score_mae_topK"] = float(err.mean())
             row["code_score_p95_topK"] = float(err.flatten().quantile(0.95))
             row["code_thr03_agree"] = float(((sc > 0.3) == (ts_full > 0.3)).float().mean())
+            zq = Qc.norm(dim=1).clamp(1e-6, 1)
+            zy = codes.float().norm(dim=1).clamp(1e-6, 1)
+            gain = 1 + torch.sqrt((1 - zq[:, None] ** 2) * (1 - zy[loc] ** 2)) / (zq[:, None] * zy[loc])
+            scc = sc * gain
+            errc = (scc - ts_full).abs()
+            row["codec_score_mae_topK"] = float(errc.mean())
+            row["codec_score_p95_topK"] = float(errc.flatten().quantile(0.95))
+            row["codec_thr03_agree"] = float(((scc > 0.3) == (ts_full > 0.3)).float().mean())
         tops = []
         for i in range(0, len(qi), 256):   # chunked over queries
             tops.append(((Qc[i:i + 256].half() @ codes.T).float()).topk(min(K, n), dim=1).indices)
         code_top = torch.cat(tops)
         code_top_np = code_top.cpu().numpy()
+        if "codec" in a.methods:   # residual-corrected code scores (ranking by them)
+            zy_all = codes.float().norm(dim=1).clamp(1e-6, 1)
+            ry_all = torch.sqrt(1 - zy_all ** 2)
+            tops = []
+            for i in range(0, len(qi), 256):
+                q = Qc[i:i + 256]
+                zq = q.norm(dim=1).clamp(1e-6, 1)
+                d = (q.half() @ codes.T).float()
+                g = 1 + torch.sqrt(1 - zq[:, None] ** 2) * ry_all[None] / (zq[:, None] * zy_all[None])
+                tops.append((d * g).topk(min(K, n), dim=1).indices)
+            evaluate("codec", db_idx[torch.cat(tops).cpu().numpy()])
         if "code" in a.methods:
             evaluate("code", db_idx[code_top_np])
         if "ivf" in a.methods and n >= 20000:
