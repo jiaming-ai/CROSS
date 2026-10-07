@@ -794,6 +794,18 @@ def write_map(save_path, save_data: dict, cfg, on_written=None) -> dict:
         os.replace(tmp, side / desc_file)
         db["embeddings"] = {"__file__": desc_file, "dtype": src_dtype, "shape": tuple(arr.shape)}
         stats["descriptor_bytes"] = int(arr.nbytes)
+    # the descriptor projection of a large map (cross/db/index.py: D x d float16, up to 64 MB) goes to the data
+    # directory too, so that map.pkl stays a small graph
+    di = db.get("descriptor_index")
+    if isinstance(di, dict) and isinstance(di.get("projection"), dict) and \
+            isinstance(di["projection"].get("components"), np.ndarray):
+        proj = dict(di["projection"])
+        tmp = side / f"projection.npy.tmp{os.getpid()}.npy"
+        np.save(tmp, proj["components"])
+        os.replace(tmp, side / "projection.npy")
+        stats["projection_bytes"] = int(proj["components"].nbytes)
+        proj["components"] = {"__file__": "projection.npy"}
+        db["descriptor_index"] = dict(di, projection=proj)
     if "index_to_atlas_idx" in db:
         db["index_to_atlas_idx"] = _encode_index_map(db["index_to_atlas_idx"])
     if "atlas_to_indices" in db:
@@ -844,6 +856,12 @@ def read_map(load_path, descriptor_mmap: bool = False) -> dict:
         if str(arr.dtype) != emb["dtype"]:
             arr = arr.astype(emb["dtype"])
         db["embeddings"] = torch.from_numpy(np.ascontiguousarray(arr))
+    di = db.get("descriptor_index")
+    if isinstance(di, dict) and isinstance(di.get("projection"), dict) and \
+            isinstance(di["projection"].get("components"), dict):
+        proj = dict(di["projection"])
+        proj["components"] = np.load(side / proj["components"]["__file__"])
+        db["descriptor_index"] = dict(di, projection=proj)
     if isinstance(db.get("index_to_atlas_idx"), dict) and "__im__" in db["index_to_atlas_idx"]:
         db["index_to_atlas_idx"] = _decode_index_map(db["index_to_atlas_idx"])
     if isinstance(db.get("atlas_to_indices"), dict) and db["atlas_to_indices"].get("__dol__"):

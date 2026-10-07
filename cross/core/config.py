@@ -105,6 +105,58 @@ class TrackingConfig:
 
 
 @dataclass
+class DescriptorIndexConfig:
+    """Storage and search of the keyframe descriptors (cross/db/index.py).  Default: the full 16384-d BoQ descriptor in
+    float32 with an exact search, i.e. the original database (64 KB per keyframe)."""
+    # None: full descriptors.  "map": fit an uncentred projection on the map's own descriptors once the database
+    # holds `fit_at` keyframes (smaller maps are unchanged), then store float16 codes (0.5-4 KB instead of 64 KB per
+    # keyframe), extending the subspace when the scene changes (cross.db.index.DescriptorIndex).  A path: a fixed
+    # projection (.npz, PCAProjection.save).  A map saved with a projection always uses its own.
+    # On by default: below fit_at nothing changes (full descriptors, original scores); above it the stored scores keep
+    # the full cosine's meaning (exact re-scoring in session) and maps were identical on KITTI 07 (projection forced at
+    # 128 keyframes) and NCLT (5.5 km, fitted at 1024): see outputs/2026-10-07_retrieval_index
+    projection: Optional[str] = "map"
+    fit_at: int = 4096
+    fit_dim: int = 0               # 0: the fewest dimensions with held-out explained energy >= fit_energy (<= max_dim)
+    fit_energy: float = 0.9        # (OpenLORIS / ROVER / SimChange: 256-600 dims; NCLT 5 cameras: the cap)
+    extend: bool = True            # extend the map projection's subspace when the explained energy drops
+    extend_margin: float = 0.05
+    extend_dims: int = 64
+    max_dim: int = 2048            # NCLT cross-season: 2048 dims lossless in recall, 1024 -1.7 pts R@1, 512 -4
+    recent: int = 1024             # full descriptors of the latest keyframes kept for an extension
+    # projected scores: the best `shortlist` codes of a query are re-scored exactly from the full descriptors while
+    # these are in RAM (keyframes added in this session); loaded maps use the code scores with this calibration
+    # (raw | iso | resid; raw is best across sessions, see cross.db.index.ScoreCalibration)
+    shortlist: int = 64
+    max_rescore: int = 256         # + rows whose code score + fitted residual margin reaches the k-th exact score
+    keep_full_max: int = 131072    # full descriptors kept in CPU RAM (fp16, 32 KB each) up to this many keyframes
+    calibration: str = "raw"
+    store_dtype: str = "auto"      # auto: float32 without a projection, float16 with one
+    backend: str = "exact"         # exact | ivf: inverted file (k-means cells), trained once ivf_min_rows rows exist
+    ivf_nlist: int = 0             # cells (0: 4 sqrt(n))
+    ivf_nprobe: int = 16           # cells searched per query
+    ivf_min_rows: int = 200000
+
+
+@dataclass
+class LocalityConfig:
+    """Locality-aware retrieval: the keyframes near where the belief (or an external prior such as GPS,
+    System.add_location_prior) places the robot are scored apart from the global appearance ranking and get
+    `slots` of the top_k, so that at a revisit the right place is not crowded out by look-alike places far away
+    (a problem that grows with the map).  The rest of the slots stay global (relocalization, large drift)."""
+    enabled: bool = False
+    min_keyframes: int = 0         # only when the database holds at least this many keyframes
+    slots: int = 5                 # of top_k, for the best-scoring keyframes inside the search regions
+    k_sigma: float = 3.0           # search radius = r_min + k_sigma * position sigma (+ drift for hypothesis 0)
+    r_min: float = 5.0             # metres
+    drift_rate: float = 0.05       # metres of radius per metre travelled since the last anchoring (loop closure,
+                                   # map edge, external fix); hypothesis 0 only
+    r_max: float = 2000.0
+    min_weight: float = 0.05       # hypotheses with a smaller weight do not open a search region
+    score_threshold: Optional[float] = None   # VPR score floor inside the regions (None: the database's)
+
+
+@dataclass
 class RetrievalConfig:
     vpr_model_type: VPRModelType = VPRModelType.BOQ
     top_k: int = 10
@@ -143,6 +195,8 @@ class RetrievalConfig:
     initial_buffer_size: int = 1000
     historical_slots: int = 0  # reserve within top_k after loading a map; same score thresholds
     historical_min_score: float | None = None  # opt-in exploration floor, saved-map candidates only
+    index: DescriptorIndexConfig = field(default_factory=DescriptorIndexConfig)
+    locality: LocalityConfig = field(default_factory=LocalityConfig)
 
 
 @dataclass
@@ -858,10 +912,9 @@ class GeoConfig:
     # map's vertical from odometry / vision).  Consumer altitude is poor: NCLT 2012-08-04 end to end the vertical error
     # rose 3.5 -> 8.1 m with it (2012-01-08: 3.0 -> 2.3 m); see the 27-session study
     use_altitude: bool = True
-    retrieval_gate: bool = True               # relocalization: map keyframes far from the fix are not retrieved
+    retrieval_gate: bool = True               # the current fix is a location prior of retrieval (System.add_location_prior;
+                                              # acts with retrieval.locality.enabled)
     proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
-    retrieval_margin_m: float = 10.0          # retrieval gate radius beyond the fix's chi-square radius (views of the
-                                              # same place from a few metres away)
     fix_max_age_s: float = 3.0                # a fix gates proposals / retrieval for this long (odometry carries it)
     compass_gate: bool = True                 # references whose heading contradicts the compass are dropped (needs the
                                               # compass offset, calibrated against the GNSS-anchored map)

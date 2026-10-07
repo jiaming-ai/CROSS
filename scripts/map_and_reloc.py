@@ -175,6 +175,9 @@ def run_mapping(args, out: Path):
     step_times = []
     kf_frame = {}            # frame index of every keyframe created (temporary ones too: T1 completeness)
     online = [] if getattr(args, "online_poses", False) else None
+    step_log = open(out / "steps.csv", "w") if getattr(args, "step_log", False) else None
+    if step_log is not None:
+        step_log.write("frame,dt_s,nodes,db_keyframes,loop_closure,rss_mb,gpu_mb\n")
     from reloc_metrics import step_diagnostics, quality_summary
     steps = [] if getattr(args, "dump_steps", False) else None
     mem_trace = [] if getattr(args, "mem_trace", 0) else None   # (frame, nodes, permanent, GPU allocated, host RSS)
@@ -185,6 +188,13 @@ def run_mapping(args, out: Path):
         system.process(d)
         step_times.append(time.perf_counter() - ts)
         n += 1
+        if step_log is not None:            # per-step cost vs map size (large-map studies)
+            mp = getattr(system, "mapper", system)
+            rss = int(open("/proc/self/statm").read().split()[1]) * 4096 / 1e6 if os.path.exists("/proc/self/statm") else -1
+            gpu = torch.cuda.memory_allocated() / 1e6 if torch.cuda.is_available() else -1
+            step_log.write(f"{idx},{step_times[-1]:.5f},{len(mp.hypothesis_manager.nodes)},{mp.db.get_size()},"
+                           f"{int(bool((getattr(mp, 'last_step_diagnostics', None) or {}).get('loop_closure_applied')))},"
+                           f"{rss:.0f},{gpu:.0f}\n")
         if steps is not None:
             steps.append({"frame": args.map_start + idx * args.stride, **step_diagnostics(system)})
         if online is not None:               # the pose the session published at this frame (and its odometry's)
@@ -198,6 +208,8 @@ def run_mapping(args, out: Path):
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
             kf_frame[int(last_kf)] = args.map_start + idx * args.stride
     elapsed = time.time() - t0
+    if step_log is not None:
+        step_log.close()
     frames = system.keyframe_frames() if hasattr(system, "keyframe_frames") else None
     if frames is not None:                  # behind a real link the keyframe ids come back late: by their frames
         kf_gt = {k: gts[f].tolist() for k, f in frames.items() if f < len(gts)}
@@ -425,6 +437,8 @@ def main():
     ap.add_argument("--obs-min-rotation", type=float, default=None)
     ap.add_argument("--obs-max-interval", type=int, default=None)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
+    ap.add_argument("--step-log", action="store_true",
+                    help="mapping: write steps.csv (per-frame step time, graph nodes, database keyframes, loop closures)")
     ap.add_argument("--mem-trace", type=int, default=0, metavar="N",
                     help="map run: every N frames record graph size, GPU and host memory (map_meta.json mem_trace)")
     ap.add_argument("--online-poses", action="store_true",

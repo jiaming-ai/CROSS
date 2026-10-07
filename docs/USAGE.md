@@ -184,15 +184,16 @@ receiver that holds a stale position while the robot moves fails this), a new ep
 must agree with the map's prediction at the verified loop closure's chi-square level. Used fixes become pose-graph
 factors with a robust kernel, spaced one correlation time of the receiver error apart (estimated online; consumer
 receivers repeat the same error for tens of seconds), and the graph is optimised when they say the map drifted. In a
-relocalization session on a geo-anchored map, the current fix gates retrieval (stored keyframes near the fix first)
-and drops references that contradict it; a calibrated compass also drops references with a contradicting heading.
+relocalization session on a geo-anchored map, the current fix drops references that contradict it (a calibrated compass
+also drops references with a contradicting heading) and is a location prior of retrieval (`System.add_location_prior`:
+with `retrieval.locality.enabled` the stored keyframes near the fix get the locality slots).
 Input: a prepared folder (or its parent) with `gnss.txt` (`t lat lon alt [mode num_sats [hdop [sigma_h]]]`, times on
 the clock of `times.txt`), optionally `mag.txt` / `ms25.txt` (magnetometer + accelerometer, forward-right-down) or
 `heading.txt` (see `cross/dataloader/geo.py`); in code, `obs["gnss"] = {"t", "lat", "lon", "alt", ...}` and
 `obs["compass"]` per step. `--gnss-degrade sigma=8,bias=15,drop=0.3,outage=60:120` degrades the query's fixes
 (testing). Main options (`geo.*`): `gate`, `decimate`, `robust` (the method; switch off for ablations),
 `use_altitude` (on: horizontal-only factors let the optimisation tilt the map), `sigma_v_factor` (4: consumer altitude
-is poor), `retrieval_gate`, `proposal_gate`, `compass_gate`. Off by default: without GNSS input the system is unchanged.
+is poor), `retrieval_gate` (the fix as a location prior), `proposal_gate`, `compass_gate`. Off by default: without GNSS input the system is unchanged.
 
 Stereo-mode quick-run options: `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation gating;
 default: the mode's configuration file), `--max-refs`, `--n-ref-anchors`. Without a right camera pass

@@ -73,7 +73,7 @@ class GeoManager:
         self.compass_last = None
         self.now = None
         self.robust_c = (float(cfg.robust_c) if cfg.robust_c is not None else math.sqrt(self.k2)) if cfg.robust else None
-        self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0, "retrieval_gated": 0}
+        self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0}
 
     # ------------------------------------------------------------------ state
     @property
