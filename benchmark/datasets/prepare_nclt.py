@@ -367,19 +367,19 @@ def prepare_sensors(raw: Path, out_root: Path, session: str, cams: dict):
                 files[Path(m.name).name] = read_csv(tf.extractfile(m))
     us = 1e-6
     # consumer GPS (Garmin 18x): utime, msg (2 / 3: two NMEA sentences per fix, the 3 carries the altitude; NOT a fix
-    # quality), num_sats (always 0: not reported), lat, lon (rad), alt (m, nan in the 2 rows), track (rad), speed (m/s)
+    # quality), num_sats (always 0: not reported), lat, lon (rad), alt (m, nan in the 2 rows), track (deg), speed (m/s)
     g = files["gps.csv"]
-    _write(out / "gnss.txt", "t_s lat_deg lon_deg alt_m msg num_sats track_rad speed_mps  (Garmin 18x consumer GPS; "
+    _write(out / "gnss.txt", "t_s lat_deg lon_deg alt_m msg num_sats track_deg speed_mps  (Garmin 18x consumer GPS; "
            "msg 2/3 = NMEA sentence pair, not fix quality; num_sats not reported; no rows while there is no fix)",
            np.column_stack([g[:, 0] * us, np.degrees(g[:, 3]), np.degrees(g[:, 4]), g[:, 5], g[:, 1], g[:, 2], g[:, 6], g[:, 7]]),
-           ["%.6f", "%.9f", "%.9f", "%.3f", "%d", "%d", "%.5f", "%.4f"])
+           ["%.6f", "%.9f", "%.9f", "%.3f", "%d", "%d", "%.2f", "%.4f"])
     r = files["gps_rtk.csv"]
     e = files.get("gps_rtk_err.csv")
     err = np.interp(r[:, 0], e[:, 0], e[:, 1]) if e is not None and len(e) else np.full(len(r), np.nan)
-    _write(out / "gnss_rtk.txt", "t_s lat_deg lon_deg alt_m mode num_sats track_rad speed_mps err_m  (NovAtel DL-4 "
+    _write(out / "gnss_rtk.txt", "t_s lat_deg lon_deg alt_m mode num_sats track_deg speed_mps err_m  (NovAtel DL-4 "
            "plus; mode 3 = 3-D solution; err_m = receiver error estimate (gps_rtk_err.csv))",
            np.column_stack([r[:, 0] * us, np.degrees(r[:, 3]), np.degrees(r[:, 4]), r[:, 5], r[:, 1], r[:, 2], r[:, 6], r[:, 7], err]),
-           ["%.6f", "%.9f", "%.9f", "%.3f", "%d", "%d", "%.5f", "%.4f", "%.3f"])
+           ["%.6f", "%.9f", "%.9f", "%.3f", "%d", "%d", "%.2f", "%.4f", "%.3f"])
     m = files["ms25.csv"]
     _write(out / "imu.txt", "t_s mag_x mag_y mag_z (Gauss) acc_x acc_y acc_z (m/s^2, specific force) gyro_x gyro_y "
            "gyro_z (rad/s)  (Microstrain 3DM-GX3-45, axes = body axes: x fwd, y right, z down)",
@@ -462,7 +462,8 @@ def session_stats(prep: Path, session: str) -> dict:
         p, R, ok = _interp_gt(gt, arr[:, 0])
         e = pl[:, :2] - (p + R @ lever)[:, :2]
         eh = np.linalg.norm(e, axis=1)
-        res = {"n": int(ok.sum()), "err_h_m": {f"p{q}": float(np.percentile(eh[ok], q)) for q in (50, 90, 95, 99)},
+        ok = ok & np.isfinite(eh)
+        res = {"n": int(ok.sum()), "n_nan": int((~np.isfinite(pl[:, 0])).sum()), "err_h_m": {f"p{q}": float(np.percentile(eh[ok], q)) for q in (50, 90, 95, 99)},
                "mean_e_ne_m": e[ok].mean(0).round(3).tolist()}
         if name == "rtk":
             for mode in (2, 3):
