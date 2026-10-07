@@ -122,16 +122,19 @@ class PCAProjection:
 
 
 class ScoreCalibration:
-    """Maps code inner products back to the full-descriptor cosine they approximate, so that a projected database keeps
-    the score semantics CROSS relies on (VPR thresholds, the new-keyframe test, retrieval weights).  Fitted on the map's
-    own pairs (each sampled row's best full-descriptor neighbours outside +-`exclude` rows, plus random rows):
+    """Maps code inner products back to the full-descriptor cosine they approximate (VPR thresholds, the new-keyframe
+    test and retrieval weights use the score's value).  Fitted on the map's own pairs (each sampled row's best
+    full-descriptor neighbours outside +-`exclude` rows, plus random rows).  The applied model is `raw` by default:
+    on NCLT (projection fitted on the whole map) the raw code scores are within 0.002-0.004 of the full cosine at 2048
+    dims, and a calibration fitted on the map's pairs reduces the in-map error but increases it for queries of another
+    season (512 dims: 0.013 -> 0.020), whose explained energy is lower (0.30 vs 0.69).  Models:
 
       iso    isotonic map of the code score
       resid  s + beta r_q r_y cos(z_q, z_y) + c: the residual inner product as a fitted fraction of its bound, with
              e = |z|^2 the explained energy of a unit descriptor and r = sqrt(1 - e) (uses the query's own energy, so
              it adapts to queries the projection explains less well, e.g. another season)"""
 
-    def __init__(self, iso_x=None, iso_y=None, beta: float = 0.0, c: float = 0.0, model: str = "resid",
+    def __init__(self, iso_x=None, iso_y=None, beta: float = 0.0, c: float = 0.0, model: str = "raw",
                  meta: Optional[dict] = None):
         self.iso_x = None if iso_x is None else np.asarray(iso_x, np.float32)
         self.iso_y = None if iso_y is None else np.asarray(iso_y, np.float32)
@@ -140,7 +143,7 @@ class ScoreCalibration:
 
     @classmethod
     def fit(cls, X: torch.Tensor, Z: torch.Tensor, n_q: int = 2000, k: int = 50, n_rand: int = 50, exclude: int = 20,
-            model: str = "resid") -> "ScoreCalibration":
+            model: str = "raw") -> "ScoreCalibration":
         n = X.shape[0]
         g = torch.Generator(device="cpu").manual_seed(1)
         qi = torch.randperm(n, generator=g)[: min(n_q, n)].to(X.device)

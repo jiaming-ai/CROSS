@@ -121,6 +121,11 @@ class DescriptorIndexConfig:
     extend_dims: int = 64
     max_dim: int = 2048            # NCLT cross-season: 2048 dims lossless in recall, 1024 -1.7 pts R@1, 512 -4
     recent: int = 1024             # full descriptors of the latest keyframes kept for an extension
+    # projected scores: the best `shortlist` codes of a query are re-scored exactly from the full descriptors while
+    # these are in RAM (keyframes added in this session); loaded maps use the code scores with this calibration
+    # (raw | iso | resid; raw is best across sessions, see cross.db.index.ScoreCalibration)
+    shortlist: int = 64
+    calibration: str = "raw"
     store_dtype: str = "auto"      # auto: float32 without a projection, float16 with one
     backend: str = "exact"         # exact | ivf: inverted file (k-means cells), trained once ivf_min_rows rows exist
     ivf_nlist: int = 0             # cells (0: 4 sqrt(n))
