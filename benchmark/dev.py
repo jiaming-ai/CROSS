@@ -84,6 +84,8 @@ def run_jobs(jobs, a, log_dir: Path):
                 cmd += ["--args", a.args]
             if a.force:
                 cmd += ["--force"]
+            if a.keep_rows:
+                cmd += ["--keep-rows"]
             name = "_".join(job[1::2][:4] + job[-1:] + ([a.variant] if a.variant else [])).replace("/", "-")
             env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu))
             t0 = time.time()
@@ -302,6 +304,7 @@ def main():
     r.add_argument("--args", default="", help="extra CROSS arguments of this variant")
     r.add_argument("--seed", type=int, default=0)
     r.add_argument("--force", action="store_true")
+    r.add_argument("--keep-rows", action="store_true", help="keep the per-frame rows of the query runs (reloc_rows.json)")
     c = sub.choices["compare"]
     c.add_argument("runs", nargs="+", help="<system>[@<variant>]; the first one is the reference")
     a = ap.parse_args()
