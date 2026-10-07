@@ -112,6 +112,26 @@ dev_openloris:
     cafe:   {map: cafe1-1, queries: [cafe1-2_f300]}
   t1: maps           # T1 of the map sequences only
 
+# keyframe quality filter test (tier occ): the dev OpenLORIS scenes with junk views injected into the map and query
+# sessions (benchmark/datasets/inject_junk.py, seed 0, 20 % of the frames in bursts: people / objects close to the
+# camera, blank surfaces at arm's length, darkness, glare, motion blur); folders <sequence>_occ next to the originals
+occ_openloris:
+  dev: true
+  tier: occ
+  data: openloris
+  environment: indoor
+  r_d: 2.0
+  thresholds: [1.0, 2.0]
+  trial_len: 100
+  trial_stride: 50
+  odometry: wheel
+  setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
+  scenes:
+    office: {map: office1-1_occ, queries: [office1-2_occ, office1-7_occ, office1-4_occ]}
+    home:   {map: home1-1_f600_occ, queries: [home1-4_f400_occ]}
+    cafe:   {map: cafe1-1_occ, queries: [cafe1-2_f300_occ]}
+  t1: maps
+
 dev_simchange:
   dev: true
   data: simchange

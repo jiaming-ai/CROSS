@@ -185,13 +185,17 @@ class _VGGTOmegaBackend(_Backend):
 
     def _heads(self, x: torch.Tensor, tokens: list, start: int, k: int, dino: Optional[torch.Tensor] = None):
         """Camera head (all views) and depth head (first k views); the camera head runs on a side stream, concurrently
-        with the depth head (both only read the tokens)."""
+        with the depth head (both only read the tokens), except inside a CUDA-graph capture: there it runs first, on
+        the capture stream.  A side-stream branch in the captured graphs made replays die with "illegal memory access"
+        (~2 % of benchmark jobs with the fine-tuned checkpoint, H20 2026-10-07; never without graphs)."""
         m = self.model
         main = torch.cuda.current_stream()
-        if self._head_stream is None:
-            self._head_stream = torch.cuda.Stream(device=x.device)
-        self._head_stream.wait_stream(main)
-        with torch.cuda.stream(self._head_stream), torch.autocast(device_type="cuda", enabled=False):
+        side = not torch.cuda.is_current_stream_capturing()
+        if side:
+            if self._head_stream is None:
+                self._head_stream = torch.cuda.Stream(device=x.device)
+            self._head_stream.wait_stream(main)
+        with torch.cuda.stream(self._head_stream if side else main), torch.autocast(device_type="cuda", enabled=False):
             pose_enc = m.camera_head(tokens, patch_token_start=start)
         if k == 0:
             # no view needs depth (covis_source=head without a frontend observation): the dense head is skipped
@@ -201,7 +205,8 @@ class _VGGTOmegaBackend(_Backend):
             sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
             with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
                 depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
-        main.wait_stream(self._head_stream)
+        if side:
+            main.wait_stream(self._head_stream)
         # the fine-tune's covisibility / scale heads (small) run on the main stream after the join: on the side stream,
         # concurrently with the dense head, they made the side-stream race (illegal memory access with CUDA graphs)
         # frequent (H20 benchmark, 2026-10-06)
@@ -684,6 +689,9 @@ class PoseEstFeedForward:
         """
         cfg = self.config
         t_start = time.perf_counter()
+        # (model-gauge depth of the current view, metric factor) of this pass: the keyframe quality filter's near
+        # field; read before the next pass (CUDA-graph outputs are reused)
+        self.last_curr_depth = None
         B = int(ref_image.shape[0])
         views = [curr_image] + [ref_image[i] for i in range(B)]
         view_tags = ["curr_L"] + [f"ref{i}_L" for i in range(B)]
@@ -770,6 +778,7 @@ class PoseEstFeedForward:
             pred.c2w, anchors, method=cfg.scale_method,
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
             weight_by_baseline=cfg.anchor_weight_by_baseline,
+            view_logstd_floor=float(getattr(cfg, "anchor_view_logstd_floor", 0.0) or 0.0),
         )
         src = getattr(cfg, "scale_source", "anchors")
         if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
@@ -784,7 +793,10 @@ class PoseEstFeedForward:
             return torch.empty((0, 7)), np.zeros(B, dtype=bool), torch.empty(0)
 
         # calibrated metric-scale correction (the estimator's translations divided by their measured/true ratio)
-        c2w_metric = scale_camera_centers(pred.c2w, scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0), origin_index=0)
+        metric = scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0)
+        c2w_metric = scale_camera_centers(pred.c2w, metric, origin_index=0)
+        if pred.depth is not None and pred.depth.shape[0] > 0:
+            self.last_curr_depth = (pred.depth[0], metric)
         if self._R_model_to_cam is not None:
             c2w_metric = c2w_metric @ self._R_model_to_cam
 

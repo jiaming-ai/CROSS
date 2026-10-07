@@ -49,7 +49,7 @@ class DatasetPool:
         self.name = name
         self.cfg = {**DEFAULTS, **cfg}
         dirs = list_scenes(root, cfg.get("dataset", name), self.cfg["include"], self.cfg["exclude"],
-                           self.cfg.get("val_mod", 0), "train")
+                           self.cfg.get("val_mod", 0), self.cfg.get("split", "train"))
         if self.cfg["max_scenes"] and len(dirs) > self.cfg["max_scenes"]:
             r = np.random.default_rng(seed)
             dirs = [dirs[i] for i in sorted(r.choice(len(dirs), self.cfg["max_scenes"], replace=False))]
