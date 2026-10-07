@@ -124,9 +124,9 @@ def run(args):
     session.link.flush()
     session._receive(float("inf"))
     wall = time.monotonic() - t_start
-    keyframes = session.link.call("keyframes")
     if args.save_map:
-        session.save_map(args.save_map)
+        session.save_map(args.save_map)          # (its final optimisation moves the keyframes: read them after)
+    keyframes = session.link.call("keyframes")
     stats = session.remote_stats()
     stats.update(frames=n, wall_s=wall, fps=n / max(wall, 1e-9), odometry_s_per_frame=t_odom / max(n, 1),
                  session_s_per_frame=t_sess / max(n, 1), odometry=getattr(odom, "stats", {}), server=opened)
