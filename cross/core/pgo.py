@@ -62,8 +62,8 @@ class Vertex:
     """Represents a vertex (node) in the pose graph.
 
     `pose` / `std` are the rows of the keyframe's belief (`pose_mu[comp]`, `pose_std[comp]`, views as before); they
-    are materialised on first access from the tensors captured at construction (`src`), since most vertices of a
-    large graph are only read numerically by PoseGraph.solve (`pose_row`)."""
+    are materialised on first access from the keyframe (`src`), since most vertices of a large graph are only read
+    numerically by PoseGraph.solve (`pose_row`, a plain view of the stored row)."""
 
     def __init__(self, id: int, pose: Optional[pp.LieTensor] = None, std: Optional[pp.LieTensor] = None,
                  original_kf_id: int = 0, original_comp_id: int = 0, temporary: bool = False, src=None):
@@ -73,12 +73,12 @@ class Vertex:
         self.temporary = temporary  # Whether the vertex is a temp kf
         self._pose = pose
         self._std = std
-        self._src = src  # (pose_mu, pose_std, component) of the keyframe at construction
+        self._src = src  # (keyframe, component): the keyframe's belief row, read when needed
 
     @property
     def pose(self) -> pp.LieTensor:
         if self._pose is None and self._src is not None:
-            self._pose = self._src[0][self._src[2]]
+            self._pose = self._src[0].pose_mu[self._src[1]]
         return self._pose
 
     @pose.setter
@@ -88,7 +88,7 @@ class Vertex:
     @property
     def std(self) -> pp.LieTensor:
         if self._std is None and self._src is not None:
-            self._std = self._src[1][self._src[2]]
+            self._std = self._src[0].pose_std[self._src[1]]
         return self._std
 
     @std.setter
@@ -99,8 +99,7 @@ class Vertex:
         """The pose as a plain (7,) tensor (the values of `pose`, without creating a LieTensor)."""
         if self._pose is not None or self._src is None:
             return self._pose.tensor()
-        with _plain_tensor_ops():
-            return self._src[0][self._src[2]]
+        return self._src[0].plain_row("pose_mu", self._src[1])
 
     def __repr__(self):
         return (f"Vertex(id={self.id}, original_kf_id={self.original_kf_id}, original_comp_id={self.original_comp_id}, "
@@ -336,7 +335,7 @@ class PoseGraph:
         kf = self.nodes[node_id]
         return Vertex(id=node_id if vertex_id is None else vertex_id, original_kf_id=node_id,
                       original_comp_id=hypothesis_id, temporary=kf.temporary,
-                      src=(kf.pose_mu, kf.pose_std, hypothesis_id))
+                      src=(kf, hypothesis_id))
     
     def _expand_visual_edges(
         self,

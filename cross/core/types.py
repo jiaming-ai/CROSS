@@ -259,6 +259,15 @@ class Keyframe:
         self.id = Keyframe._next_id
         Keyframe._next_id += 1
 
+    def plain_row(self, name: str, index: int) -> torch.Tensor:
+        """Row `index` of a pose field (pose_mu / pose_std) as a plain tensor over the stored values (a view, no
+        LieTensor: the pose graph reads thousands of rows per optimisation)."""
+        v = self.__dict__.get("_" + name)
+        if type(v) is np.ndarray:
+            return torch.from_numpy(v[index])
+        with torch._C.DisableTorchFunctionSubclass():
+            return v[index]
+
     def stored_image(self, name: str):
         """The tensor, store reference or None held by an image field, without decoding it."""
         return self.__dict__.get("_" + name)
@@ -364,7 +373,7 @@ class Edge:
         """Measurement as a (7,) float64 numpy array [x y z qx qy qz qw], cached (avoids repeated device syncs)."""
         m = getattr(self, "_mean_np", None)
         if m is None:
-            m = (self._m.reshape(-1) if type(self._m) is np.ndarray       # the stored float64 values themselves
+            m = ((self._m if self._m.ndim == 1 else self._m.reshape(-1)) if type(self._m) is np.ndarray   # stored values
                  else self.mean.tensor().detach().cpu().numpy().astype(np.float64).reshape(-1))
             self._mean_np = m
         return m
@@ -373,7 +382,7 @@ class Edge:
     def std_np(self) -> np.ndarray:
         s = getattr(self, "_std_np", None)
         if s is None:
-            s = (self._s.reshape(-1) if type(self._s) is np.ndarray
+            s = ((self._s if self._s.ndim == 1 else self._s.reshape(-1)) if type(self._s) is np.ndarray
                  else self.std.tensor().detach().cpu().numpy().astype(np.float64).reshape(-1))
             self._std_np = s
         return s
