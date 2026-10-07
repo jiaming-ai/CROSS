@@ -905,7 +905,7 @@ class VggtImuFrontend:
         self.last_info = {"measured": True, "nodes": len(G.ids), "lam": float(lam), "lam_std": est.lam_std,
                           "gyro_bias": G.bg.round(5).tolist(), "accel_bias": G.ba.round(4).tolist(),
                           "depth_bias": float(np.exp(G.beta)), "rot_scale": float(np.exp(G.kappa)),
-                          "gravity_norm": float(np.linalg.norm(G.g)),
+                          "gravity_norm": float(np.linalg.norm(G.g)), "gravity": G.g.round(4).tolist(),
                           "speed": float(np.linalg.norm(v)), "link_ok": link_ok, "keyframe": kf_used,
                           "time_offset": self.time_offset, "graph_time_offset": float(G.td), "cost": info.get("cost"), "m_index": int(self.m["index"]),
                           "b_index": int(index), "da3": None if da3 is None else [round(da3[0], 4), round(da3[1], 4)],
