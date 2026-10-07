@@ -317,7 +317,9 @@ class LoopClosureConfig:
     # keyframes that share a factor with that window enter as fixed vertices.  A loop back to the start still optimises
     # the whole session; local revisits optimise only what they can move.  The map is optimised as a whole when it is
     # saved.  Applies once the session graph has pgo_window_min_nodes keyframes; 0 = off (every keyframe, as before).
-    pgo_window_min_nodes: int = 0
+    # On from 1000 keyframes (outputs/2026-10-07_pgo_scale): smaller maps bit-identical; ROVER day T1 equal, KITTI 00
+    # +0.0002 m, NCLT 6.5 km 5.80 / 5.88 m vs 9.00 / 7.25 m whole-session (two runs each); PGO time per session -30..-45 %.
+    pgo_window_min_nodes: int = 1000
     pgo_window_margin: int = 50
     # relocalization sessions: a map edge of hypothesis 0 anchors the session to the map (prior test of the following
     # map references) when it passes the prior test through an earlier, still unanchored map edge of hypothesis 0 from
