@@ -179,3 +179,32 @@ def nclt_combined(pd, files=("nclt/nclt_s1_d2048.json", "nclt/nclt_s4_d2048.json
 
 if __name__ == "__main__" and len(sys.argv) > 1:
     nclt_combined(sys.argv[1])
+
+
+def nclt_e2e(pd):
+    import numpy as np
+    runs = [("base_0804", "base (full descriptors)"), ("proj_0804", "map projection"),
+            ("projloc_0804", "map projection + locality")]
+    data = []
+    for name, lab in runs:
+        f = os.path.join(pd, "nclt_e2e", name, "steps.csv")
+        if os.path.exists(f):
+            data.append((lab, np.genfromtxt(f, delimiter=",", names=True)))
+    if not data:
+        return
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4), dpi=150, facecolor="white")
+    for i, (lab, d) in enumerate(data):
+        B = 500
+        n = len(d) // B
+        nodes = [d["nodes"][(k + 1) * B - 1] for k in range(n)]
+        mean = [d["dt_s"][k * B:(k + 1) * B].mean() * 1e3 for k in range(n)]
+        axes[0].plot(nodes, mean, "-", color=SERIES[i], lw=2, label=lab)
+        axes[1].plot(d["nodes"], d["gpu_mb"] / 1e3, "-", color=SERIES[i], lw=2, label=lab)
+    style(axes[0], "NCLT 5.5 km mapping: mean step time (500-frame blocks)", "graph nodes", "ms per frame")
+    style(axes[1], "GPU memory allocated", "graph nodes", "GB")
+    axes[0].legend(frameon=False, fontsize=7, labelcolor=INK2)
+    fig.tight_layout(); fig.savefig(os.path.join(pd, "nclt_e2e_step_cost.png")); plt.close(fig)
+
+
+if __name__ == "__main__" and len(sys.argv) > 1:
+    nclt_e2e(sys.argv[1])
