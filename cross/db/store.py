@@ -379,6 +379,16 @@ class ImageSpool:
             p.result()
         self.pending = []
 
+    def retarget(self, pack: ImagePack) -> None:
+        """Spill into a saved map's pack from now on (after save_map re-pointed the spooled images to it): later saves
+        to the same map keep them instead of copying the spool again.  The old spool file is deleted."""
+        self.flush()
+        if pack.uid == self.pack.uid:
+            return
+        old, self.pack = self.pack, pack
+        if old.path.parent == self.dir:
+            old.path.unlink(missing_ok=True)
+
 
 # --------------------------------------------------------------------------------------------------------------------
 # columns: lists of homogeneous records <-> numpy arrays
@@ -543,7 +553,7 @@ def decode_dict_of_lists(enc: dict) -> dict:
 # map files
 # --------------------------------------------------------------------------------------------------------------------
 
-def _encode_images(records: list, directory: Path, cfg, stats: dict):
+def _encode_images(records: list, directory: Path, cfg, stats: dict, on_written=None):
     """Pull the image fields out of keyframe records into one pack; returns the image index (columns)."""
     # the pack to append to: one this map already references (incremental save), else a new one
     pack = None
@@ -610,6 +620,8 @@ def _encode_images(records: list, directory: Path, cfg, stats: dict):
         sh = tuple(shape) + (1,) * (3 - len(shape))
         idx["shape"][j] = sh[:3]
         idx["dtype"].append(dtype)
+        if on_written is not None:
+            on_written(i, f, ImageRef(pack, int(idx["offset"][j]), int(length), codec, shape, dtype, "cpu"))
         stats.setdefault(f"{f}_bytes", 0)
         stats[f"{f}_bytes"] += int(length)
         stats.setdefault(f"{f}_count", 0)
@@ -686,9 +698,10 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
-def write_map(save_path, save_data: dict, cfg) -> dict:
+def write_map(save_path, save_data: dict, cfg, on_written=None) -> dict:
     """Write a map in format v2: the graph into `save_path`, images and descriptors into its sidecar directory.
-    Returns size / time statistics."""
+    `on_written(row, field, ImageRef)` is called with the stored reference of every keyframe image (row of
+    save_data["db_data"]["keyframes"]).  Returns size / time statistics (stats["pack"]: the map's ImagePack)."""
     t0 = time.perf_counter()
     real = Path(os.path.realpath(str(save_path)))
     real.parent.mkdir(parents=True, exist_ok=True)
@@ -699,7 +712,7 @@ def write_map(save_path, save_data: dict, cfg) -> dict:
     data = dict(save_data)
     db = dict(save_data["db_data"])
     records = [dict(r) for r in db["keyframes"]]
-    pack, img_idx = _encode_images(records, side, cfg, stats)
+    pack, img_idx = _encode_images(records, side, cfg, stats, on_written)
     for r in records:
         for f in IMAGE_FIELDS:
             if f in r:
@@ -740,6 +753,7 @@ def write_map(save_path, save_data: dict, cfg) -> dict:
             p.unlink(missing_ok=True)
     stats["pack_bytes"] = pack.size()
     stats["write_s"] = round(time.perf_counter() - t0, 3)
+    stats["pack"] = pack
     return stats
 
 

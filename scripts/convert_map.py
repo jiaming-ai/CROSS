@@ -84,6 +84,7 @@ def main():
     t0 = time.perf_counter()
     if a.format == "v2":
         st = store.write_map(a.dst, data, cfg)
+        st.pop("pack", None)
     else:
         import pickle
         with open(a.dst, "wb") as f:

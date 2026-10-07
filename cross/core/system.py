@@ -752,7 +752,22 @@ class System:
                 pickle.dump(map_store.materialize(save_data), f)
             map_store.remove_sidecar(save_path)
         elif scfg.format == "v2":
-            st = map_store.write_map(save_path, save_data, scfg)
+            # images the live spool (storage.max_ram_images) encoded are copied into the map once and re-pointed to
+            # it, and later spills go there: a long session saved repeatedly does not copy its images again
+            spool = getattr(self.db, "_spool", None)
+            on_written = None
+            if spool is not None:
+                by_id = {kf.id: kf for kf in self.db.get_all_keyframes()}
+                rows = [r["id"] for r in save_data["db_data"]["keyframes"]]
+
+                def on_written(row, field, ref):
+                    kf = by_id.get(rows[row])
+                    old = kf.stored_image(field) if kf is not None else None
+                    if map_store.is_ref(old) and old.pack.uid != ref.pack.uid:
+                        setattr(kf, field, ref.to(old.device))
+            st = map_store.write_map(save_path, save_data, scfg, on_written=on_written)
+            if spool is not None:
+                spool.retarget(st["pack"])
             logger.info(f"Map storage: graph {st['graph_bytes'] / 1e6:.2f} MB, images {st['pack_bytes'] / 1e6:.1f} MB "
                         f"({scfg.image_codec}; {st['encoded']} encoded, {st['copied']} copied, {st['kept']} kept), "
                         f"descriptors {st.get('descriptor_bytes', 0) / 1e6:.1f} MB, {st['write_s']:.2f} s")

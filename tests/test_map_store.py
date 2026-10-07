@@ -205,3 +205,33 @@ def test_columns_with_missing_values():
     enc = store.encode_records(recs)
     assert enc["cols"]["a"]["k"] == "py" and enc["cols"]["c"]["k"] == "tensor" and enc["cols"]["d"]["k"] == "list"
     assert same(recs, store.decode_records(pickle.loads(pickle.dumps(enc)))) == []
+
+
+def test_spooled_images_are_repointed_to_the_saved_map(monkeypatch, tmp_path):
+    """System.save_map's callback: spooled images move into the map's pack once, later saves keep them."""
+    scfg = StorageConfig(max_ram_images=2, spill_dir=str(tmp_path / "spool"), image_codec="png")
+    data, db = _state(monkeypatch, n=5, scfg=scfg)
+    p = tmp_path / "m" / "map.pkl"
+
+    def save():
+        state = db.save_state()
+        rows = [r["id"] for r in state["keyframes"]]
+        by_id = {k.id: k for k in db.get_all_keyframes()}
+
+        def on_written(row, field, ref):
+            old = by_id[rows[row]].stored_image(field)
+            if store.is_ref(old) and old.pack.uid != ref.pack.uid:
+                setattr(by_id[rows[row]], field, ref.to(old.device))
+        st = store.write_map(p, dict(data, db_data=state), scfg, on_written=on_written)
+        db._spool.retarget(st["pack"])
+        return st
+
+    st1 = save()
+    assert st1["copied"] == 9 and st1["encoded"] == 6
+    kf_new = db.insert(99, _rng_image(np.random.default_rng(9)), None, mu=pp.randn_SE3(3), sigma=pp.se3(torch.rand(3, 6)),
+                       weights=torch.tensor([1., 0., 0.]), atlas=db.get_all_atlases()[0])
+    db._spool.flush()                                                        # one more keyframe spilled into the map
+    st2 = save()
+    assert st2["copied"] == 0 and st2["kept"] == 9 + 3 and st2["encoded"] == 6 - 3 + 1
+    back = store.read_map(p)
+    assert torch.equal(back["db_data"]["keyframes"][-1]["raw_rgb_image"].load(), kf_new.raw_rgb_image)
