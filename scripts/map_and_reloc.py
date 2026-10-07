@@ -40,7 +40,7 @@ from cross.core.system import System
 from cross.core.types import Camera
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
-from cross.pipeline import add_session_args, mode_config_files, session_factory
+from cross.pipeline import add_session_args, apply_settings, mode_config_files, session_factory
 
 
 def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
@@ -98,19 +98,7 @@ def make_config(args) -> SystemConfig:
     else:
         cfg.pose_est.type = PoseEstType.PNP
     cfg.retrieval.top_k = args.top_k
-    for kv in getattr(args, "set", None) or []:      # generic overrides: section.sub.key=value (YAML-parsed value)
-        import yaml
-        key, val = kv.split("=", 1)
-        obj = cfg
-        parts = key.split(".")
-        for p in parts[:-1]:
-            obj = getattr(obj, p)
-        cur = getattr(obj, parts[-1])
-        v = yaml.safe_load(val)
-        if hasattr(cur, "value") and not isinstance(v, type(cur)):   # enums
-            v = type(cur)(v)
-        setattr(obj, parts[-1], v)
-    return cfg
+    return apply_settings(cfg, getattr(args, "set", None))    # generic overrides: section.sub.key=value
 
 
 def odom_kwargs(args) -> dict:

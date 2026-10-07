@@ -1,4 +1,4 @@
-"""The wire format of a remote session (cross.remote.grpc_link): a message (nested dicts / lists of numbers, strings,
+"""The wire format of a remote CROSS session (cross_edge.grpc_client, cross.remote.grpc_link): a message (nested dicts / lists of numbers, strings,
 None and numpy arrays; images as JPEG or PNG) as one bytes payload, a JSON header and the binary parts after it.  No
 pickle: a payload can only produce these types."""
 
