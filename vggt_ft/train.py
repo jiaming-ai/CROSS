@@ -147,9 +147,9 @@ def compute_losses(pred, batch, lc, hw, teach=None, meta=None, steach=None):
                             for b in range(ratio.shape[0])]).clamp(0.2, 5.0)
         pred = dict(pred)
         pred["depth"] = pred["depth"] / s_al[:, None, None, None, None]
-        pe = pred["pose_enc"].clone()
-        pe[..., :3] = pe[..., :3] / s_al[:, None, None]
-        pred["pose_enc"] = pe
+        # out of place: s_al carries a gradient, so the division's backward needs the unmodified translations
+        pe = pred["pose_enc"]
+        pred["pose_enc"] = torch.cat([pe[..., :3] / s_al[:, None, None], pe[..., 3:]], -1)
         out["gauge_ratio"] = s_al.detach().mean()
     elif lc.get("scale_align", False):
         # the released model does not use our normalisation (its gauge is 0.83-1.17x unit mean point distance depending
