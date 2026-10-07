@@ -45,7 +45,7 @@ class FrameQuality:
     n_person: int = 0
     stage: str = "image"              # "image" (pre-observation cues) or "pass" (refined with the pass depth)
     ms: float = 0.0
-    cells: dict = field(default_factory=dict, repr=False)   # per-cell masks (torch bool), for refinement / figures
+    cells: dict = field(default_factory=dict, repr=False)   # per-cell masks (numpy bool), for refinement / figures
 
     def summary(self) -> dict:
         return {"info": round(self.info, 3), "thr": round(self.threshold, 3), "junk": bool(self.junk),
@@ -93,8 +93,18 @@ class KeyframeQuality:
             self.baseline = float(abs(np.asarray(T_right_in_left)[0, 3]))
 
     # ------------------------------------------------------------------ cues
-    def _person_mask(self, rgb: torch.Tensor, hw) -> tuple:
-        """Union of person boxes (score >= person_score) rasterized at `hw`; (mask or None, count)."""
+    @staticmethod
+    def _pool(a: np.ndarray, gh: int, gw: int) -> np.ndarray:
+        """Mean of `a` (h, w) over a gh x gw grid of cells (cell edges floor(i * h / gh))."""
+        h, w = a.shape
+        ys = (np.arange(gh) * h) // gh
+        xs = (np.arange(gw) * w) // gw
+        s = np.add.reduceat(np.add.reduceat(a.astype(np.float64), ys, axis=0), xs, axis=1)
+        n = np.diff(np.append(ys, h))[:, None] * np.diff(np.append(xs, w))[None, :]
+        return s / np.maximum(n, 1)
+
+    def _person_cells(self, rgb: torch.Tensor, gh: int, gw: int) -> tuple:
+        """Cells mostly inside a person box (score >= person_score); (cells or None, count)."""
         if not getattr(self.cfg, "person", True):
             return None, 0
         if self._detector is None:
@@ -103,32 +113,24 @@ class KeyframeQuality:
         with torch.inference_mode():
             res = self._detector([rgb.float().clamp(0, 1)])[0]
         keep = (res["labels"] == 1) & (res["scores"] >= float(getattr(self.cfg, "person_score", 0.5)))
-        boxes = res["boxes"][keep]
-        if boxes.numel() == 0:
+        boxes = res["boxes"][keep].cpu().numpy()
+        if len(boxes) == 0:
             return None, 0
         H, W = rgb.shape[-2:]
-        h, w = hw
-        mask = torch.zeros((h, w), dtype=torch.bool, device=rgb.device)
-        sx, sy = w / W, h / H
-        for x0, y0, x1, y1 in boxes.tolist():
-            mask[max(int(y0 * sy), 0):int(np.ceil(y1 * sy)), max(int(x0 * sx), 0):int(np.ceil(x1 * sx))] = True
-        return mask, int(boxes.shape[0])
+        h, w = 4 * gh, 4 * gw                   # boxes rasterized at 4 x 4 samples per cell
+        mask = np.zeros((h, w), bool)
+        for x0, y0, x1, y1 in boxes:
+            mask[max(int(y0 * h / H), 0):int(np.ceil(y1 * h / H)), max(int(x0 * w / W), 0):int(np.ceil(x1 * w / W))] = True
+        return self._pool(mask, gh, gw) > 0.5, int(len(boxes))
 
-    def _stereo_depth(self, rgb: torch.Tensor, rgb_right: torch.Tensor) -> Optional[torch.Tensor]:
-        """Metric depth of the left view from semi-global matching of the rectified pair at half resolution (an
+    def _stereo_depth(self, y_left: np.ndarray, rgb_right: torch.Tensor, W: int) -> Optional[np.ndarray]:
+        """Metric depth of the left view from semi-global matching of the rectified pair at <= 256 px width (an
         occluder near the camera has a large disparity).  The disparity range covers depths down to near_abs / 2."""
         import cv2
         if not self.fx or not self.baseline:
             return None
-        def gray(t):
-            t = t.float()
-            t = t[0] if t.dim() == 4 else t
-            y = (0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2]) if t.shape[0] == 3 else t[0]
-            return (y.clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
-        L, R = gray(rgb), gray(rgb_right)
-        W = L.shape[1]
-        L, R = cv2.resize(L, (W // 2, L.shape[0] // 2), interpolation=cv2.INTER_AREA), \
-            cv2.resize(R, (W // 2, R.shape[0] // 2), interpolation=cv2.INTER_AREA)
+        L = (np.clip(y_left, 0, 1) * 255).astype(np.uint8)
+        R = (np.clip(self._luminance(rgb_right, L.shape[1]), 0, 1) * 255).astype(np.uint8)
         fx = self.fx * L.shape[1] / W
         need = fx * self.baseline / (0.5 * float(getattr(self.cfg, "near_abs", 0.8)))
         nd = int(min(max(16 * int(np.ceil(need / 16)), 16), 128))
@@ -136,70 +138,74 @@ class KeyframeQuality:
                                      uniquenessRatio=10, speckleWindowSize=50, speckleRange=2,
                                      mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY)
         disp = sgbm.compute(L, R).astype(np.float32) / 16.0
-        z = np.where(disp > 0.5, fx * self.baseline / np.maximum(disp, 1e-3), 0.0).astype(np.float32)
-        return torch.from_numpy(z)
+        return np.where(disp > 0.5, fx * self.baseline / np.maximum(disp, 1e-3), 0.0).astype(np.float32)
 
-    def _near_cells(self, depth: torch.Tensor, grid_hw, update: bool):
-        """Cells whose valid depth is mostly closer than d_near; depth (1, H, W) or (H, W) metric, <= 0 invalid."""
-        d = depth.float().reshape(1, 1, *depth.shape[-2:])
-        valid = (d > 0) & torch.isfinite(d)
-        if int(valid.sum()) < 0.05 * d.numel():
+    @staticmethod
+    def _luminance(t: torch.Tensor, width: int) -> np.ndarray:
+        """Luminance (h, width) float in [0, 1] on the CPU: one small transfer of a (3, H, W) image in [0, 1]."""
+        t = t.float()
+        t = t[0] if t.dim() == 4 else t
+        y = (0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2]) if t.shape[0] == 3 else t[0]
+        H, W = y.shape
+        if width < W:
+            y = F.interpolate(y[None, None], size=(max(int(round(H * width / W)), 1), width), mode="area")[0, 0]
+        return y.cpu().numpy()
+
+    def _near_cells(self, depth, gh: int, gw: int, update: bool):
+        """Cells whose valid depth is mostly closer than d_near; depth (1, H, W) / (H, W) metric (tensor or array),
+        <= 0 invalid."""
+        d = depth.float().cpu().numpy() if torch.is_tensor(depth) else np.asarray(depth, np.float32)
+        d = d.reshape(d.shape[-2:])
+        valid = (d > 0) & np.isfinite(d)
+        if valid.sum() < 0.05 * d.size:
             return None
-        med = float(d[valid].median())
+        med = float(np.median(d[valid]))
         if update:
             self.depth_ref.push(med)
         ref = self.depth_ref.get(med)
         d_near = max(float(getattr(self.cfg, "near_abs", 0.8)), float(getattr(self.cfg, "near_rel", 0.25)) * ref)
-        near = (valid & (d < d_near)).float()
-        frac = F.adaptive_avg_pool2d(near, grid_hw)[0, 0]
-        vfrac = F.adaptive_avg_pool2d(valid.float(), grid_hw)[0, 0]
+        frac = self._pool(valid & (d < d_near), gh, gw)
+        vfrac = self._pool(valid, gh, gw)
         # a cell is near when most of its valid depth is near (and it has some valid depth)
-        return (frac > 0.5 * vfrac.clamp_min(1e-6)) & (vfrac > 0.2)
+        return (frac > 0.5 * np.maximum(vfrac, 1e-6)) & (vfrac > 0.2)
 
     # ------------------------------------------------------------------ test
     @torch.inference_mode()
     def assess(self, rgb: torch.Tensor, depth: Optional[torch.Tensor] = None,
                rgb_right: Optional[torch.Tensor] = None) -> FrameQuality:
         """rgb (3, H, W) float in [0, 1] (the transformed image of the step); depth (1, H, W) metric or None; without
-        depth, the rectified right image gives the near field by stereo matching (stereo_near)."""
+        depth, the rectified right image gives the near field by stereo matching (stereo_near).  The cues run on the
+        CPU on a <= 256 px luminance image (one transfer); only the person detector runs on the image's device."""
+        import cv2
         t0 = time.perf_counter()
         cfg = self.cfg
-        x = rgb.float()
-        if x.dim() == 4:
-            x = x[0]
+        x = rgb[0] if rgb.dim() == 4 else rgb
         H, W = x.shape[-2:]
         gw = int(getattr(cfg, "grid", 16))
         gh = max(int(round(gw * H / W)), 1)
-        # luminance at <= 256 px width (the cues are coarse; this keeps the test ~1 ms)
-        s = min(1.0, 256.0 / W)
-        y = (0.299 * x[0] + 0.587 * x[1] + 0.114 * x[2])[None, None]
-        if s < 1.0:
-            y = F.interpolate(y, scale_factor=s, mode="area")
-        h, w = y.shape[-2:]
-        kx = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=y.dtype, device=y.device).view(1, 1, 3, 3) / 8
-        gx = F.conv2d(F.pad(y, (1, 1, 1, 1), mode="replicate"), kx)
-        gy = F.conv2d(F.pad(y, (1, 1, 1, 1), mode="replicate"), kx.transpose(2, 3))
-        g = torch.sqrt(gx * gx + gy * gy)
-        cell_g = F.adaptive_avg_pool2d(g, (gh, gw))[0, 0]
-        clip = ((y < float(getattr(cfg, "clip_dark", 0.04))) | (y > float(getattr(cfg, "clip_bright", 0.96)))).float()
-        clipped = F.adaptive_avg_pool2d(clip, (gh, gw))[0, 0] > 0.5
+        y = self._luminance(x, min(W, 256))
+        gx = cv2.Sobel(y, cv2.CV_32F, 1, 0, ksize=3, borderType=cv2.BORDER_REPLICATE) / 8
+        gy = cv2.Sobel(y, cv2.CV_32F, 0, 1, ksize=3, borderType=cv2.BORDER_REPLICATE) / 8
+        cell_g = self._pool(np.sqrt(gx * gx + gy * gy), gh, gw)
+        clip = (y < float(getattr(cfg, "clip_dark", 0.04))) | (y > float(getattr(cfg, "clip_bright", 0.96)))
+        clipped = self._pool(clip, gh, gw) > 0.5
 
         # typical textured-cell gradient: 75th percentile of the cells that are not clipped, as a running median
         g_ok = cell_g[~clipped]
-        g75 = float(torch.quantile(g_ok, 0.75)) if g_ok.numel() >= 4 else None
+        g75 = float(np.quantile(g_ok, 0.75)) if g_ok.size >= 4 else None
         self.grad_ref.push(g75)
         g_ref = self.grad_ref.get(g75 if g75 is not None else 0.0)
         flat = cell_g < float(getattr(cfg, "texture_rel", 0.25)) * g_ref
 
         cells = {"clipped": clipped, "flat": flat & ~clipped}
         if depth is None and rgb_right is not None and getattr(cfg, "stereo_near", True):
-            depth = self._stereo_depth(x, rgb_right)
-        near = self._near_cells(depth.to(x.device), (gh, gw), update=True) if depth is not None else None
+            depth = self._stereo_depth(y, rgb_right, W)
+        near = self._near_cells(depth, gh, gw, update=True) if depth is not None else None
         if near is not None:
             cells["near"] = near
-        pmask, n_person = self._person_mask(x, (h, w))
-        if pmask is not None:
-            cells["person"] = F.adaptive_avg_pool2d(pmask.float()[None, None], (gh, gw))[0, 0] > 0.5
+        person, n_person = self._person_cells(x, gh, gw)
+        if person is not None:
+            cells["person"] = person
         q = self._decide(cells, stage="image", has_depth=near is not None, n_person=n_person, update=True)
         q.ms = (time.perf_counter() - t0) * 1e3
         self.stats["assessed"] += 1
@@ -207,13 +213,13 @@ class KeyframeQuality:
         return q
 
     @torch.inference_mode()
-    def refine(self, q: FrameQuality, depth: torch.Tensor) -> FrameQuality:
+    def refine(self, q: FrameQuality, depth) -> FrameQuality:
         """Add the near-field cells of a metric depth map of the current view (the feed-forward pass's depth)."""
         if q is None or depth is None:
             return q
         t0 = time.perf_counter()
-        some = next(iter(q.cells.values()))
-        near = self._near_cells(depth.to(some.device), tuple(some.shape), update=not q.has_depth)
+        gh, gw = next(iter(q.cells.values())).shape
+        near = self._near_cells(depth, gh, gw, update=not q.has_depth)
         if near is None:
             return q
         cells = dict(q.cells)
@@ -230,13 +236,12 @@ class KeyframeQuality:
     def _decide(self, cells: dict, stage: str, has_depth: bool, n_person: int, update: bool,
                 threshold: Optional[float] = None) -> FrameQuality:
         cfg = self.cfg
-        some = next(iter(cells.values()))
-        removed = torch.zeros_like(some)
+        removed = np.zeros_like(next(iter(cells.values())), dtype=bool)
         for c in CAUSES:
             if c in cells:
                 removed |= cells[c]
-        info = 1.0 - float(removed.float().mean())
-        fractions = {c: float(cells[c].float().mean()) if c in cells else 0.0 for c in CAUSES}
+        info = 1.0 - float(removed.mean())
+        fractions = {c: float(cells[c].mean()) if c in cells else 0.0 for c in CAUSES}
         if threshold is None:
             ref = self.info_ref.get(info)
             threshold = min(float(getattr(cfg, "info_min", 0.35)), float(getattr(cfg, "info_rel", 0.5)) * ref)
