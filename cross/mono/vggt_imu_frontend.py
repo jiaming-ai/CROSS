@@ -262,8 +262,7 @@ class VggtImuFrontend:
         if self.imu_calib is None:
             self._start(frame["imu_calib"])
         ic = self.config.imu
-        if self.align is None and not self.standalone and \
-                (ic.vgio_align if ic.vgio_align is not None else self.T_rl is not None):
+        if ic.vgio_align and self.align is None and not self.standalone:
             self.align = (ic.vgio_align_min, ic.vgio_align_max)
         self.klt = bool(ic.vgio_klt)
         if self.klt:
