@@ -4,6 +4,7 @@ from cross.utils.profile import timeit
 import pypose as pp
 from typing import Tuple, List, Dict, Set, Optional, Any
 import torch
+import dataclasses
 from dataclasses import dataclass, field
 from loguru import logger
 import collections
@@ -509,6 +510,10 @@ class HypothesisManager:
         def noise(f):
             cov = v.noise.factor_cov_gtsam(f)          # anisotropic visual factor: full covariance (gtsam order)
             return cov if cov is not None else v.noise.factor_sigmas_pypose(f)
+        # for visual and odometry factors the result depends only on the factor (measurement, noise metadata) and the
+        # calibrated model's parameters: the pose graph may cache it per factor under this key
+        noise.cache_types = (EdgeType.VISUAL, EdgeType.ODOMETRY)
+        noise.cache_key = lambda: (id(v.noise), dataclasses.astuple(v.noise.cfg))
         return noise
 
     def pgo_skip_fn(self):
@@ -1914,18 +1919,20 @@ class HypothesisManager:
                 optimized_poses = {i: p for i, p in optimized_poses.items() if i in pg.source_node_poses}
                 affected_ids = set(optimized_poses)
                 affected_ids |= self._transport_merged_charts(pg, optimized_poses)
-            for node_id, optimized_pose in optimized_poses.items():
-                if node_id in self.nodes:
-                    kf = self.nodes[node_id]
-                    kf.pose_mu[0] = optimized_pose
-                    if self.chart_aware:
-                        kf.pose_charts[0] = pg.output_chart
-                    # The keyframe's std is left as it is: the optimisation does not compute marginals, and halving
-                    # it at every optimisation (the previous behaviour) underflowed to exactly zero after ~100
-                    # optimisations (HSSD house: 1037 of 1045 keyframes at std 0), after which the belief fusion
-                    # produced garbage poses that no later optimisation could repair
-                    kf.last_pgo_step = int(self.step_counter)
-                    logger.debug(f"Applied PGO update to KF {node_id}")
+            step = int(self.step_counter)
+            # plain tensor assignment (same values; pypose's dispatch costs ~90 us per keyframe)
+            with torch._C.DisableTorchFunctionSubclass():
+                for node_id, optimized_pose in optimized_poses.items():
+                    if node_id in self.nodes:
+                        kf = self.nodes[node_id]
+                        kf.pose_mu[0] = optimized_pose
+                        if self.chart_aware:
+                            kf.pose_charts[0] = pg.output_chart
+                        # The keyframe's std is left as it is: the optimisation does not compute marginals, and halving
+                        # it at every optimisation (the previous behaviour) underflowed to exactly zero after ~100
+                        # optimisations (HSSD house: 1037 of 1045 keyframes at std 0), after which the belief fusion
+                        # produced garbage poses that no later optimisation could repair
+                        kf.last_pgo_step = step
 
             if other_hypo != 0 and other_hypo in self.hypotheses:
                 self.merge_hypotheses(other_hypo)
