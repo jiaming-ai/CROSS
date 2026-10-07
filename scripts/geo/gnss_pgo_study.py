@@ -132,6 +132,7 @@ class Replay:
         gcfg = GnssGateConfig(confidence=args.confidence)
         self.gate = GnssGate(GnssNoiseModel(), gcfg)
         self.err = GnssErrorModel()
+        self.drift_flag = False
         self.k2 = float(chi2.ppf(args.confidence, 2))
         self.conf = args.confidence
 
@@ -206,6 +207,8 @@ class Replay:
                     if dec[0]:                               # anchor only: gated fixes align the map, no factors
                         first_minute.append((j, enu, dec[2] / sc, dec[3] / sc, off, fx.t))
                     continue
+                if dec[1] == "drift":
+                    self.drift_flag = True
                 if dec[0]:
                     # sigmas without the posterior scale (applied at use, so that rescaling reaches every factor)
                     item = (j, enu, dec[2] / sc, dec[3] / sc, off, fx.t)
@@ -229,9 +232,10 @@ class Replay:
                     self.fit_anchor(used, est_p)
                 if self.anchor.ok and anchored_at is None:
                     anchored_at = k
-                if (self.anchor.ok and len(pending) >= 5 and k - last_opt_k >= self.args.opt_min_kf
+                if (self.anchor.ok and (len(pending) >= 5 or (self.drift_flag and pending)) and k - last_opt_k >= self.args.opt_min_kf
                         and self.drifted(pending, est_p)):
                     last_opt_k = k
+                    self.drift_flag = False
                     t0 = time.perf_counter()
                     est_R, est_p = self.optimize(kfi, est_R, est_p, used)
                     t_opt += time.perf_counter() - t0
@@ -288,13 +292,18 @@ class Replay:
         self.anchor.fit(pm, pe, sh, sv)
 
     def drifted(self, pending, est_p) -> bool:
-        """The used fixes since the last optimisation disagree with the current estimate (chi-square, 2 dof each)."""
-        e = 0.0
+        """The used fixes since the last optimisation disagree with the current estimate (chi-square, 2 dof each):
+        all of them, or the most recent ones (as cross.geo.manager.GeoManager.should_optimize); a fix whose offset the
+        gate attributed to drift triggers at once."""
+        if self.drift_flag:
+            return True
         sc = self.gate.noise.scale
+        es = []
         for (j, enu, sh, sv, off, t) in pending:
             r = enu[:2] - self.anchor.to_enu(est_p[j] + off)[:2]
-            e += float(r @ r) / (sh * sc) ** 2
-        return e > chi2.ppf(self.conf, 2 * len(pending))
+            es.append(float(r @ r) / (sh * sc) ** 2)
+        m = min(len(es), 5)
+        return sum(es) > chi2.ppf(self.conf, 2 * len(es)) or sum(es[-m:]) > chi2.ppf(self.conf, 2 * m)
 
     def optimize(self, kfi, est_R, est_p, used, final=False):
         odo = self.odo
