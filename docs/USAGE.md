@@ -153,6 +153,15 @@ only maps. Another query in the same scene is another call with the same `--out`
 `System.save_map(path)` / `System.load_map(path)`; `examples/multi_session.py` runs several sequences through one
 `System`, and `examples/planner.py` loads a map and plans paths on it.
 
+**Map files.** A map is `map.pkl` (the graph: keyframe poses, edges, metadata) plus the directory `map.pkl.store/`
+next to it (keyframe images and retrieval descriptors); copy or move both together. Keyframe images of a loaded map
+are read from disk when they are used, so a large map does not have to fit in memory. The `storage` config section
+chooses the encoding: `storage.image_codec` `webp_lossless` (default; exact) or `png`, or the lossy `jpeg` / `webp` at
+`storage.image_quality`; `storage.depth_drop_bits` (lossy depth, RGB-D); `storage.descriptor_dtype float16`;
+`storage.max_ram_images N` keeps only the newest N keyframes' images in memory during a long session. Maps written by
+older versions (one `map.pkl` with everything inside) still load; `storage.format pickle` writes that format, and
+`python scripts/convert_map.py old/map.pkl new/map.pkl [--image-codec jpeg --image-quality 95] --verify` converts a map.
+
 Stereo-mode quick-run options: `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation gating;
 default: the mode's configuration file), `--max-refs`, `--n-ref-anchors`. Without a right camera pass
 `--set pose_est.ff.right_image=left` (scale from the odometry; see the README OpenLORIS example).
