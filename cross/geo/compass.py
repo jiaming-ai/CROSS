@@ -130,7 +130,9 @@ class Compass:
             med, mad = ref
             bad = abs(nb - med[0]) > self.k1 * mad[0] or abs(dip - med[1]) > self.k1 * mad[1]
         self.ref_all.append((nb, dip))
-        if outdoor_ok and not bad:
+        if outdoor_ok:
+            # every sample of good conditions feeds the reference (its median / MAD are robust to the few disturbed
+            # ones; keeping only accepted samples would let the band shrink onto itself)
             self.ref_good.append((nb, dip))
         return bad
 
