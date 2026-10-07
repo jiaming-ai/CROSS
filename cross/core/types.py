@@ -108,11 +108,40 @@ _COMPACT_DTYPES = {torch.float16, torch.float32, torch.float64, torch.uint8, tor
                    torch.int64, torch.bool}
 
 
+class PackedTensor:
+    """The values of a tensor as a numpy array (+ its LieTensor type), as the records of a v2 map decode for
+    System.load_map (cross.db.store.read_map(packed=True)): loading a large map creates no tensor object per field.
+    `to(cpu)` keeps it packed (a compact field takes the array without a copy); other devices get the tensor."""
+    __slots__ = ("arr", "ltype")
+
+    def __init__(self, arr: np.ndarray, ltype=None):
+        self.arr = arr
+        self.ltype = ltype
+
+    def unpack(self):
+        return unpack_tensor(self.arr, self.ltype)
+
+    def to(self, device=None, *args, **kwargs):
+        if not args and not kwargs and (device is None or torch.device(device).type == "cpu"):
+            return self
+        return self.unpack().to(device, *args, **kwargs)
+
+    def cpu(self):
+        return self
+
+
+def unpacked(v):
+    """A PackedTensor as its tensor; anything else as it is."""
+    return v.unpack() if type(v) is PackedTensor else v
+
+
 def pack_tensor(v):
     """(array, ltype) holding a copy of a CPU tensor's values, or (v, None) for a value kept as it is."""
     if v is None:
         return None, None
     kind = type(v)
+    if kind is PackedTensor:
+        return v.arr, v.ltype
     if kind is not torch.Tensor and kind is not pp.LieTensor:
         return v, None
     with torch._C.DisableTorchFunctionSubclass():          # attribute access of a LieTensor costs ~20 us otherwise

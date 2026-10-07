@@ -40,6 +40,8 @@ from typing import Dict, List, Optional
 import numpy as np
 import torch
 
+from cross.core.types import PackedTensor
+
 try:
     import cv2
 except ImportError:          # pragma: no cover - opencv is a dependency of the package
@@ -425,6 +427,9 @@ _LTYPES = {"SE3Type": "SE3_type", "se3Type": "se3_type", "SO3Type": "SO3_type", 
            "Sim3Type": "Sim3_type", "sim3Type": "sim3_type", "RxSO3Type": "RxSO3_type", "rxso3Type": "rxso3_type"}
 
 
+_decode_opts = threading.local()
+
+
 def _tensor_kind(v):
     """('lie', ltype) / ('tensor', None) / None for a value that can go into a stacked numeric column.  The ltype is
     matched by its class: a LieTensor unpickled from an old map carries a copy of the ltype object, decoding gives the
@@ -462,6 +467,8 @@ def to_device(t, device):
     """t.to(device), skipped when t is already there (.to returns t itself then; a LieTensor's .to costs ~60 us)."""
     if t is None:
         return t
+    if type(t) is PackedTensor:
+        return t.to(device)
     if torch.is_tensor(t) and device is not None:
         with _no_torch_function():                       # .device of a LieTensor otherwise costs ~18 us
             same = t.device == torch.device(device)
@@ -509,7 +516,12 @@ def _decode_column(col, n: int) -> list:
     a = col["a"]
     if k in ("tensor", "lie"):
         # one owned tensor per row (no views of a shared buffer: a view would pickle / deep-copy the whole column)
-        if k == "lie":
+        if getattr(_decode_opts, "packed", False):
+            # System.load_map: rows stay numpy arrays (PackedTensor), taken by the compact keyframe / edge fields
+            import pypose as pp
+            lt = getattr(pp, col["ltype"]) if k == "lie" else None
+            vals = [PackedTensor(np.array(x), lt) for x in a]
+        elif k == "lie":
             vals = [lie_tensor(np.array(x), col["ltype"]) for x in a]
         else:
             vals = [torch.from_numpy(np.array(x)) for x in a]
@@ -830,13 +842,22 @@ def write_map(save_path, save_data: dict, cfg, on_written=None) -> dict:
     return stats
 
 
-def read_map(load_path, descriptor_mmap: bool = False) -> dict:
+def read_map(load_path, descriptor_mmap: bool = False, packed: bool = False) -> dict:
     """Read a map (format v2 or the old single pickle) into the dict System.load_map restores from.  Images of a v2
-    map come back as ImageRefs (decoded on access)."""
+    map come back as ImageRefs (decoded on access).  `packed`: tensor fields of the records come back as
+    PackedTensor (numpy rows) instead of one tensor object each (System.load_map: millions of fields)."""
     with open(load_path, "rb") as f:
         data = pickle.load(f)
     if data.get("__format__") != FORMAT:
         return data                                                    # old single-file map
+    _decode_opts.packed = packed
+    try:
+        return _read_v2(load_path, data, descriptor_mmap)
+    finally:
+        _decode_opts.packed = False
+
+
+def _read_v2(load_path, data: dict, descriptor_mmap: bool) -> dict:
     if int(data.get("__version__", 0)) > FORMAT_VERSION:
         raise ValueError(f"{load_path}: map format {data['__version__']} is newer than this code ({FORMAT_VERSION})")
     side = sidecar_dir(load_path)
