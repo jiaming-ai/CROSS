@@ -282,6 +282,18 @@ class HypothesisManager:
 
         self.visualize_pose_graph = cfg.visualize_pose_graph
 
+    def odom_adjacency(self) -> Dict[int, Set[int]]:
+        """Undirected adjacency of the odometry edges (planners), rebuilt when the odometry edges change."""
+        key = (getattr(self, "odom_edges_version", 0), len(self.odom_edges))
+        cache = getattr(self, "_odom_adj_cache", None)
+        if cache is None or cache[0] != key:
+            adj: Dict[int, Set[int]] = {}
+            for (a, b) in list(self.odom_edges.keys()):
+                adj.setdefault(a, set()).add(b)
+                adj.setdefault(b, set()).add(a)
+            self._odom_adj_cache = (key, adj)
+        return self._odom_adj_cache[1]
+
     @property
     def proximity_edges(self) -> Dict[Tuple[int, int], Edge]:
         """

@@ -286,12 +286,8 @@ class SimpleTopo:
         # Proximity neighbors (undirected)
         neighbors.update(self.proximity_adjacency.get(kf_id, set()))
 
-        # Odometry neighbors (treat as undirected for planning)
-        for (id1, id2) in self._hm.odom_edges.keys():
-            if id1 == kf_id:
-                neighbors.add(id2)
-            elif id2 == kf_id:
-                neighbors.add(id1)
+        # Odometry neighbors (treat as undirected for planning; cached adjacency instead of a scan of every edge)
+        neighbors.update(self._hm.odom_adjacency().get(kf_id, ()))
 
         return list(neighbors)
 
