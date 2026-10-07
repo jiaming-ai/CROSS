@@ -154,6 +154,9 @@ class GeoManager:
             return dec
         self.last_used_dist = self.dist
         sc = self.noise.scale
+        if not self.cfg.inflate_factors and math.isfinite(dec.inflation) and dec.inflation > 1.0:
+            # the relative test's inflation steers the gate only; factors keep prior x posterior scale
+            dec.sigma_h, dec.sigma_v = dec.sigma_h / math.sqrt(dec.inflation), dec.sigma_v / math.sqrt(dec.inflation)
         rec = {"t": float(fix.t), "enu": np.array([enu[0], enu[1], enu[2] if z_ok else np.nan]),
                "sh": dec.sigma_h / sc, "sv": dec.sigma_v / sc, "in_map": bool(in_map_frame), "kf": None, "delta": None,
                "map": None if T_map_cam is None else T_map_cam[:3, 3].copy(), "odo": self.T_odo.copy(),

@@ -781,6 +781,9 @@ class GeoConfig:
     gate: bool = True
     decimate: bool = True
     robust: bool = True
+    # factors with the relative test's noise inflation (the gate always uses it); NCLT study: no gain (6 of 21
+    # sessions better), so factors keep the prior noise times the posterior scale
+    inflate_factors: bool = False
     retrieval_gate: bool = True               # relocalization: map keyframes far from the fix are not retrieved
     proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
     retrieval_margin_m: float = 10.0          # retrieval gate radius beyond the fix's chi-square radius (views of the

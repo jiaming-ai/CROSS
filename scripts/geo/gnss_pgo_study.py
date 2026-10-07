@@ -274,7 +274,9 @@ class Replay:
             if s is None:
                 return False, "no_fix", None, None
             return True, "all", s[0], s[1]
-        if v == "gated_noinfl":
+        if v in ("gated_noinfl", "gated_post"):
+            # the gate's decisions as in "gated"; factors with the prior noise (gated_post: times the posterior scale,
+            # without the relative test's inflation; gated_noinfl: neither)
             d = self.gate.process(fx, enu, track_xy, pred)
             sig = self.gate.noise.sigma(fx)
             return d.used, d.reason, (sig[0] if sig else None), (sig[1] if sig else None)
