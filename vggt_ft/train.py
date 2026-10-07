@@ -117,6 +117,11 @@ def compute_losses(pred, batch, lc, hw, teach=None, meta=None, steach=None):
     """All losses of one batch (dict of scalars) and the total."""
     depths, masks = batch["depths"], batch["masks"]
     covis_gt = gt_covisibility(depths, masks, batch["extrinsics"], batch["intrinsics"], batch["world_id"])
+    if lc.get("covis_only", False):
+        # covisibility head alone (everything else frozen): no pose / depth / scale losses, no dense-head forward
+        cv = covis_loss(pred["covis_logits"], covis_gt, None if batch.get("posed") is None else batch["posed"].float(),
+                        pos_weight=lc.get("covis_pos_weight", 1.0))
+        return {**cv, "loss": cv["loss_covis"]}
     conn = connected_to_ref(covis_gt, lc.get("connect_thr", 0.05))
     mode = lc.get("mask_unobservable", "unconnected_other_session")
     if mode == "unconnected":
@@ -347,7 +352,7 @@ def main():
             with torch.no_grad():
                 steach = scale_teacher(batch["images"])
         # known intrinsics: a canonical-camera scale head converts with the calibrated focal (others ignore them)
-        pred = fwd(batch["images"], intrinsics=batch["intrinsics"])
+        pred = fwd(batch["images"], intrinsics=batch["intrinsics"], need_depth=not lc.get("covis_only", False))
         losses = compute_losses(pred, batch, lc, hw, teach, meta, steach)
         loss = losses["loss"]
         if not torch.isfinite(loss):

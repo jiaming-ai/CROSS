@@ -291,3 +291,30 @@ def test_geo_stream_nclt_layout(tmp_path):
     gd = GeoStream.load(tmp_path, len(times), 2.0, degrade=parse_degrade("bias=20,outage=2:6"))
     assert len(gd.fix) < len(gs.fix)
     assert gd.window(5, 6, timestamp=3.0).get("gnss") is None                 # inside the outage
+
+
+def test_geo_state_columns_round_trip():
+    """The geo state stored with a map (format v2 keeps per-keyframe data as numpy columns) loads back, and the
+    version-1 dict form still loads."""
+    import pickle
+    from cross.core.config import GeoConfig
+    from cross.geo.manager import GeoManager
+    g = GeoManager(GeoConfig(enabled=True))
+    g.frame = LocalFrame(42.29, -83.71, 270.0)
+    g.anchor.R, g.anchor.t, g.anchor.yaw = np.eye(3), np.zeros(3), 0.0
+    g.anchor.cov = np.eye(4) * 1e-6
+    g.factors = {5: {"enu": np.array([1.0, 2.0, np.nan]), "sh": 5.0, "sv": 10.0, "delta": np.array([0.1, 0, 0]), "t": 3.0},
+                 9: {"enu": np.array([4.0, 5.0, 6.0]), "sh": 4.0, "sv": 8.0, "delta": np.zeros(3), "t": 9.0}}
+    s = g.state()
+    assert isinstance(s["factors"]["enu"], np.ndarray) and s["factors"]["enu"].shape == (2, 3)
+    s["keyframe_lla"] = GeoManager.lla_columns({3: [42.0, -83.0, 270.0], 1: [42.1, -83.1, 271.0]})
+    s2 = pickle.loads(pickle.dumps(s))
+    h = GeoManager(GeoConfig(enabled=True))
+    h.load_state(s2)
+    assert h.anchored and set(h.map_factors) == {5, 9}
+    assert np.isnan(h.map_factors[5]["enu"][2]) and h.map_factors[9]["sv"] == 8.0
+    assert GeoManager.lla_records(s2["keyframe_lla"]) == {1: [42.1, -83.1, 271.0], 3: [42.0, -83.0, 270.0]}
+    v1 = dict(s2, factors={7: {"enu": [1, 2, 3], "sh": 5.0, "sv": 10.0, "delta": [0, 0, 0], "t": 1.0}})
+    h.load_state(v1)
+    assert set(h.map_factors) == {7}
+    assert GeoManager.lla_records({3: [1, 2, 3]}) == {3: [1, 2, 3]}

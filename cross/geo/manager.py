@@ -400,12 +400,30 @@ class GeoManager:
 
     # ------------------------------------------------------------------ persistence / export
     def state(self) -> dict:
-        return {"version": 1, "frame": None if self.frame is None else self.frame.state(),
+        """Persistent state, stored with the map (System.save_map: "geo").  Per-keyframe data as numpy columns (map
+        format v2 keeps the graph as columns too): factors (kf, enu, sigmas, offset, time)."""
+        ks = sorted(self.factors)
+        f = self.factors
+        return {"version": 2, "frame": None if self.frame is None else self.frame.state(),
                 "anchor": self.anchor.state(), "noise": self.noise.state(), "err": self.err.state(),
                 "compass": self.compass.state(),
-                "factors": {int(k): {"enu": np.asarray(v["enu"]).tolist(), "sh": v["sh"], "sv": v["sv"],
-                                     "delta": np.asarray(v["delta"]).tolist(), "t": v["t"]} for k, v in self.factors.items()},
+                "factors": {"kf": np.asarray(ks, np.int64),
+                            "enu": np.asarray([f[k]["enu"] for k in ks], np.float64).reshape(-1, 3),
+                            "sh": np.asarray([f[k]["sh"] for k in ks], np.float64),
+                            "sv": np.asarray([f[k]["sv"] for k in ks], np.float64),
+                            "delta": np.asarray([f[k]["delta"] for k in ks], np.float64).reshape(-1, 3),
+                            "t": np.asarray([f[k]["t"] for k in ks], np.float64)},
                 "gate": dict(self.gate.stats), "stats": dict(self.stats)}
+
+    @staticmethod
+    def factor_records(fac) -> Dict[int, dict]:
+        """Factors of a stored state: the columns of version 2, or the dict of version 1."""
+        if not fac:
+            return {}
+        if isinstance(fac, dict) and "kf" in fac and not isinstance(next(iter(fac.values())), dict):
+            return {int(k): {"enu": np.asarray(e), "sh": float(a), "sv": float(b), "delta": np.asarray(d), "t": float(t)}
+                    for k, e, a, b, d, t in zip(fac["kf"], fac["enu"], fac["sh"], fac["sv"], fac["delta"], fac["t"])}
+        return {int(k): v for k, v in fac.items()}
 
     def load_state(self, s: dict):
         if not s or s.get("frame") is None:
@@ -419,7 +437,21 @@ class GeoManager:
             self.err.sigma2_axis = s["err"].get("sigma2_axis")
         self.compass.load_state(s.get("compass", {}))
         # the stored map's fixes stay with it (its keyframes are fixed in a relocalization session)
-        self.map_factors = {int(k): v for k, v in s.get("factors", {}).items()}
+        self.map_factors = self.factor_records(s.get("factors"))
+
+    @staticmethod
+    def lla_columns(lla: Dict[int, list]) -> dict:
+        ks = sorted(lla)
+        return {"kf": np.asarray(ks, np.int64), "lla": np.asarray([lla[k] for k in ks], np.float64).reshape(-1, 3)}
+
+    @staticmethod
+    def lla_records(c) -> Dict[int, list]:
+        """Keyframe latitude / longitude / altitude of a stored map: columns (v2) or a dict (v1)."""
+        if not c:
+            return {}
+        if isinstance(c, dict) and "kf" in c and "lla" in c:
+            return {int(k): [float(x) for x in v] for k, v in zip(c["kf"], c["lla"])}
+        return {int(k): v for k, v in c.items()}
 
     def keyframe_lla(self, nodes: dict) -> Dict[int, list]:
         """Latitude / longitude / altitude of every keyframe (camera position), once anchored."""

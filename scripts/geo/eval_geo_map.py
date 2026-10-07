@@ -58,7 +58,8 @@ def main():
     with open(a.run / "map.pkl", "rb") as f:
         m = pickle.load(f)
     geo = m.get("geo") or {}
-    lla = {int(k): v for k, v in (geo.get("keyframe_lla") or {}).items()}
+    from cross.geo.manager import GeoManager
+    lla = GeoManager.lla_records(geo.get("keyframe_lla"))
     kf_gt = {int(k): np.asarray(v) for k, v in meta["kf_gt"].items()}
     kf_frame = {int(k): int(v) for k, v in meta.get("kf_frame", {}).items()}
     ids = sorted(k for k in lla if k in kf_gt)

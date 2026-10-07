@@ -23,12 +23,17 @@ def main():
     with open(a.map, "rb") as f:
         m = pickle.load(f)
     geo = m.get("geo")
-    if not geo or not geo.get("keyframe_lla"):
+    from cross.geo.manager import GeoManager
+    lla = GeoManager.lla_records((geo or {}).get("keyframe_lla"))
+    if not lla:
         sys.exit("the map has no geo anchor (built without --gnss, or never anchored)")
-    lla = {int(k): v for k, v in geo["keyframe_lla"].items()}
     ids = sorted(lla)
     arr = np.array([lla[k] for k in ids])
-    perm = {d["id"] for d in m["db_data"]["keyframes"]}
+    kfr = m["db_data"]["keyframes"]
+    if isinstance(kfr, dict):                       # map format v2: keyframe records as columns
+        from cross.db.store import decode_records
+        kfr = decode_records(kfr)
+    perm = {int(d["id"]) for d in kfr}
     feats = [geojson_linestring(arr, {"name": "keyframes", "n": len(ids)})]
     feats += geojson_points(arr[[i for i, k in enumerate(ids) if k in perm]],
                             [{"id": k, "permanent": True} for k in ids if k in perm])
