@@ -142,15 +142,14 @@ def encode_rows(desc, idx, proj, dev, chunk=32768):
     return torch.cat(out)
 
 
-def topk_full(desc, db_idx, Q, k, dev, chunk=100000):
+def topk_full(desc, db_idx, Q, k, dev, chunk=20000):
     """Exact top-k of queries Q (full, normalized, on dev) over desc[db_idx], database streamed in chunks."""
     best_s = torch.full((Q.shape[0], k), -9.0, device=dev)
     best_i = torch.zeros((Q.shape[0], k), dtype=torch.long, device=dev)
     Qh = Q.half()
     for i in range(0, len(db_idx), chunk):
         rows = db_idx[i:i + chunk]
-        X = torch.from_numpy(np.asarray(desc[rows], dtype=np.float16)).to(dev)
-        X = torch.nn.functional.normalize(X.float(), dim=-1).half()
+        X = torch.from_numpy(np.asarray(desc[rows], dtype=np.float16)).to(dev)   # stored L2-normalized
         S = (Qh @ X.T).float()
         s, j = S.topk(min(k, S.shape[1]), dim=1)
         cand_s = torch.cat([best_s, s], 1)
