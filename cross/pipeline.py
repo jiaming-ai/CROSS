@@ -142,12 +142,19 @@ class Pipeline:
         self.mapper.load_map(str(path))
 
     # ------------------------------------------------------------------ one frame
+    def _left_only(self) -> bool:
+        """The back end observes on the left image alone (pose_est.ff.right_image)."""
+        pe = getattr(getattr(self.mapper, "config", None), "pose_est", None)
+        return getattr(getattr(pe, "ff", None), "right_image", "pair") == "left"
+
     def process(self, frame: dict):
         """Process one frame (loader dict: rgb, timestamp, and depth / rgb_right / delta_pose as the mode allows).
         (MonocularSystem.step(rgb, timestamp) is the monocular CLI's per-image entry point.)"""
         if self.frontend is None:
             if self.mode == "mono":           # (rgbd / stereo: frames unchanged, as before the pipeline existed)
                 frame = restrict_inputs(frame, self.mode, self.odometry)
+            elif self.mode == "stereo" and frame.get("rgb_right") is not None and self._left_only():
+                frame = dict(frame, rgb_right=None)   # the back end observes on the left image (pose_est.ff.right_image)
             self.mapper.step(obs=frame, data=frame)
             self.mapped_now = True
             return None
@@ -184,7 +191,8 @@ class Pipeline:
                 depth = self.depth_model.predict_metric(rgb, self.K, rgb.shape[:2])
             if depth is not None and depth.shape[:2] != rgb.shape[:2]:
                 depth = cv2.resize(depth, (rgb.shape[1], rgb.shape[0]))
-            right = frame.get("rgb_right")
+            if not self._left_only():
+                right = frame.get("rgb_right")
         # Every input increment is accumulated; image retrieval / filtering runs every mapping_interval frames.
         self.mapper.step({
             "rgb": rgb if map_now else None,
@@ -307,6 +315,34 @@ def mono_ff_config(cfg):
     return cfg
 
 
+def mode_config_files(mode: str, odometry: str, fast: bool = False) -> list:
+    """The configuration files shipped for a mode and odometry (layered in this order, before the user's --config):
+    the stereo mode configs/stereo.yaml (+ configs/stereo_fast.yaml with --fast).  Other modes: none (their presets
+    are in code: mono_ff_config, mono profiles).  Opt-in profiles go in --config (configs/stereo_lowband.yaml: left
+    image, half the rate; not a default because it blinds the odometry scale guard)."""
+    files = []
+    if mode == "stereo":
+        files.append(os.path.join(CONFIG_DIR, "stereo.yaml"))
+        if fast:
+            files.append(FAST_STEREO_PRESET)
+    return files
+
+
+def apply_right_image(cfg):
+    """(In place) pose_est.ff.right_image "left": no stereo anchors; the scale from the odometry anchor and pairs of
+    map references (the mono mode's feed-forward estimator, mono_ff_config, without its cadence)."""
+    ff = cfg.pose_est.ff
+    if ff.right_image not in ("left", "pair"):
+        raise ValueError(f"pose_est.ff.right_image: left | pair, not {ff.right_image}")
+    if ff.right_image == "left":
+        ff.use_curr_anchor = False
+        ff.n_ref_anchors = 0
+        ff.store_right_images = False
+        ff.use_odom_anchor = True
+        ff.use_map_anchors = True
+    return cfg
+
+
 def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in_left=None, mono_config=None,
                   vo_config=None, device="cuda", visualize=False, mono_estimator: str = "da3",
                   continuous_start: bool = True) -> Pipeline:
@@ -326,7 +362,7 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
         raise ValueError("vgio uses the feed-forward back end's model (--mono-estimator ff)")
     K = np.array(camera.K, dtype=np.float64).copy()        # before System rescales camera.K to its storage size
     size = (int(camera.frame_width), int(camera.frame_height))
-    cfg = copy.deepcopy(system_config)
+    cfg = apply_right_image(copy.deepcopy(system_config))
     mc = mono_config
     if odometry in INERTIAL:
         if mc is None:
@@ -360,6 +396,10 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
         return pipeline
 
     if mode in ("rgbd", "stereo"):
+        if odometry == "vgio":
+            # the odometry scale guard keeps its sample filter but does not rescale this odometry (LoopClosureConfig.
+            # odom_guard_rescale): it is metric itself, and the back end's passes collapse with the frontend's (KITTI 01)
+            cfg.mapping.loop_closure.odom_guard_rescale = False
         system = System(visualize=visualize, debug=False, camera=Camera(K.copy(), *size), config=cfg,
                         T_right_in_left=T_right_in_left)
         if odometry == "external":
@@ -405,7 +445,10 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
 
 def _vgio_config(mc, mode, T_right_in_left=None):
     """(In place) the stereo mode's VGGT-inertial odometry takes the metric scale from the stereo pair: no learned
-    depth and no bias state for it."""
+    depth and no bias state for it; it measures on the back end's passes (imu.vgio_align: None = on in the stereo mode,
+    off in the mono mode, where the passes' map references cost scale accuracy)."""
+    if mc.imu.vgio_align is None:
+        mc.imu.vgio_align = mode == "stereo"
     if mode == "stereo":
         if T_right_in_left is None:
             raise ValueError("The stereo mode's VGGT-inertial odometry needs the stereo calibration (T_right_in_left)")
@@ -449,7 +492,7 @@ def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_lef
 
 
 def edge_session(mode: str, odometry: str, camera, system_config, link_factory, *, T_right_in_left=None,
-                 mono_config=None, mono_estimator: str = "da3", upload: str = "predicted"):
+                 mono_config=None, mono_estimator: str = "da3", upload: str = "predicted", obs_cap: float = 0.0):
     """The edge of a remote session behind a real link (cross/remote/grpc_link.py): the odometry only, no GPU model.
     link_factory(open message) -> link; the open message carries what the server needs to build the same session
     (build_session): mode, odometry, camera, stereo calibration and the resolved configurations."""
@@ -459,13 +502,11 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
     if odometry not in ("external", "vgio"):
         raise ValueError("Remote sessions: external odometry or VGGT-inertial odometry (--odometry vgio)")
     K = np.array(camera.K, dtype=np.float64).copy()
-    cfg = copy.deepcopy(system_config)
+    cfg = apply_right_image(copy.deepcopy(system_config))
     mc = copy.deepcopy(mono_config)
     frontend = factory = None
     if odometry == "vgio":
         mc.imu.enabled = True
-        if mc.imu.vgio_align:
-            raise ValueError("vgio_align (measurements only on the back end's passes) needs a local session")
         edge_mc = _vgio_config(copy.deepcopy(mc), mode, T_right_in_left)
 
         def factory():
@@ -476,7 +517,8 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
                 "T_right_in_left": None if T_right_in_left is None else np.asarray(T_right_in_left, dtype=np.float64),
                 "system_config": config_to_dict(cfg), "mono_config": None if mc is None else _to_dict(mc)}
     return RemotePipeline(frontend, link_factory(open_msg), mode, odometry, ObservationCadence(cfg.pose_est), 1, upload,
-                          frontend_factory=factory, server=None, continuous_start_in_map=odometry == "vgio", K=K)
+                          frontend_factory=factory, server=None, continuous_start_in_map=odometry == "vgio", K=K,
+                          obs_cap=obs_cap, send_right=cfg.pose_est.ff.right_image != "left" or odometry == "vgio")
 
 
 def server_session(open_msg, device="cuda"):
@@ -551,6 +593,12 @@ def add_session_args(ap):
                         "without its observation (the back end observes the next fresh frame); measurements are kept.  "
                         "It acts only when the server is behind (outputs/2026-10-06_remote_mode: it never fired where "
                         "the server kept up, and it kept every overloaded case close to the local session)")
+    g.add_argument("--remote-obs-cap", type=float, default=0.1,
+                   help="rate cap (s, 0: off): the edge sends an observation only if the server can start it within "
+                        "this time (a model of the server's queue from the server time of each kind of message, learned "
+                        "from the replies); otherwise the back end observes at the next frame it can.  It acts only "
+                        "when the server is behind; there it kept the results of the overload policy and sent 9-35 %% "
+                        "fewer images (outputs/2026-10-07_remote_cadence)")
     g.add_argument("--remote-server", default="",
                    help="HOST:PORT of a remote-session server (scripts/remote/serve.py): a real gRPC link instead of the "
                         "simulated one; this process runs only the edge")
@@ -560,7 +608,8 @@ def add_session_args(ap):
                    help="real link: feed the frames at their timestamps (wall clock), as a sensor would")
 
 
-FAST_STEREO_PRESET = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs", "stereo_fast.yaml")
+CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs")
+FAST_STEREO_PRESET = os.path.join(CONFIG_DIR, "stereo_fast.yaml")
 
 
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):
@@ -592,12 +641,14 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
                 return GrpcLink(args.remote_server, dict(open_msg, max_backlog=args.remote_max_backlog),
                                 jpeg=args.remote_jpeg, extra_delay=args.remote_extra_delay, realtime=args.remote_realtime)
             return edge_session(mode, odometry, camera, cfg, link, T_right_in_left=T_right_in_left,
-                                mono_config=mono_config, mono_estimator=mono_estimator, upload=args.remote_upload)
+                                mono_config=mono_config, mono_estimator=mono_estimator, upload=args.remote_upload,
+                                obs_cap=args.remote_obs_cap)
         session = build_session(mode, odometry, camera, cfg, T_right_in_left=T_right_in_left, mono_config=mono_config,
                                 vo_config=vo_config, visualize=visualize, mono_estimator=mono_estimator)
         if getattr(args, "remote", False):
             from cross.remote import remote_session
-            session = remote_session(session, remote_link_factory(args), upload=args.remote_upload)
+            session = remote_session(session, remote_link_factory(args), upload=args.remote_upload,
+                                     obs_cap=args.remote_obs_cap)
         return session
     return make
 

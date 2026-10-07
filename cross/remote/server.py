@@ -42,9 +42,10 @@ class MapServer:
         if req is not None and sv is not None:
             sv.prune(req.get("keep_from"))
             sv.add_frame(req["index"], msg["rgb"], msg.get("rgb_right"))
-        if stale and msg.get("rgb") is not None and system.hypothesis_manager.dist is not None:
-            msg = dict(msg, rgb=None, rgb_right=None, depth=None)
-            self.stats["shed"] = self.stats.get("shed", 0) + 1
+        if (stale or msg.get("no_observation")) and msg.get("rgb") is not None and system.hypothesis_manager.dist is not None:
+            msg = dict(msg, rgb=None, rgb_right=None, depth=None)     # (the back end defers the observation)
+            key = "shed" if stale else "capped"
+            self.stats[key] = self.stats.get(key, 0) + 1
         anchor = sv.anchor(req) if (sv is not None and req is not None and map_frame) else None
         own0 = sv.stats["own_calls"] if sv is not None else 0
         da30 = sv.stats.get("depth_priors", 0) if sv is not None else 0
@@ -75,6 +76,11 @@ class MapServer:
                             "Tbest": mu[int(w.argmax())].matrix().detach().cpu().numpy(),
                             "w": w.detach().cpu().numpy(),
                             "B0": pose_matrix(mu[0]), "Bbest": pose_matrix(mu[int(w.argmax())])}
+            cfg = system.config.pose_est
+            if cfg.obs_confident_max_interval_steps > 0:
+                # the back end's adaptive cadence for its next frames (System._should_skip_observation), for the edge
+                reply["map"]["confident"] = bool(getattr(system, "_last_obs_mapped", False)
+                                                 and float(w.max()) >= cfg.obs_confident_weight)
             if self.keep_lie:
                 wn = reply["map"]["w"]
                 reply["map"].update(mu0=mu[0].clone(), mubest=mu[int(np.argmax(wn))].clone())

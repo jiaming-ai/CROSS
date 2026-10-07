@@ -430,6 +430,7 @@ class LoopClosureVerifier:
         self._guard = collections.deque(maxlen=max(int(getattr(cfg, "odom_guard_window", 20)), 3))
         self._guard_run = []                          # log medians of consecutive departing windows
         self.guard_persist = max(int(getattr(cfg, "odom_guard_persist", 2)), 1)
+        self.guard_rescale = bool(getattr(cfg, "odom_guard_rescale", True))
         self.odom_scale = 1.0                         # correction of the odometry's translations (applied by the System)
         # after a firing: the odometry's relative translation error measured by the guard (0: none measured), applied to
         # the odometry edges from the departing windows on; while it is > 0 the guard tracks the faulty odometry
@@ -766,7 +767,7 @@ class LoopClosureVerifier:
                             f"before): attributed to the visual estimator, odometry kept")
                 self._guard_run = []
                 self._guard_run_kf = None
-            elif len(self._guard_run) >= self.guard_persist:
+            elif len(self._guard_run) >= self.guard_persist and self.guard_rescale:
                 m = math.exp(lm)                              # the latest window's departure
                 self.odom_scale *= m
                 self._guard_run = []

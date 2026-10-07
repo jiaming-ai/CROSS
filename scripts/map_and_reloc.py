@@ -40,7 +40,7 @@ from cross.core.system import System
 from cross.core.types import Camera
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
-from cross.pipeline import FAST_STEREO_PRESET, add_session_args, session_factory
+from cross.pipeline import add_session_args, mode_config_files, session_factory
 
 
 def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
@@ -58,9 +58,10 @@ def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
 
 
 def make_config(args) -> SystemConfig:
-    configs = list(args.config or [])
-    if getattr(args, "fast", False) and args.estimator == "ff":
-        configs.append(FAST_STEREO_PRESET)                   # explicit --max-refs / --n-ref-anchors still win
+    # the mode's shipped configuration files (cross.pipeline.mode_config_files: configs/stereo.yaml, + stereo_fast.yaml
+    # with --fast), then the user's --config; explicit options below win
+    configs = mode_config_files(args.mode, args.odometry, getattr(args, "fast", False) and args.estimator == "ff")
+    configs += list(args.config or [])
     cfg = load_config(*configs) if configs else SystemConfig()
     cfg.async_update = False
     cfg.mapping.loop_closure.intra_enabled = not getattr(args, "no_intra_lc", False)
@@ -80,11 +81,17 @@ def make_config(args) -> SystemConfig:
             ff.max_refs = args.max_refs
         if args.n_ref_anchors is not None:
             ff.n_ref_anchors = args.n_ref_anchors
-        ff.use_curr_anchor = not args.no_curr_anchor
-        ff.use_odom_anchor = args.odom_anchor
-        cfg.pose_est.obs_min_translation = args.obs_min_translation   # observation gating (generic option, set for the stereo estimator as before)
-        cfg.pose_est.obs_min_rotation = args.obs_min_rotation
-        cfg.pose_est.obs_max_interval_steps = args.obs_max_interval
+        if args.no_curr_anchor:
+            ff.use_curr_anchor = False
+        if args.odom_anchor:
+            ff.use_odom_anchor = True
+        # observation cadence: the mode's configuration file unless given here
+        if args.obs_min_translation is not None:
+            cfg.pose_est.obs_min_translation = args.obs_min_translation
+        if args.obs_min_rotation is not None:
+            cfg.pose_est.obs_min_rotation = args.obs_min_rotation
+        if args.obs_max_interval is not None:
+            cfg.pose_est.obs_max_interval_steps = args.obs_max_interval
         ff.scale_method = args.scale_method
         if getattr(args, "ff_meas_std", None):
             ff.base_measurement_std = list(args.ff_meas_std)
@@ -253,15 +260,19 @@ def run_reloc(args, out: Path, meta: dict):
     q_start = args.query_start
     q_end = args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
+    remote_trials = []
+    n_new = 0                                     # keyframes the trials added to the map (summed over the sessions)
     for ti, (ts_, te_) in enumerate(trials):
-        if ti > 0:                                    # every trial is an independent relocalization session
-            try:
-                system.load_map(out / "map.pkl")
-            except RuntimeError:                      # the mono mode loads a map only into a fresh session
-                if hasattr(system, "shutdown"):
-                    system.shutdown()
-                system = new_session(args, ds, args.seed)
-                system.load_map(out / "map.pkl")
+        if ti > 0:
+            n_new += len(system.hypothesis_manager.nodes) - n_map_kfs
+            # every trial is an independent relocalization session: a fresh one.  load_map on the used session would
+            # keep its belief and step counters, and only a missing first motion (external odometry: delta_pose None)
+            # re-initialized it; with a frontend (VGGT + IMU, DPVO) the trial started from the last trial's belief
+            if hasattr(system, "remote_stats"):
+                remote_trials.append(system.remote_stats())
+            system.release()
+            system = new_session(args, ds, args.seed)
+            system.load_map(out / "map.pkl")
         for idx, d in enumerate(ds.replay_data(start_idx=q_start + ts_, end_idx=q_start + te_, stride=args.stride)):
             if idx == 0:
                 d["delta_pose"] = None
@@ -288,9 +299,11 @@ def run_reloc(args, out: Path, meta: dict):
                 logger.info(f"trial {ti} step {idx}: c0 err {row['c0_t_err']:.2f} m / {row['c0_r_err']:.1f} deg, "
                             f"best(k={row['best_k']}) {row['best_t_err']:.2f} m, w0={row['w0']:.2f}")
     elapsed = time.time() - t0
-    n_new = len(system.hypothesis_manager.nodes) - n_map_kfs
-    remote = system.remote_stats() if hasattr(system, "remote_stats") else None
+    n_new += len(system.hypothesis_manager.nodes) - n_map_kfs
+    if hasattr(system, "remote_stats"):
+        remote_trials.append(system.remote_stats())
     system.release()
+    remote = remote_trials[0] if len(remote_trials) == 1 else ({"trials": remote_trials} if remote_trials else None)
 
     from reloc_metrics import map_relative_errors, summarize_errors, summarize_trials
     rel = map_relative_errors(rows, meta)          # errors w.r.t. the map (primary metric)
@@ -371,9 +384,10 @@ def main():
     ap.add_argument("--odom-anchor", action="store_true")
     ap.add_argument("--no-curr-anchor", action="store_true", help="ablation: drop the current stereo pair as scale anchor")
     ap.add_argument("--scale-method", default="adaptive")
-    ap.add_argument("--obs-min-translation", type=float, default=0.0)
-    ap.add_argument("--obs-min-rotation", type=float, default=0.0)
-    ap.add_argument("--obs-max-interval", type=int, default=1)
+    ap.add_argument("--obs-min-translation", type=float, default=None,
+                    help="observation cadence (default: the mode's configuration file; 0 / 0 / 1 = every frame)")
+    ap.add_argument("--obs-min-rotation", type=float, default=None)
+    ap.add_argument("--obs-max-interval", type=int, default=None)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
     ap.add_argument("--online-poses", action="store_true",
                     help="map run: score the pose published at every frame (map_meta.json 'online')")
@@ -384,7 +398,8 @@ def main():
     ap.add_argument("--lc-mode", choices=["verified", "heuristic"], default=None, help="loop-closure mode (default: config, 'verified')")
     ap.add_argument("--lc-confidence", type=float, default=None, help="chi-square confidence of the verified loop closure (default 0.999)")
     ap.add_argument("--noise-config", default=None, help="YAML from scripts/lc/calibrate_noise.py (calibrated noise model)")
-    ap.add_argument("--set", nargs="*", default=[], help="config overrides section.sub.key=value (YAML-parsed values)")
+    ap.add_argument("--set", nargs="*", action="extend", default=[],
+                    help="config overrides section.sub.key=value (YAML-parsed values; repeatable)")
     ap.add_argument("--dump-obs", action="store_true", help="write every observation of the mapping run to obs.jsonl (scripts/lc/obs_recorder.py)")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (e.g. 0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift of the odometry (deg per metre)")

@@ -241,6 +241,12 @@ class LoopClosureConfig:
     # (stereo / depth): in mono the map measurements' scale follows the odometry, and on ROVER night the samples made
     # the guard rescale the wrong way.
     odom_guard_map: bool = True
+    # whether a departure rescales the odometry (False: the guard only keeps the departing samples out of the long-run
+    # ratio).  Off for the stereo mode's VGGT-inertial odometry (cross.pipeline.build_session): that odometry is metric
+    # from the stereo pair and the IMU and tested against the IMU, while the back end's feed-forward passes are the same
+    # VGGT-Omega passes and collapse with them (KITTI 01: ratio 0.45, the odometry rescaled by 0.43 and never back, map
+    # 15 -> 318 m with a healthy frontend; it fired on no other cell of the benchmark)
+    odom_guard_rescale: bool = True
     # the visual noise is split along / across the measured bearing, each with its own online scale (innovations of
     # measurements to keyframes <= 5 odometry edges back, normalised with the un-inflated chain covariance).  The metric
     # scale of the feed-forward estimator comes from the stereo baseline and is its weak part far away: on KITTI the
@@ -634,6 +640,15 @@ class FeedForwardConfig:
     n_ref_anchors: int = 2               # stored right images of the best references used as extra anchors
     use_curr_anchor: bool = True         # include the current right image (ablation switch)
     store_right_images: bool = False     # keep right images of keyframes even when n_ref_anchors == 0
+    # the right image in the stereo mode's back end: "pair" anchors each pass's metric scale (the current pair, stored
+    # right images of the references: use_curr_anchor, n_ref_anchors); "left": the back end observes on the left image
+    # alone, with the metric scale from the previous observation and the odometry between them (use_odom_anchor) and
+    # from pairs of map references (use_map_anchors), set by cross.pipeline.apply_right_image; the right image is not
+    # stored and, in remote sessions, not sent.  The opt-in profile configs/stereo_lowband.yaml sets it (with trusted
+    # external odometry: half the uplink on the development split) - not the default: with the left image no
+    # translation is metric without the odometry, and the odometry scale guard cannot see an odometry failure (ROVER
+    # night with a VIO runaway: map ATE 36-38 m vs 11 m with the pair; outputs/2026-10-07_remote_cadence)
+    right_image: str = "pair"
     use_odom_anchor: bool = False        # previous frame + odometry as an additional metric anchor
     odom_anchor_min_translation: float = 0.15
     odom_anchor_weight: float = 0.5

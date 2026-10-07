@@ -137,10 +137,14 @@ class ImuConfig:
     vgio_klt: bool = True                        # graph: rotation factors from tracked corners (optional, gated)
     # pipeline: measure on the back end's forward passes (at least vgio_align_min frames apart); a pass of the
     # frontend's own only after vgio_align_max frames without one.  Off: every visual_interval frames, on the back
-    # end's pass when it observes at that frame, else a pass of its own (3 views).  Off is better: the back end's
-    # passes carry map references, and measured on them alone the indoor scale came out 6 % short (development maps,
-    # 5090: office 0.11 -> 0.06 m, KITTI 07 2.76 -> 1.79, home 0.46 -> 0.36, cafe 0.24 -> 0.17; time +0-14 %)
-    vgio_align: bool = False
+    # end's pass when it observes at that frame, else a pass of its own (3 views).  None: by the mode
+    # (cross.pipeline._vgio_config): on in the stereo mode, off in the mono mode.  Mono: the back end's passes carry
+    # map references, and measured on them alone the indoor scale came out 6 % short (development maps, 5090: office
+    # 0.11 -> 0.06 m, KITTI 07 2.76 -> 1.79, home 0.46 -> 0.36, cafe 0.24 -> 0.17; time +0-14 %).  Stereo (the scale
+    # from the pair), development split: T1 0.33 -> 0.31 m, odometry 0.66 -> 0.53 m, T3 29/33 both, 20 % fewer uploads
+    # in remote sessions; one relocalization (office1-7) locks on 78 frames later (T2 0.87 -> 0.67), the other six T2
+    # sessions within 0.02 (outputs/2026-10-07_remote_cadence)
+    vgio_align: bool | None = None
     vgio_align_min: int = 2
     vgio_align_max: int = 4
     # graph: a pass's translation must agree with the IMU's prediction in length within this factor or in velocity
@@ -202,13 +206,17 @@ class ImuConfig:
     # disagreement with the gyro)
     vgio_stereo_pnp_rotation: object = False
     # stereo + IMU: the translation tests with the IMU as the arbiter (VggtImuFrontend._stereo_gate): the pass and the
-    # corners' motion must agree with the IMU's prediction within 4 sigma (vgio_stereo_gate_factor > 1 also accepts
-    # within that factor, the monocular test's tolerance for the learned scale); vgio_stereo_gate_pairs: the pass's
-    # keyframe pairs (~2 s) too, against the graph's motion (KITTI 01: a pass accepted on its short pair pulled every
-    # velocity of the window through its long ones, 24 -> 2 m/s; ATE 266 -> 38 m with the test)
+    # corners' motion must agree with the IMU's prediction (vgio_stereo_gate_factor > 1 also accepts within that factor,
+    # the monocular test's tolerance for the learned scale); vgio_stereo_gate_pairs: the pass's keyframe pairs (~2 s)
+    # too, against the graph's motion (KITTI 01: a pass accepted on its short pair pulled every velocity of the window
+    # through its long ones, 24 -> 2 m/s; ATE 266 -> 38 m with the test).  The tests know how the cues fail: a pass
+    # collapses to less motion (KITTI 01: 10.7 % of the passes > 15 % short, 0.07 % > 15 % long), the corners lock onto
+    # vehicles alongside (mostly short too); below the prediction a cue must be likelier the truth than a collapse at
+    # its recent failure rate, and two consistent passes far above it override the IMU
     vgio_stereo_gate_factor: float = 1.0
     vgio_stereo_gate_pairs: bool = True
     vgio_debug_costs: bool = False               # graph: log the cost of each factor type per solve (diagnostics)
+    vgio_trace: str = ""                         # diagnostics: a JSON line per visual measurement to this file ("": none)
 
 
 @dataclass

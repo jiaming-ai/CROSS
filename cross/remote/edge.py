@@ -12,13 +12,17 @@ class ObservationCadence:
     obs_max_interval_steps mapped frames since the last observation) on the edge's own odometry: the frames whose images
     the server needs.  The back end decides on the same motion (the deltas the edge sends), so the two agree up to
     rounding; a frame the back end wants without its image is observed at the next one that has it.  Its adaptive
-    relaxation while one hypothesis dominates (obs_confident_*) is not known to the edge: the strict rule sends more."""
+    relaxation while one hypothesis dominates (obs_confident_*) follows the server's last reply (confident): exact
+    without latency; with latency the edge sends a few images the back end skips, or the back end observes a frame later."""
 
     def __init__(self, pose_est_cfg):
         c = self.cfg = pose_est_cfg
         self.min_t, self.min_r = float(c.obs_min_translation), float(c.obs_min_rotation)
         self.max_steps, self.warmup = int(c.obs_max_interval_steps), int(c.obs_warmup_steps)
         self.every_frame = self.min_t <= 0 and self.min_r <= 0 and self.max_steps <= 1
+        relax = int(getattr(c, "obs_confident_max_interval_steps", 0))
+        self.relaxed = (relax, float(c.obs_confident_min_translation), float(c.obs_confident_min_rotation)) if relax > 0 else None
+        self.confident = False                   # the back end's state in its last reply (MapServer: map.confident)
         self.processed = self.start = self.steps = 0
         self.T = np.eye(4)
         self.missing = False
@@ -35,6 +39,7 @@ class ObservationCadence:
     def frame(self, delta, map_frame: bool) -> bool:
         """The motion of this frame (None: missing) and whether the back end steps it; True if it will observe it (or
         initialize on it)."""
+        self._undo = None
         if delta is None:
             self.missing = True                  # the back end re-initializes at its next step (kidnapped)
         else:
@@ -45,20 +50,34 @@ class ObservationCadence:
         if self.processed == 1 or self.missing:
             self.missing = False
             self.start, self.steps, self.T = self.processed, 0, np.eye(4)
-            return True
+            return True                          # (the image is needed: no veto)
         if self.every_frame:
             return True
         self.steps += 1
-        if self.processed - self.start <= self.warmup or self.steps >= self.max_steps or getattr(self, "unknown", False):
-            self.unknown = False
+        unknown = getattr(self, "unknown", False)
+        max_steps, min_t, min_r = self.max_steps, self.min_t, self.min_r
+        if self.relaxed is not None and self.confident:
+            max_steps, min_t, min_r = self.relaxed
+        if self.processed - self.start <= self.warmup or self.steps >= max_steps or unknown:
             observe = True
         else:
-            moved = self.min_t > 0 and float(np.linalg.norm(self.T[:3, 3])) >= self.min_t
+            moved = min_t > 0 and float(np.linalg.norm(self.T[:3, 3])) >= min_t
             angle = float(np.arccos(np.clip((np.trace(self.T[:3, :3]) - 1.0) / 2.0, -1.0, 1.0)))
-            observe = moved or (self.min_r > 0 and angle >= self.min_r)
+            observe = moved or (min_r > 0 and angle >= min_r)
         if observe:
-            self.steps, self.T = 0, np.eye(4)
+            self._undo = (self.steps, self.T, unknown)
+            self.steps, self.T, self.unknown = 0, np.eye(4), False
         return observe
+
+    def can_veto(self) -> bool:
+        return self._undo is not None
+
+    def veto(self):
+        """This frame's image is not sent after all (the rate cap): the back end defers the observation to the next
+        frame with an image, and the copy keeps counting as it does."""
+        if self._undo is not None:
+            self.steps, self.T, self.unknown = self._undo
+            self._undo = None
 
 
 class RemotePipeline:
@@ -76,7 +95,8 @@ class RemotePipeline:
     odometry: T_map(b) T_odom(b)^-1 T_odom(t)."""
 
     def __init__(self, frontend, link, mode, odometry, cadence, mapping_interval=1, upload="predicted",
-                 frontend_factory=None, server=None, continuous_start_in_map=False, depth_model=None, K=None):
+                 frontend_factory=None, server=None, continuous_start_in_map=False, depth_model=None, K=None,
+                 obs_cap=0.0, send_right=True):
         if upload not in ("predicted", "all"):
             raise ValueError(f"Unknown upload policy {upload}")
         self.frontend, self.link, self.server = frontend, link, server
@@ -87,6 +107,7 @@ class RemotePipeline:
         self.frontend_factory = frontend_factory
         self.continuous_start_in_map = continuous_start_in_map
         self.depth_model, self.K = depth_model, K
+        self.send_right = bool(send_right)       # False: the back end observes on the left image only (ff.right_image)
         self.initialized = self.mapped_now = False
         self.index = -1                          # frames processed in this session
         self._frames = 0
@@ -96,8 +117,16 @@ class RemotePipeline:
         self._sent = {}                          # frame index -> dataset time it was sent
         self.last_estimate = None
         self.frontend_pose = None
-        self.stats = dict(frames=0, uploads=0, requests=0, replies=0, map_lag_frames=[], measurement_lag_s=[],
+        self.stats = dict(frames=0, uploads=0, requests=0, replies=0, capped=0, map_lag_frames=[], measurement_lag_s=[],
                           map_lag_s=[])
+        # rate cap (obs_cap s, 0: off): an observation is sent only if the server can start it within obs_cap s, by a
+        # model of its queue in send time from the server time of each kind of message, learned from the replies
+        self.obs_cap = float(obs_cap or 0.0)
+        self._costs = {}                         # (observed, request) -> server seconds (running mean)
+        self._q_free = -np.inf                   # when the server will have finished what was sent (send-time clock)
+        self._kind = {}                          # frame index -> request sent with it
+        self._inflight = {}                      # frame index -> (time sent, its expected server seconds), in order
+        self._net = np.inf                       # the network's delay: the smallest (reply lag - server seconds)
 
     # ------------------------------------------------------------------ server passthroughs (simulated link)
     @property
@@ -179,26 +208,13 @@ class RemotePipeline:
         rgb = frame["rgb"]
         estimate = None
         if self.frontend is not None:
-            import cv2
             estimate = self.frontend.track(frame)
             valid = bool(estimate.diagnostics.get("valid", True))
             observable = valid or bool(estimate.diagnostics.get("unknown_motion", False))
             index = getattr(self.frontend, "index", 1) - 1
             map_now = observable and (not self.initialized or index % self.mapping_interval == 0)
             req, self.frontend.request = self.frontend.request, None
-            if req is not None:
-                req["anchor"] = bool(map_now and req["m"] is not None)
             delta, cov, fpose = estimate.delta_pose, estimate.motion_covariance, estimate.pose.copy()
-            depth = right = None
-            if map_now or req is not None:
-                depth = frame.get("depth")
-                if depth is None:
-                    depth = estimate.depth
-                if depth is None and self.depth_model is not None and map_now:
-                    depth = self.depth_model.predict_metric(rgb, self.K, rgb.shape[:2])
-                if depth is not None and depth.shape[:2] != rgb.shape[:2]:
-                    depth = cv2.resize(depth, (rgb.shape[1], rgb.shape[0]))
-                right = frame.get("rgb_right")
             chart = fpose.copy() if map_now and not self.initialized else None
         else:
             map_now, req = True, None
@@ -206,11 +222,36 @@ class RemotePipeline:
             if delta is not None and i > 0:
                 self._odom = self._odom @ np.asarray(delta, dtype=np.float64)
             fpose = self._odom.copy()
-            depth, right, chart = frame.get("depth"), frame.get("rgb_right"), None
+            chart = None
         observe = self.cadence.frame(delta, map_now)
+        capped = False
+        if observe and self.obs_cap > 0 and self.cadence.can_veto():
+            if self._cost(True, req is not None) is not None and self._q_free - t > self.obs_cap:
+                self.cadence.veto()              # the server could not start it in time: the next frame instead
+                observe, capped = False, True
+                self.stats["capped"] += 1
+        if self.frontend is not None:
+            if req is None and self.frontend.align is not None:
+                req = self.frontend.aligned_request(map_now and observe)
+                self.frontend.request = None
+            if req is not None:
+                req["anchor"] = bool(map_now and req["m"] is not None)
         send_images = (map_now and (observe or self.upload == "all")) or req is not None
+        depth = right = None
+        if send_images:
+            depth, right = frame.get("depth"), frame.get("rgb_right") if self.send_right else None
+            if self.frontend is not None:
+                import cv2
+                if depth is None:
+                    depth = estimate.depth
+                if depth is None and self.depth_model is not None and map_now:
+                    depth = self.depth_model.predict_metric(rgb, self.K, rgb.shape[:2])
+                if depth is not None and depth.shape[:2] != rgb.shape[:2]:
+                    depth = cv2.resize(depth, (rgb.shape[1], rgb.shape[0]))
         msg = {"index": i, "timestamp": t, "delta_pose": delta, "motion_covariance": cov, "map_frame": map_now,
                "initial_chart_pose": chart, "request": req}
+        if capped and map_now and send_images:
+            msg["no_observation"] = True         # the images serve the odometry's request only
         if send_images:
             msg.update(rgb=rgb, rgb_right=right, depth=depth)
             self.stats["uploads"] += 1
@@ -218,6 +259,10 @@ class RemotePipeline:
         self.stats["frames"] += 1
         self._fpose[i] = fpose
         self._sent[i] = t
+        self._kind[i] = req is not None
+        expected = self._cost(bool(observe and map_now), req is not None) or 0.0
+        self._inflight[i] = (t, expected)
+        self._q_free = max(self._q_free, t) + expected
         self.link.send(msg, t)
         self._receive(t)                         # a reply that arrived at once (no latency)
         if map_now:
@@ -232,10 +277,29 @@ class RemotePipeline:
         self._prune()
         return estimate
 
+    def _cost(self, observed, request):
+        return self._costs.get((bool(observed), bool(request)))
+
     def _receive(self, t):
         for r in self.link.poll(t):
             self.stats["replies"] += 1
             sent = self._sent.pop(r["index"], None)
+            had_req = self._kind.pop(r["index"], "token" in r)
+            cost = r.get("link_cost", r.get("server_seconds"))
+            flight = self._inflight.pop(r["index"], None)
+            if cost is not None:                 # the server time of this kind of message (running mean)
+                key = (bool((r.get("work") or {}).get("observed")), bool(had_req))
+                old = self._costs.get(key)
+                self._costs[key] = float(cost) if old is None else 0.8 * old + 0.2 * float(cost)
+                if flight is not None:
+                    # the queue model re-anchored on this message: it waited lag - server time - network delay, the
+                    # server finished it then, and the messages sent after it follow
+                    lag = t - flight[0]
+                    self._net = min(self._net, lag - float(cost))
+                    q = flight[0] + max(lag - float(cost) - self._net, 0.0) + float(cost)
+                    for t_j, c_j in self._inflight.values():
+                        q = max(q, t_j) + c_j
+                    self._q_free = q
             if r.get("summary") is not None or "token" in r:
                 if self.frontend is not None:
                     self.frontend.close(r["token"], r.get("summary"))
@@ -243,6 +307,7 @@ class RemotePipeline:
                     self.stats["measurement_lag_s"].append(t - sent)
             if r.get("map") is not None:
                 self._map = r["map"]
+                self.cadence.confident = bool(r["map"].get("confident", False))
                 self.stats["map_lag_frames"].append(self.index - r["index"])
                 if sent is not None:
                     self.stats["map_lag_s"].append(t - sent)
@@ -312,7 +377,7 @@ class _RemoteKeyframes:
                 for k, v in r["nodes"].items()}
 
 
-def remote_session(pipeline, link_factory, upload="predicted"):
+def remote_session(pipeline, link_factory, upload="predicted", obs_cap=0.0):
     """A local session (cross.pipeline.build_session: a Pipeline with external or VGGT-inertial odometry) split into a
     server (its back end and the odometry's pass service) and an edge behind the link link_factory(server)."""
     from .server import MapServer
@@ -325,8 +390,6 @@ def remote_session(pipeline, link_factory, upload="predicted"):
     frontend = pipeline.frontend
     service = None
     if frontend is not None:
-        if frontend.config.imu.vgio_align:
-            raise ValueError("vgio_align (measurements only on the back end's passes) needs a local session")
         service, frontend.service = frontend.service, None
     server = MapServer(pipeline.mapper, service)
     factory = None
@@ -339,4 +402,5 @@ def remote_session(pipeline, link_factory, upload="predicted"):
                           ObservationCadence(pipeline.mapper.config.pose_est), pipeline.mapping_interval, upload,
                           frontend_factory=factory, server=server,
                           continuous_start_in_map=pipeline.continuous_start_in_map,
-                          depth_model=pipeline.depth_model, K=pipeline.K)
+                          depth_model=pipeline.depth_model, K=pipeline.K, obs_cap=obs_cap,
+                          send_right=pipeline.mapper.config.pose_est.ff.right_image != "left" or pipeline.odometry == "vgio")
