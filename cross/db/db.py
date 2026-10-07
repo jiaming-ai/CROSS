@@ -1,3 +1,4 @@
+from loguru import logger
 from .boq import BoQ
 from .index import DescriptorIndex, PCAProjection, ScoreCalibration, SpatialIndex, projection_from_config
 import numpy as np

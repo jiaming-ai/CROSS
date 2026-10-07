@@ -12,14 +12,13 @@ positions of the belief's hypotheses (or near a GPS fix) that locality-aware ret
 """
 from __future__ import annotations
 
-import logging
 import math
 from typing import Dict, Optional, Sequence
 
 import numpy as np
 import torch
+from loguru import logger
 
-logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------------------------------------------------
