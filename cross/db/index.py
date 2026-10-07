@@ -144,17 +144,24 @@ class ScoreCalibration:
         n = X.shape[0]
         g = torch.Generator(device="cpu").manual_seed(1)
         qi = torch.randperm(n, generator=g)[: min(n_q, n)].to(X.device)
-        S = X[qi].float() @ X.float().T
-        near = (qi[:, None] - torch.arange(n, device=X.device)[None]).abs() <= exclude
-        S[near] = -9
         kk = min(k, max(1, n - 2 * exclude - 1))
-        top = S.topk(kk, dim=1).indices
-        rnd = torch.randint(0, n, (len(qi), n_rand), generator=g).to(X.device)
-        xi = torch.cat([top, rnd], 1).reshape(-1)
-        ai = qi[:, None].expand(-1, kk + n_rand).reshape(-1)
-        full = (X[ai].float() * X[xi].float()).sum(1)
-        zq, zy = Z[ai].float(), Z[xi].float()
-        s = (zq * zy).sum(1)
+        Xf, Zf = X.float(), Z.float()
+        ez = Zf.pow(2).sum(1)
+        fulls, ss, eqs, eys = [], [], [], []
+        for i in range(0, len(qi), 256):              # pair scores from chunked products (no per-pair gathers)
+            q = qi[i:i + 256]
+            S = Xf[q] @ Xf.T
+            Sm = S.clone()
+            Sm[(q[:, None] - torch.arange(n, device=X.device)[None]).abs() <= exclude] = -9
+            top = Sm.topk(kk, dim=1).indices
+            rnd = torch.randint(0, n, (len(q), n_rand), generator=g).to(X.device)
+            xi = torch.cat([top, rnd], 1)
+            fulls.append(torch.gather(S, 1, xi).reshape(-1))
+            ss.append(torch.gather(Zf[q] @ Zf.T, 1, xi).reshape(-1))
+            eqs.append(ez[q][:, None].expand_as(xi).reshape(-1))
+            eys.append(ez[xi].reshape(-1))
+        full, s = torch.cat(fulls), torch.cat(ss)
+        eq_all, ey_all = torch.cat(eqs), torch.cat(eys)
         # isotonic regression of full on s (pool adjacent violators on the sorted pairs), knots for np.interp
         o = torch.argsort(s)
         xs, ys = s[o].cpu().numpy().astype(np.float64), full[o].cpu().numpy().astype(np.float64)
@@ -169,7 +176,7 @@ class ScoreCalibration:
         idx = np.unique(np.linspace(0, len(xs) - 1, 256).astype(int))
         iso_x, iso_y = xs[idx], fitted[idx]
         # residual model: full - s ~ beta * r_q r_y cos + c
-        eq, ey = zq.pow(2).sum(1).clamp(0, 1), zy.pow(2).sum(1).clamp(0, 1)
+        eq, ey = eq_all.clamp(0, 1), ey_all.clamp(0, 1)
         f = torch.sqrt((1 - eq) * (1 - ey)) * s / torch.sqrt(eq * ey).clamp_min(1e-6)
         A = torch.stack([f, torch.ones_like(f)], 1).double()
         sol = torch.linalg.lstsq(A, (full - s).double()[:, None]).solution.flatten()
