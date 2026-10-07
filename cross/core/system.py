@@ -1997,7 +1997,7 @@ class System:
     def _geo_reference_mask(self, valid_keyframes, valid_poses):
         """References whose implied current pose (map frame) contradicts the current GNSS fix are dropped."""
         geo = self._geo
-        if geo.current is None or not geo.anchored:
+        if not geo.anchored or (geo.current is None and geo.compass_last is None):
             return None
         in_map = self.session_localized()
         keep = np.ones(len(valid_keyframes), dtype=bool)
@@ -2007,6 +2007,8 @@ class System:
             T = (kf.pose_mu[0] @ valid_poses[i]).matrix().detach().cpu().numpy().astype(np.float64)
             ok = geo.proposal_consistent(T[:3, 3])
             if ok is False:
+                keep[i] = False
+            elif self.config.geo.compass_gate and geo.heading_consistent(T[:3, :3]) is False:
                 keep[i] = False
         if not keep.all():
             logger.debug(f"geo: {int((~keep).sum())} of {len(keep)} references inconsistent with the GNSS fix")

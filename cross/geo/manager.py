@@ -186,8 +186,10 @@ class GeoManager:
         outdoor_ok = self.last_decision is not None and self.last_decision.used
         h = self.compass.heading(sample, outdoor_ok=outdoor_ok)
         if h is None:
+            self.compass_last = None          # disturbed: no heading this frame
             return
         self.compass_last = h
+        self.compass_t = self.now
         if self.anchored and in_map_frame and outdoor_ok and T_map_cam is not None:
             cam_yaw = self.anchor.heading_enu(T_map_cam[:3, :3])
             self.compass.add_offset_sample(h[0], cam_yaw)
@@ -372,6 +374,23 @@ class GeoManager:
         ok = float(r @ np.linalg.solve(S, r)) <= self.k2
         if not ok:
             self.stats["proposals_rejected"] += 1
+        return ok
+
+    def heading_consistent(self, R_map_cam: np.ndarray) -> Optional[bool]:
+        """Chi-square test (1 dof) of a proposed camera orientation (map frame) against the compass heading of this
+        frame (undisturbed, offset calibrated); None without a usable compass heading."""
+        if not self.anchored or self.compass_last is None or self.compass.offset is None:
+            return None
+        if self.now is not None and self.now - getattr(self, "compass_t", -1e18) > self.cfg.fix_max_age_s:
+            return None
+        yaw_c = self.compass.camera_yaw(self.compass_last[0])
+        yaw_p = self.anchor.heading_enu(np.asarray(R_map_cam, float))
+        spread = getattr(self.compass, "offset_spread", None) or 0.0
+        sig = math.sqrt(max(self.compass_last[1], spread) ** 2 + self.anchor.yaw_std() ** 2)
+        self.stats["heading_tested"] = self.stats.get("heading_tested", 0) + 1
+        ok = float(wrap(yaw_p - yaw_c)) ** 2 <= (sig ** 2) * float(chi2.ppf(self.conf, 1))
+        if not ok:
+            self.stats["heading_rejected"] = self.stats.get("heading_rejected", 0) + 1
         return ok
 
     # ------------------------------------------------------------------ persistence / export

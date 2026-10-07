@@ -786,6 +786,8 @@ class GeoConfig:
     retrieval_margin_m: float = 10.0          # retrieval gate radius beyond the fix's chi-square radius (views of the
                                               # same place from a few metres away)
     fix_max_age_s: float = 3.0                # a fix gates proposals / retrieval for this long (odometry carries it)
+    compass_gate: bool = True                 # references whose heading contradicts the compass are dropped (needs the
+                                              # compass offset, calibrated against the GNSS-anchored map)
     compass_sigma_deg: float = 5.0
     compass_offset_deg: Optional[float] = None   # compass -> camera heading offset; None: calibrated online
     compass_frame: str = "frd"                # body frame of raw magnetometer / accelerometer samples
