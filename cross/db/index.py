@@ -374,10 +374,10 @@ class _IVF:
         self._n_sorted = 0
 
     @classmethod
-    def train(cls, X: torch.Tensor, nlist: int, iters: int = 12, sample: int = 256) -> "_IVF":
+    def train(cls, X: torch.Tensor, nlist: int, iters: int = 12, sample: int = 64, max_sample: int = 500000) -> "_IVF":
         g = torch.Generator(device="cpu").manual_seed(0)
         n = X.shape[0]
-        take = torch.randperm(n, generator=g)[: min(n, nlist * sample)].to(X.device)
+        take = torch.randperm(n, generator=g)[: min(n, nlist * sample, max_sample)].to(X.device)
         S = X[take].float()
         C = S[torch.randperm(S.shape[0], generator=g)[:nlist].to(X.device)].clone()
         for _ in range(iters):     # spherical k-means
@@ -435,7 +435,7 @@ class _IVF:
 def _argmax_chunked(X: torch.Tensor, C: torch.Tensor, chunk: int = 65536) -> torch.Tensor:
     out = []
     for i in range(0, X.shape[0], chunk):
-        out.append((X[i:i + chunk] @ C.T).argmax(1))
+        out.append((X[i:i + chunk].to(C.dtype) @ C.T).argmax(1))
     return torch.cat(out) if out else torch.empty(0, dtype=torch.long, device=X.device)
 
 
