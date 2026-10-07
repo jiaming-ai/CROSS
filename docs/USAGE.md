@@ -115,6 +115,18 @@ Override one value with `--set section.key=value` (the `scripts/` runners; `run.
 YAML file and pass it with `--config`. Some options (charts, session recovery, historical retrieval slots, ...) are off by default and are
 enabled by the mono profiles.
 
+**Keyframe quality filter** (`mapping.keyframe_quality`, `cross/core/kf_quality.py`). Views that are mostly blocked or
+empty are not stored as permanent keyframes: a person or object right in front of the camera, a wall or shelf at arm's
+length, darkness, glare, a covered lens. They waste storage, and views of the same occluder at different places look
+alike, so they get retrieved at the wrong place. Such a frame becomes a temporary node: the odometry chain is kept,
+with no image and no descriptor. The test is the share of the view that shows textured, well-exposed scene content
+at a normal distance. The near field comes from sensor depth, or from stereo matching in the stereo mode; people are
+found by a small detector. Thresholds are relative to the session's running medians.
+A view that is only textureless (a white wall) is kept unless it shows no structure above the sensor noise. On by
+default; `--set mapping.keyframe_quality.enabled=false` turns it off, and `skip_observation=true` also skips observing
+with such a frame (not recommended: it lost relocalization in tests). The test set with injected junk views is
+`benchmark/datasets/inject_junk.py` (`benchmark/dev.py ... --tier occ`).
+
 **Camera mounting and the vertical.** Relocalization proposals are clustered, and matched to hypotheses, in place
 coordinates: position on the horizontal plane plus heading (`mapping.projection`). The default assumes a
 forward-looking camera on a ground robot, so the vertical is the camera's y axis in the first frame and height is

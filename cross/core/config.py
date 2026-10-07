@@ -592,6 +592,41 @@ class ProjectionConfig:
 
 
 @dataclass
+class KeyframeQualityConfig:
+    """Keyframe quality filter (cross/core/kf_quality.py): a frame whose view is mostly blocked by something close to
+    the camera (a person, an object, a wall at arm's length), clipped, or without texture (blank surface, blur, covered
+    lens) is not stored as a permanent keyframe (it becomes a temporary node: odometry chain kept, no image, no
+    descriptor).  Decided by the informative fraction of the view against the session's running medians.
+    On by default: on the dev OpenLORIS scenes T2 / T3 were identical per query in the stereo, RGB-D and mono modes
+    (T1 within 4 mm), and with injected junk views (benchmark/datasets/inject_junk.py) 52-68 % fewer junk keyframes
+    were stored."""
+    enabled: bool = True
+    # also do not observe (retrieve + estimate) with a junk frame: the odometry carries the belief, as on a frame the
+    # observation cadence skips
+    skip_observation: bool = False
+    info_min: float = 0.35          # junk when the informative fraction < min(info_min, info_rel * session median)
+    info_rel: float = 0.5
+    texture_rel: float = 0.25       # flat cell: gradient < texture_rel * the session's typical textured-cell gradient
+    # a view removed mostly for flat cells (white wall, floor) is junk only when it is empty: its 90th-percentile cell
+    # gradient is below empty_snr x the image's noise level (pure noise ~0.6; blank surfaces 0.6-0.7, low-contrast real
+    # walls 3-5 in OpenLORIS home, whose rejection cost relocalization there)
+    empty_snr: float = 1.5
+    clip_dark: float = 0.04         # clipped pixel: luminance below / above these
+    clip_bright: float = 0.96
+    near_abs: float = 0.8           # near pixel: depth < max(near_abs, near_rel * the session's typical depth) metres
+    near_rel: float = 0.25
+    person: bool = True             # person detections (SSDLite) remove their cells
+    person_score: float = 0.5
+    stereo_near: bool = True        # stereo input without depth: the near field from SGBM on the rectified pair
+    # feed-forward modes: add the near cells of the pass's depth of the current view.  Off: VGGT-Omega's depth of a
+    # close occluder follows its apparent size (a pasted person at 0.4-0.75 m came out at 1.6-2.8 m)
+    pass_depth: bool = False
+    grid: int = 16                  # cells across the image width
+    window: int = 200               # frames of the running medians
+    warmup: int = 5                 # the first frames of a session are never junk (the medians are seeded)
+
+
+@dataclass
 class MappingConfig:
     kf_gmm_n_components: int = 5
     kf_retrieval_threshold_new_kf: float = 0.75
@@ -604,6 +639,7 @@ class MappingConfig:
     cluster_std: ClusterStdConfig = field(default_factory=ClusterStdConfig)
     hypothesis: HypothesisConfig = field(default_factory=HypothesisConfig)
     topo: TopoConfig = field(default_factory=TopoConfig)
+    keyframe_quality: KeyframeQualityConfig = field(default_factory=KeyframeQualityConfig)
 
 
 @dataclass

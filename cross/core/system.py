@@ -121,6 +121,13 @@ class System:
             self.depth_pred = DepthPredUni(device=self.device)
 
         
+        ################ keyframe quality filter ################
+        self._kf_quality = None
+        self._frame_quality = None
+        if self.config.mapping.keyframe_quality.enabled:
+            from cross.core.kf_quality import KeyframeQuality
+            self._kf_quality = KeyframeQuality(self.config.mapping.keyframe_quality, device=self.device)
+
         ################ counter ################
         self._processed_frame_num = 0
         # Immutable provenance of the graph present at map load. New query
@@ -307,6 +314,8 @@ class System:
         self.camera = camera
         if self.pose_est_type == PoseEstType.FF and hasattr(self.pose_est, "set_camera"):
             self.pose_est.set_camera(camera.K, camera.frame_width, camera.frame_height)
+        if self._kf_quality is not None:
+            self._kf_quality.set_stereo(camera.K, T_right_in_left)
 
         ################ visualization ################
         if visualizer is not None:
@@ -1086,6 +1095,27 @@ class System:
                 )
             return
 
+        # keyframe quality (mapping.keyframe_quality): a junk view (close occluder, clipped, textureless) is never
+        # stored as a permanent keyframe; with skip_observation it is not observed either (as a skipped observation)
+        self._frame_quality = None
+        if self._kf_quality is not None:
+            # the person detector (the costly cue) runs here only when a junk frame must not be observed; otherwise
+            # only for the frames that are about to become permanent keyframes (_add_new_kf)
+            self._frame_quality = self._kf_quality.assess(rgb_image, depth_image, rgb_right=rgb_right,
+                                                          person=self.config.mapping.keyframe_quality.skip_observation)
+            self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
+            if self._frame_quality.junk and self.config.mapping.keyframe_quality.skip_observation:
+                self._kf_quality.stats["skipped_observation"] += 1
+                current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
+                ret.update(current_mu=current_mu, current_sigma=current_sigma, current_weights=current_weights,
+                           hypotheses=self.hypothesis_manager.hypotheses, observation_skipped=True, valid_keyframes=[])
+                self.last_step_diagnostics["observation_skipped_junk"] = True
+                if self.visualize:
+                    self.visualizer.visualize_tracking_step(
+                        kf=None, state_info=ret, gt_info=kwargs.get("data"), step_idx=self._processed_frame_num,
+                    )
+                return
+
         # temporal anchor for the feed-forward estimator: previous observed frame + odometry
         odom_anchor = None
         if self.use_odometry:
@@ -1106,6 +1136,11 @@ class System:
         # update the observation likelihood
         ################################
         ret.update(self._construct_observation_dist(rgb_image, depth_image, rgb_right=rgb_right, odom_anchor=odom_anchor))
+        if (self._frame_quality is not None and self.config.mapping.keyframe_quality.pass_depth
+                and getattr(self.pose_est, "last_curr_depth", None) is not None):
+            d_model, metric = self.pose_est.last_curr_depth
+            self._frame_quality = self._kf_quality.refine(self._frame_quality, d_model.float() * metric)
+            self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
         self.last_step_diagnostics["verified_keyframes"] = len(ret["valid_keyframes"])
         self.last_step_diagnostics["retrieval_audit"] = ret["retrieval_audit"]
         self.last_step_diagnostics["loaded_node_count"] = len(self.loaded_node_ids)
@@ -1796,6 +1831,15 @@ class System:
                 (self.pose_est_type == PoseEstType.PNP and confidence.max() < self.kf_match_threshold_new_kf) or \
                 (self.pose_est_type == PoseEstType.FF and confidence.max() < self.config.pose_est.ff.kf_conf_threshold_new_kf):
                 is_temp_kf = False
+
+        if not is_temp_kf and self._frame_quality is not None and rgb_image is not None:
+            self._frame_quality = self._kf_quality.add_person(self._frame_quality, rgb_image)
+            self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
+        if not is_temp_kf and self._frame_quality is not None and self._frame_quality.junk:
+            # a junk view (mapping.keyframe_quality) stays a temporary node: odometry chain kept, no image / descriptor
+            is_temp_kf = True
+            self._kf_quality.stats["rejected_permanent"] += 1
+            self.last_step_diagnostics["keyframe_rejected"] = self._frame_quality.reason
 
         mu, sigma, weights = self.hypothesis_manager.get_active_dist()
         pose_charts = self.hypothesis_manager.get_active_charts()
