@@ -67,6 +67,26 @@ def test_scale_recovery_requires_repeated_consistent_evidence():
     assert filter_.uncertainty_variance == filter_.variance
 
 
+def test_scale_filter_tracks_disagreement_through_shape_inconsistent_observations():
+    def shape_rejected(scale, mad=0.45):
+        return ScaleObservation(log_scale=np.log(scale), variance=0.05, inlier_fraction=0.9, log_mad=mad,
+                                accepted=False, reason="inconsistent_shape")
+    held, tracking = LogScaleFilter(), LogScaleFilter(ScaleConfig(track_disagreement=True))
+    for f in (held, tracking):
+        f.update(ScaleObservation(log_scale=np.log(0.75), variance=0.12**2, inlier_fraction=0.9, log_mad=0.1,
+                                  accepted=True, reason="accepted"))
+    for scale in (0.9, 1.8, 2.0, 2.5, 2.6):         # the scale moves; the per-pixel ratios scatter (close wall)
+        held.update(shape_rejected(scale))
+        tracking.update(shape_rejected(scale))
+    assert held.scale == pytest.approx(0.75)        # default: rejected, the filter holds
+    assert tracking.scale > 1.3                     # follows the persistent disagreement
+    noisy = LogScaleFilter(ScaleConfig(track_disagreement=True))
+    noisy.update(ScaleObservation(log_scale=np.log(3.0), variance=0.12**2, inlier_fraction=0.9, log_mad=0.1,
+                                  accepted=True, reason="accepted"))
+    noisy.update(shape_rejected(25.0, mad=1.5))     # one wildly scattered observation barely moves it
+    assert noisy.scale < 3.5
+
+
 def test_sparse_metric_scale_requires_spatially_distributed_patches():
     from cross.mono.scale import observe_sparse_scale
     rng = np.random.default_rng(12)
