@@ -293,8 +293,12 @@ def main():
     if lc.get("distill", False):
         from vggt_omega.models import VGGTOmega
         teacher = VGGTOmega()
-        teacher.load_state_dict(torch.load(cfg["pretrained"], map_location="cpu", weights_only=True),
-                                strict=False)
+        sd_t = torch.load(cfg.get("teacher", cfg["pretrained"]), map_location="cpu", weights_only=False)
+        sd_t = sd_t["model"] if isinstance(sd_t, dict) and isinstance(sd_t.get("model"), dict) else sd_t
+        missing_t, _ = teacher.load_state_dict(sd_t, strict=False)
+        if missing_t:      # a wrapped / mismatched checkpoint must not leave a randomly initialised teacher
+            raise RuntimeError(f"distillation teacher lacks {len(missing_t)} weights, e.g. {missing_t[:3]}")
+        del sd_t
         teacher = teacher.to(torch.bfloat16).cuda().eval().requires_grad_(False)
         teacher.camera_head.float()
         teacher.dense_head.float()
