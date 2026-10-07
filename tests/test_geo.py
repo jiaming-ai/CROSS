@@ -264,3 +264,29 @@ def test_manager_factors_correct_a_drifting_chain_in_the_pose_graph():
     assert np.sqrt((e_opt ** 2).mean()) < 0.25 * np.sqrt((e_odo ** 2).mean())
     assert np.sqrt((e_opt ** 2).mean()) < 4.0
     assert 5.0 < geo.err.tau < 60.0                # the receiver error's correlation time (30 s) from the residuals
+
+
+def test_geo_stream_nclt_layout(tmp_path):
+    """gnss.txt with NCLT's two rows per fix ('msg' column, satellites not reported), imu.txt with the magnetometer,
+    times.txt: one fix per frame on the loader's clock, unknown mode, compass sample; degradation."""
+    from cross.dataloader.geo import GeoStream, parse_degrade
+    t = 1000.0 + np.arange(0, 20, 0.2)
+    rows = []
+    for ti in t:
+        rows.append([ti, 42.29, -83.71, np.nan, 2, 0, 0.1, 1.0])
+        rows.append([ti, 42.29, -83.71, 270.0, 3, 0, 0.1, 1.0])
+    np.savetxt(tmp_path / "gnss.txt", np.array(rows), header="t_s lat_deg lon_deg alt_m msg num_sats track_rad speed_mps")
+    imu = np.c_[t, np.tile([0.2, 0.0, 0.45, 0.0, 0.0, -9.81, 0, 0, 0], (len(t), 1))]
+    np.savetxt(tmp_path / "imu.txt", imu, header="t_s mag_x mag_y mag_z acc_x acc_y acc_z gyro_x gyro_y gyro_z")
+    times = 1000.0 + np.arange(0, 19, 0.5)
+    np.savetxt(tmp_path / "times.txt", times)
+    gs = GeoStream.load(tmp_path, len(times), 2.0)
+    assert len(gs.fix) == len(t) and np.isfinite(gs.fix[:, 3]).all()        # one row per fix, with altitude
+    w = gs.window(3, 4, timestamp=2.0)
+    g = w["gnss"]
+    assert "mode" not in g and "num_sats" not in g                           # NCLT: quality not reported
+    assert abs(g["t"] - 2.0) < 1e-6 and abs(g["alt"] - 270.0) < 1e-9
+    assert "mag" in w["compass"]
+    gd = GeoStream.load(tmp_path, len(times), 2.0, degrade=parse_degrade("bias=20,outage=2:6"))
+    assert len(gd.fix) < len(gs.fix)
+    assert gd.window(5, 6, timestamp=3.0).get("gnss") is None                 # inside the outage

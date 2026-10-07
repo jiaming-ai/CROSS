@@ -98,6 +98,8 @@ def make_config(args) -> SystemConfig:
     else:
         cfg.pose_est.type = PoseEstType.PNP
     cfg.retrieval.top_k = args.top_k
+    if getattr(args, "gnss", False):
+        cfg.geo.enabled = True
     for kv in getattr(args, "set", None) or []:      # generic overrides: section.sub.key=value (YAML-parsed value)
         import yaml
         key, val = kv.split("=", 1)
@@ -157,6 +159,8 @@ def step_time_stats(dts) -> dict:
 def run_mapping(args, out: Path):
     ds = StereoSequenceLoader(args.map, depth_source=depth_source(args),
                               snr=args.snr, baseline=args.baseline, seed=args.seed, **odom_kwargs(args))
+    from cross.dataloader.geo import attach
+    attach(ds, args.map, args, query=False)
     system = new_session(args, ds, args.seed)
     recorder = None
     if getattr(args, "dump_obs", False):          # every observation of the mapping run (offline back-end studies)
@@ -245,6 +249,8 @@ def run_reloc(args, out: Path, meta: dict):
     ds = StereoSequenceLoader(args.query, depth_source=depth_source(args),
                               snr=args.snr, baseline=args.baseline, seed=None if args.seed is None else args.seed + 1,
                               **odom_kwargs(args))
+    from cross.dataloader.geo import attach
+    attach(ds, args.query, args, query=True)
     system = new_session(args, ds, args.seed)
     system.load_map(out / "map.pkl")
     n_map_kfs = len(system.hypothesis_manager.nodes)
@@ -407,6 +413,8 @@ def main():
     ap.add_argument("--dump-obs", action="store_true", help="write every observation of the mapping run to obs.jsonl (scripts/lc/obs_recorder.py)")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (e.g. 0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift of the odometry (deg per metre)")
+    from cross.dataloader.geo import add_args as add_geo_args
+    add_geo_args(ap)
     ap.add_argument("--odom-file", default=None, help="odometry file of the prepared folders to use instead of "
                     "odom_left.txt when present (e.g. odom_vio.txt from benchmark/datasets/prepare_vio.py)")
     ap.add_argument("--ff-meas-std", type=float, nargs=6, default=None, help="base measurement std [tx ty tz rx ry rz] of the FF estimator")
