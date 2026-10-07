@@ -108,6 +108,13 @@ def main():
             db = make_db(X, dev, projection=proj, **kw)
             db.vpr_model = SimpleNamespace(get_embedding=lambda _: q)
             row[label] = timed(lambda: db.query(0))
+            row[label]["rescored_rows"] = int(getattr(db.index, "last_rescored", 0))
+            if label == "codes_rescored":
+                for cap in (0, 64, 1024):
+                    db.index.max_rescore = cap
+                    row[f"{label}_cap{cap}"] = timed(lambda: db.query(0))
+                    row[f"{label}_cap{cap}"]["rescored_rows"] = int(db.index.last_rescored)
+                db.index.max_rescore = 256
             if label == "codes_rescored":
                 row[label + "_map_split"] = timed(lambda: db.query(0, max_kf_id=n // 2))
                 near = np.arange(0, min(n, 3000))

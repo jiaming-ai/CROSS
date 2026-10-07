@@ -250,7 +250,7 @@ class DescriptorIndex:
                  ivf_nlist: int = 0, ivf_nprobe: int = 16, ivf_min_rows: int = 200000, ann_shortlist: int = 256,
                  fit_at: int = 0, fit_dim: int = 0, fit_energy: float = 0.9, extend: bool = True,
                  extend_margin: float = 0.05, extend_dims: int = 64, max_dim: int = 2048, recent: int = 1024,
-                 shortlist: int = 64, calibration: str = "raw"):
+                 shortlist: int = 64, calibration: str = "raw", max_rescore: int = 256):
         self.dim_in = int(dim_in)
         self.device = device
         self.projection = projection
@@ -277,6 +277,8 @@ class DescriptorIndex:
         self.calibration: Optional[ScoreCalibration] = None        # code score -> full cosine (projected rows)
         self.shortlist = int(shortlist)                             # rows re-scored exactly (full descriptors in RAM)
         self.calibration_model = calibration
+        self.max_rescore = int(max_rescore)                        # extra rows re-scored by the bound (per query)
+        self.last_rescored = 0
         self._energy = torch.zeros(int(initial_capacity), device=device)   # |code|^2 per row (projected rows)
         self._e_ema = None
         self._since_extend = 0
@@ -521,7 +523,7 @@ class DescriptorIndex:
         return (db.float() @ q.float().unsqueeze(-1)).squeeze(-1)
 
     def query_scores(self, q_full: torch.Tensor, rows: Optional[torch.Tensor] = None, shortlist: int = 0,
-                     need: int = 10, max_rescore: int = 1024) -> torch.Tensor:
+                     need: int = 10, max_rescore: Optional[int] = None) -> torch.Tensor:
         """Scores of a query (full VPR descriptor) with the full-descriptor cosine's meaning: without a projection the
         exact scores; with one, code scores (calibrated if configured), where the full descriptors are in RAM (rows
         added in this process) re-scored exactly for the best `shortlist` rows and for every row that could still
@@ -561,9 +563,11 @@ class DescriptorIndex:
                 beta = min(1.0, max(0.05, float(self.calibration.meta["resid_ratio_q999"])))
             bound = s + beta * math.sqrt(max(0.0, 1.0 - eq)) * torch.sqrt((1.0 - ey).clamp_min(0.0))
             cand = ((bound >= kth) & ~done).nonzero(as_tuple=True)[0]
-            if cand.numel():
-                cand = cand[bound[cand].argsort(descending=True)[:max_rescore]]
+            cap = self.max_rescore if max_rescore is None else int(max_rescore)
+            if cand.numel() and cap > 0:
+                cand = cand[bound[cand].argsort(descending=True)[:cap]]
                 rescore(cand)
+        self.last_rescored = int(done.sum())
         return s
 
     def id_mask(self, max_kf_id: Optional[int] = None, min_kf_id: Optional[int] = None) -> torch.Tensor:

@@ -125,6 +125,7 @@ class DescriptorIndexConfig:
     # these are in RAM (keyframes added in this session); loaded maps use the code scores with this calibration
     # (raw | iso | resid; raw is best across sessions, see cross.db.index.ScoreCalibration)
     shortlist: int = 64
+    max_rescore: int = 256         # + rows whose code score + fitted residual margin reaches the k-th exact score
     calibration: str = "raw"
     store_dtype: str = "auto"      # auto: float32 without a projection, float16 with one
     backend: str = "exact"         # exact | ivf: inverted file (k-means cells), trained once ivf_min_rows rows exist

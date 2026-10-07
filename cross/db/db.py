@@ -89,7 +89,7 @@ class KeyframeDatabase:
             fit_at=g("fit_at", 0) if g("projection", None) == "map" else 0, fit_dim=g("fit_dim", 0),
             fit_energy=g("fit_energy", 0.9), extend=g("extend", True), extend_margin=g("extend_margin", 0.05),
             extend_dims=g("extend_dims", 64), max_dim=g("max_dim", 2048), recent=g("recent", 1024),
-            shortlist=g("shortlist", 64), calibration=g("calibration", "raw"))
+            shortlist=g("shortlist", 64), calibration=g("calibration", "raw"), max_rescore=g("max_rescore", 256))
 
     def _extend_buffer(self, min_size: int):
         """Extend the descriptor buffer if needed."""
