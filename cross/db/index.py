@@ -250,7 +250,7 @@ class DescriptorIndex:
                  ivf_nlist: int = 0, ivf_nprobe: int = 16, ivf_min_rows: int = 200000, ann_shortlist: int = 256,
                  fit_at: int = 0, fit_dim: int = 0, fit_energy: float = 0.9, extend: bool = True,
                  extend_margin: float = 0.05, extend_dims: int = 64, max_dim: int = 2048, recent: int = 1024,
-                 shortlist: int = 64, calibration: str = "raw", max_rescore: int = 256):
+                 shortlist: int = 64, calibration: str = "raw", max_rescore: int = 256, keep_full_max: int = 131072):
         self.dim_in = int(dim_in)
         self.device = device
         self.projection = projection
@@ -278,6 +278,7 @@ class DescriptorIndex:
         self.shortlist = int(shortlist)                             # rows re-scored exactly (full descriptors in RAM)
         self.calibration_model = calibration
         self.max_rescore = int(max_rescore)                        # extra rows re-scored by the bound (per query)
+        self.keep_full_max = int(keep_full_max)                    # rows whose full descriptors are kept in RAM
         self.last_rescored = 0
         self._energy = torch.zeros(int(initial_capacity), device=device)   # |code|^2 per row (projected rows)
         self._e_ema = None
@@ -322,6 +323,11 @@ class DescriptorIndex:
         if self.projection is not None:
             self._energy[row] = self.buf[row].float().pow(2).sum()
         self.n += 1
+        if self._refit_ok and self.n > self.keep_full_max and self.map_fitted:
+            # the session's full descriptors would outgrow RAM (32 KB each): the projection was last refitted on at
+            # least half of the map; from now on codes only (subspace extension still follows new kinds of place)
+            logger.info(f"descriptor index: {self.n} keyframes > keep_full_max: full descriptors released, no more refits")
+            self._refit_ok, self._full, self._full_ok, self._next_refit = False, None, None, 1 << 62
         if self._refit_ok:
             self._keep_full(row, desc)
         if self.map_fitted:

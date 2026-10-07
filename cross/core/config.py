@@ -112,7 +112,10 @@ class DescriptorIndexConfig:
     # holds `fit_at` keyframes (smaller maps are unchanged), then store float16 codes (0.5-4 KB instead of 64 KB per
     # keyframe), extending the subspace when the scene changes (cross.db.index.DescriptorIndex).  A path: a fixed
     # projection (.npz, PCAProjection.save).  A map saved with a projection always uses its own.
-    projection: Optional[str] = None
+    # On by default: below fit_at nothing changes (full descriptors, original scores); above it the stored scores keep
+    # the full cosine's meaning (exact re-scoring in session) and maps were identical on KITTI 07 (projection forced at
+    # 128 keyframes) and NCLT (5.5 km, fitted at 1024): see outputs/2026-10-07_retrieval_index
+    projection: Optional[str] = "map"
     fit_at: int = 4096
     fit_dim: int = 0               # 0: the fewest dimensions with held-out explained energy >= fit_energy (<= max_dim)
     fit_energy: float = 0.9        # (OpenLORIS / ROVER / SimChange: 256-600 dims; NCLT 5 cameras: the cap)
@@ -126,6 +129,7 @@ class DescriptorIndexConfig:
     # (raw | iso | resid; raw is best across sessions, see cross.db.index.ScoreCalibration)
     shortlist: int = 64
     max_rescore: int = 256         # + rows whose code score + fitted residual margin reaches the k-th exact score
+    keep_full_max: int = 131072    # full descriptors kept in CPU RAM (fp16, 32 KB each) up to this many keyframes
     calibration: str = "raw"
     store_dtype: str = "auto"      # auto: float32 without a projection, float16 with one
     backend: str = "exact"         # exact | ivf: inverted file (k-means cells), trained once ivf_min_rows rows exist
