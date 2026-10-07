@@ -63,6 +63,7 @@ class GeoManager:
         self.pending: List[int] = []               # keyframes whose factor arrived since the last optimisation
         self.last_factor_t = -1e18
         self.last_used_dist = None
+        self.window_ref_kf = None
         self.drift_flag = False
         self.last_decision = None
         self.current = None                        # the latest used fix of this step: {"enu", "sh", "t", "map"}
@@ -330,6 +331,10 @@ class GeoManager:
         self.pending = []
         self.drift_flag = False
         self.last_opt_kf = n_kf_now
+        # the latest keyframe the GNSS factors constrained at this optimisation: a later GNSS-triggered optimisation
+        # of a large map may keep the keyframes before it fixed (windowed PGO), everything since is free
+        live = [k for k in self.factors if k in nodes]
+        self.window_ref_kf = max(live) if live else None
         self.n_opt += 1
         self.stats["opt"] += 1
         if not self.factors:
