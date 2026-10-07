@@ -27,6 +27,13 @@ def as_float_image(t):
     return t.float() if t.dtype == torch.float16 else t
 
 
+def _stored_or_encoded(kf, field: str):
+    """What a keyframe holds for an image field, or its background-encoded reference when it holds a tensor."""
+    v = kf.stored_image(field)
+    pre = kf.__dict__.get("_pre_" + field)
+    return pre if (pre is not None and torch.is_tensor(v)) else v
+
+
 class KeyframeDatabase:
     def __init__(
         self,
@@ -73,6 +80,17 @@ class KeyframeDatabase:
         self._id_to_row: Dict[int, int] = {}
         self.spatial = SpatialIndex()              # keyframe positions, for locality-aware retrieval
         self._track_positions = bool(getattr(getattr(cfg, "locality", None), "enabled", False))
+
+        # keyframe image storage (cross/db/store.py): decoded-image cache and, with max_ram_images, the live spool
+        from cross.db.store import ImageSpool, set_decode_cache
+        scfg = getattr(getattr(system, "config", None), "storage", None)
+        self.storage_config = scfg
+        self.image_device = None            # set by System (storage.image_device); None: keep images where they come
+        self._spool = None
+        if scfg is not None:
+            set_decode_cache(scfg.decode_cache)
+            if scfg.format == "v2" and (scfg.max_ram_images > 0 or scfg.encode_ahead):
+                self._spool = ImageSpool(scfg, scfg.max_ram_images, scfg.encode_ahead)
 
         # Query parameters
         self.score_threshold_high = cfg.vpr_score_threshold_high
@@ -153,6 +171,11 @@ class KeyframeDatabase:
             raw_rgb_image = to_uint8_image(raw_rgb_image)
             raw_rgb_right = to_uint8_image(raw_rgb_right)
             depth_image = depth_image.half() if depth_image is not None else None
+        if self.image_device is not None:
+            # held where storage.image_device says (host RAM by default); converted on the compute device above
+            raw_rgb_image = raw_rgb_image.to(self.image_device) if raw_rgb_image is not None else None
+            raw_rgb_right = raw_rgb_right.to(self.image_device) if raw_rgb_right is not None else None
+            depth_image = depth_image.to(self.image_device) if depth_image is not None else None
         
         # Create PosedRGBD object
         keyframe = Keyframe(
@@ -182,6 +205,8 @@ class KeyframeDatabase:
         self._id_to_row[int(keyframe.id)] = row
         if mu is not None and getattr(self, "_track_positions", True):
             self.spatial.add(row, _position(keyframe))
+        if self._spool is not None:
+            self._spool.add(keyframe)
 
         return keyframe
 
@@ -261,14 +286,19 @@ class KeyframeDatabase:
         """
         from cross.core.conditional_pose import records
         self.index.finalize()            # map projection: refit on the whole map before its codes are stored
+        if self._spool is not None:
+            self._spool.flush()
         db_keyframes = []
         for atlas in self._keyframe_by_atlas:
             for kf in self._keyframe_by_atlas[atlas]:
                 db_keyframes.append({
                     "id": kf.id,
-                    "raw_rgb_image": kf.raw_rgb_image.cpu() if kf.raw_rgb_image is not None else None,
-                    "depth_image": kf.depth_image.cpu() if kf.depth_image is not None else None,
-                    "raw_rgb_right": kf.raw_rgb_right.cpu() if kf.raw_rgb_right is not None else None,
+                    # what the keyframe holds, not decoded: a tensor (any device) or a store reference
+                    # (cross/db/store.py writes both; store.materialize makes CPU tensors for the old format)
+                    # (a tensor already encoded in the background, storage.encode_ahead: its encoded reference)
+                    "raw_rgb_image": _stored_or_encoded(kf, "raw_rgb_image"),
+                    "depth_image": _stored_or_encoded(kf, "depth_image"),
+                    "raw_rgb_right": _stored_or_encoded(kf, "raw_rgb_right"),
                     "pose_mu": kf.pose_mu.cpu() if kf.pose_mu is not None else None,
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,

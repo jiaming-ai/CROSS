@@ -518,7 +518,8 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
         def factory():
             return vgio_frontend(K, edge_mc, mode, T_right_in_left, device="cpu")
         frontend = factory()
-    open_msg = {"mode": mode, "odometry": odometry, "mono_estimator": mono_estimator,
+    from cross_edge import PROTOCOL_VERSION
+    open_msg = {"protocol": PROTOCOL_VERSION, "mode": mode, "odometry": odometry, "mono_estimator": mono_estimator,
                 "camera": {"K": K, "width": int(camera.frame_width), "height": int(camera.frame_height)},
                 "T_right_in_left": None if T_right_in_left is None else np.asarray(T_right_in_left, dtype=np.float64),
                 "system_config": config_to_dict(cfg), "mono_config": None if mc is None else _to_dict(mc)}
@@ -527,24 +528,60 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
                           obs_cap=obs_cap, send_right=cfg.pose_est.ff.right_image != "left" or odometry == "vgio")
 
 
+def apply_settings(cfg, items):
+    """(In place) configuration overrides "section.sub.key=value" (YAML-parsed values; enums by their value)."""
+    import yaml
+    for kv in items or []:
+        key, val = kv.split("=", 1)
+        obj = cfg
+        parts = key.split(".")
+        for part in parts[:-1]:
+            obj = getattr(obj, part)
+        cur = getattr(obj, parts[-1])
+        v = yaml.safe_load(val)
+        if hasattr(cur, "value") and not isinstance(v, type(cur)):   # enums
+            v = type(cur)(v)
+        setattr(obj, parts[-1], v)
+    return cfg
+
+
 def server_session(open_msg, device="cuda"):
-    """The server of a remote session from the edge's open message (edge_session): (MapServer, factory of a new pass
-    service for a new session of the edge's odometry, information for the edge)."""
-    from cross.core.config import SystemConfig, _from_dict
+    """The server of a remote session from the edge's open message: (MapServer, factory of a new pass service for a new
+    session of the edge's odometry, information for the edge).  The CROSS runners' edge (edge_session) sends its
+    resolved configurations; a standalone edge (the cross-edge package) sends none: the server builds the mode's
+    shipped configuration (mode_config_files) + the named files of its configs/ folder ("config_files") + overrides
+    ("set"), and returns the cadence settings the edge copies (cross_edge.cadence)."""
+    from cross.core.config import SystemConfig, _from_dict, load_config
     from cross.core.types import Camera
     from cross.mono.config import MonoConfig
     from cross.remote.server import MapServer
+    from cross_edge import PROTOCOL_VERSION
+    from cross_edge.cadence import cadence_params
+    proto = open_msg.get("protocol", PROTOCOL_VERSION)
+    if int(proto) != PROTOCOL_VERSION:
+        raise ValueError(f"remote session protocol {proto}, this server speaks {PROTOCOL_VERSION}")
     cam = open_msg["camera"]
     camera = Camera(K=np.asarray(cam["K"], dtype=np.float64), frame_width=int(cam["width"]),
                     frame_height=int(cam["height"]))
-    cfg = _from_dict(SystemConfig, open_msg["system_config"])
+    mode, odometry = open_msg["mode"], open_msg["odometry"]
+    if open_msg.get("system_config") is not None:
+        cfg = _from_dict(SystemConfig, open_msg["system_config"])
+    else:
+        names = [str(n) for n in open_msg.get("config_files") or []]
+        if any(os.path.basename(n) != n or not n.endswith(".yaml") for n in names):
+            raise ValueError(f"config_files: names of {CONFIG_DIR} only, not {names}")
+        files = mode_config_files(mode, odometry, bool(open_msg.get("fast"))) + [os.path.join(CONFIG_DIR, n) for n in names]
+        cfg = apply_settings(load_config(*files) if files else SystemConfig(), open_msg.get("set"))
+        cfg.async_update = False
     mc = None if open_msg.get("mono_config") is None else _from_dict(MonoConfig, open_msg["mono_config"])
-    p = build_session(open_msg["mode"], open_msg["odometry"], camera, cfg, T_right_in_left=open_msg.get("T_right_in_left"),
+    p = build_session(mode, odometry, camera, cfg, T_right_in_left=open_msg.get("T_right_in_left"),
                       mono_config=mc, device=device, mono_estimator=open_msg.get("mono_estimator", "da3"))
     service = p.frontend.service if p.frontend is not None else None
     factory = (lambda: p.frontend_factory().service) if p.frontend_factory is not None else None
     import torch
-    info = {"gpu": torch.cuda.get_device_name() if torch.cuda.is_available() else "cpu"}
+    pe = p.mapper.config.pose_est
+    info = {"gpu": torch.cuda.get_device_name() if torch.cuda.is_available() else "cpu", "protocol": PROTOCOL_VERSION,
+            "cadence": cadence_params(pe), "right_image": pe.ff.right_image}
     return MapServer(p.mapper, service, keep_lie=False), factory, info
 
 

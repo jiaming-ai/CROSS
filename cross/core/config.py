@@ -574,6 +574,19 @@ class HypothesisConfig:
     reloc_min_verified_frames: int = 3
     reloc_realize_nats: float = 2.0
     detect_reject_cooldown_steps: int = 30   # steps a candidate is ignored after a rejected merge
+    # strong passes (0 = off): a proposal backed by at least strong_pass_min_refs references, each with covisibility
+    # >= strong_pass_min_covis, is a multi-view check by itself; such a pass counts as strong_pass_frames valid evidence
+    # frames in the frame-count gates of realization (realize_min_frames) and detection (detect_min_frames). Without
+    # it, a short real overlap after non-overlapping views (rightly rejected) gives too few frames, and the passes split
+    # over several components (OpenLORIS office1-7, mono: relocalization ~175 frames late)
+    strong_pass_frames: int = 0
+    strong_pass_min_refs: int = 2
+    strong_pass_min_covis: float = 0.3
+    # close correction (0 = off): a candidate within the 3 m separation radius of hypothesis 0 passes the separation
+    # gate when its net evidence against hypothesis 0 over detect_min_frames frames is at least this many nats; the
+    # measurements then say hypothesis 0 is wrong, not that the candidate duplicates it (office1-4, mono: hypothesis 0
+    # 1.6 m off after a wrong-scale fix, the correct candidate 1.7 m away with 15-20 nats never merged)
+    close_correction_min_llr: float = 0.0
     # geometric verification of a merge: fraction of the candidate's visual edges that remain outliers
     # (Mahalanobis norm > verify_outlier_sigma) after the loop-closure optimisation
     verify_outlier_sigma: float = 4.0
@@ -633,6 +646,41 @@ class ProjectionConfig:
 
 
 @dataclass
+class KeyframeQualityConfig:
+    """Keyframe quality filter (cross/core/kf_quality.py): a frame whose view is mostly blocked by something close to
+    the camera (a person, an object, a wall at arm's length), clipped, or without texture (blank surface, blur, covered
+    lens) is not stored as a permanent keyframe (it becomes a temporary node: odometry chain kept, no image, no
+    descriptor).  Decided by the informative fraction of the view against the session's running medians.
+    On by default: on the dev OpenLORIS scenes T2 / T3 were identical per query in the stereo, RGB-D and mono modes
+    (T1 within 4 mm), and with injected junk views (benchmark/datasets/inject_junk.py) 52-68 % fewer junk keyframes
+    were stored."""
+    enabled: bool = True
+    # also do not observe (retrieve + estimate) with a junk frame: the odometry carries the belief, as on a frame the
+    # observation cadence skips
+    skip_observation: bool = False
+    info_min: float = 0.35          # junk when the informative fraction < min(info_min, info_rel * session median)
+    info_rel: float = 0.5
+    texture_rel: float = 0.25       # flat cell: gradient < texture_rel * the session's typical textured-cell gradient
+    # a view removed mostly for flat cells (white wall, floor) is junk only when it is empty: its 90th-percentile cell
+    # gradient is below empty_snr x the image's noise level (pure noise ~0.6; blank surfaces 0.6-0.7, low-contrast real
+    # walls 3-5 in OpenLORIS home, whose rejection cost relocalization there)
+    empty_snr: float = 1.5
+    clip_dark: float = 0.04         # clipped pixel: luminance below / above these
+    clip_bright: float = 0.96
+    near_abs: float = 0.8           # near pixel: depth < max(near_abs, near_rel * the session's typical depth) metres
+    near_rel: float = 0.25
+    person: bool = True             # person detections (SSDLite) remove their cells
+    person_score: float = 0.5
+    stereo_near: bool = True        # stereo input without depth: the near field from SGBM on the rectified pair
+    # feed-forward modes: add the near cells of the pass's depth of the current view.  Off: VGGT-Omega's depth of a
+    # close occluder follows its apparent size (a pasted person at 0.4-0.75 m came out at 1.6-2.8 m)
+    pass_depth: bool = False
+    grid: int = 16                  # cells across the image width
+    window: int = 200               # frames of the running medians
+    warmup: int = 5                 # the first frames of a session are never junk (the medians are seeded)
+
+
+@dataclass
 class MappingConfig:
     kf_gmm_n_components: int = 5
     kf_retrieval_threshold_new_kf: float = 0.75
@@ -645,6 +693,7 @@ class MappingConfig:
     cluster_std: ClusterStdConfig = field(default_factory=ClusterStdConfig)
     hypothesis: HypothesisConfig = field(default_factory=HypothesisConfig)
     topo: TopoConfig = field(default_factory=TopoConfig)
+    keyframe_quality: KeyframeQualityConfig = field(default_factory=KeyframeQualityConfig)
 
 
 @dataclass
@@ -730,6 +779,11 @@ class FeedForwardConfig:
     # places a reference that overlaps nothing else in the pass arbitrarily; every anchor through it shares that error,
     # so the anchors agree and a wrong scale looks certain (mono passes whose only anchors are map pairs)
     map_anchor_min_pair_covis: float = 0.0
+    # view-level scale uncertainty (0 = off): the spread of the scale is also measured by leaving out each reference view
+    # in turn (jackknife), since anchors through one view share its placement error; when one reference view carries
+    # every anchor, the relative scale std is at least this. Three anchors through one disconnected view gave a
+    # 7x scale error with logstd 0.003
+    anchor_view_logstd_floor: float = 0.0
     anchor_weight_by_baseline: bool = True   # weight anchors by predicted baseline length (precision of the ratio)
     anchor_max_rot_err_deg: float = 20.0
     anchor_min_dir_cos: float = 0.5
@@ -805,6 +859,36 @@ class VisualizationConfig:
 
 
 @dataclass
+class StorageConfig:
+    """How a saved map stores its keyframes (cross/db/store.py).  Format v2: `map.pkl` holds the graph as numpy
+    columns, the images and descriptors go to `map.pkl.store/` and are read on demand."""
+    format: str = "v2"                   # v2 | pickle (the old single file: every image and descriptor inside)
+    # colour keyframe images: png / webp_lossless (exact) or jpeg / webp (lossy, image_quality); raw = uncompressed
+    image_codec: str = "webp_lossless"
+    image_quality: int = 95              # jpeg / webp quality
+    png_level: int = 3                   # png / png16 compression level (0-9)
+    depth_codec: str = "png16"           # png16 (fp16 bit pattern in a 16-bit PNG, exact) | zstd | raw
+    depth_drop_bits: int = 0             # png16: drop this many fp16 mantissa bits (3: <= 0.4 % error, 35 % smaller)
+    # retrieval descriptors on disk: float16 (half the bytes; dev split full tier: every metric unchanged, scores differ
+    # ~1e-7) | float32 (exact)
+    descriptor_dtype: str = "float16"
+    decode_cache: int = 1024             # decoded keyframe images kept in memory (LRU, process-wide)
+    # where keyframe images are held: "cpu" (host RAM; the references of an observation are copied to the GPU for its
+    # pass) or "" (the compute device, the old behaviour: GPU memory grows with the map, ~0.6 MB per image)
+    image_device: str = "cpu"
+    # live run: keep the images of the newest N keyframes as tensors, encode older ones into a spool file and drop
+    # them from memory (decoded again on access, exact with the lossless codecs); 0: every keyframe image stays in
+    # memory (~0.6 MB each).  NCLT 2012-01-08 (4300 keyframes) with 500: identical map, same run time, host RAM
+    # 4.3 vs 6.3 GB
+    max_ram_images: int = 2000
+    # encode every new keyframe's images in the background as it is added (format v2), so saving a large map copies
+    # bytes instead of encoding; the images in memory are unchanged
+    encode_ahead: bool = True
+    spill_dir: Optional[str] = None      # spool directory of max_ram_images (default: a temporary directory)
+    encode_workers: int = 4              # threads that encode images when a map is saved
+
+
+@dataclass
 class SystemConfig:
     """Root configuration for the CROSS system."""
     async_update: bool = False
@@ -819,6 +903,7 @@ class SystemConfig:
     pose_est: PoseEstConfig = field(default_factory=PoseEstConfig)
     depth_pred: DepthPredConfig = field(default_factory=DepthPredConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
 
 
 # ---------------------------------------------------------------------------

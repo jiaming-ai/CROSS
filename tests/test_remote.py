@@ -1,7 +1,8 @@
 """Remote sessions (cross/remote): the VGGT-inertial frontend whose measurements come back frames after their request
 (a remote server's latency) tracks a simulated drive about as well as with in-frame measurements, also when a
 measurement fails; the simulated link's timing (round trip, compute queue, outages, order); the edge's copy of the back
-end's observation cadence."""
+end's observation cadence.  The edge package's own tests (wire format, cadence copy, session, a run over gRPC):
+edge/tests."""
 
 import sys
 from pathlib import Path
@@ -147,52 +148,6 @@ def test_sim_link_timing():
         got = [r["index"] for r in link.poll(0.1 * k)]
         assert got == ([] if 5 <= k < 15 else ([k] if k < 5 else list(range(5, 16)) if k == 15 else [k])), (k, got)
     assert srv.seen == [0, 1, 2]
-
-
-def test_observation_cadence():
-    """The edge's copy of the back end's cadence: every frame through the warm-up after the first, then after 0.3 m or
-    3 mapped frames; a missing odometry reading re-initializes (the image is needed)."""
-    from types import SimpleNamespace
-    from cross.remote.edge import ObservationCadence
-    cfg = SimpleNamespace(obs_min_translation=0.3, obs_min_rotation=0.15, obs_max_interval_steps=3, obs_warmup_steps=10)
-    c = ObservationCadence(cfg)
-    small, big = np.eye(4), np.eye(4)
-    small[2, 3], big[2, 3] = 0.01, 0.2
-    assert all(c.frame(None if k == 0 else small, True) for k in range(11))       # initialization + warm-up
-    assert [c.frame(small, True) for _ in range(6)] == [False, False, True] * 2    # 3 mapped frames
-    assert [c.frame(big, True) for _ in range(4)] == [False, True, False, True]    # 0.3 m
-    assert c.frame(small, False) is False and c.frame(None, False) is False       # frames the back end does not map
-    assert c.frame(small, True) is True                    # re-initialization after the missing reading
-    # the adaptive relaxation (obs_confident_*) while the server's last reply says the back end is confident
-    cfg.obs_confident_max_interval_steps, cfg.obs_confident_min_translation, cfg.obs_confident_min_rotation = 10, 0.6, 0.3
-    c = ObservationCadence(cfg)
-    assert all(c.frame(None if k == 0 else small, True) for k in range(11))
-    c.confident = True
-    assert [c.frame(small, True) for _ in range(10)] == [False] * 9 + [True]      # 10 mapped frames
-    assert [c.frame(big, True) for _ in range(3)] == [False, False, True]         # 0.6 m
-    c.confident = False
-    assert [c.frame(small, True) for _ in range(3)] == [False, False, True]       # the strict rule again
-
-
-def test_codec_roundtrip():
-    """The wire format: nested dicts / lists, numbers (nan and inf too), None, arrays of any dtype, images (lossless
-    PNG; JPEG close), no other types."""
-    import pytest
-    from cross.remote.codec import decode, encode
-    rng = np.random.default_rng(0)
-    img = rng.integers(0, 255, (24, 32, 3), dtype=np.uint8)
-    msg = {"index": 3, "t": 0.25, "x": float("nan"), "big": float("inf"), "none": None, "flag": True,
-           "T": np.eye(4), "corners": rng.random((5, 2)).astype(np.float32), "link": (1.5, 0.01),
-           "nested": {"w": np.arange(3), "s": "ok"}, "rgb": img}
-    out = decode(encode(msg))
-    assert out["index"] == 3 and out["t"] == 0.25 and np.isnan(out["x"]) and out["big"] == float("inf")
-    assert out["none"] is None and out["flag"] is True and out["link"] == [1.5, 0.01] and out["nested"]["s"] == "ok"
-    assert np.array_equal(out["T"], np.eye(4)) and out["corners"].dtype == np.float32
-    assert np.array_equal(out["nested"]["w"], np.arange(3)) and np.array_equal(out["rgb"], img)
-    lossy = decode(encode({"rgb": img}, jpeg=90))["rgb"]
-    assert lossy.shape == img.shape and lossy.dtype == np.uint8
-    with pytest.raises(TypeError):
-        encode({"f": lambda: 0})
 
 
 def test_grpc_link():

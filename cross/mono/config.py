@@ -16,6 +16,11 @@ class ScaleConfig:
     posterior_std_floor: float = 0.08
     innovation_gate: float = 3.5
     recovery_observations: int = 3  # zero reproduces permanent innovation rejection
+    # follow a moving scale through shape-inconsistent observations: such an observation (per-pixel ratio scatter above
+    # max_log_mad, e.g. a close white wall) is used with its scatter as variance, and persistent disagreement of the
+    # recent rejected observations inflates the filter's variance.  Off: they are rejected and the filter holds its
+    # scale (DPVO's own scale drifted up to 4x through a doorway of OpenLORIS home1-1 while the filter held)
+    track_disagreement: bool = False
 
     def __post_init__(self):
         if self.recovery_observations < 0 or self.recovery_observations == 1:

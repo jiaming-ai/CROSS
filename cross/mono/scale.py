@@ -122,6 +122,7 @@ class LogScaleFilter:
         self.rejected = 0
         self.reinitializations = 0
         self.pending = []
+        self.disagreeing = []   # log scales of the observations rejected since the last regular acceptance
 
     @property
     def scale(self):
@@ -140,6 +141,28 @@ class LogScaleFilter:
         self.variance += frames * self.config.process_std_per_frame**2
 
     def update(self, observation):
+        if not self.config.track_disagreement:
+            return self._update(observation)
+        soft = (not observation.accepted and observation.reason == "inconsistent_shape"
+                and np.isfinite(observation.log_scale) and observation.inlier_fraction >= self.config.min_inlier_fraction
+                and self.initialized and self.config.mode == "filtered")
+        if soft:
+            # the scale is moving when the recent rejected observations keep disagreeing: the filter's variance takes
+            # that disagreement, so this observation (variance = its spatial scatter) can pull it
+            if len(self.disagreeing) >= 2:
+                alternative = float(np.median(self.disagreeing[-3:] + [float(observation.log_scale)]))
+                self.variance = max(self.variance, 0.25 * (alternative - self.mean) ** 2)
+            observation.variance = float(max(observation.variance, observation.log_mad ** 2))
+            observation.accepted = True
+            observation.reason = "soft_shape"
+        ok = self._update(observation)
+        if soft or (not ok and observation.reason == "innovation_gate"):
+            self.disagreeing.append(float(observation.log_scale))
+        elif ok:
+            self.disagreeing.clear()
+        return ok
+
+    def _update(self, observation):
         if not observation.accepted:
             self.rejected += 1
             self.pending.clear()
