@@ -414,7 +414,7 @@ class DescriptorIndex:
         e = float(code.float().pow(2).sum() / x.pow(2).sum().clamp_min(1e-12))
         a = 1.0 / 200
         self._e_ema = e if self._e_ema is None else (1 - a) * self._e_ema + a * e
-        self._recent.append((int(kf_id), x.half()))
+        self._recent.append((int(kf_id), x.half().cpu()))
         if len(self._recent) > self.recent_size:
             self._recent.pop(0)
         self._since_extend += 1
@@ -425,7 +425,7 @@ class DescriptorIndex:
 
     def _extend_subspace(self) -> None:
         V = torch.from_numpy(self.projection.components).to(self.device)
-        Xr = torch.stack([x for _, x in self._recent]).float()
+        Xr = torch.stack([x for _, x in self._recent]).to(self.device).float()
         R = Xr - (Xr @ V) @ V.T
         a = min(self.extend_dims, self.max_dim - self.dim)
         _, _, W = torch.svd_lowrank(R, q=min(a + 16, min(R.shape)), niter=6)

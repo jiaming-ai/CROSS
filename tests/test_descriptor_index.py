@@ -289,3 +289,20 @@ def test_projected_scores_keep_the_full_cosine():
     assert torch.allclose(s2, raw, atol=1e-4)
     iso = re.calibration.apply(raw, 0.9, re._energy[:re.n], model="iso")      # opt-in models stay available
     assert iso.shape == raw.shape and torch.isfinite(iso).all()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_map_projection_refit_and_extension_on_the_gpu():
+    g = torch.Generator().manual_seed(19)
+    D = 256
+    A, B = torch.randn(20, D, generator=g), torch.randn(20, D, generator=g)
+    def draw(basis, n):
+        return torch.nn.functional.normalize(torch.randn(n, 20, generator=g) @ basis + 0.02 * torch.randn(n, D, generator=g), dim=-1)
+    X = torch.cat([draw(A, 700), draw(B, 500)]).cuda()
+    idx = DescriptorIndex(D, device="cuda", initial_capacity=50, fit_at=300, fit_dim=24, extend_dims=16, recent=300,
+                          max_dim=128)
+    for i, x in enumerate(X):
+        idx.add(x, i)
+    assert idx.map_fitted and (idx.projection.meta["extensions"] >= 1 or idx.projection.meta["refits"] >= 1)
+    s = idx.query_scores(X[1100])
+    assert s.device.type == "cuda" and int(s.argmax()) == 1100
