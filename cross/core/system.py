@@ -1368,7 +1368,7 @@ class System:
                 except Exception as ex:
                     logger.warning(f"in-pass consistency test failed: {ex}")
         if getattr(self, "_geo", None) is not None and self.config.geo.proposal_gate:
-            gk = self._geo_reference_mask(valid_keyframes, valid_poses)
+            gk = self._geo_reference_mask(valid_keyframes, valid_poses, ret.get("h0_loop"))
             if gk is not None:
                 keep = keep & gk
         return keep, h0_ok
@@ -1994,16 +1994,21 @@ class System:
             geo.pending = []
             geo.last_opt_kf = n_kf
 
-    def _geo_reference_mask(self, valid_keyframes, valid_poses):
-        """References whose implied current pose (map frame) contradicts the current GNSS fix are dropped."""
+    def _geo_reference_mask(self, valid_keyframes, valid_poses, loop_flags=None):
+        """Relocalization references (stored-map keyframes) and loop-closure candidates of a mapping session whose
+        implied current pose (map frame) contradicts the current GNSS fix / compass heading are dropped; references to
+        the keyframes just behind the robot (local tracking) are never tested: the chain's own drift is the GNSS
+        factors' business, not the references'."""
         geo = self._geo
         if not geo.anchored or (geo.current is None and geo.compass_last is None):
             return None
-        in_map = self.session_localized()
         keep = np.ones(len(valid_keyframes), dtype=bool)
         for i, kf in enumerate(valid_keyframes):
-            if not (kf.id < self._session_start_kf_id or in_map):
-                continue                       # a keyframe of an unmerged session lives in its own frame
+            if self._session_start_kf_id > 0:
+                if kf.id >= self._session_start_kf_id:
+                    continue                   # this session's own keyframes (its own frame until merged)
+            elif loop_flags is None or i >= len(loop_flags) or not loop_flags[i]:
+                continue                       # mapping: only loop-closure candidates
             T = (kf.pose_mu[0] @ valid_poses[i]).matrix().detach().cpu().numpy().astype(np.float64)
             ok = geo.proposal_consistent(T[:3, 3])
             if ok is False:
