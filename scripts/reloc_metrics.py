@@ -191,3 +191,30 @@ def online_pose_metrics(online, T_gt_from_map) -> dict:
         e = np.linalg.norm((src - mu_s) @ R.T + mu_d - gt, axis=1)
         out["odom_ate_rmse"] = float(np.sqrt(np.mean(e ** 2)))
     return out
+
+
+def step_diagnostics(system) -> dict:
+    """Compact diagnostics of the session's last step (--dump-steps): keyframe quality of the frame, whether it was
+    rejected as a permanent keyframe or not observed, and the retrieved keyframes [id, score, verified]."""
+    m = getattr(system, "mapper", system)
+    d = getattr(m, "last_step_diagnostics", None) or {}
+    out = {}
+    if d.get("frame_quality"):
+        out["q"] = d["frame_quality"]
+    if d.get("keyframe_rejected"):
+        out["rej"] = d["keyframe_rejected"]
+    if d.get("observation_skipped_junk"):
+        out["jskip"] = 1
+    ra = d.get("retrieval_audit")
+    if ra:
+        out["ret"] = [[int(a["keyframe_id"]), round(float(a["retrieval_score"]), 3), int(bool(a["verified"]))] for a in ra]
+    kf = getattr(m, "last_added_kf_id", None)
+    if kf is not None:
+        out["kf"] = int(kf)
+    return out
+
+
+def quality_summary(system):
+    """Counters of the keyframe quality filter of a session (None when it is off)."""
+    q = getattr(getattr(system, "mapper", system), "_kf_quality", None)
+    return None if q is None else q.summary()

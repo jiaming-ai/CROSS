@@ -169,6 +169,8 @@ def run_mapping(args, out: Path):
     step_times = []
     kf_frame = {}            # frame index of every keyframe created (temporary ones too: T1 completeness)
     online = [] if getattr(args, "online_poses", False) else None
+    from reloc_metrics import step_diagnostics, quality_summary
+    steps = [] if getattr(args, "dump_steps", False) else None
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
@@ -176,6 +178,8 @@ def run_mapping(args, out: Path):
         system.process(d)
         step_times.append(time.perf_counter() - ts)
         n += 1
+        if steps is not None:
+            steps.append({"frame": args.map_start + idx * args.stride, **step_diagnostics(system)})
         if online is not None:               # the pose the session published at this frame (and its odometry's)
             fp = getattr(system, "frontend_pose", None)
             online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
@@ -216,6 +220,10 @@ def run_mapping(args, out: Path):
         "timing": _timing_summary(),
         "map_file_bytes": map_file.stat().st_size if map_file.exists() else None,
     }
+    if quality_summary(system) is not None:
+        meta["kf_quality"] = quality_summary(system)
+    if steps is not None:
+        (out / "steps_map.json").write_text(json.dumps(steps))
     if online is not None:
         from reloc_metrics import online_pose_metrics
         meta["online"] = online_pose_metrics(online, T_gt_from_map)
@@ -256,7 +264,8 @@ def run_reloc(args, out: Path, meta: dict):
     rows = []
     t0 = time.time()
     n_obs = 0
-    from reloc_metrics import build_trials, drop_unlocalized, is_localized
+    from reloc_metrics import build_trials, drop_unlocalized, is_localized, step_diagnostics, quality_summary
+    quality_trials = []
     q_start = args.query_start
     q_end = args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
@@ -270,6 +279,7 @@ def run_reloc(args, out: Path, meta: dict):
             # re-initialized it; with a frontend (VGGT + IMU, DPVO) the trial started from the last trial's belief
             if hasattr(system, "remote_stats"):
                 remote_trials.append(system.remote_stats())
+            quality_trials.append(quality_summary(system))
             system.release()
             system = new_session(args, ds, args.seed)
             system.load_map(out / "map.pkl")
@@ -298,6 +308,8 @@ def run_reloc(args, out: Path, meta: dict):
             row["localized"] = is_localized(system)
             if not row["localized"]:
                 drop_unlocalized(row, ("c0", "best") if row["best_k"] == 0 else ("c0",))
+            if getattr(args, "dump_steps", False):
+                row["diag"] = step_diagnostics(system)
             rows.append(row)
             if idx % 50 == 0:
                 logger.info(f"trial {ti} step {idx}: c0 err {row['c0_t_err']:.2f} m / {row['c0_r_err']:.1f} deg, "
@@ -306,6 +318,7 @@ def run_reloc(args, out: Path, meta: dict):
     n_new += len(system.hypothesis_manager.nodes) - n_map_kfs
     if hasattr(system, "remote_stats"):
         remote_trials.append(system.remote_stats())
+    quality_trials.append(quality_summary(system))
     system.release()
     remote = remote_trials[0] if len(remote_trials) == 1 else ({"trials": remote_trials} if remote_trials else None)
 
@@ -355,6 +368,8 @@ def run_reloc(args, out: Path, meta: dict):
     }
     if remote is not None:
         summary["remote"] = remote
+    if any(q is not None for q in quality_trials):
+        summary["kf_quality_trials"] = quality_trials
     (out / "reloc_rows.json").write_text(json.dumps(rows))
     (out / "reloc_summary.json").write_text(json.dumps(summary, indent=1))
     logger.info(json.dumps({k: v for k, v in summary.items() if k != "timing"}, indent=1))
@@ -405,6 +420,8 @@ def main():
     ap.add_argument("--set", nargs="*", action="extend", default=[],
                     help="config overrides section.sub.key=value (YAML-parsed values; repeatable)")
     ap.add_argument("--dump-obs", action="store_true", help="write every observation of the mapping run to obs.jsonl (scripts/lc/obs_recorder.py)")
+    ap.add_argument("--dump-steps", action="store_true", help="per-step diagnostics (keyframe quality, retrieved keyframes): "
+                    "steps_map.json of the map run, 'diag' in every query row")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (e.g. 0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift of the odometry (deg per metre)")
     ap.add_argument("--odom-file", default=None, help="odometry file of the prepared folders to use instead of "
