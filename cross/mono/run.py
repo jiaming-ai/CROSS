@@ -102,6 +102,8 @@ def build_parser():
     parser.add_argument("--metric-model", default="depth-anything/DA3METRIC-LARGE")
     parser.add_argument("--scale-mode", choices=["filtered", "direct", "initial", "relative"], default="filtered")
     parser.add_argument("--scale-recovery-observations", type=int, default=3)
+    parser.add_argument("--scale-track-disagreement", action="store_true",
+                        help="follow a moving scale through shape-inconsistent metric observations (ScaleConfig)")
     parser.add_argument("--intrinsics", nargs="+", type=float)
     parser.add_argument("--no-undistort", action="store_true")
     parser.add_argument("--image-size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"),
@@ -199,7 +201,8 @@ def config_from_args(args):
                         degenerate_mode=args.degenerate_mode, discontinuity_ncc=args.discontinuity_ncc,
                         **motion_std_kwargs(args.motion_std),
                         scale=ScaleConfig(interval=args.metric_interval, mode=args.scale_mode,
-                                          recovery_observations=args.scale_recovery_observations))
+                                          recovery_observations=args.scale_recovery_observations,
+                                          track_disagreement=args.scale_track_disagreement))
 
 
 def main():
