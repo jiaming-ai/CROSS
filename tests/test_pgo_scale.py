@@ -66,7 +66,7 @@ def make_manager(n=240, loops=((10, 200), (40, 230), (120, 160)), window_min_nod
 
 
 def _poses(res):
-    return {k: v.tensor().detach().numpy().copy() for k, v in res["optimized_poses"].items()}
+    return {k: v.tensor().detach().cpu().numpy().copy() for k, v in res["optimized_poses"].items()}
 
 
 def test_cached_factors_give_the_uncached_solution():
