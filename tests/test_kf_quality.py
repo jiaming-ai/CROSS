@@ -33,7 +33,7 @@ def test_blank_view_is_flat_junk():
     f = _filter()
     _seed(f)
     q = f.assess(torch.full((3, 240, 320), 0.5))
-    assert q.junk and q.reason == "flat"
+    assert q.junk and q.reason == "flat"           # no structure at all (noise level 0)
 
 
 def test_dark_view_is_clipped_junk():
@@ -112,6 +112,9 @@ def test_mostly_flat_view_is_kept_unless_almost_empty():
     x[:, :, :250] = 0.5                         # ~ 78 % of the view textureless (a white wall), the rest textured
     q = f.assess(x)
     assert q.fractions["flat"] > 0.6 and not q.junk
-    x[:, :, :300] = 0.5                         # ~ 94 %: almost nothing left
+    x[:, :, :300] = 0.5                         # ~ 94 % flat: still structure in the rest -> kept
     q = f.assess(x)
-    assert q.junk and q.reason == "flat"
+    assert not q.junk and q.snr > 1.5
+    g = torch.Generator().manual_seed(5)        # an empty view: a uniform surface with sensor noise only
+    q = f.assess((0.5 + 0.01 * torch.randn(3, 240, 320, generator=g)).clamp(0, 1))
+    assert q.junk and q.reason == "flat" and q.snr < 1.5

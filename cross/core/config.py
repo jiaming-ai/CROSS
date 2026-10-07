@@ -591,9 +591,10 @@ class KeyframeQualityConfig:
     info_min: float = 0.35          # junk when the informative fraction < min(info_min, info_rel * session median)
     info_rel: float = 0.5
     texture_rel: float = 0.25       # flat cell: gradient < texture_rel * the session's typical textured-cell gradient
-    # a view removed mostly for flat cells (white wall, floor) is junk only below this informative fraction (blank
-    # surface, covered lens): rejecting textureless but real views at 0.35 cost relocalization in OpenLORIS home (mono)
-    flat_info_min: float = 0.1
+    # a view removed mostly for flat cells (white wall, floor) is junk only when it is empty: its 90th-percentile cell
+    # gradient is below empty_snr x the image's noise level (pure noise ~0.6; blank surfaces 0.6-0.7, low-contrast real
+    # walls 3-5 in OpenLORIS home, whose rejection cost relocalization there)
+    empty_snr: float = 1.5
     clip_dark: float = 0.04         # clipped pixel: luminance below / above these
     clip_bright: float = 0.96
     near_abs: float = 0.8           # near pixel: depth < max(near_abs, near_rel * the session's typical depth) metres

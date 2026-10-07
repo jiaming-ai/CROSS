@@ -18,9 +18,10 @@ well-exposed, static scene content at a normal distance.  A cell is removed when
              blur, covered lens).
 The session's typical values are running medians over the frames assessed so far (robust to a minority of junk
 frames), so the test adapts to the camera, the exposure and the environment.  A frame is junk when its informative
-fraction is below min(info_min, info_rel * the session's running median informative fraction); when the cells are
-mostly removed only for being flat, below flat_info_min (a textureless wall still has edges and may be the only view of
-a place; tested: rejecting such views cost relocalization in a home scene).
+fraction is below min(info_min, info_rel * the session's running median informative fraction).  When the cells are
+mostly removed for being flat, the view must also be empty: no structure above the image's own noise level (a
+low-contrast white wall still has structure and may be the only view of a place; tested: rejecting such views cost
+relocalization in a home scene).
 """
 from __future__ import annotations
 
@@ -47,11 +48,12 @@ class FrameQuality:
     n_person: int = 0
     stage: str = "image"              # "image" (pre-observation cues) or "pass" (refined with the pass depth)
     person_checked: bool = False      # the person detector has run on this frame
+    snr: float = float("inf")         # 90th-percentile cell gradient / the image's noise level (structure above noise)
     ms: float = 0.0
     cells: dict = field(default_factory=dict, repr=False)   # per-cell masks (numpy bool), for refinement / figures
 
     def summary(self) -> dict:
-        return {"info": round(self.info, 3), "thr": round(self.threshold, 3), "junk": bool(self.junk),
+        return {"info": round(self.info, 3), "thr": round(self.threshold, 3), "junk": bool(self.junk), "snr": round(self.snr, 2),
                 "reason": self.reason, "stage": self.stage, "ms": round(self.ms, 2), "person_checked": self.person_checked,
                 **{k: round(float(v), 3) for k, v in self.fractions.items()}}
 
@@ -204,6 +206,13 @@ class KeyframeQuality:
         g_ref = self.grad_ref.get(g75 if g75 is not None else 0.0)
         flat = cell_g < float(getattr(cfg, "texture_rel", 0.25)) * g_ref
 
+        # structure above the sensor noise: the 90th-percentile cell gradient over the image's noise level (Immerkaer's
+        # estimator; pure noise gives ~0.6).  A view that is textureless for the session (a white wall) still has
+        # structure; an empty one (blank surface, covered lens) has none
+        lap = cv2.filter2D(y, -1, np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]], np.float32))[1:-1, 1:-1]
+        noise = np.sqrt(np.pi / 2) / 6 * float(np.abs(lap).mean())
+        snr = float(np.quantile(g_ok, 0.9)) / max(noise, 1e-6) if g_ok.size >= 4 else 0.0
+
         cells = {"clipped": clipped, "flat": flat & ~clipped}
         if depth is None and rgb_right is not None and getattr(cfg, "stereo_near", True):
             depth = self._stereo_depth(y, rgb_right, W)
@@ -216,7 +225,7 @@ class KeyframeQuality:
             pc, n_person = self._person_cells(x, gh, gw)
             if pc is not None:
                 cells["person"] = pc
-        q = self._decide(cells, stage="image", has_depth=near is not None, n_person=n_person, update=True)
+        q = self._decide(cells, stage="image", has_depth=near is not None, n_person=n_person, update=True, snr=snr)
         q.person_checked = run_person
         q.ms = (time.perf_counter() - t0) * 1e3
         self.stats["assessed"] += 1
@@ -237,7 +246,8 @@ class KeyframeQuality:
             return q
         cells = dict(q.cells)
         cells["person"] = pc
-        r = self._decide(cells, stage=q.stage, has_depth=q.has_depth, n_person=n_person, update=False, threshold=q.threshold)
+        r = self._decide(cells, stage=q.stage, has_depth=q.has_depth, n_person=n_person, update=False, threshold=q.threshold,
+                         snr=q.snr)
         r.person_checked = True
         r.ms = q.ms + (time.perf_counter() - t0) * 1e3
         self.stats["ms_total"] += r.ms - q.ms
@@ -259,7 +269,8 @@ class KeyframeQuality:
         cells = dict(q.cells)
         cells["near"] = near if "near" not in cells else (cells["near"] | near)
         was_junk = q.junk
-        r = self._decide(cells, stage="pass", has_depth=True, n_person=q.n_person, update=False, threshold=q.threshold)
+        r = self._decide(cells, stage="pass", has_depth=True, n_person=q.n_person, update=False, threshold=q.threshold,
+                         snr=q.snr)
         r.person_checked = q.person_checked
         r.ms = q.ms + (time.perf_counter() - t0) * 1e3
         self.stats["ms_total"] += r.ms - q.ms
@@ -269,7 +280,7 @@ class KeyframeQuality:
         return r
 
     def _decide(self, cells: dict, stage: str, has_depth: bool, n_person: int, update: bool,
-                threshold: Optional[float] = None) -> FrameQuality:
+                threshold: Optional[float] = None, snr: float = float("inf")) -> FrameQuality:
         cfg = self.cfg
         removed = np.zeros_like(next(iter(cells.values())), dtype=bool)
         for c in CAUSES:
@@ -283,11 +294,13 @@ class KeyframeQuality:
         warm = self.n_assessed < int(getattr(cfg, "warmup", 5))
         # the cause that alone removes the most cells (causes listed in order of precedence on ties)
         main = max(CAUSES, key=lambda c: fractions[c])
-        # a view that is only textureless (a white wall, a floor) still carries edges and is sometimes the only view of
-        # a place: it is junk only when (almost) nothing is left (covered lens, blank surface filling the view); a view
-        # blocked by something close, a person or clipping is junk below the threshold
-        thr = min(threshold, float(getattr(cfg, "flat_info_min", 0.1))) if main == "flat" else threshold
-        junk = (not warm) and info < thr
+        # a view that is only textureless for the session (a white wall, a floor) still has structure and is sometimes
+        # the only view of a place: it is junk only when it shows no structure above the sensor noise (a blank surface
+        # filling the view, a covered lens); a view blocked by something close, a person or clipping is junk below the
+        # threshold
+        junk = (not warm) and info < threshold
+        if main == "flat":
+            junk = junk and snr < float(getattr(cfg, "empty_snr", 1.5))
         if update:
             self.info_ref.push(info)
             self.n_assessed += 1
@@ -298,7 +311,7 @@ class KeyframeQuality:
                 self.stats["junk"] += 1
                 self.stats["by_reason"][reason] += 1
         return FrameQuality(info=info, threshold=float(threshold), junk=bool(junk), reason=reason, fractions=fractions,
-                            has_depth=has_depth, n_person=n_person, stage=stage, cells=cells)
+                            has_depth=has_depth, n_person=n_person, stage=stage, cells=cells, snr=float(snr))
 
     def summary(self) -> dict:
         s = dict(self.stats)
