@@ -120,6 +120,141 @@ def T_body_cam(cam: int, cams: dict) -> np.ndarray:
     return ssc_to_T(EXTRINSICS["lb3"]) @ ssc_to_T(cams[cam]["x_lb3_c"])
 
 
+# ---------------------------------------------------------------------------------------------------------- images
+STORED_W, STORED_H = 1616, 1232          # Ladybug3 images as stored: rotated by 90 deg (image x = down)
+OUT_W, OUT_H = 640, 480                   # prepared images: upright pinhole 640 x 480
+CROP_HW, CROP_HH = 392, 294               # half size of the centred 4:3 crop of the upright undistorted image (88 x 71 deg)
+
+
+def u2d_maps(u2d_dir: Path, cam: int):
+    """NCLT undistortion map of a camera (U2D_Cam<k>_1616X1232.txt, from U2D_ALL_1616X1232.tar.gz): for every pixel of
+    the undistorted (pinhole, K_cam<k>) stored image, its position in the distorted image; cached as .npz."""
+    cache = u2d_dir / f"u2d_cam{cam}.npz"
+    if cache.exists():
+        d = np.load(cache)
+        return d["mapu"], d["mapv"]
+    txt = next(u2d_dir.rglob(f"U2D_Cam{cam}_1616X1232.txt"))
+    a = np.loadtxt(txt, skiprows=1, dtype=np.float32)
+    mapu = np.zeros((STORED_H, STORED_W), np.float32)
+    mapv = np.zeros((STORED_H, STORED_W), np.float32)
+    r, c = a[:, 0].astype(int), a[:, 1].astype(int)
+    mapu[r, c], mapv[r, c] = a[:, 3], a[:, 2]            # as the NCLT devkit (undistort.py)
+    np.savez(cache, mapu=mapu, mapv=mapv)
+    return mapu, mapv
+
+
+class LB3Rectifier:
+    """Raw Ladybug3 image of one camera -> upright undistorted pinhole image OUT_W x OUT_H (one remap + one resize).
+
+    The stored image is undistorted with the NCLT U2D map (pinhole, K_cam<k>), turned upright (90 deg clockwise: the
+    horizontal cameras are mounted on their side), cropped to a 4:3 window centred on the principal point that is valid
+    for every camera (88 x 71 deg), and resized with area interpolation.  Upright camera frame = OpenCV (x right, y down,
+    z forward); its pose in the body frame is `T_body_cam_upright`."""
+
+    def __init__(self, u2d_dir: Path, cam: int, cams: dict):
+        mapu, mapv = u2d_maps(u2d_dir, cam)
+        K = np.asarray(cams[cam]["K"], float)
+        f, cx_s, cy_s = K[0, 0], K[0, 2], K[1, 2]
+        # upright image B (H' = STORED_W rows, W' = STORED_H cols): B[r, c] = A[STORED_H - 1 - c, r]
+        cxu, cyu = (STORED_H - 1) - cy_s, cx_s
+        self.x0, self.y0 = int(round(cxu)) - CROP_HW, int(round(cyu)) - CROP_HH
+        c = np.arange(2 * CROP_HW)[None, :] + self.x0          # upright column
+        r = np.arange(2 * CROP_HH)[:, None] + self.y0          # upright row
+        su, sv = r + 0 * c, (STORED_H - 1) - c + 0 * r         # stored undistorted pixel (u, v)
+        self.map_x = np.ascontiguousarray(mapu[sv, su])
+        self.map_y = np.ascontiguousarray(mapv[sv, su])
+        valid = (self.map_x >= 0) & (self.map_x <= STORED_W - 1) & (self.map_y >= 0) & (self.map_y <= STORED_H - 1)
+        self.valid_fraction = float(valid.mean())
+        s = OUT_W / (2 * CROP_HW)
+        # pixel centres: x_out + 0.5 = s (x_crop + 0.5)
+        self.K = np.array([[f * s, 0, (cxu - self.x0 + 0.5) * s - 0.5],
+                           [0, f * s, (cyu - self.y0 + 0.5) * s - 0.5],
+                           [0, 0, 1.0]])
+        # upright axes in the stored camera frame: x' = -y, y' = x, z' = z
+        R_stored_upright = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1.0]])
+        T = np.eye(4)
+        T[:3, :3] = R_stored_upright
+        self.T_body_cam_upright = T_body_cam(cam, cams) @ T
+
+    def __call__(self, raw_bgr: np.ndarray) -> np.ndarray:
+        import cv2
+        crop = cv2.remap(raw_bgr, self.map_x, self.map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        return cv2.resize(crop, (OUT_W, OUT_H), interpolation=cv2.INTER_AREA)
+
+
+_RECT = {}
+
+
+def _init_worker(u2d_dir, cams, out_dir, quality):
+    global _RECT, _OUT, _Q
+    _RECT = {c: LB3Rectifier(Path(u2d_dir), c, cams) for c in range(1, 6)}
+    _OUT, _Q = Path(out_dir), quality
+
+
+def _process_member(args):
+    import cv2
+    cam, utime, data = args
+    raw = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if raw is None or raw.shape[:2] != (STORED_H, STORED_W):
+        return cam, utime, False
+    img = _RECT[cam](raw)
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, _Q])
+    (_OUT / f"Cam{cam}" / f"{utime}.jpg").write_bytes(buf.tobytes())
+    return cam, utime, True
+
+
+def prepare_images(prep: Path, session: str, source, u2d_dir: Path, cams_used=(1, 2, 3, 4, 5), workers: int = 8,
+                   quality: int = 95, connections: int = 8):
+    """Stream the session's image archive (a local .tar.gz path, or None = straight from S3 with parallel range
+    requests, nothing stored), rectify every frame of the chosen cameras with LB3Rectifier, write
+    <prep>/<session>/lb3/Cam<k>/<utime>.jpg and lb3/frames.txt (cam utime ok)."""
+    import multiprocessing as mp
+    from nclt_download import BASE, RangeStream
+    cams = {int(k): v for k, v in json.loads((prep / session / "geo_ref.json").read_text())["cameras"].items()}
+    out = prep / session / "lb3"
+    for c in cams_used:
+        (out / f"Cam{c}").mkdir(parents=True, exist_ok=True)
+    done = {(int(p.parent.name[3:]), int(p.stem)) for c in cams_used for p in (out / f"Cam{c}").glob("*.jpg")}
+    rect = {c: LB3Rectifier(u2d_dir, c, cams) for c in cams_used}
+    (out / "cameras.json").write_text(json.dumps({f"cam{c}": {"K": r.K.tolist(), "width": OUT_W, "height": OUT_H,
+                                                             "T_body_cam": r.T_body_cam_upright.tolist(),
+                                                             "crop_valid_fraction": r.valid_fraction}
+                                                  for c, r in rect.items()}, indent=1))
+    fileobj = RangeStream(f"{BASE}/images/{session}_lb3.tar.gz", connections=connections) if source is None else open(source, "rb")
+    n_seen, n_ok, t0 = {}, 0, time.time()
+    rows = []
+    pool = mp.Pool(workers, initializer=_init_worker, initargs=(str(u2d_dir), cams, str(out), quality))
+
+    def members():
+        nonlocal n_ok
+        with tarfile.open(fileobj=fileobj, mode="r|gz", bufsize=1 << 20) as tf:
+            for m in tf:
+                if not m.isfile() or not m.name.endswith(".tiff"):
+                    continue
+                cam, utime = int(Path(m.name).parent.name[3:]), int(Path(m.name).stem)
+                n_seen[cam] = n_seen.get(cam, 0) + 1
+                if cam not in cams_used or (cam, utime) in done:
+                    continue
+                yield cam, utime, tf.extractfile(m).read()
+
+    pending = []
+    for res in pool.imap_unordered(_process_member, members(), chunksize=4):
+        rows.append(res)
+        n_ok += res[2]
+        if len(rows) % 5000 == 0:
+            rate = fileobj.rate() if hasattr(fileobj, "rate") else float("nan")
+            print(f"{session}: {len(rows)} frames ({n_seen}), {rate:.1f} MB/s, {time.time() - t0:.0f} s", flush=True)
+    pool.close()
+    pool.join()
+    rows += [(c, u, True) for (c, u) in done]
+    rows.sort()
+    with open(out / "frames.txt", "w") as f:
+        f.write("# cam utime_us ok\n")
+        for c, u, ok in rows:
+            f.write(f"{c} {u} {int(ok)}\n")
+    print(f"{session}: done, {n_ok} new frames, per camera seen {n_seen}, {time.time() - t0:.0f} s", flush=True)
+
+
 # --------------------------------------------------------------------------------------------------------- sensors
 def _write(path: Path, header: str, rows: np.ndarray, fmt):
     np.savetxt(path, rows, fmt=fmt, header=header, comments="# ")
@@ -336,8 +471,19 @@ def main():
     s2 = sub.add_parser("stats")
     s2.add_argument("prepared", type=Path)
     s2.add_argument("--sessions", nargs="+", default=SESSIONS)
+    s3 = sub.add_parser("images")
+    s3.add_argument("prepared", type=Path)
+    s3.add_argument("--session", required=True)
+    s3.add_argument("--tar", type=Path, default=None, help="local <session>_lb3.tar.gz (default: stream from S3)")
+    s3.add_argument("--u2d", type=Path, required=True, help="folder with U2D_Cam<k>_1616X1232.txt (or cached .npz)")
+    s3.add_argument("--cams", type=int, nargs="+", default=[1, 2, 3, 4, 5])
+    s3.add_argument("--workers", type=int, default=8)
+    s3.add_argument("--connections", type=int, default=8)
+    s3.add_argument("--quality", type=int, default=95)
     a = ap.parse_args()
-    if a.cmd == "sensors":
+    if a.cmd == "images":
+        prepare_images(a.prepared, a.session, a.tar, a.u2d, tuple(a.cams), a.workers, a.quality, a.connections)
+    elif a.cmd == "sensors":
         cams = camera_params(a.raw / "cam_params.zip")
         for s in a.sessions:
             if not (a.raw / f"{s}_sen.tar.gz").exists() or not (a.raw / f"groundtruth_{s}.csv").exists():
