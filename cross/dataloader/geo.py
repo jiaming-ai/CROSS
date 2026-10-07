@@ -190,7 +190,7 @@ def parse_degrade(spec: Optional[str]) -> dict:
 def attach(ds, root, args, query: bool) -> None:
     """Runner helper (--gnss, --gnss-degrade, --gnss-degrade-map, --no-compass): give the loader `ds` of the folder
     `root` its GNSS / compass stream (ds.geo), degraded as asked for this session."""
-    if not getattr(args, "gnss", False):
+    if not getattr(args, "gnss", False) or getattr(args, "no_gnss", False):
         return
     n = len(ds)
     fps = float(getattr(ds, "fps", 10.0))
@@ -203,8 +203,11 @@ def attach(ds, root, args, query: bool) -> None:
 
 
 def add_args(ap) -> None:
-    ap.add_argument("--gnss", action="store_true", help="GNSS / compass anchoring (geo.enabled; gnss.txt, mag.txt / "
-                    "imu.txt with magnetometer, times.txt of the folder or its parent; see cross/dataloader/geo.py)")
+    ap.add_argument("--gnss", action="store_true", help="feed the folder's GNSS / compass data (gnss.txt, mag.txt / "
+                    "ms25.txt with magnetometer, times.txt of the folder or its parent; see cross/dataloader/geo.py); geo "
+                    "anchoring itself is on by default (geo.enabled)")
+    ap.add_argument("--no-gnss", action="store_true", help="geo anchoring off (geo.enabled=false): no GNSS data, and a "
+                    "loaded map's geo anchor is not kept on re-save")
     ap.add_argument("--gnss-degrade", default=None, help="degrade the query sessions' fixes: sigma=M,bias=M,drop=F,outage=A:B[;C:D]")
     ap.add_argument("--gnss-degrade-map", default=None, help="the same for the map session")
     ap.add_argument("--no-compass", action="store_true", help="with --gnss: ignore the magnetometer")

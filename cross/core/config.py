@@ -874,8 +874,11 @@ class GeoConfig:
     the robot's own track, stale receivers, reacquisition hold-off, absolute chi-square gate), the map is anchored to a
     local ENU frame, decimated GNSS factors (one per correlation time of the receiver error, estimated online) enter
     the pose graph with a Cauchy kernel, and fixes gate retrieval / relocalization proposals.  Thresholds are
-    chi-square levels (`confidence`, default: the verified loop closure's); noise and correlation time adapt online."""
-    enabled: bool = False
+    chi-square levels (`confidence`, default: the verified loop closure's); noise and correlation time adapt online.
+    On by default: GNSS input is used whenever a frame carries it, and a geo-anchored map keeps its anchor (and every
+    keyframe's latitude / longitude) when it is loaded and saved again in a session without GNSS; without GNSS input
+    and without an anchored map the system's results are unchanged (the idle manager only integrates the odometry)."""
+    enabled: bool = True
     confidence: Optional[float] = None        # None: mapping.loop_closure.confidence
     drift_rate: Optional[float] = None        # growth of the prediction's std per metre since the last used fix (None: odom_k_t)
     pred_floor: float = 0.5                   # metres added to the prediction's std (lever arm, time stamps)

@@ -407,8 +407,9 @@ class GeoManager:
     def state(self) -> dict:
         """Persistent state, stored with the map (System.save_map: "geo").  Per-keyframe data as numpy columns (map
         format v2 keeps the graph as columns too): factors (kf, enu, sigmas, offset, time)."""
-        ks = sorted(self.factors)
-        f = self.factors
+        # the stored map's factors (a loaded map) are kept with this session's (a map saved again keeps its fixes)
+        f = {**getattr(self, "map_factors", {}), **self.factors}
+        ks = sorted(f)
         return {"version": 2, "frame": None if self.frame is None else self.frame.state(),
                 "anchor": self.anchor.state(), "noise": self.noise.state(), "err": self.err.state(),
                 "compass": self.compass.state(),

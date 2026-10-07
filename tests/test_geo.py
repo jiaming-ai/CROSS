@@ -318,3 +318,68 @@ def test_geo_state_columns_round_trip():
     h.load_state(v1)
     assert set(h.map_factors) == {7}
     assert GeoManager.lla_records({3: [1, 2, 3]}) == {3: [1, 2, 3]}
+
+
+def test_geo_anchor_kept_when_a_map_is_saved_again_without_gnss(tmp_path, monkeypatch):
+    """geo.enabled by default: a geo-anchored map loaded and saved again in a session without GNSS input keeps its
+    anchor, its GNSS factors and every keyframe's latitude / longitude (map format v2, System.save_map / load_map)."""
+    import pypose as pp
+    import torch
+    from cross.core.config import HypothesisConfig, PoseEstType, SystemConfig
+    from cross.core.hypothesis import HypothesisManager
+    from cross.core.system import System
+    from cross.core.types import Edge, EdgeType, Keyframe
+    from cross.db import store
+    from cross.geo.manager import GeoManager
+    from test_map_store import _db, _rng_image
+
+    def stub(monkeypatch):
+        cfg = SystemConfig()
+        assert cfg.geo.enabled
+        s = System.__new__(System)
+        s.config, s._lc_verifier, s.topo_map, s.visualize = cfg, None, None, False
+        s.state_device = s.storage_device = s.device = "cpu"
+        s.pose_est_type, s.pose_est = PoseEstType.PNP, None
+        s._anchor_pending, s._contra_pending, s.loaded_node_ids = [], [], frozenset()
+        s._last_retrieved_results, s._projection_n_nodes = None, -1
+        s.db = _db(monkeypatch)
+        s.hypothesis_manager = HypothesisManager(s, 3, HypothesisConfig())
+        s._geo = GeoManager(cfg.geo)
+        return s
+
+    rng = np.random.default_rng(0)
+    s1 = stub(monkeypatch)
+    hm, db = s1.hypothesis_manager, s1.db
+    s1.current_atlas = db.create_atlas()
+    hm.dist = (pp.identity_SE3(3), pp.se3(torch.ones(3, 6) * .1), torch.tensor([1., 0., 0.]))
+    hm.create_hypothesis_branch(0, 0)
+    prev = None
+    for i in range(5):
+        mu = pp.SE3(torch.tensor([[i * 3.0, 0.0, i * 1.0, 0, 0, 0, 1.0]] * 3))
+        kf = db.insert(i, _rng_image(rng), None, mu=mu, sigma=pp.se3(torch.rand(3, 6)), weights=torch.tensor([1., 0., 0.]),
+                       atlas=s1.current_atlas, timestamp=float(i))
+        hm.nodes[kf.id] = kf
+        if prev is not None:
+            hm.odom_edges[(prev, kf.id)] = Edge(pp.randn_SE3(), pp.se3(torch.rand(6)), EdgeType.ODOMETRY)
+        prev = kf.id
+    g = s1._geo
+    g.frame = LocalFrame(42.29, -83.71, 270.0)
+    g.anchor.R, g.anchor.t, g.anchor.yaw = rot_z(0.3) @ g.anchor.R_level, np.array([10.0, 20.0, 0.0]), 0.3
+    g.anchor.cov = np.eye(4) * 1e-6
+    k0 = min(hm.nodes)
+    g.factors = {k0: {"enu": np.array([10.0, 20.0, 1.0]), "sh": 5.0, "sv": 20.0, "delta": np.zeros(3), "t": 0.0}}
+    lla1 = g.keyframe_lla(hm.nodes)
+    s1.save_map(str(tmp_path / "a" / "map.pkl"))
+
+    s2 = stub(monkeypatch)                                     # a session without GNSS input
+    s2.load_map(str(tmp_path / "a" / "map.pkl"))
+    assert s2._geo.anchored and s2._geo.frame.lat0 == 42.29
+    s2.hypothesis_manager.dist = (pp.identity_SE3(3), pp.se3(torch.ones(3, 6) * .1), torch.tensor([1., 0., 0.]))
+    s2.save_map(str(tmp_path / "b" / "map.pkl"))
+    d = store.read_map(str(tmp_path / "b" / "map.pkl"))
+    geo = d["geo"]
+    assert abs(geo["anchor"]["yaw"] - 0.3) < 1e-12 and geo["frame"]["lon0"] == -83.71
+    lla2 = GeoManager.lla_records(geo["keyframe_lla"])
+    assert set(lla2) == set(lla1)
+    assert max(abs(np.array(lla2[k]) - np.array(lla1[k])).max() for k in lla1) < 1e-9
+    assert set(GeoManager.factor_records(geo["factors"])) == {k0}

@@ -101,6 +101,8 @@ def make_config(args) -> SystemConfig:
     cfg.retrieval.top_k = args.top_k
     if getattr(args, "gnss", False):
         cfg.geo.enabled = True
+    if getattr(args, "no_gnss", False):
+        cfg.geo.enabled = False
     return apply_settings(cfg, getattr(args, "set", None))    # generic overrides: section.sub.key=value
 
 

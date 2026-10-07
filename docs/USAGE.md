@@ -193,7 +193,9 @@ the clock of `times.txt`), optionally `mag.txt` / `ms25.txt` (magnetometer + acc
 `obs["compass"]` per step. `--gnss-degrade sigma=8,bias=15,drop=0.3,outage=60:120` degrades the query's fixes
 (testing). Main options (`geo.*`): `gate`, `decimate`, `robust` (the method; switch off for ablations),
 `use_altitude` (on: horizontal-only factors let the optimisation tilt the map), `sigma_v_factor` (4: consumer altitude
-is poor), `retrieval_gate` (the fix as a location prior), `proposal_gate`, `compass_gate`. Off by default: without GNSS input the system is unchanged.
+is poor), `retrieval_gate` (the fix as a location prior), `proposal_gate`, `compass_gate`. On by default (`--no-gnss` /
+`geo.enabled=false` turns it off): `--gnss` only feeds the folder's GNSS data; without GNSS input the system's results
+are unchanged, and a geo-anchored map keeps its anchor and keyframe latitude / longitude when it is saved again.
 
 Stereo-mode quick-run options: `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation gating;
 default: the mode's configuration file), `--max-refs`, `--n-ref-anchors`. Without a right camera pass
