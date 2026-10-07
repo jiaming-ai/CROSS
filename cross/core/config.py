@@ -769,8 +769,10 @@ class StorageConfig:
     # pass) or "" (the compute device, the old behaviour: GPU memory grows with the map, ~0.6 MB per image)
     image_device: str = "cpu"
     # live run: keep the images of the newest N keyframes as tensors, encode older ones into a spool file and drop
-    # them from memory (decoded again on access); 0: every keyframe image stays in memory (the old behaviour)
-    max_ram_images: int = 0
+    # them from memory (decoded again on access, exact with the lossless codecs); 0: every keyframe image stays in
+    # memory (~0.6 MB each).  NCLT 2012-01-08 (4300 keyframes) with 500: identical map, same run time, host RAM
+    # 4.3 vs 6.3 GB
+    max_ram_images: int = 2000
     # encode every new keyframe's images in the background as it is added (format v2), so saving a large map copies
     # bytes instead of encoding; the images in memory are unchanged
     encode_ahead: bool = True

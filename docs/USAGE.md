@@ -159,7 +159,7 @@ are read from disk when they are used, so a large map does not have to fit in me
 chooses the encoding: `storage.image_codec` `webp_lossless` (default; exact) or `png`, or the lossy `jpeg` / `webp` at
 `storage.image_quality`; `storage.depth_drop_bits` (lossy depth, RGB-D); `storage.descriptor_dtype` (`float16` by default, `float32`);
 `storage.image_device` (`cpu` by default: keyframe images in host RAM, copied to the GPU only for the pass that uses them);
-`storage.max_ram_images N` keeps only the newest N keyframes' images in memory during a long session. Maps written by
+`storage.max_ram_images` (2000 by default; 0 = all) keeps only the newest keyframes' images in memory during a long session. Maps written by
 older versions (one `map.pkl` with everything inside) still load; `storage.format pickle` writes that format, and
 `python scripts/convert_map.py old/map.pkl new/map.pkl [--image-codec jpeg --image-quality 95] --verify` converts a map.
 

@@ -33,7 +33,7 @@ def _db(monkeypatch, scfg=None):
     import cross.db.db as db_module
     monkeypatch.setattr(db_module, "BoQ", lambda **_: SimpleNamespace(
         get_embed_dim=lambda: 8, get_embedding=lambda img: torch.as_tensor(img).float().mean() * torch.ones(8)))
-    system = SimpleNamespace(config=SystemConfig(storage=scfg or StorageConfig(encode_ahead=False)))
+    system = SimpleNamespace(config=SystemConfig(storage=scfg or StorageConfig(encode_ahead=False, max_ram_images=0)))
     return db_module.KeyframeDatabase(system, device="cpu")
 
 
