@@ -554,10 +554,12 @@ def add_session_args(ap):
                         "without its observation (the back end observes the next fresh frame); measurements are kept.  "
                         "It acts only when the server is behind (outputs/2026-10-06_remote_mode: it never fired where "
                         "the server kept up, and it kept every overloaded case close to the local session)")
-    g.add_argument("--remote-obs-cap", type=float, default=0.0,
+    g.add_argument("--remote-obs-cap", type=float, default=0.1,
                    help="rate cap (s, 0: off): the edge sends an observation only if the server can start it within "
                         "this time (a model of the server's queue from the server time of each kind of message, learned "
-                        "from the replies); otherwise the back end observes at the next frame it can")
+                        "from the replies); otherwise the back end observes at the next frame it can.  It acts only "
+                        "when the server is behind; there it kept the results of the overload policy and sent 9-35 %% "
+                        "fewer images (outputs/2026-10-07_remote_cadence)")
     g.add_argument("--remote-server", default="",
                    help="HOST:PORT of a remote-session server (scripts/remote/serve.py): a real gRPC link instead of the "
                         "simulated one; this process runs only the edge")

@@ -137,10 +137,13 @@ class ImuConfig:
     vgio_klt: bool = True                        # graph: rotation factors from tracked corners (optional, gated)
     # pipeline: measure on the back end's forward passes (at least vgio_align_min frames apart); a pass of the
     # frontend's own only after vgio_align_max frames without one.  Off: every visual_interval frames, on the back
-    # end's pass when it observes at that frame, else a pass of its own (3 views).  Off is better: the back end's
-    # passes carry map references, and measured on them alone the indoor scale came out 6 % short (development maps,
-    # 5090: office 0.11 -> 0.06 m, KITTI 07 2.76 -> 1.79, home 0.46 -> 0.36, cafe 0.24 -> 0.17; time +0-14 %)
-    vgio_align: bool = False
+    # end's pass when it observes at that frame, else a pass of its own (3 views).  None: on with a stereo pair, off
+    # for mono.  Mono: off is better, the back end's passes carry map references, and measured on them alone the indoor
+    # scale came out 6 % short (development maps, 5090: office 0.11 -> 0.06 m, KITTI 07 2.76 -> 1.79, home 0.46 ->
+    # 0.36, cafe 0.24 -> 0.17; time +0-14 %).  Stereo (the scale from the pair): neutral on the development split
+    # (T1 0.33 -> 0.31 m, odometry 0.66 -> 0.53 m, T3 29/33 both; outputs/2026-10-07_remote_cadence) with 20 % fewer
+    # uploads in remote sessions (the frontend's own passes need images on frames the back end does not observe)
+    vgio_align: bool | None = None
     vgio_align_min: int = 2
     vgio_align_max: int = 4
     # graph: a pass's translation must agree with the IMU's prediction in length within this factor or in velocity
