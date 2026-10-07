@@ -1056,7 +1056,7 @@ class System:
             self.hypothesis_manager.motion_update(ret["delta_pose"], ret["delta_std"],
                                                   source_factor=ret.get('motion_source_factor'))
             logger.debug(f"Updated the current state gmm with odometry at step {self._processed_frame_num}")
-            if self._geo is not None:
+            if getattr(self, "_geo", None) is not None:
                 self._geo_step(ret["delta_pose"], last_obs, timestamp)
         
         else:
@@ -1270,7 +1270,7 @@ class System:
                 done = self._maybe_intra_hypothesis_loop_closure(ret, new_kf, edge_mapping)
             if not done:
                 self.hypothesis_manager.maybe_adopt_dominant_hypothesis()
-        if self._geo is not None:
+        if getattr(self, "_geo", None) is not None:
             self._geo_maybe_optimize(ret)
 
         if self.visualize:
@@ -1864,7 +1864,7 @@ class System:
         
         keyframe.step_created = int(self._processed_frame_num)
         self.hypothesis_manager.add_node(keyframe)
-        if self._geo is not None:
+        if getattr(self, "_geo", None) is not None:
             self._geo.on_keyframe(keyframe.id)
 
         # ---- Add new relative pose measurements to the graph ----
@@ -2363,7 +2363,7 @@ class System:
                     own_slots = self.config.retrieval.own_session_slots
                     map_res = self.db.query(rgb_image, max_kf_id=self._session_start_kf_id,
                                             score_threshold=self.config.retrieval.map_score_threshold)
-                    if self._geo is not None and self.config.geo.retrieval_gate:
+                    if getattr(self, "_geo", None) is not None and self.config.geo.retrieval_gate:
                         map_res = self._geo_gated_map_results(rgb_image, map_res)
                     logger.debug(f"retrieval: map kfs {[(kf.id, round(sc, 3)) for sc, kf in zip(map_res['scores'], map_res['keyframes'])][:6]}, "
                                  f"own {[(kf.id, round(sc, 3)) for sc, kf in zip(results['scores'], results['keyframes']) if kf.id >= self._session_start_kf_id][:3]}")

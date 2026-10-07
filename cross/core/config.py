@@ -784,6 +784,10 @@ class GeoConfig:
     # factors with the relative test's noise inflation (the gate always uses it); NCLT study: no gain (6 of 21
     # sessions better), so factors keep the prior noise times the posterior scale
     inflate_factors: bool = False
+    # rescale the prior noise from the posterior residuals after each optimisation; the residuals are shrunk by the fit
+    # (the trajectory absorbs part of the error), so the rescaled noise overweights GNSS (NCLT 27 sessions: geo RMSE
+    # 3.53 vs 3.40 m, online 6.67 vs 5.49 m, 2.4x the optimisations)
+    posterior_scale: bool = False
     retrieval_gate: bool = True               # relocalization: map keyframes far from the fix are not retrieved
     proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
     retrieval_margin_m: float = 10.0          # retrieval gate radius beyond the fix's chi-square radius (views of the

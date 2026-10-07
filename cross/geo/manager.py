@@ -346,7 +346,8 @@ class GeoManager:
             tt.append(rec["t"])
             ee.append(rec.get("epoch", 0))
         if len(e) >= 10:
-            self.noise.update_posterior(np.array(e))
+            if self.cfg.posterior_scale:
+                self.noise.update_posterior(np.array(e))
             self.err.update_from_residuals(np.array(tt), np.array(rr), np.array(ee))
         # the logged fixes' map positions follow the optimised keyframes they are attached to
         self.fit_anchor(nodes)
