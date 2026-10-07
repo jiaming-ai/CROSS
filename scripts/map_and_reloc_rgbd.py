@@ -105,6 +105,8 @@ def make_config(args) -> SystemConfig:
     cfg.retrieval.top_k = args.top_k
     if getattr(args, "gnss", False):
         cfg.geo.enabled = True
+    if getattr(args, "no_gnss", False):
+        cfg.geo.enabled = False
     for kv in args.set or []:            # generic overrides: section.sub.key=value (YAML-parsed value)
         import yaml
         key, val = kv.split("=", 1)
