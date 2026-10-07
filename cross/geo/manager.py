@@ -273,7 +273,7 @@ class GeoManager:
             kf = nodes[kid]
             T = kf.pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)
             enu = f["enu"]
-            z_ok = bool(np.isfinite(enu[2]))
+            z_ok = bool(np.isfinite(enu[2])) and self.cfg.use_altitude
             target = self.anchor.to_map(np.array([enu[0], enu[1], enu[2] if z_ok else 0.0])) - T[:3, :3] @ f["delta"]
             Cenu = np.diag([(f["sh"] * sc) ** 2, (f["sh"] * sc) ** 2, ((f["sv"] * sc) if z_ok else 1e3) ** 2])
             out.append((kid, target, Rme @ Cenu @ Rme.T + 1e-6 * np.eye(3)))

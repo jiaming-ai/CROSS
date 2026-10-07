@@ -788,6 +788,10 @@ class GeoConfig:
     # (the trajectory absorbs part of the error), so the rescaled noise overweights GNSS (NCLT 27 sessions: geo RMSE
     # 3.53 vs 3.40 m, online 6.67 vs 5.49 m, 2.4x the optimisations)
     posterior_scale: bool = False
+    # GNSS altitude in the factors (vertical noise sigma_v_factor x horizontal); False: horizontal factors only (the
+    # map's vertical from odometry / vision).  Consumer altitude is poor: NCLT 2012-08-04 end to end the vertical error
+    # rose 3.5 -> 8.1 m with it (2012-01-08: 3.0 -> 2.3 m); see the 27-session study
+    use_altitude: bool = True
     retrieval_gate: bool = True               # relocalization: map keyframes far from the fix are not retrieved
     proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
     retrieval_margin_m: float = 10.0          # retrieval gate radius beyond the fix's chi-square radius (views of the

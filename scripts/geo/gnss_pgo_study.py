@@ -349,6 +349,8 @@ class Replay:
             used = kept
         for (j, enu, sh, sv, off, t) in used:
             sh, sv = sh * sc, sv * sc
+            if self.args.no_altitude:
+                enu = np.array([enu[0], enu[1], np.nan])
             target = A.to_map(np.array([enu[0], enu[1], enu[2] if np.isfinite(enu[2]) else 0.0]))
             # factor on keyframe j's position: the fix minus the odometry offset between keyframe and fix
             Rme = A.R.T      # ENU -> map
@@ -401,7 +403,11 @@ def evaluate(res, gt_enu, gtd, sky):
         Rr, tt = fit_rigid_2d(P[ok, :2], g[ok, :2], np.ones(ok.sum()))
         es = np.linalg.norm(P[ok, :2] @ Rr.T + tt - g[ok, :2], axis=1)
         sk = sky(kt[ok])
-        row = {"ate_geo_rmse": float(np.sqrt((e ** 2).mean())), "ate_geo_median": float(np.median(e)),
+        dz = P[ok, 2] - g[ok, 2]
+        dz = dz[np.isfinite(dz)]
+        row = {"vert_rmse": float(np.sqrt(((dz - np.median(dz)) ** 2).mean())) if len(dz) else None,
+               "vert_range_est": float(np.ptp(P[ok, 2])) if ok.sum() else None, "vert_range_gt": float(np.ptp(g[ok, 2])),
+               "ate_geo_rmse": float(np.sqrt((e ** 2).mean())), "ate_geo_median": float(np.median(e)),
                "ate_geo_p95": float(np.percentile(e, 95)), "ate_geo_max": float(e.max()),
                "ate_shape_rmse": float(np.sqrt((es ** 2).mean())), "n": int(ok.sum())}
         if (~sk).sum() > 0:
@@ -451,6 +457,7 @@ def main():
     ap.add_argument("--factor-interval", type=float, default=0.0,
                     help="seconds between GNSS factors (0: every used fix; -1: from the online error model)")
     ap.add_argument("--tag", default="", help="suffix of the variant names in the output")
+    ap.add_argument("--no-altitude", action="store_true", help="horizontal GNSS factors only (no altitude)")
     ap.add_argument("--opt-min-kf", type=int, default=25, help="keyframes between two optimisations (rate limit)")
     ap.add_argument("--max-time", type=float, default=0.0, help="seconds of the session to use (0: all)")
     args = ap.parse_args()
