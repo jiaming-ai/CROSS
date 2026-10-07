@@ -4,7 +4,7 @@ obs["gnss"] / obs["compass"]).
 Files (in the folder or its parent, the session folder of a prepared dataset):
 - `gnss.txt`: `t lat_deg lon_deg alt_m [mode num_sats [hdop [sigma_h]]]`, t on the clock of `times.txt`.  A header
   that names the 5th column `msg` (NCLT: the NMEA sentence of the row, not a fix quality) makes the mode unknown.
-- `mag.txt` (`t mag_x mag_y mag_z acc_x acc_y acc_z`) or an `imu.txt` whose header names `mag_x` (NCLT layout:
+- `mag.txt` (`t mag_x mag_y mag_z acc_x acc_y acc_z`) or a `ms25.txt` / `imu.txt` whose header names `mag_x` (NCLT layout:
   `t mag(3) acc(3) gyro(3)`), body frame forward-right-down; or `heading.txt` (`t yaw_enu_rad [sigma_rad]`).
 - `times.txt`: frame times (seconds), one per frame; without it frames are idx / fps on the fix clock's start.
 
@@ -75,7 +75,7 @@ class GeoStream:
         compass = None
         if use_compass:
             mp = _find(root, "mag.txt")
-            ip = _find(root, "imu.txt")
+            ip = _find(root, "ms25.txt") or _find(root, "imu.txt")
             hp = _find(root, "heading.txt")
             if mp is not None:
                 m = np.loadtxt(mp, ndmin=2)
