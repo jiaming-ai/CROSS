@@ -432,8 +432,7 @@ class LoopClosureVerifier:
         self.guard_persist = max(int(getattr(cfg, "odom_guard_persist", 2)), 1)
         self.odom_scale = 1.0                         # correction of the odometry's translations (applied by the System)
         # after a firing: the odometry's relative translation error measured by the guard (0: none measured), applied to
-        # the odometry edges from the departing windows on (odom_guard_inflate)
-        self.guard_inflate = bool(getattr(cfg, "odom_guard_inflate", False))
+        # the odometry edges from the departing windows on; while it is > 0 the guard tracks the faulty odometry
         self.odom_fault = 0.0
         # relocalization sessions: map measurements as guard samples (odom_guard_map)
         self.guard_map = bool(getattr(cfg, "odom_guard_map", False))
@@ -444,11 +443,8 @@ class LoopClosureVerifier:
         self._guard_epoch_kf = None
         self._gate_last_kf = None
         self._pass_g: list = []                       # guard samples of the current observation (one window sample)
-        # attribution (odom_guard_attribute): log odometry speed (raw, per frame) of the window samples, and of the latest
-        # healthy window before any fault (the odometry's own reference)
-        self.guard_attribute = bool(getattr(cfg, "odom_guard_attribute", False))
-        # one window sample per observation (odom_guard_per_observation); off: every measurement is a sample
-        self.guard_per_obs = bool(getattr(cfg, "odom_guard_per_observation", False))
+        # attribution of a departure: log odometry speed (raw, per frame) of the window samples, and of the latest healthy
+        # window before any fault (the odometry's own reference)
         self._guard_ls: list = []
         self._guard_speed_ref: Optional[float] = None
         self._pass_fix: list = []                     # map fixes of the current observation (position, sigma)
@@ -703,9 +699,6 @@ class LoopClosureVerifier:
         odometry's distance per frame over the sample's span."""
         if span_from is not None and self._guard_epoch_kf is not None and span_from < self._guard_epoch_kf:
             return
-        if not self.guard_per_obs:
-            self._guard_push(float(g), span_from, speed)
-            return
         self._pass_g.append((float(g), span_from, speed))
 
     def _step(self) -> Optional[int]:
@@ -747,13 +740,17 @@ class LoopClosureVerifier:
         if speed is not None and speed > 0:
             self._guard_ls.append(math.log(speed))
         if len(self._guard) == self._guard.maxlen:            # consecutive, non-overlapping windows
-            lm = float(np.median(np.log(self._guard)))
+            logs = np.log(np.asarray(self._guard, dtype=np.float64))
+            lm = float(np.median(logs))
             ls = float(np.median(self._guard_ls)) if self._guard_ls else None
             self._guard.clear()
             self._guard_ls = []
             start, self._guard_win_kf = self._guard_win_kf, None
             if abs(lm) <= lim and ls is not None and self.odom_scale == 1.0:
                 self._guard_speed_ref = ls                # the odometry's own pace while healthy
+            if self.odom_fault > 0:
+                self._guard_track(lm, ls, logs, start)
+                return abs(math.log(g)) <= lim
             if abs(lm) > lim and (not self._guard_run or (lm > 0) == (self._guard_run[-1] > 0)):
                 if not self._guard_run:
                     self._guard_run_kf = start
@@ -773,21 +770,40 @@ class LoopClosureVerifier:
                 m = math.exp(lm)                              # the latest window's departure
                 self.odom_scale *= m
                 self._guard_run = []
-                if self.guard_inflate and self._gate_last_kf is not None:
+                if self._gate_last_kf is not None:
                     self._guard_epoch_kf = self._gate_last_kf + 1
                 self.stats["odom_guard_updates"] = self.stats.get("odom_guard_updates", 0) + 1
                 self.stats["odom_scale"] = round(self.odom_scale, 4)
                 logger.info(f"odometry scale guard: measured / odometry translation {m:.3f} x the long-run ratio in "
                             f"{self.guard_persist} consecutive windows of {self._guard.maxlen} spans; odometry translations "
                             f"now scaled by {self.odom_scale:.4f}")
-                if self.guard_inflate:
-                    self._set_fault(abs(1.0 - m), self._guard_run_kf)
+                self._set_fault(abs(1.0 - m), self._guard_run_kf)
                 self._guard_run_kf = None
-            elif self.guard_inflate and self.odom_fault > 0:
-                # after a firing the odometry is as uncertain as the latest window's departure (from the corrected
-                # odometry): the inflation follows the fault and fades when the odometry is healthy again
-                self._set_fault(abs(1.0 - math.exp(lm)), None)
         return abs(math.log(g)) <= lim
+
+    def _guard_track(self, lm: float, ls: Optional[float], logs: np.ndarray, start: Optional[int]) -> None:
+        """After a firing the odometry is known to be faulty and the guard follows it window by window: a window whose
+        median departs from the corrected odometry by more than twice its own standard error (1.858 MAD / sqrt(n)) is
+        applied at once (no band, no persistence), when the departure is the odometry's (attribution).  A diverging VIO
+        keeps accelerating after the first firing (ROVER night RGB-D: 1.2-1.4x too long again within ~250 frames, inside the
+        band, the map drifted 15 m at the end).  The inflation follows the latest window (fades when the odometry is
+        steady; a correction inflates the window's stretch like the first firing), and a recovered odometry is followed
+        back the same way."""
+        mad = float(np.median(np.abs(logs - np.median(logs))))
+        se = 1.858 * mad / math.sqrt(max(len(logs), 1))
+        m = math.exp(lm)
+        self._guard_run, self._guard_run_kf = [], None
+        if abs(lm) > 2.0 * se and self._attributed_to_odometry(lm, ls):
+            self.odom_scale *= m
+            if self._gate_last_kf is not None:
+                self._guard_epoch_kf = self._gate_last_kf + 1
+            self.stats["odom_guard_tracked"] = self.stats.get("odom_guard_tracked", 0) + 1
+            self.stats["odom_scale"] = round(self.odom_scale, 4)
+            logger.info(f"odometry scale guard (tracking the fault): measured / corrected odometry {m:.3f} "
+                        f"(window standard error {se:.3f} in log); odometry translations now scaled by {self.odom_scale:.4f}")
+            self._set_fault(abs(1.0 - m), start)
+        else:
+            self._set_fault(abs(1.0 - m), None)
 
     def _attributed_to_odometry(self, lm: float, ls: Optional[float]) -> bool:
         """Which sensor changed?  A departure of the measured / odometry ratio is the odometry's when the odometry's own
@@ -796,7 +812,7 @@ class LoopClosureVerifier:
         estimator changed (KITTI 01, PnP on depth at highway speed: measured translations near zero for ~250 frames while
         the VIO kept its pace; ROVER night: the VIO's speed rose several-fold).  Without speed information (or with
         attribution off) the departure is the odometry's, as before."""
-        if not self.guard_attribute or ls is None:
+        if ls is None:
             return True
         if self._guard_speed_ref is None:
             return False                                  # no healthy reference of the odometry's pace yet
