@@ -864,10 +864,17 @@ class System:
         if self.pose_est_type == PoseEstType.FF and hasattr(self.pose_est, "precompute"):
             # tokens of every map image now (exact, a few seconds once per process: the cache keeps them across map
             # reloads), instead of a slower pass whenever a map keyframe is retrieved for the first time
+            # (only as many images as the token cache holds are converted: precompute keeps the first `capacity`
+            # anyway, and converting every image of a large map to float on the GPU ran out of memory: 4248 keyframes
+            # = 15.6 GB on NCLT)
+            import itertools
             from cross.db.db import as_float_image
             kfs = self.db.get_all_keyframes()
-            images = [as_float_image(k.raw_rgb_image) for k in kfs if k.raw_rgb_image is not None]
-            images += [as_float_image(k.raw_rgb_right) for k in kfs if getattr(k, "raw_rgb_right", None) is not None]
+            cache = getattr(getattr(self.pose_est, "backend", None), "token_cache", None)
+            cap = int(getattr(cache, "capacity", 0) or 0) if cache is not None else 0
+            gen = itertools.chain((k.raw_rgb_image for k in kfs if k.raw_rgb_image is not None),
+                                  (k.raw_rgb_right for k in kfs if getattr(k, "raw_rgb_right", None) is not None))
+            images = [as_float_image(x) for x in itertools.islice(gen, cap)]
             self.pose_est.precompute(images)
 
         logger.info(f"Map loaded successfully from {load_path}")
