@@ -90,3 +90,12 @@ def test_pairwise_covisibility_matches_per_destination_scores():
         src = [v for v in views if v != b]
         assert np.allclose(C[src, b], covisibility_scores(pred, src, b, grid=32), atol=1e-6)
     assert np.allclose(np.diag(C), 1.0)
+
+
+def test_long_reference_confidence():
+    from cross.cv.pose_est_ff import long_reference_confidence
+    covis, dists, head = [0.8, 0.8, 0.8], [1.0, 5.0, 12.0], [0.1, 0.05, 0.6]
+    assert np.allclose(long_reference_confidence(covis, dists, head), covis)                 # both options off
+    assert np.allclose(long_reference_confidence(covis, dists, head, head_min_dist=3.0), [0.8, 0.05, 0.6])
+    assert np.allclose(long_reference_confidence(covis, dists, None, head_min_dist=3.0), covis)
+    assert np.allclose(long_reference_confidence(covis, dists, head, long_conf_dist=4.0), [0.8, 0.64, 0.8 / 3])

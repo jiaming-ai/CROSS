@@ -392,6 +392,21 @@ def _load_scale_encoder(sd: dict, patch_embed, scale_head_cfg: Optional[dict], d
     return enc.eval().to(device)
 
 
+def long_reference_confidence(covis, dists, head=None, head_min_dist: float = 0.0, long_conf_dist: float = 0.0):
+    """Per-reference confidence with the long-reference options: beyond head_min_dist (m) the covisibility head must
+    agree (min of the score and the head), beyond long_conf_dist (m) the confidence is scaled by long_conf_dist /
+    distance; 0 turns either off."""
+    c = np.array(covis, dtype=np.float64)
+    d = np.asarray(dists, dtype=np.float64)
+    if head_min_dist > 0 and head is not None:
+        far = d > head_min_dist
+        c[far] = np.minimum(c[far], np.asarray(head, dtype=np.float64)[far])
+    if long_conf_dist > 0:
+        far = d > long_conf_dist
+        c[far] *= long_conf_dist / d[far]
+    return c
+
+
 def pairwise_covisibility(pred: FFPrediction, views: List[int], grid: int = 48, rel_depth_tol: float = 0.15,
                           min_conf_quantile: float = 0.3) -> np.ndarray:
     """covisibility_scores for every ordered pair of the given views in one batched pass (one device
@@ -819,9 +834,15 @@ class PoseEstFeedForward:
 
         # ---- relative poses T_ref_cam = X_ref^-1 X_curr ----
         poses, confs, valid = [], [], []
+        T_refs = [invert_poses(c2w_metric[1 + i]) @ c2w_metric[0] for i in range(B)]
+        dists = np.asarray([float(np.linalg.norm(T[:3, 3])) for T in T_refs])
+        head_min_dist = float(getattr(cfg, "covis_head_min_dist", 0.0) or 0.0)
+        if head_min_dist > 0 and pred.covis is None:
+            raise ValueError("covis_head_min_dist needs a checkpoint with a covisibility head (vggt_ft)")
+        covis = long_reference_confidence(covis, dists, None if pred.covis is None else pred.covis[0, ref_idx],
+                                          head_min_dist, float(getattr(cfg, "long_ref_conf_dist", 0.0) or 0.0))
         for i in range(B):
-            T_ref_cam = invert_poses(c2w_metric[1 + i]) @ c2w_metric[0]
-            dist = float(np.linalg.norm(T_ref_cam[:3, 3]))
+            T_ref_cam, dist = T_refs[i], float(dists[i])
             ok = (covis[i] >= cfg.min_covis) and (dist <= cfg.max_rel_distance)
             valid.append(bool(ok))
             if ok:

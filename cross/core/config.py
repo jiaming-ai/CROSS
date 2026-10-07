@@ -803,6 +803,12 @@ class FeedForwardConfig:
     # covisibility of the current view with each reference: "geometric" (reprojection consistency of the predicted
     # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint) or "min" of the two
     covis_source: str = "geometric"
+    # references farther than this (predicted metric distance, m) count only where the covisibility head agrees: their
+    # confidence is min(geometric, head) (needs a vggt_ft checkpoint; 0 = off).  Between the two ends of a long,
+    # repetitive corridor the geometric score finds overlap the views do not have; the head rarely does
+    covis_head_min_dist: float = 0.0
+    # confidence (and so the visual edge's weight) of references farther than this (m) scaled by this / distance (0 = off)
+    long_ref_conf_dist: float = 0.0
     # metric scale of a pass: "anchors" (stereo / odometry anchors), "head" (scale head of a vggt_ft checkpoint) or
     # "head_fallback" (the head only when no anchor is valid, e.g. monocular passes without odometry)
     scale_source: str = "anchors"

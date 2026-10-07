@@ -16,6 +16,9 @@ results page.
 | full | OpenLORIS cafe | cafe1-1 (570) → cafe1-2, first 300 | people and clutter |
 | full | KITTI 07 | 07 (1101), T1 only | outdoor scale and the loop closure at the end of the drive |
 
+A tier `corridor` (entry `corridor_openloris`) is the benchmark's OpenLORIS corridor scene: map corridor1-1, its four
+queries, T1 / T2 / T3. It checks the loop closures of a long, repetitive corridor, which the other tiers do not contain.
+
 A third tier, `val`, is a confirmation set: every OpenLORIS office, home and cafe query of the benchmark (11 queries,
 about 106 T3 trials), T2 and T3 only (entry `val_openloris`, `tier: val`). It takes about 25 minutes per stereo variant
 on an RTX 5090, and is meant for a change that passed the dev split, before the full benchmark.
