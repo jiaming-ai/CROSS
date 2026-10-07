@@ -86,7 +86,9 @@ class GeoStream:
             elif hp is not None:
                 m = np.loadtxt(hp, ndmin=2)
                 compass = ("yaw", m[:, 0], m[:, 1], m[:, 2] if m.shape[1] > 2 else np.full(len(m), np.nan))
-        return cls(fixes, mode_known, np.asarray(times, float), compass, degrade, seed)
+        gs = cls(fixes, mode_known, np.asarray(times, float), compass, degrade, seed)
+        gs.loader_clock = np.arange(len(times)) / float(fps)     # the loaders' frame timestamps (idx / fps)
+        return gs
 
     def _apply_degrade(self, seed: int):
         d = self.degrade
@@ -126,7 +128,11 @@ class GeoStream:
         hi = int(np.searchsorted(self.fix[:, 0], t1, side="right"))
         if hi > lo:
             r = self.fix[hi - 1]
-            g = {"t": float(timestamp) - (t1 - float(r[0])), "lat": float(r[1]), "lon": float(r[2]),
+            # the fix's time on the loader's clock (piecewise linear between frames: dropped frames do not shift it)
+            lc = getattr(self, "loader_clock", None)
+            tf = float(np.interp(r[0], self.frame_times, lc)) + (float(timestamp) - float(lc[idx])) if lc is not None \
+                else float(timestamp) - (t1 - float(r[0]))
+            g = {"t": tf, "lat": float(r[1]), "lon": float(r[2]),
                  "alt": float(r[3]) if np.isfinite(r[3]) else None}
             if self.mode_known and np.isfinite(r[4]):
                 g["mode"] = int(r[4])
