@@ -224,7 +224,7 @@ class DescriptorIndex:
     # -------------------------------------------------------------- search
     def scores(self, q: torch.Tensor, rows: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Inner products of the code q with all rows [0, n) or with `rows` (in that order)."""
-        db = self.buf[:self.n] if rows is None else self.buf[rows]
+        db = self.buf[:self.n] if rows is None else self.buf.index_select(0, torch.as_tensor(rows, device=self.buf.device))
         if self.dtype == torch.float32:
             return (db @ q.unsqueeze(-1)).squeeze(-1)          # the original database's computation
         if db.is_cuda:
@@ -258,18 +258,23 @@ class DescriptorIndex:
 
 
 class _IVF:
-    """Inverted file on the GPU/CPU: k-means centroids and the cell of every row."""
+    """Inverted file: k-means centroids, the cell of every row, and the rows sorted by cell (contiguous lists, so a
+    probe reads nprobe slices instead of scanning every row).  Rows added since the last sort are scanned apart and
+    the lists are re-sorted once they exceed 10 % (or after a removal)."""
 
     def __init__(self, centroids: torch.Tensor):
-        self.centroids = torch.nn.functional.normalize(centroids, dim=-1)
-        self.cell = torch.empty(0, dtype=torch.int32, device=centroids.device)
+        self.centroids = torch.nn.functional.normalize(centroids.float(), dim=-1)
+        self.cell = torch.empty(0, dtype=torch.long, device=centroids.device)
+        self._order = None          # rows sorted by cell (first _n_sorted rows)
+        self._offsets = None        # (nlist + 1,) start of each cell's list in _order
+        self._n_sorted = 0
 
     @classmethod
     def train(cls, X: torch.Tensor, nlist: int, iters: int = 12, sample: int = 256) -> "_IVF":
         g = torch.Generator(device="cpu").manual_seed(0)
         n = X.shape[0]
         take = torch.randperm(n, generator=g)[: min(n, nlist * sample)].to(X.device)
-        S = X[take]
+        S = X[take].float()
         C = S[torch.randperm(S.shape[0], generator=g)[:nlist].to(X.device)].clone()
         for _ in range(iters):     # spherical k-means
             C = torch.nn.functional.normalize(C, dim=-1)
@@ -280,13 +285,13 @@ class _IVF:
             Cn[empty] = S[torch.randint(0, S.shape[0], (int(empty.sum()),), generator=g).to(X.device)]
             C = Cn
         ivf = cls(C)
-        ivf.cell = _argmax_chunked(X, ivf.centroids).to(torch.int32)
+        ivf.cell = _argmax_chunked(X, ivf.centroids)
         return ivf
 
     def add(self, x: torch.Tensor, row: int) -> None:
-        c = _argmax_chunked(x, self.centroids).to(torch.int32)
+        c = _argmax_chunked(x, self.centroids)
         if row >= self.cell.shape[0]:
-            grow = torch.full((max(row + 1, 2 * self.cell.shape[0]) - self.cell.shape[0],), -1, dtype=torch.int32,
+            grow = torch.full((max(row + 1, 2 * self.cell.shape[0]) - self.cell.shape[0],), -1, dtype=torch.long,
                               device=self.cell.device)
             self.cell = torch.cat([self.cell, grow])
         self.cell[row] = c[0]
@@ -294,14 +299,33 @@ class _IVF:
     def move(self, src: int, dst: int) -> None:
         self.cell[dst] = self.cell[src]
         self.cell[src] = -1
+        self._order = None
 
     def drop_last(self, row: int) -> None:
         self.cell[row] = -1
+        self._order = None
+
+    def _sort(self, n: int) -> None:
+        cells = self.cell[:n]
+        self._order = torch.argsort(cells, stable=True)
+        counts = torch.bincount(cells, minlength=self.centroids.shape[0])
+        self._offsets = torch.zeros(counts.numel() + 1, dtype=torch.long, device=cells.device)
+        self._offsets[1:] = torch.cumsum(counts, 0)
+        self._offsets = self._offsets.cpu()
+        self._n_sorted = n
 
     def probe(self, q: torch.Tensor, nprobe: int, n: int) -> torch.Tensor:
+        if self._order is None or n < self._n_sorted or n - self._n_sorted > max(1000, n // 10):
+            self._sort(n)
         cs = self.centroids @ q.to(self.centroids.dtype)
-        top = cs.topk(min(nprobe, cs.shape[0])).indices.to(torch.int32)
-        return torch.isin(self.cell[:n], top).nonzero(as_tuple=True)[0]
+        top = cs.topk(min(nprobe, cs.shape[0])).indices
+        off = self._offsets
+        parts = [self._order[off[c]:off[c + 1]] for c in top.cpu().tolist()]
+        if n > self._n_sorted:
+            tail = torch.arange(self._n_sorted, n, device=self.cell.device)
+            parts.append(tail[torch.isin(self.cell[self._n_sorted:n], top)])
+        rows = torch.cat(parts) if parts else torch.empty(0, dtype=torch.long, device=self.cell.device)
+        return rows.sort().values
 
 
 def _argmax_chunked(X: torch.Tensor, C: torch.Tensor, chunk: int = 65536) -> torch.Tensor:
