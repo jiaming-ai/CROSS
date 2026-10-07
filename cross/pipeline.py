@@ -360,6 +360,10 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
         return pipeline
 
     if mode in ("rgbd", "stereo"):
+        if odometry == "vgio":
+            # the odometry scale guard keeps its sample filter but does not rescale this odometry (LoopClosureConfig.
+            # odom_guard_rescale): it is metric itself, and the back end's passes collapse with the frontend's (KITTI 01)
+            cfg.mapping.loop_closure.odom_guard_rescale = False
         system = System(visualize=visualize, debug=False, camera=Camera(K.copy(), *size), config=cfg,
                         T_right_in_left=T_right_in_left)
         if odometry == "external":

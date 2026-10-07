@@ -202,13 +202,17 @@ class ImuConfig:
     # disagreement with the gyro)
     vgio_stereo_pnp_rotation: object = False
     # stereo + IMU: the translation tests with the IMU as the arbiter (VggtImuFrontend._stereo_gate): the pass and the
-    # corners' motion must agree with the IMU's prediction within 4 sigma (vgio_stereo_gate_factor > 1 also accepts
-    # within that factor, the monocular test's tolerance for the learned scale); vgio_stereo_gate_pairs: the pass's
-    # keyframe pairs (~2 s) too, against the graph's motion (KITTI 01: a pass accepted on its short pair pulled every
-    # velocity of the window through its long ones, 24 -> 2 m/s; ATE 266 -> 38 m with the test)
+    # corners' motion must agree with the IMU's prediction (vgio_stereo_gate_factor > 1 also accepts within that factor,
+    # the monocular test's tolerance for the learned scale); vgio_stereo_gate_pairs: the pass's keyframe pairs (~2 s)
+    # too, against the graph's motion (KITTI 01: a pass accepted on its short pair pulled every velocity of the window
+    # through its long ones, 24 -> 2 m/s; ATE 266 -> 38 m with the test).  The tests know how the cues fail: a pass
+    # collapses to less motion (KITTI 01: 10.7 % of the passes > 15 % short, 0.07 % > 15 % long), the corners lock onto
+    # vehicles alongside (mostly short too); below the prediction a cue must be likelier the truth than a collapse at
+    # its recent failure rate, and two consistent passes far above it override the IMU
     vgio_stereo_gate_factor: float = 1.0
     vgio_stereo_gate_pairs: bool = True
     vgio_debug_costs: bool = False               # graph: log the cost of each factor type per solve (diagnostics)
+    vgio_trace: str = ""                         # diagnostics: a JSON line per visual measurement to this file ("": none)
 
 
 @dataclass
