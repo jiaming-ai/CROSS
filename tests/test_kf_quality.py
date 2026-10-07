@@ -103,3 +103,15 @@ def test_add_person_keeps_threshold_and_skips_checked():
     assert not q.person_checked
     r = f.add_person(q, _textured(31))         # the filter's config has person=False: unchanged
     assert r is q
+
+
+def test_mostly_flat_view_is_kept_unless_almost_empty():
+    f = _filter()
+    _seed(f)
+    x = _textured(41)
+    x[:, :, :250] = 0.5                         # ~ 78 % of the view textureless (a white wall), the rest textured
+    q = f.assess(x)
+    assert q.fractions["flat"] > 0.6 and not q.junk
+    x[:, :, :300] = 0.5                         # ~ 94 %: almost nothing left
+    q = f.assess(x)
+    assert q.junk and q.reason == "flat"

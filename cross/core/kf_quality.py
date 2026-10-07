@@ -18,7 +18,9 @@ well-exposed, static scene content at a normal distance.  A cell is removed when
              blur, covered lens).
 The session's typical values are running medians over the frames assessed so far (robust to a minority of junk
 frames), so the test adapts to the camera, the exposure and the environment.  A frame is junk when its informative
-fraction is below min(info_min, info_rel * the session's running median informative fraction).
+fraction is below min(info_min, info_rel * the session's running median informative fraction); when the cells are
+mostly removed only for being flat, below flat_info_min (a textureless wall still has edges and may be the only view of
+a place; tested: rejecting such views cost relocalization in a home scene).
 """
 from __future__ import annotations
 
@@ -279,14 +281,19 @@ class KeyframeQuality:
             ref = self.info_ref.get(info)
             threshold = min(float(getattr(cfg, "info_min", 0.35)), float(getattr(cfg, "info_rel", 0.5)) * ref)
         warm = self.n_assessed < int(getattr(cfg, "warmup", 5))
-        junk = (not warm) and info < threshold
+        # the cause that alone removes the most cells (causes listed in order of precedence on ties)
+        main = max(CAUSES, key=lambda c: fractions[c])
+        # a view that is only textureless (a white wall, a floor) still carries edges and is sometimes the only view of
+        # a place: it is junk only when (almost) nothing is left (covered lens, blank surface filling the view); a view
+        # blocked by something close, a person or clipping is junk below the threshold
+        thr = min(threshold, float(getattr(cfg, "flat_info_min", 0.1))) if main == "flat" else threshold
+        junk = (not warm) and info < thr
         if update:
             self.info_ref.push(info)
             self.n_assessed += 1
         reason = None
         if junk:
-            # the cause that alone removes the most cells (causes listed in order of precedence on ties)
-            reason = max(CAUSES, key=lambda c: fractions[c])
+            reason = main
             if update:
                 self.stats["junk"] += 1
                 self.stats["by_reason"][reason] += 1
