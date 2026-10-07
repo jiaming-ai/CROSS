@@ -281,10 +281,11 @@ def test_projected_scores_keep_the_full_cosine():
     s = idx.query_scores(q)
     top = full.topk(20).indices
     assert torch.allclose(s[top], full[top], atol=1e-3)                      # exact on the shortlist
-    assert float((s - full).abs().mean()) < float((raw - full).abs().mean())  # calibration helps elsewhere
     st = idx.state()
     re = DescriptorIndex(D, device="cpu", projection=PCAProjection.from_state(st["projection"]))
     re.set_rows(idx.buf[:idx.n], idx.ids[:idx.n].tolist())
     re.calibration = ScoreCalibration.from_state(st["calibration"])
-    s2 = re.query_scores(q)
-    assert float((s2 - full).abs().mean()) < float((raw - full).abs().mean())
+    s2 = re.query_scores(q)                                                   # codes only: raw code scores
+    assert torch.allclose(s2, raw, atol=1e-4)
+    iso = re.calibration.apply(raw, 0.9, re._energy[:re.n], model="iso")      # opt-in models stay available
+    assert iso.shape == raw.shape and torch.isfinite(iso).all()

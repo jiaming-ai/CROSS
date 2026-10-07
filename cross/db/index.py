@@ -243,7 +243,8 @@ class DescriptorIndex:
                  projection: Optional[PCAProjection] = None, store_dtype: str = "auto", backend: str = "exact",
                  ivf_nlist: int = 0, ivf_nprobe: int = 16, ivf_min_rows: int = 200000, ann_shortlist: int = 256,
                  fit_at: int = 0, fit_dim: int = 0, fit_energy: float = 0.9, extend: bool = True,
-                 extend_margin: float = 0.05, extend_dims: int = 64, max_dim: int = 2048, recent: int = 1024):
+                 extend_margin: float = 0.05, extend_dims: int = 64, max_dim: int = 2048, recent: int = 1024,
+                 shortlist: int = 64, calibration: str = "raw"):
         self.dim_in = int(dim_in)
         self.device = device
         self.projection = projection
@@ -268,7 +269,8 @@ class DescriptorIndex:
         self._next_refit = 0
         self._refit_ok = self.fit_at > 0 and projection is None    # every row's full descriptor is at hand
         self.calibration: Optional[ScoreCalibration] = None        # code score -> full cosine (projected rows)
-        self.shortlist = 64                                         # rows re-scored exactly (full descriptors in RAM)
+        self.shortlist = int(shortlist)                             # rows re-scored exactly (full descriptors in RAM)
+        self.calibration_model = calibration
         self._energy = torch.zeros(int(initial_capacity), device=device)   # |code|^2 per row (projected rows)
         self._e_ema = None
         self._since_extend = 0
@@ -379,7 +381,8 @@ class DescriptorIndex:
                            for i in range(0, n, 8192)])
         self._set_projection(proj, codes)
         sel = torch.linspace(0, n - 1, min(n, 8192)).long()           # in insertion (time) order
-        self.calibration = ScoreCalibration.fit(self._full_rows(sel), self.buf[sel.to(self.device)].float(), exclude=5)
+        self.calibration = ScoreCalibration.fit(self._full_rows(sel), self.buf[sel.to(self.device)].float(), exclude=5,
+                                                model=self.calibration_model)
         self._recent = [(int(self.ids[r]), self._full[r].clone()) for r in range(max(0, n - self.recent_size), n)]
         self._e_ema = proj.meta["e_ref"]
         self._since_extend = 0
@@ -445,7 +448,7 @@ class DescriptorIndex:
                     f"{self.extend_margin}); subspace {self.dim} -> {Vn.shape[1]} dims")
         self._set_projection(proj, codes)
         Zr = torch.stack([proj.apply(x.float().to(self.device)) for _, x in self._recent])
-        self.calibration = ScoreCalibration.fit(Xr, Zr, exclude=5)
+        self.calibration = ScoreCalibration.fit(Xr, Zr, exclude=5, model=self.calibration_model)
         self._e_ema = proj.meta["e_ref"]
         self._since_extend = 0
 
