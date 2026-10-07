@@ -377,7 +377,8 @@ def prepare_sensors(raw: Path, out_root: Path, session: str, cams: dict):
     e = files.get("gps_rtk_err.csv")
     err = np.interp(r[:, 0], e[:, 0], e[:, 1]) if e is not None and len(e) else np.full(len(r), np.nan)
     _write(out / "gnss_rtk.txt", "t_s lat_deg lon_deg alt_m mode num_sats track_deg speed_mps err_m  (NovAtel DL-4 "
-           "plus; mode 3 = 3-D solution; err_m = receiver error estimate (gps_rtk_err.csv))",
+           "plus; mode 3 = 3-D solution; err_m = gps_rtk_err.csv = distance to the ground truth (correlation 0.99998 with our "
+           "own GT residual): evaluation only, NOT a receiver accuracy estimate)",
            np.column_stack([r[:, 0] * us, np.degrees(r[:, 3]), np.degrees(r[:, 4]), r[:, 5], r[:, 1], r[:, 2], r[:, 6], r[:, 7], err]),
            ["%.6f", "%.9f", "%.9f", "%.3f", "%d", "%d", "%.2f", "%.4f", "%.3f"])
     m = files["ms25.csv"]
