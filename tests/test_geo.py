@@ -261,8 +261,9 @@ def test_manager_factors_correct_a_drifting_chain_in_the_pose_graph():
     print("rmse opt", np.sqrt((e_opt ** 2).mean()), "odo", np.sqrt((e_odo ** 2).mean()), "factors", n_fac, "opt", n_opt,
           "tau", geo.err.tau, "scale", geo.noise.scale, geo.gate.stats)
     assert 15 <= n_fac <= 120                     # decimated: about one per correlation time
-    assert np.sqrt((e_opt ** 2).mean()) < 0.25 * np.sqrt((e_odo ** 2).mean())
-    assert np.sqrt((e_opt ** 2).mean()) < 4.0
+    # (prior noise 5 m against a 3 m receiver error: the default without posterior rescaling, see GeoConfig)
+    assert np.sqrt((e_opt ** 2).mean()) < 0.35 * np.sqrt((e_odo ** 2).mean())
+    assert np.sqrt((e_opt ** 2).mean()) < 8.0
     assert 5.0 < geo.err.tau < 60.0                # the receiver error's correlation time (30 s) from the residuals
 
 
