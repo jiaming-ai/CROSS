@@ -143,11 +143,11 @@ def nclt_dims(pd):
 
 if __name__ == "__main__" and len(sys.argv) > 1:
     nclt_scaling(sys.argv[1], "nclt/nclt_s1_d2048.json", "nclt_recall_vs_size.png", " (2048-d codes)")
-    nclt_scaling(sys.argv[1], "nclt/nclt_big.json", "nclt_recall_vs_size_million.png")
+    nclt_scaling(sys.argv[1], "nclt/nclt_million.json", "nclt_recall_vs_size_million.png", " (838k descriptors, 2048-d codes)")
     nclt_dims(sys.argv[1])
 
 
-def nclt_combined(pd, files=("nclt/nclt_s1_d2048.json", "nclt/nclt_s4_d2048.json", "nclt/nclt_big.json"),
+def nclt_combined(pd, files=("nclt/nclt_s1_d2048.json", "nclt/nclt_s4_d2048.json", "nclt/nclt_big.json", "nclt/nclt_million.json"),
                   out="nclt_recall_vs_size_all.png"):
     """Recall@1 (25 m) vs database size, from the NCLT stress run with the largest database (one database
     composition per curve: its smaller sizes are random subsets of it)."""
