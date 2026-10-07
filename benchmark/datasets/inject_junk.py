@@ -171,6 +171,14 @@ class Occluder:
             self.scale = np.sqrt(self.cov * W * H / max(area, 1.0))
             self.c0 = np.array([rng.uniform(0.3, 0.7) * W, rng.uniform(0.45, 0.75) * H])
             self.v = np.array([rng.uniform(-0.3, 0.3) * W, rng.uniform(-0.05, 0.05) * H])
+            # the part outside the frame does not count: rescale until the visible coverage matches (mid-burst)
+            probe = np.zeros((H, W, 3), np.float32)
+            for _ in range(4):
+                _, m = self.apply(probe, 0.5)
+                got = float(m.mean())
+                if got <= 0 or abs(got - self.cov) < 0.03:
+                    break
+                self.scale *= float(np.clip(np.sqrt(self.cov / got), 0.7, 1.6))
 
     def apply(self, img, t, disparity=0.0):
         """img (H, W, 3) float [0, 1]; t in [0, 1] position in the burst; disparity: horizontal shift (right image).
