@@ -106,6 +106,7 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | file | use |
 |---|---|
 | `configs/stereo.yaml` | stereo mode preset (loaded by `--mode stereo`): VGGT-Omega, observation gating |
+| `configs/stereo_lowband.yaml` | opt-in (`--config`) for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away), not with `--fast` |
 | `configs/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius); `outdoor_noown.yaml` is its variant for the same scale |
 | `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
 | `configs/mono_*.json` | mono profiles: the arguments of `python -m cross.mono.run`. `mono_benchmark_10hz.json` for offline runs at 10 Hz, `mono_streaming_dpvo_v2_20hz.json` for real time; select with `--mono-profile`, extra arguments with `--mono-args` |
@@ -152,9 +153,9 @@ only maps. Another query in the same scene is another call with the same `--out`
 `System.save_map(path)` / `System.load_map(path)`; `examples/multi_session.py` runs several sequences through one
 `System`, and `examples/planner.py` loads a map and plans paths on it.
 
-Stereo-mode quick-run options: `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation gating),
-`--max-refs`, `--n-ref-anchors`. Without a right camera pass `--set pose_est.ff.use_odom_anchor=true ...` (see the README
-OpenLORIS example).
+Stereo-mode quick-run options: `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation gating;
+default: the mode's configuration file), `--max-refs`, `--n-ref-anchors`. Without a right camera pass
+`--set pose_est.ff.right_image=left` (scale from the odometry; see the README OpenLORIS example).
 
 ## 5. Benchmark
 
@@ -236,6 +237,13 @@ python scripts/map_and_reloc.py ... --odometry vgio --remote --remote-rtt 0.1   
 #   --remote-compute model|measured|zero   server time (model: cross/remote/link.py, --remote-costs to override)
 #   --remote-jitter 0.05  --remote-outage every:30:3  --remote-jpeg 90  --remote-uplink-mbps 5
 #   --remote-max-backlog 0.3 (default; 0: off)   a server behind the edge skips stale observations instead of queueing
+#   --remote-obs-cap 0.1 (default; 0: off)   the edge sends an observation only if the server could start it within
+#                          0.1 s (its model of the server's queue); else the back end observes a later frame
+#   --set pose_est.obs_confident_max_interval_steps=10   fewer observations while localized; the edge follows (no images)
+#   vgio measures on the back end's passes in the stereo mode (imu.vgio_align, on there; off for mono, where it costs
+#   scale accuracy): 20 % fewer uploads;  --mono-args '--imu-config vgio_align=false' turns it off
+#   --config configs/stereo_lowband.yaml   stereo + trusted external odometry: left image only, half the rate (a third
+#                                          of the uplink; the odometry scale guard is blind then)
 #   --remote --remote-compute zero --remote-upload all   reproduces the local session exactly
 python benchmark/dev.py run --systems cross_stereo_vgio --variant rtt100 --args "--remote --remote-rtt 0.1 --online-poses"
 ```
@@ -247,6 +255,22 @@ python scripts/remote/serve.py --port 50051                                     
 python scripts/map_and_reloc.py ... --remote-server gpu-host:50051 --remote-realtime      # edge: frames at their timestamps
 #   --remote-extra-delay 0.1   emulate a longer round trip;  --remote-jpeg 90   lossy uploads
 ```
+
+Standalone edge (the robot's computer, CPU only, no CROSS / torch): the `cross-edge` package in `edge/` (its own
+`pyproject.toml`; `edge/README.md`) runs Basalt's stereo-inertial VIO live (`edge/native/install_basalt_live.sh` builds
+`basalt_live`), copies the back end's observation cadence and publishes the map-frame pose of every frame:
+
+```bash
+pip install ./edge && edge/native/install_basalt_live.sh ~/basalt_build      # on the robot
+python scripts/remote/serve.py --port 50051                                  # GPU machine (full CROSS)
+cross-edge run --server gpu-host:50051 --data <stereo folder> --realtime --save-map /maps/a.pkl --out run_map
+cross-edge run --server gpu-host:50051 --data <stereo folder> --realtime --load-map /maps/a.pkl --out run_query
+```
+
+The server builds the session from its own configuration files for the mode (`configs/stereo.yaml`, plus
+`--config-file` names of its `configs/` folder and `--set` overrides) and sends the cadence settings back; the
+effective configuration equals the benchmark's `cross_stereo` (external odometry).  `cross.remote.edge.RemotePipeline`
+(the CROSS runners' edge, also with the VGGT-inertial frontend) extends the package's `EdgeSession`.
 
 Map files are written on the server at the paths the edge names.  `--online-poses` (map runs) scores the pose the
 session published at every frame (`map_meta.json` `online`), the number latency changes; `remote` in `map_meta.json` /

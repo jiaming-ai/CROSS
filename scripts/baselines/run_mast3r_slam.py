@@ -33,7 +33,7 @@ sys.path.insert(0, str(ROOT / "scripts/baselines"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import shutil  # noqa: E402
 from eval_traj import evaluate  # noqa: E402
-from reloc_metrics import build_trials, summarize_trials, summarize_errors  # noqa: E402
+from reloc_metrics import build_trials, first_map_link, summarize_trials, summarize_errors  # noqa: E402
 
 
 def main():
@@ -103,6 +103,15 @@ def main():
         traj_all = MS / "logs" / save_as / f"stream_t{ti}_all.txt"     # every tracked frame (patched main.py)
         traj = traj_all if traj_all.is_file() else MS / "logs" / save_as / f"stream_t{ti}.txt"
         map_poses, query_poses = {}, {}
+        # query frames count as localized only from the first query keyframe linked to a map keyframe by a
+        # retrieval / relocalization edge (the patched main.py writes the factor graph's edges); before that their pose
+        # only continues the map's trajectory across the jump between the traversals (reloc_metrics.first_map_link)
+        edges_f = MS / "logs" / save_as / f"stream_t{ti}_edges.txt"
+        link = None
+        if edges_f.is_file() and edges_f.stat().st_size > 0:
+            e = np.loadtxt(edges_f, ndmin=2)
+            link = first_map_link([(r[0], r[1]) for r in e if int(r[2]) == 0], n_map)
+        per_trial_time[-1].update(map_link=None if link is None else int(link) - n_map + a, edge_log=edges_f.is_file())
         if traj.is_file():
             rows_ = np.loadtxt(traj)
             rows_ = rows_.reshape(-1, rows_.shape[-1] if rows_.ndim > 1 else len(rows_))
@@ -117,6 +126,8 @@ def main():
                 if idx < n_map:
                     map_poses[idx] = (state, T)
                 else:
+                    if link is None or idx < link:
+                        state = 1                       # not linked to the map yet: no pose in the map
                     query_poses[idx - n_map + a] = (state, T)
         if args.map_only:
             with open(out / "map_poses.txt", "w") as f:

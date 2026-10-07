@@ -107,3 +107,57 @@ def wilson(k: int, n: int, z: float = 1.96):
     c = (p + z * z / (2 * n)) / den
     h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
     return (max(0.0, c - h), min(1.0, c + h))
+
+
+# Moving robot (PROTOCOL.md, T2 / T3): only the frames at which the robot moves are evaluated, and a T3 trial counts only
+# when the robot moves in at least `min_fraction` of its frames.  A dataset may override any field (datasets.yaml:
+# `moving: {...}`); `tracks` lists the tracks the rule applies to.
+MOVING_RULE = {"window_s": 1.0, "min_speed": 0.05, "min_rate": 5.0, "min_fraction": 0.5, "tracks": ["t2", "t3"]}
+
+
+def moving_rule(dataset_cfg: dict | None = None) -> dict:
+    """The moving rule of a dataset: MOVING_RULE with the dataset's overrides."""
+    return {**MOVING_RULE, **((dataset_cfg or {}).get("moving") or {})}
+
+
+def moving_frames(gt: np.ndarray, fps: float = 10.0, window_s: float = 1.0, min_speed: float = 0.05,
+                  min_rate: float = 5.0, **_) -> np.ndarray:
+    """Per frame of a ground-truth trajectory (N, 4, 4): whether the robot moves there, i.e. over the window of
+    `window_s` centred on the frame (clipped at the ends) the camera travels at least `min_speed` m/s or turns at
+    least `min_rate` deg/s."""
+    n = len(gt)
+    if n < 2:
+        return np.zeros(n, bool)
+    h = max(1, int(round(window_s * fps / 2)))
+    i = np.arange(n)
+    a, b = np.clip(i - h, 0, n - 1), np.clip(i + h, 0, n - 1)
+    dt = np.maximum(b - a, 1) / fps
+    speed = np.linalg.norm(gt[b, :3, 3] - gt[a, :3, 3], axis=1) / dt
+    c = (np.einsum("nij,nij->n", gt[a, :3, :3], gt[b, :3, :3]) - 1) / 2
+    rate = np.degrees(np.arccos(np.clip(c, -1, 1))) / dt
+    return (speed >= min_speed) | (rate >= min_rate)
+
+
+def still_intervals(moving: np.ndarray) -> list:
+    """[first, last] frame intervals at which the robot does not move."""
+    out, start = [], None
+    for k, m in enumerate(moving):
+        if not m and start is None:
+            start = k
+        elif m and start is not None:
+            out.append([start, k - 1])
+            start = None
+    if start is not None:
+        out.append([start, len(moving) - 1])
+    return out
+
+
+def moving_fraction(start: int, length: int, still: list | None = None, moving: np.ndarray | None = None) -> float:
+    """Fraction of the frames [start, start + length) at which the robot moves, from a per-frame mask or from the still
+    intervals (still_intervals)."""
+    if moving is not None:
+        seg = moving[start:start + length]
+        return float(seg.mean()) if len(seg) else 0.0
+    end = start + length - 1
+    n_still = sum(max(0, min(end, b) - max(start, a) + 1) for a, b in (still or []))
+    return 1.0 - n_still / max(length, 1)

@@ -248,6 +248,12 @@ class LoopClosureConfig:
     # (stereo / depth): in mono the map measurements' scale follows the odometry, and on ROVER night the samples made
     # the guard rescale the wrong way.
     odom_guard_map: bool = False
+    # whether a departure rescales the odometry (False: the guard only keeps the departing samples out of the long-run
+    # ratio).  Off for the stereo mode's VGGT-inertial odometry (cross.pipeline.build_session): that odometry is metric
+    # from the stereo pair and the IMU and tested against the IMU, while the back end's feed-forward passes are the same
+    # VGGT-Omega passes and collapse with them (KITTI 01: ratio 0.45, the odometry rescaled by 0.43 and never back, map
+    # 15 -> 318 m with a healthy frontend; it fired on no other cell of the benchmark)
+    odom_guard_rescale: bool = True
     # the visual noise is split along / across the measured bearing, each with its own online scale (innovations of
     # measurements to keyframes <= 5 odometry edges back, normalised with the un-inflated chain covariance).  The metric
     # scale of the feed-forward estimator comes from the stereo baseline and is its weak part far away: on KITTI the
@@ -514,6 +520,19 @@ class HypothesisConfig:
     reloc_min_verified_frames: int = 3
     reloc_realize_nats: float = 2.0
     detect_reject_cooldown_steps: int = 30   # steps a candidate is ignored after a rejected merge
+    # strong passes (0 = off): a proposal backed by at least strong_pass_min_refs references, each with covisibility
+    # >= strong_pass_min_covis, is a multi-view check by itself; such a pass counts as strong_pass_frames valid evidence
+    # frames in the frame-count gates of realization (realize_min_frames) and detection (detect_min_frames). Without
+    # it, a short real overlap after non-overlapping views (rightly rejected) gives too few frames, and the passes split
+    # over several components (OpenLORIS office1-7, mono: relocalization ~175 frames late)
+    strong_pass_frames: int = 0
+    strong_pass_min_refs: int = 2
+    strong_pass_min_covis: float = 0.3
+    # close correction (0 = off): a candidate within the 3 m separation radius of hypothesis 0 passes the separation
+    # gate when its net evidence against hypothesis 0 over detect_min_frames frames is at least this many nats; the
+    # measurements then say hypothesis 0 is wrong, not that the candidate duplicates it (office1-4, mono: hypothesis 0
+    # 1.6 m off after a wrong-scale fix, the correct candidate 1.7 m away with 15-20 nats never merged)
+    close_correction_min_llr: float = 0.0
     # geometric verification of a merge: fraction of the candidate's visual edges that remain outliers
     # (Mahalanobis norm > verify_outlier_sigma) after the loop-closure optimisation
     verify_outlier_sigma: float = 4.0
@@ -641,6 +660,15 @@ class FeedForwardConfig:
     n_ref_anchors: int = 2               # stored right images of the best references used as extra anchors
     use_curr_anchor: bool = True         # include the current right image (ablation switch)
     store_right_images: bool = False     # keep right images of keyframes even when n_ref_anchors == 0
+    # the right image in the stereo mode's back end: "pair" anchors each pass's metric scale (the current pair, stored
+    # right images of the references: use_curr_anchor, n_ref_anchors); "left": the back end observes on the left image
+    # alone, with the metric scale from the previous observation and the odometry between them (use_odom_anchor) and
+    # from pairs of map references (use_map_anchors), set by cross.pipeline.apply_right_image; the right image is not
+    # stored and, in remote sessions, not sent.  The opt-in profile configs/stereo_lowband.yaml sets it (with trusted
+    # external odometry: half the uplink on the development split) - not the default: with the left image no
+    # translation is metric without the odometry, and the odometry scale guard cannot see an odometry failure (ROVER
+    # night with a VIO runaway: map ATE 36-38 m vs 11 m with the pair; outputs/2026-10-07_remote_cadence)
+    right_image: str = "pair"
     use_odom_anchor: bool = False        # previous frame + odometry as an additional metric anchor
     odom_anchor_min_translation: float = 0.15
     odom_anchor_weight: float = 0.5
@@ -661,6 +689,11 @@ class FeedForwardConfig:
     # places a reference that overlaps nothing else in the pass arbitrarily; every anchor through it shares that error,
     # so the anchors agree and a wrong scale looks certain (mono passes whose only anchors are map pairs)
     map_anchor_min_pair_covis: float = 0.0
+    # view-level scale uncertainty (0 = off): the spread of the scale is also measured by leaving out each reference view
+    # in turn (jackknife), since anchors through one view share its placement error; when one reference view carries
+    # every anchor, the relative scale std is at least this. Three anchors through one disconnected view gave a
+    # 7x scale error with logstd 0.003
+    anchor_view_logstd_floor: float = 0.0
     anchor_weight_by_baseline: bool = True   # weight anchors by predicted baseline length (precision of the ratio)
     anchor_max_rot_err_deg: float = 20.0
     anchor_min_dir_cos: float = 0.5

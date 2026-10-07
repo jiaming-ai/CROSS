@@ -100,6 +100,7 @@ class SimLink:
         stale = self.max_backlog is not None and start - at_server > self.max_backlog
         reply = self.server.handle(msg, stale=stale) if stale else self.server.handle(msg)
         cost = self._cost(reply)
+        reply["link_cost"] = cost               # the server time of this message as the link counts it
         self.server_free = start + cost
         arrival = self._up(self.server_free) + self._delay()
         arrival = max(arrival, self.last_arrival)           # one ordered stream

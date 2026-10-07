@@ -126,6 +126,7 @@ class System:
         # Immutable provenance of the graph present at map load. New query
         # nodes can share its atlas, so atlas IDs do not identify sessions.
         self.loaded_node_ids = frozenset()
+        self._session_localized = False        # session_localized(): hypothesis 0 linked to the stored map
 
 
         ########### tracking ###########
@@ -736,6 +737,29 @@ class System:
 
         # Note: planning system (sparse graph) will be rebuilt on load if enabled
 
+    def session_localized(self) -> bool:
+        """Whether hypothesis 0 is expressed in the frame of the stored map.
+
+        A session that loaded a map starts in a coordinate frame of its own, placed outside the stored map
+        (atlas.new_atlas_center); its pose becomes a pose in the map only when a merge links one of its keyframes to a
+        stored keyframe in hypothesis 0's graph (the merged hypothesis brings its session->map edges along).  Until then
+        the pose must not be reported as a pose in the map.  A mapping session (nothing loaded) is its own map.  Once
+        linked, the session stays localized, since the keyframe that held the link may be a temporary one removed later;
+        replacing hypothesis 0 (merge, adoption) resets the flag and the link is checked again."""
+        if not self.loaded_node_ids:
+            return True
+        if self._session_localized:
+            return True
+        h0 = self.hypothesis_manager.hypotheses.get(0)
+        if h0 is None:
+            return False
+        start, loaded = self._session_start_kf_id, self.loaded_node_ids
+        for kid, nbrs in list(h0.visual_adjacency.items()):
+            if kid >= start and not loaded.isdisjoint(nbrs):
+                self._session_localized = True
+                break
+        return self._session_localized
+
     def load_map(self, load_path: str):
         """Load the map.
         Loads persistent graph structure:
@@ -786,6 +810,7 @@ class System:
         self.loaded_node_ids = frozenset(self.hypothesis_manager.nodes)
         self.hypothesis_manager.reference_support.start(self.loaded_node_ids)
         self._session_start_kf_id = Keyframe._next_id
+        self._session_localized = False
         self._projection_n_nodes = -1                  # re-estimate the vertical from the loaded map
         self._anchor_pending.clear()
         self._contra_pending.clear()
@@ -2142,6 +2167,14 @@ class System:
                     else:
                         informative = True
 
+            # references of the cluster with a high pose-estimator confidence (covisibility): a multi-view check of the
+            # proposal (HypothesisConfig.strong_pass_frames)
+            hc = self.config.mapping.hypothesis
+            strong_refs = 0
+            if getattr(hc, "strong_pass_frames", 0) > 1:
+                bs_c = valid_indices_tuple[0][cluster_indices]
+                strong_refs = len({int(b) for b in bs_c.tolist() if float(confidences[int(b)]) >= hc.strong_pass_min_covis})
+
             hypotheses.append({
                 'pose': representative_pose, # cluster representative pose
                 'std': representative_std, # std from cluster dispersion (se(3))
@@ -2149,6 +2182,7 @@ class System:
                 'source_indices': cluster_sources.tolist(), # M, 2
                 'h0_ok': h0_flag,
                 'informative': informative,
+                'strong_refs': strong_refs,
             })
             if self.hypothesis_manager.chart_aware:
                 hypotheses[-1]['chart_id'] = int(flat_charts[best_candidate_in_cluster_idx])

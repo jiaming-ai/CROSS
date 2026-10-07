@@ -185,13 +185,17 @@ class _VGGTOmegaBackend(_Backend):
 
     def _heads(self, x: torch.Tensor, tokens: list, start: int, k: int, dino: Optional[torch.Tensor] = None):
         """Camera head (all views) and depth head (first k views); the camera head runs on a side stream, concurrently
-        with the depth head (both only read the tokens)."""
+        with the depth head (both only read the tokens), except inside a CUDA-graph capture: there it runs first, on
+        the capture stream.  A side-stream branch in the captured graphs made replays die with "illegal memory access"
+        (~2 % of benchmark jobs with the fine-tuned checkpoint, H20 2026-10-07; never without graphs)."""
         m = self.model
         main = torch.cuda.current_stream()
-        if self._head_stream is None:
-            self._head_stream = torch.cuda.Stream(device=x.device)
-        self._head_stream.wait_stream(main)
-        with torch.cuda.stream(self._head_stream), torch.autocast(device_type="cuda", enabled=False):
+        side = not torch.cuda.is_current_stream_capturing()
+        if side:
+            if self._head_stream is None:
+                self._head_stream = torch.cuda.Stream(device=x.device)
+            self._head_stream.wait_stream(main)
+        with torch.cuda.stream(self._head_stream if side else main), torch.autocast(device_type="cuda", enabled=False):
             pose_enc = m.camera_head(tokens, patch_token_start=start)
         if k == 0:
             # no view needs depth (covis_source=head without a frontend observation): the dense head is skipped
@@ -201,7 +205,8 @@ class _VGGTOmegaBackend(_Backend):
             sub = [t if t is None or k == x.shape[1] else t[:, :k] for t in tokens]
             with torch.autocast(device_type="cuda", dtype=self.dtype, enabled=self.dense_head_bf16):
                 depth, conf = m.dense_head(sub, images=x[:, :k], patch_token_start=start)
-        main.wait_stream(self._head_stream)
+        if side:
+            main.wait_stream(self._head_stream)
         # the fine-tune's covisibility / scale heads (small) run on the main stream after the join: on the side stream,
         # concurrently with the dense head, they made the side-stream race (illegal memory access with CUDA graphs)
         # frequent (H20 benchmark, 2026-10-06)
@@ -785,6 +790,7 @@ class PoseEstFeedForward:
             pred.c2w, anchors, method=cfg.scale_method,
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
             weight_by_baseline=cfg.anchor_weight_by_baseline,
+            view_logstd_floor=float(getattr(cfg, "anchor_view_logstd_floor", 0.0) or 0.0),
         )
         src = getattr(cfg, "scale_source", "anchors")
         if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):

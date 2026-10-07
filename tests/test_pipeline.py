@@ -129,3 +129,47 @@ def test_odometry_frontend_composes_dataset_motion():
     frontend = OdometryFrontend()
     poses = [frontend.track(frame(i)).pose for i in range(3)]
     assert np.allclose([p[0, 3] for p in poses], [0.0, 0.5, 1.0])      # the first frame's motion is ignored
+
+
+def test_mode_config_files_and_left_image():
+    """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry; the
+    opt-in low-bandwidth profile observes on the left image (no stereo anchors) at half the rate; --fast keeps the pair."""
+    import os
+    from cross.core.config import load_config
+    from cross.pipeline import CONFIG_DIR, apply_right_image, mode_config_files
+    lowband = os.path.join(CONFIG_DIR, "stereo_lowband.yaml")
+    assert mode_config_files("rgbd", "external") == [] and mode_config_files("mono", "external") == []
+    assert [p.rsplit("/", 1)[-1] for p in mode_config_files("stereo", "external", fast=True)] == ["stereo.yaml", "stereo_fast.yaml"]
+    for odometry in ("external", "vgio", "visual"):
+        pe = apply_right_image(load_config(*mode_config_files("stereo", odometry))).pose_est
+        assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
+        assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 2
+    pe = apply_right_image(load_config(*mode_config_files("stereo", "external"), lowband)).pose_est
+    assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.6, 0.3, 6)
+    assert pe.ff.right_image == "left" and not pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
+    assert pe.ff.use_odom_anchor and pe.ff.use_map_anchors and not pe.ff.store_right_images
+    # the fast preset keeps the pair (its only scale anchor) and the stereo.yaml cadence
+    pe = apply_right_image(load_config(*mode_config_files("stereo", "external", fast=True))).pose_est
+    assert (pe.obs_min_translation, pe.obs_max_interval_steps, pe.ff.right_image, pe.ff.max_refs) == (0.3, 3, "pair", 4)
+    assert pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
+
+
+def test_left_image_session_drops_the_right_image():
+    mapper = FakeMapper()
+    mapper.config = SimpleNamespace(pose_est=SimpleNamespace(ff=SimpleNamespace(right_image="left")))
+    session = Pipeline(mapper, None, mode="stereo", odometry="external")
+    f = frame(0)
+    session.process(f)
+    assert mapper.calls[0]["rgb_right"] is None and mapper.calls[0]["rgb"] is f["rgb"]
+    assert f["rgb_right"] is not None      # the loader's frame is not modified
+
+
+def test_vgio_align_by_mode():
+    from cross.mono.config import MonoConfig
+    from cross.pipeline import _vgio_config
+    stereo = _vgio_config(MonoConfig(), "stereo", np.eye(4))
+    mono = _vgio_config(MonoConfig(), "mono")
+    assert stereo.imu.vgio_align is True and mono.imu.vgio_align is False
+    explicit = MonoConfig()
+    explicit.imu.vgio_align = False
+    assert _vgio_config(explicit, "stereo", np.eye(4)).imu.vgio_align is False

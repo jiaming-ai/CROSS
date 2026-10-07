@@ -1,7 +1,8 @@
 """Remote sessions (cross/remote): the VGGT-inertial frontend whose measurements come back frames after their request
 (a remote server's latency) tracks a simulated drive about as well as with in-frame measurements, also when a
 measurement fails; the simulated link's timing (round trip, compute queue, outages, order); the edge's copy of the back
-end's observation cadence."""
+end's observation cadence.  The edge package's own tests (wire format, cadence copy, session, a run over gRPC):
+edge/tests."""
 
 import sys
 from pathlib import Path
@@ -149,43 +150,6 @@ def test_sim_link_timing():
     assert srv.seen == [0, 1, 2]
 
 
-def test_observation_cadence():
-    """The edge's copy of the back end's cadence: every frame through the warm-up after the first, then after 0.3 m or
-    3 mapped frames; a missing odometry reading re-initializes (the image is needed)."""
-    from types import SimpleNamespace
-    from cross.remote.edge import ObservationCadence
-    cfg = SimpleNamespace(obs_min_translation=0.3, obs_min_rotation=0.15, obs_max_interval_steps=3, obs_warmup_steps=10)
-    c = ObservationCadence(cfg)
-    small, big = np.eye(4), np.eye(4)
-    small[2, 3], big[2, 3] = 0.01, 0.2
-    assert all(c.frame(None if k == 0 else small, True) for k in range(11))       # initialization + warm-up
-    assert [c.frame(small, True) for _ in range(6)] == [False, False, True] * 2    # 3 mapped frames
-    assert [c.frame(big, True) for _ in range(4)] == [False, True, False, True]    # 0.3 m
-    assert c.frame(small, False) is False and c.frame(None, False) is False       # frames the back end does not map
-    assert c.frame(small, True) is True                    # re-initialization after the missing reading
-
-
-def test_codec_roundtrip():
-    """The wire format: nested dicts / lists, numbers (nan and inf too), None, arrays of any dtype, images (lossless
-    PNG; JPEG close), no other types."""
-    import pytest
-    from cross.remote.codec import decode, encode
-    rng = np.random.default_rng(0)
-    img = rng.integers(0, 255, (24, 32, 3), dtype=np.uint8)
-    msg = {"index": 3, "t": 0.25, "x": float("nan"), "big": float("inf"), "none": None, "flag": True,
-           "T": np.eye(4), "corners": rng.random((5, 2)).astype(np.float32), "link": (1.5, 0.01),
-           "nested": {"w": np.arange(3), "s": "ok"}, "rgb": img}
-    out = decode(encode(msg))
-    assert out["index"] == 3 and out["t"] == 0.25 and np.isnan(out["x"]) and out["big"] == float("inf")
-    assert out["none"] is None and out["flag"] is True and out["link"] == [1.5, 0.01] and out["nested"]["s"] == "ok"
-    assert np.array_equal(out["T"], np.eye(4)) and out["corners"].dtype == np.float32
-    assert np.array_equal(out["nested"]["w"], np.arange(3)) and np.array_equal(out["rgb"], img)
-    lossy = decode(encode({"rgb": img}, jpeg=90))["rgb"]
-    assert lossy.shape == img.shape and lossy.dtype == np.uint8
-    with pytest.raises(TypeError):
-        encode({"f": lambda: 0})
-
-
 def test_grpc_link():
     """A real gRPC stream on localhost: the open message reaches the builder, frames are answered in order with their
     images intact, an extra delay holds the replies, control messages are answered, close releases the server."""
@@ -257,3 +221,38 @@ def test_overload_policy():
     assert not any(srv.stale) and lag[-1] > 10 * lag[5]
     srv, lag = run(0.3)
     assert 0 < sum(srv.stale) < 100 and max(lag) < 0.3 + 0.26 + 1e-9
+
+
+def test_rate_cap():
+    """External odometry, a server slower than the observations asked for (0.5 s each, one every ~3 frames at 10 Hz):
+    without the cap the replies' lag grows for the whole run; with a 0.1 s cap the edge sends an observation only when
+    the server could start it within 0.1 s (by its model of the server's queue, learned from the replies), the back
+    end observes at the next frame instead, and the lag stays bounded."""
+    from types import SimpleNamespace
+    from cross.remote.edge import ObservationCadence, RemotePipeline
+    from cross.remote.link import SimLink
+
+    class Srv:
+        stats = {}
+
+        def handle(self, msg, stale=False):
+            obs = msg.get("rgb") is not None and not msg.get("no_observation") and not stale
+            return {"index": msg["index"], "work": {"observed": obs}, "server_seconds": 0.0}
+
+    def run(cap):
+        cfg = SimpleNamespace(obs_min_translation=0.3, obs_min_rotation=0.15, obs_max_interval_steps=3, obs_warmup_steps=10)
+        link = SimLink(Srv(), rtt=0.05, compute="model", costs={"frame": 0.001, "observe": 0.5}, measure_bytes=False)
+        p = RemotePipeline(None, link, "stereo", "external", ObservationCadence(cfg), obs_cap=cap)
+        step = np.eye(4)
+        step[2, 3] = 0.12
+        for k in range(300):
+            p.process({"rgb": np.zeros((4, 4, 3), np.uint8), "rgb_right": None, "depth": None,
+                       "delta_pose": None if k == 0 else step, "timestamp": 0.1 * k})
+        lag = [e["arrival"] - e["sent"] for e in link.log]
+        observed = sum(e["work"]["observed"] for e in link.log)
+        return lag, observed, p.stats["capped"]
+    lag, obs, capped = run(0.0)
+    assert capped == 0 and lag[-1] > 20.0                  # the queue grows for the whole run
+    lag, obs_c, capped = run(0.1)
+    assert capped > 0 and max(lag[100:]) < 0.1 + 0.5 + 0.06 + 1e-6, max(lag[100:])
+    assert 0.8 * 300 * 0.1 / 0.5 < obs_c < obs                # about as many observations as the server can do

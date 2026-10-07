@@ -29,7 +29,7 @@ from loguru import logger
 
 from cross.core.config import SystemConfig, load_config
 from cross.core.types import Camera
-from cross.pipeline import FAST_STEREO_PRESET, add_session_args, session_factory
+from cross.pipeline import add_session_args, mode_config_files, session_factory
 from cross.utils.profile import print_timing_registry
 
 np.set_printoptions(formatter={"float": lambda x: f"{x:0.2f}"})
@@ -111,11 +111,9 @@ def main():
     )
 
     # Build config: layer YAML files, then apply CLI overrides
-    configs = list(args.config)
-    if args.mode == "stereo":
-        configs = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "stereo.yaml")] + \
-            ([FAST_STEREO_PRESET] if args.fast else []) + configs
-    elif args.fast:
+    # the mode's shipped configuration files (configs/stereo.yaml, + the --fast preset), then the user's
+    configs = mode_config_files(args.mode, args.odometry, args.fast) + list(args.config)
+    if args.fast and args.mode != "stereo":
         logger.warning("--fast only has a preset for the stereo mode; ignored")
     config = load_config(*configs) if configs else SystemConfig()
     if args.async_update:

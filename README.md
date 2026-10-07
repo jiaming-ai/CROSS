@@ -200,14 +200,13 @@ multi-session localization, T3 relocalization success; KITTI, OpenLORIS-Scene, R
 python scripts/datasets/convert_openloris.py data/openloris/home1-1 data/posed/home1-1
 python scripts/datasets/convert_openloris.py data/openloris/home1-2 data/posed/home1-2
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home
-# the same in the stereo mode, monocular (metric scale from the wheel odometry and map keyframe pairs)
+# the same in the stereo mode on the left image alone (metric scale from the wheel odometry and map keyframe pairs:
+# pose_est.ff.right_image=left), so a posed RGB-D folder without a right camera works
 python scripts/map_and_reloc.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_ff --estimator ff \
-    --obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3 \
-    --set pose_est.ff.use_odom_anchor=true pose_est.ff.use_map_anchors=true pose_est.ff.n_ref_anchors=0 pose_est.ff.use_curr_anchor=false
+    --set pose_est.ff.right_image=left
 # stereo mode on a SimChange scene (0.3 m baseline)
 python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/hssd_house/light_night --out outputs/house_ff \
-    --estimator ff --baseline 0.3 --snr 10 --obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3 \
-    --trial-len 100 --trial-stride 50 --noise-config configs/noise/hssd_house_600.yaml
+    --estimator ff --baseline 0.3 --snr 10 --trial-len 100 --trial-stride 50 --noise-config configs/noise/hssd_house_600.yaml
 # TUM RGB-D: scripts/datasets/convert_tum.py (simulated noisy odometry: --snr 10 --seed 0)
 ```
 
@@ -338,6 +337,13 @@ python scripts/viz/record_trace.py --scene lonemonk --map map --variants light_n
     --out outputs/viz/lonemonk/trace_cross_stereo --baseline 0.3 --snr 10 --no-frames
 python scripts/viz/build_trace_page.py --viz-root outputs/viz --scenes lonemonk --out outputs/viz/page --standalone
 ```
+
+## Remote sessions and the robot's edge package
+
+The GPU work (the back end, VGGT-Omega) can run on a server while the robot runs only its odometry: see
+`docs/USAGE.md` (section 6) for the simulated and real (gRPC) links, and [`edge/README.md`](edge/README.md) for
+`cross-edge`, the robot's side as a separate, torch-free package (live Basalt stereo-inertial VIO, the observation
+cadence, the uplink, the map-frame pose).
 
 ## Datasets
 
