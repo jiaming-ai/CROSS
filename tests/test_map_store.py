@@ -33,7 +33,7 @@ def _db(monkeypatch, scfg=None):
     import cross.db.db as db_module
     monkeypatch.setattr(db_module, "BoQ", lambda **_: SimpleNamespace(
         get_embed_dim=lambda: 8, get_embedding=lambda img: torch.as_tensor(img).float().mean() * torch.ones(8)))
-    system = SimpleNamespace(config=SystemConfig(storage=scfg or StorageConfig()))
+    system = SimpleNamespace(config=SystemConfig(storage=scfg or StorageConfig(encode_ahead=False)))
     return db_module.KeyframeDatabase(system, device="cpu")
 
 
@@ -185,7 +185,7 @@ def test_fp16_descriptors(tmp_path, monkeypatch):
 
 
 def test_live_spool_keeps_newest_images_in_memory(monkeypatch, tmp_path):
-    scfg = StorageConfig(max_ram_images=2, spill_dir=str(tmp_path / "spool"), image_codec="png")
+    scfg = StorageConfig(max_ram_images=2, spill_dir=str(tmp_path / "spool"), image_codec="png", encode_ahead=False)
     data, db = _state(monkeypatch, n=5, scfg=scfg)
     db._spool.flush()
     kfs = db.get_all_keyframes()
@@ -194,9 +194,9 @@ def test_live_spool_keeps_newest_images_in_memory(monkeypatch, tmp_path):
     data2, db2 = _state(monkeypatch, n=5)                                  # same content, all in memory
     for a, b in zip(kfs, db2.get_all_keyframes()):
         assert torch.equal(a.raw_rgb_image, b.raw_rgb_image) and torch.equal(a.depth_image, b.depth_image)
-    # saving copies the spooled images (no re-encoding)
+    # every keyframe was encoded as it arrived (evicted or not): saving copies bytes, encodes nothing
     st = store.write_map(tmp_path / "m" / "map.pkl", dict(data, db_data=db.save_state()), scfg)
-    assert st["copied"] == 3 * 3 and st["encoded"] == 2 * 3
+    assert st["copied"] == 5 * 3 and st["encoded"] == 0
 
 
 def test_columns_with_missing_values():
@@ -209,7 +209,7 @@ def test_columns_with_missing_values():
 
 def test_spooled_images_are_repointed_to_the_saved_map(monkeypatch, tmp_path):
     """System.save_map's callback: spooled images move into the map's pack once, later saves keep them."""
-    scfg = StorageConfig(max_ram_images=2, spill_dir=str(tmp_path / "spool"), image_codec="png")
+    scfg = StorageConfig(max_ram_images=2, spill_dir=str(tmp_path / "spool"), image_codec="png", encode_ahead=False)
     data, db = _state(monkeypatch, n=5, scfg=scfg)
     p = tmp_path / "m" / "map.pkl"
 
@@ -218,21 +218,25 @@ def test_spooled_images_are_repointed_to_the_saved_map(monkeypatch, tmp_path):
         rows = [r["id"] for r in state["keyframes"]]
         by_id = {k.id: k for k in db.get_all_keyframes()}
 
-        def on_written(row, field, ref):
-            old = by_id[rows[row]].stored_image(field)
+        def on_written(row, field, ref):                     # as System.save_map
+            kf = by_id[rows[row]]
+            old = kf.stored_image(field)
             if store.is_ref(old) and old.pack.uid != ref.pack.uid:
-                setattr(by_id[rows[row]], field, ref.to(old.device))
+                setattr(kf, field, ref.to(old.device))
+            pre = kf.__dict__.get("_pre_" + field)
+            if pre is not None and pre.pack.uid != ref.pack.uid:
+                kf.__dict__["_pre_" + field] = ref.to(pre.device)
         st = store.write_map(p, dict(data, db_data=state), scfg, on_written=on_written)
         db._spool.retarget(st["pack"])
         return st
 
     st1 = save()
-    assert st1["copied"] == 9 and st1["encoded"] == 6
+    assert st1["copied"] == 15 and st1["encoded"] == 0
     kf_new = db.insert(99, _rng_image(np.random.default_rng(9)), None, mu=pp.randn_SE3(3), sigma=pp.se3(torch.rand(3, 6)),
                        weights=torch.tensor([1., 0., 0.]), atlas=db.get_all_atlases()[0])
     db._spool.flush()                                                        # one more keyframe spilled into the map
-    st2 = save()
-    assert st2["copied"] == 0 and st2["kept"] == 9 + 3 and st2["encoded"] == 6 - 3 + 1
+    st2 = save()                                  # re-pointed images and the new one (spilled into the map) kept
+    assert st2["copied"] == 0 and st2["encoded"] == 0 and st2["kept"] == 15 + 1
     back = store.read_map(p)
     assert torch.equal(back["db_data"]["keyframes"][-1]["raw_rgb_image"].load(), kf_new.raw_rgb_image)
 
@@ -246,3 +250,19 @@ def test_depth_drop_bits_bounds_the_relative_error():
         x, y = d.astype(np.float32), back.astype(np.float32)
         m = x > 0
         assert np.all(y[~m] == 0) and np.max(np.abs(y[m] - x[m]) / x[m]) <= 2.0 ** (b - 11) + 1e-6
+
+
+def test_encode_ahead_saves_by_copying(monkeypatch, tmp_path):
+    """encode_ahead: images are encoded as keyframes arrive (tensors stay); a save copies bytes, the map is the same."""
+    scfg = StorageConfig(spill_dir=str(tmp_path / "spool"), image_codec="png")            # encode_ahead on by default
+    data, db = _state(monkeypatch, n=4, scfg=scfg)
+    db._spool.flush()
+    assert all(torch.is_tensor(k.stored_image("raw_rgb_image")) for k in db.get_all_keyframes())
+    data_ref, _ = _state(monkeypatch, n=4)                                                  # same content, nothing pre-encoded
+    st = store.write_map(tmp_path / "a" / "map.pkl", dict(data, db_data=db.save_state()), scfg)
+    assert st["encoded"] == 0 and st["copied"] == 4 * 3
+    back = store.read_map(tmp_path / "a" / "map.pkl")
+    ref = store.materialize(data_ref)
+    for r0, r1 in zip(ref["db_data"]["keyframes"], back["db_data"]["keyframes"]):
+        for f in store.IMAGE_FIELDS:
+            assert torch.equal(r0[f], r1[f].load())

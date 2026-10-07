@@ -25,6 +25,13 @@ def as_float_image(t):
     return t.float() if t.dtype == torch.float16 else t
 
 
+def _stored_or_encoded(kf, field: str):
+    """What a keyframe holds for an image field, or its background-encoded reference when it holds a tensor."""
+    v = kf.stored_image(field)
+    pre = kf.__dict__.get("_pre_" + field)
+    return pre if (pre is not None and torch.is_tensor(v)) else v
+
+
 class KeyframeDatabase:
     def __init__(
         self,
@@ -77,8 +84,8 @@ class KeyframeDatabase:
         self._spool = None
         if scfg is not None:
             set_decode_cache(scfg.decode_cache)
-            if scfg.max_ram_images > 0:
-                self._spool = ImageSpool(scfg, scfg.max_ram_images)
+            if scfg.format == "v2" and (scfg.max_ram_images > 0 or scfg.encode_ahead):
+                self._spool = ImageSpool(scfg, scfg.max_ram_images, scfg.encode_ahead)
 
         # Query parameters
         self.score_threshold_high = cfg.vpr_score_threshold_high
@@ -265,9 +272,10 @@ class KeyframeDatabase:
                     "id": kf.id,
                     # what the keyframe holds, not decoded: a tensor (any device) or a store reference
                     # (cross/db/store.py writes both; store.materialize makes CPU tensors for the old format)
-                    "raw_rgb_image": kf.stored_image("raw_rgb_image"),
-                    "depth_image": kf.stored_image("depth_image"),
-                    "raw_rgb_right": kf.stored_image("raw_rgb_right"),
+                    # (a tensor already encoded in the background, storage.encode_ahead: its encoded reference)
+                    "raw_rgb_image": _stored_or_encoded(kf, "raw_rgb_image"),
+                    "depth_image": _stored_or_encoded(kf, "depth_image"),
+                    "raw_rgb_right": _stored_or_encoded(kf, "raw_rgb_right"),
                     "pose_mu": kf.pose_mu.cpu() if kf.pose_mu is not None else None,
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,

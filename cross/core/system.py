@@ -762,9 +762,14 @@ class System:
 
                 def on_written(row, field, ref):
                     kf = by_id.get(rows[row])
-                    old = kf.stored_image(field) if kf is not None else None
+                    if kf is None:
+                        return
+                    old = kf.stored_image(field)
                     if map_store.is_ref(old) and old.pack.uid != ref.pack.uid:
                         setattr(kf, field, ref.to(old.device))
+                    pre = kf.__dict__.get("_pre_" + field)          # background-encoded image of a resident tensor
+                    if pre is not None and pre.pack.uid != ref.pack.uid:
+                        kf.__dict__["_pre_" + field] = ref.to(pre.device)
             st = map_store.write_map(save_path, save_data, scfg, on_written=on_written)
             if spool is not None:
                 spool.retarget(st["pack"])

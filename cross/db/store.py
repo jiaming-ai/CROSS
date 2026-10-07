@@ -344,13 +344,19 @@ def _to_numpy_image(t: torch.Tensor) -> np.ndarray:
 # --------------------------------------------------------------------------------------------------------------------
 
 class ImageSpool:
-    """Keeps at most `max_ram` keyframes' images as tensors; older ones are encoded (a background thread) into a
-    spool pack and replaced by ImageRefs.  The spool lives in `spill_dir` (default: a temporary directory removed at
-    exit); save_map copies its encoded images into the map's pack without re-encoding."""
+    """Live-run handling of keyframe images (format v2), in background threads:
+    - encode_ahead: every new keyframe's images are encoded right away into a spool pack; the keyframe keeps its
+      tensor and holds the reference as `_pre_<field>`, so save_map copies bytes instead of encoding (a 10^4-keyframe
+      session saves in seconds, not minutes).  Results are unchanged: the tensors stay what they were.
+    - max_ram > 0: only the newest max_ram keyframes keep their images as tensors; older ones are replaced by their
+      encoded references (decoded again on access) and dropped from memory.
+    The spool lives in `spill_dir` (default: a temporary directory removed at exit); after a save the encoded images
+    are re-pointed to the map's pack and later ones are written there (retarget)."""
 
-    def __init__(self, cfg, max_ram: int):
+    def __init__(self, cfg, max_ram: int, encode_ahead: bool = True):
         self.cfg = cfg
         self.max_ram = int(max_ram)
+        self.encode_ahead = bool(encode_ahead)
         root = getattr(cfg, "spill_dir", None)
         if root:
             Path(root).mkdir(parents=True, exist_ok=True)
@@ -359,19 +365,24 @@ class ImageSpool:
             self.dir = Path(tempfile.mkdtemp(prefix="cross_spool_"))
         atexit.register(shutil.rmtree, str(self.dir), True)
         self.pack = ImagePack.create(self.dir)
-        self.resident = OrderedDict()              # kf id -> keyframe whose images are still tensors
-        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cross-spool")
+        self.resident = OrderedDict()              # kf id -> (keyframe whose images are still tensors, its encoding)
+        # FIFO: a keyframe's encoding is taken before its eviction, so an eviction waiting for it cannot deadlock
+        self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cross-spool")
         self.pending = []
 
     def add(self, kf) -> None:
-        if any(torch.is_tensor(kf.stored_image(f)) for f in IMAGE_FIELDS):
-            self.resident[kf.id] = kf
-        while len(self.resident) > self.max_ram:
-            _, old = self.resident.popitem(last=False)
-            self.pending.append(self.pool.submit(self._spill, old))
+        if not any(torch.is_tensor(kf.stored_image(f)) for f in IMAGE_FIELDS):
+            return
+        fut = self.pool.submit(self._encode, kf)
+        self.pending.append(fut)
+        if self.max_ram > 0:
+            self.resident[kf.id] = (kf, fut)
+            while len(self.resident) > self.max_ram:
+                _, (old, ofut) = self.resident.popitem(last=False)
+                self.pending.append(self.pool.submit(self._evict, old, ofut))
         self.pending = [p for p in self.pending if not p.done()]
 
-    def _spill(self, kf) -> None:
+    def _encode(self, kf) -> None:
         for f in IMAGE_FIELDS:
             t = kf.stored_image(f)
             if not torch.is_tensor(t):
@@ -381,7 +392,14 @@ class ImageSpool:
             blob = encode_array(arr, codec, getattr(self.cfg, "image_quality", 95), getattr(self.cfg, "png_level", 3),
                                 getattr(self.cfg, "depth_drop_bits", 0))
             off = self.pack.append([blob])[0]
-            setattr(kf, f, ImageRef(self.pack, off, len(blob), codec, arr.shape, str(arr.dtype), str(t.device)))
+            kf.__dict__["_pre_" + f] = ImageRef(self.pack, off, len(blob), codec, arr.shape, str(arr.dtype), str(t.device))
+
+    def _evict(self, kf, encoding) -> None:
+        encoding.result()
+        for f in IMAGE_FIELDS:
+            pre = kf.__dict__.pop("_pre_" + f, None)
+            if pre is not None and torch.is_tensor(kf.stored_image(f)):
+                setattr(kf, f, pre)
 
     def flush(self) -> None:
         for p in self.pending:
