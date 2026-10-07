@@ -1479,7 +1479,8 @@ class System:
         # a solution already distorted by a wrong loop edge left the map in a bad minimum: jumps of 5-11 m on long surveys)
         defer = bool(self.config.mapping.loop_closure.test_before_apply) and self.config.mapping.loop_closure.use_posterior \
             and getattr(self.config.mapping.loop_closure, "posterior_action", "remove") == "remove"
-        pgo_info = hm.handle_loop_closure(0, apply=not defer)
+        window_ref = min(a for (a, b) in new_keys)      # oldest keyframe of this step's loop edges (windowed PGO option)
+        pgo_info = hm.handle_loop_closure(0, apply=not defer, window_ref=window_ref)
         if not pgo_info.get("success"):
             logger.warning(pgo_info.get("message", "verified loop-closure PGO failed without message"))
             return False
@@ -1499,7 +1500,7 @@ class System:
                     if defer and len(outliers) == len(new_keys):
                         # every new edge was an outlier: the graph is unchanged, nothing to re-solve or apply
                         return False
-                    pgo_info = hm.handle_loop_closure(0)
+                    pgo_info = hm.handle_loop_closure(0, window_ref=window_ref)
                     applied = True
                 else:
                     logger.info(f"Verified loop closure at step {step}: {len(outliers)} of {len(new_keys)} new edges remain outliers after the "
@@ -1508,7 +1509,8 @@ class System:
             hm.apply_pgo_result({"success": True, "pose_graph": pgo_info.get("pose_graph"),
                                  "optimized_poses": pgo_info.get("optimized_poses", {}), "other_hypothesis_id": 0})
         pg_ = pgo_info.get("pose_graph"); nf = getattr(pg_, "n_factors", {})
-        logger.info(f"Verified loop closure at step {step}: {len(new_keys)} new hypothesis-0 edges, PGO cost {pgo_info.get('cost')} "
+        logger.info(f"Verified loop closure at step {step}: {len(new_keys)} new hypothesis-0 edges (oldest kf {window_ref}, window from "
+                    f"{pgo_info.get('window')}), PGO cost {pgo_info.get('cost')} "
                     f"(initial {getattr(pg_, 'initial_cost', None)}, {getattr(pg_, 'lm_iterations', None)} LM iterations; "
                     f"{time.perf_counter() - t_pgo:.2f} s, {len(hm.nodes)} keyframes, {len(getattr(pg_, 'vertices', []))} vertices, factors {nf})")
         ret["loop_closure_pgo"] = pgo_info

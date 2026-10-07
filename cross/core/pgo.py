@@ -1,3 +1,4 @@
+import bisect
 import collections
 import weakref
 import numpy as np
@@ -647,6 +648,42 @@ class PoseGraph:
         if self.hypothesis_manager.source_states is not None:
             from cross.core.conditional_pgo import prepare
             prepare(self,other_hypothesis_id)
+
+    def construct_window(self, first_free_id: int) -> Set[int]:
+        """Hypothesis-0 graph for a windowed loop-closure optimisation: the keyframes with id >= first_free_id (free)
+        and the older keyframes that share a hypothesis-0 factor with them (returned: the fixed boundary).  Built from
+        the adjacency of the window only, so its cost does not grow with the size of the map."""
+        h0 = self.hypothesis_manager.hypotheses[0]
+        ids = sorted(self.nodes.keys())
+        start = bisect.bisect_left(ids, first_free_id)
+        free = ids[start:]
+        free_set = set(free)
+        boundary: Set[int] = set()
+        edges = []
+        seen = set()
+        for u in free:
+            for v in h0.visual_adjacency.get(u, ()):
+                if v not in self.nodes:
+                    continue
+                for key in ((u, v), (v, u)):
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    factors = [f for f in h0.visual_edges.get(key, ()) if f.from_comp_id == 0 and f.to_comp_id == 0]
+                    if factors:
+                        edges.append((key[0], key[1], factors))
+                        if v not in free_set:
+                            boundary.add(v)
+        chain = ([ids[start - 1]] if start > 0 else []) + free     # the odometry chain into and through the window
+        for a, b in zip(chain[:-1], chain[1:]):
+            if (a, b) in self.odom_edges:
+                edges.append((a, b, [self.odom_edges[(a, b)]]))
+                if a not in free_set:
+                    boundary.add(a)
+        self.vertices = [self._vertex(i, 0) for i in free] + [self._vertex(i, 0) for i in sorted(boundary)]
+        self.edges = edges
+        self.vertex_map = {v.id: v for v in self.vertices}
+        return boundary
 
     def _retain_connected_chart_graph(self, target_node_id, other_hypothesis_id=0):
         """Do not optimize unrelated saved sessions merely due to adjacent IDs."""

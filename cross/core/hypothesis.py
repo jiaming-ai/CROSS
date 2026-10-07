@@ -1,3 +1,4 @@
+import bisect
 import math
 from cross.visualization.viz_graph import visualize_pose_graph
 from cross.utils.profile import timeit
@@ -1651,7 +1652,8 @@ class HypothesisManager:
         return { 'loop_closure': False, 'loop_closure_hypo_id': None }
     
     def handle_loop_closure(
-        self, hypo_id: int, target_node_id: Optional[int] = None, apply: bool = True, global_opt: bool = False
+        self, hypo_id: int, target_node_id: Optional[int] = None, apply: bool = True, global_opt: bool = False,
+        window_ref: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Handle loop closure.
@@ -1663,6 +1665,9 @@ class HypothesisManager:
         Args:
             hypo_id: The hypothesis ID to merge with hypothesis 0
             target_node_id: The central node to expand from (defaults to latest keyframe)
+            window_ref: the oldest keyframe of the loop edges that trigger this optimisation; with
+                mapping.loop_closure.pgo_window_min_nodes set, a session graph of that size is optimised only from
+                window_ref (minus pgo_window_margin keyframes) on, older keyframes that share a factor with it fixed
         
         Returns:
             Dict[str, Any]: Information required for visualization and logging. 
@@ -1692,6 +1697,7 @@ class HypothesisManager:
         if target_node_id is None:
             target_node_id = max(self.nodes.keys())
         result["target_node_id"] = target_node_id
+        result["window"] = None
 
         if hypo_id == 0:
             logger.info("Handling intra-hypothesis loop closure: optimising the graph of hypothesis 0")
@@ -1703,6 +1709,14 @@ class HypothesisManager:
         lc_cfg = getattr(getattr(getattr(self.system, "config", None), "mapping", None), "loop_closure", None)
         full = global_opt or (bool(getattr(lc_cfg, "full_session_pgo", False))
                               and int(getattr(self.system, "_session_start_kf_id", 0)) == 0)
+        window, boundary = None, set()
+        min_nodes = int(getattr(lc_cfg, "pgo_window_min_nodes", 0) or 0)
+        if (window_ref is not None and hypo_id == 0 and full and not global_opt and min_nodes > 0
+                and len(self.nodes) >= min_nodes and not self.chart_aware and self.source_states is None):
+            ids = sorted(self.nodes.keys())
+            i = bisect.bisect_left(ids, int(window_ref)) - int(getattr(lc_cfg, "pgo_window_margin", 0) or 0)
+            if i > 0:
+                window = ids[i]
         with self.graph_lock:
             pg = PoseGraph(
                 self,
@@ -1713,10 +1727,13 @@ class HypothesisManager:
                 skip_fn=self.pgo_skip_fn(),
             )
             try:
-                pg.construct_for_loop_closure(
-                    target_node_id=target_node_id,
-                    other_hypothesis_id=hypo_id,
-                )
+                if window is not None:
+                    boundary = pg.construct_window(window)
+                else:
+                    pg.construct_for_loop_closure(
+                        target_node_id=target_node_id,
+                        other_hypothesis_id=hypo_id,
+                    )
             except ValueError as ex:
                 # an inconsistent proposal (a chart-aware graph that does not reach the proposed reference chart, seen
                 # once in a ROVER relocalization of the mono mode) skips this loop closure instead of ending the session
@@ -1740,7 +1757,10 @@ class HypothesisManager:
         # Fix the earliest keyframe from hypothesis 0; in a relocalization session (map loaded from a
         # previous session) all map keyframes stay fixed: the merge aligns the new session to the map
         session_start = getattr(self.system, "_session_start_kf_id", 0)
-        if global_opt:
+        if window is not None:
+            # windowed optimisation: the keyframes before the window that share a factor with it stay where they are
+            fixed_ids = set(boundary) if boundary else {min(original_kf_ids)}
+        elif global_opt:
             # joint optimisation of the merged map (all sessions): only the very first keyframe is fixed, so the
             # cross-session edges reconcile the sessions with each other instead of pinning every earlier session
             fixed_ids = {min(original_kf_ids)}
@@ -1852,6 +1872,7 @@ class HypothesisManager:
                 "optimized_poses": pg.optimized_poses,
                 "optim_nodes_ids": optim_node_ids,
                 "fixed_nodes_ids": fixed_ids,
+                "window": window,
                 "message": None,
             }
         )
