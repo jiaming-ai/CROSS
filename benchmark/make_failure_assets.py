@@ -56,9 +56,9 @@ class Seq:
     def at_time(self, t):
         return int(np.clip(np.argmin(np.abs(self.t - t)), 0, len(self.G) - 1))
 
-    def image(self, i, label=None, sub=None):
+    def image(self, i, label=None, sub=None, width=W):
         im = cv2.imread(str(self.files[min(i, len(self.files) - 1)]), cv2.IMREAD_COLOR)
-        im = cv2.resize(im, (W, int(round(W * im.shape[0] / im.shape[1]))), interpolation=cv2.INTER_AREA)
+        im = cv2.resize(im, (width, int(round(width * im.shape[0] / im.shape[1]))), interpolation=cv2.INTER_AREA)
         if label:
             put(im, label, 0)
         if sub:
@@ -290,13 +290,22 @@ def run_case(c, a, ds_cfg, sy_cfg, published, out_dir: Path):
             qi = s.at_time(ref.t[i]) if k else i
             short = seq.split("/")[-1].replace("campus_large_", "")
             lab = f"{'query' if t3 else 'session'} {short}  {(i - a0) / ref.fps:4.1f} s" if k == 0 else None
-            tiles = [s.image(qi, lab, CAM_LABEL[cam] if len(cams) > 1 else None)]
+            width = W if t3 else (640 if len(cams) == 1 else 480)     # mapping stretches: no map tile, larger frames
+            tiles = [s.image(qi, lab, CAM_LABEL[cam] if len(cams) > 1 else None, width)]
             if t3:
                 ms = cam_maps[k][1]
                 mj = ms.at_time(gmap.t[j]) if k else j
                 tiles += [sep(tiles[0].shape[0]), ms.image(mj, "map session, same place" if k == 0 else None,
                                                              f"{dist:.1f} m and {ang:.0f} deg away" if k == 0 else None)]
             rows.append(np.hstack(tiles))
+        if not t3 and len(rows) > 1:          # mapping stretches: the cameras side by side
+            hmax = max(r.shape[0] for r in rows)
+            rows = [np.pad(r, ((0, hmax - r.shape[0]), (0, 0), (0, 0)), constant_values=255) for r in rows]
+            im = rows[0]
+            for r in rows[1:]:
+                im = np.hstack([im, sep(hmax), r])
+            rows_per_frame.append(im)
+            continue
         wmax = max(r.shape[1] for r in rows)
         rows = [np.pad(r, ((0, 0), (0, wmax - r.shape[1]), (0, 0)), constant_values=255) for r in rows]
         im = rows[0]
@@ -372,10 +381,10 @@ def run_case(c, a, ds_cfg, sy_cfg, published, out_dir: Path):
                 if t3:
                     v = poses.get(j)
                     T, e = (v if v is not None else (None, None))
-                else:              # mapping trajectory: the latest pose of the last second (keyframe systems)
-                    k = np.searchsorted(keys, j, side="right") - 1
+                else:              # mapping trajectory: the latest pose of the last second (keyframe systems), its error
+                    k = np.searchsorted(keys, j, side="right") - 1      # against the ground truth of its own frame
                     T = poses[keys[k]] if k >= 0 and j - keys[k] <= own.fps else None
-                    e = float(np.linalg.norm(T[:3, 3] - own.G[j][:3, 3])) if T is not None else None
+                    e = float(np.linalg.norm(T[:3, 3] - own.G[keys[k]][:3, 3])) if T is not None else None
                 pos.append(plane.pose(T) if T is not None else None)
                 err.append(None if e is None or not np.isfinite(e) else round(float(e), 3))
                 if online is not None:

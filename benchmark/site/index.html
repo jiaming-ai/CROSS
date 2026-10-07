@@ -397,7 +397,7 @@ function renderFailures(v) {
     v.append(sec);
   }
   const det = $("details", {class: "card"}, $("summary", {style: "cursor:pointer;font-weight:600"}, "Worst runs per system"));
-  renderWorstRuns(det);
+  det.addEventListener("toggle", () => { if (det.open && det.children.length === 1) renderWorstRuns(det); });    // built on first open
   v.append(det);
 }
 
@@ -407,8 +407,10 @@ function finding(f, n, A) {
     $("span", {class: `grade g-${f.grade}`, title: GRADE[f.grade] || ""}, f.grade)));
   for (const p of [].concat(f.text || [])) box.append($("p", {}, p));
   if (f.grade_note) box.append($("p", {class: "note"}, `Evidence: ${f.grade_note}.`));
-  const fig = {matchability: matchChart, causes: causeDumbbells, modes: modeBars, overlap: overlapTable, localize: localizeTable}[f.figure];
-  if (fig) box.append(fig(A, f));
+  for (const name of [].concat(f.figure || [])) {
+    const fig = {matchability: matchChart, causes: causeDumbbells, modes: modeBars, overlap: overlapTable, localize: localizeTable}[name];
+    if (fig) box.append(fig(A, f));
+  }
   if (f.cases) box.append($("p", {class: "note"}, "Cases: ", ...f.cases.flatMap((id, i) => [i ? ", " : "", $("a", {href: `#fail`, onclick: e => { e.preventDefault(); const el = document.getElementById(`case-${id}`); if (el) el.scrollIntoView({behavior: "smooth"}); }}, id.replace(/_/g, " "))])));
   return box;
 }

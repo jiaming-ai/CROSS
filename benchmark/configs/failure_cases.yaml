@@ -193,18 +193,21 @@ findings:
     cases: [corridor_aliasing, corridor_dark, rover_standing_start]
   - title: "Baselines fail by not answering; CROSS fails by answering wrong, or by reporting a pose before it has relocalized."
     grade: validated
-    figure: modes
+    figure: [modes, localize]
     systems: [cross_stereo|stereo, cross_rgbd|rgbd, cross_mono_ff_odom|mono, orbslam3|stereo, rtabmap|stereo, rtabmap_vo|stereo, vggt_slam|mono, mast3r_slam|mono]
     text:
       - >-
-        98-100 % of the failed trials of ORB-SLAM3, RTAB-Map and MASt3R-SLAM end without any pose. CROSS always
+        98-100 % of the failed trials of ORB-SLAM3, RTAB-Map and MASt3R-SLAM end without any pose, and more time
+        does not fix it: given a whole query session (T2) instead of 10 s, ORB-SLAM3 and RTAB-Map still never
+        localize in 53-65 % of the OpenLORIS sessions, and on ROVER the stereo setups need a median of 2.5-6
+        minutes. On SimChange, where the rendered appearance repeats exactly, they localize within 0.1-3 s. CROSS always
         reports a pose, and its failures are far off (median 27-30 m). The per-frame poses of CROSS show two
         different reasons. After loading a map, CROSS starts the session in a new coordinate frame placed just
         outside the map's bounding box (cross/core/atlas.py, new_atlas_center) and reports the pose in that frame
         until the session merges with the map; the benchmark scores it like a map pose, so "not relocalized yet"
-        appears as an error of tens of metres. In the OpenLORIS re-runs this is half of CROSS stereo's failures
-        (15 of 30) and most of CROSS RGB-D's (27 of 33); the other half merged with the wrong place (aliasing,
-        previous finding).
+        appears as an error of tens of metres. In per-frame re-runs of all OpenLORIS trials and 8 SimChange
+        traversals, 24 of CROSS stereo's 54 failures and 51 of CROSS RGB-D's 104 never merged; the others merged
+        with the wrong place (aliasing, previous finding).
       - >-
         So the dominant failure is the same for all systems: no match within 10 s. CROSS knows when it has not
         merged and could report "not localized" instead of a pose 30 m away; a robot that trusts the pose cannot
@@ -391,13 +394,13 @@ notes:
       - >-
         The robot turns 125 degrees in 10 s, up to 32 degrees per second. ORB-SLAM3 loses tracking at frame 517 in
         all three setups (online, for 32-40 frames) and starts a new map; the RGB-D and mono frames of this stretch
-        are not in the final map. CROSS takes the wheel odometry between observations and stays within 0.4 m;
-        RTAB-Map with visual odometry is 1.3-4.6 m off.
+        are not in the final map. CROSS takes the wheel odometry between observations and stays within 0.2 m
+        (also with visual odometry); RTAB-Map with visual odometry is 1.4-5.3 m off, VGGT-SLAM 2.0 1.2-5.1 m.
   kitti01_highway:
     title: "Highway at 27 m/s: visual estimates lose the scale"
     text:
       - >-
         Consecutive frames are 2.7 m apart and the road side repeats. ORB-SLAM3 mono tracks only 55 of these 120
-        frames (ATE 106 m over the drive); VGGT-SLAM 2.0 is 265-405 m off here; RTAB-Map and CROSS with visual
-        odometry are 32-40 m off. With the INS dead reckoning, CROSS (ATE 1.7 m) and RTAB-Map (1.7 m) stay on the
-        road.
+        frames and none of them is in its final map (ATE 106 m over the drive); VGGT-SLAM 2.0 is 290-440 m off
+        here; RTAB-Map and CROSS with visual odometry are 38-45 m off, ORB-SLAM3 stereo 3-9 m. With the INS dead
+        reckoning, CROSS (0.3-2.5 m here, ATE 1.7 m) and RTAB-Map (0.4-4.3 m, ATE 1.7 m) stay on the road.
