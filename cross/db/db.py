@@ -71,6 +71,7 @@ class KeyframeDatabase:
         self._row_kf: List[Keyframe] = []          # keyframe of each descriptor row
         self._id_to_row: Dict[int, int] = {}
         self.spatial = SpatialIndex()              # keyframe positions, for locality-aware retrieval
+        self._track_positions = bool(getattr(getattr(cfg, "locality", None), "enabled", False))
 
         # Query parameters
         self.score_threshold_high = cfg.vpr_score_threshold_high
@@ -176,7 +177,7 @@ class KeyframeDatabase:
         self._index_to_atlas_idx[row] = (atlas, list_idx)
         self._row_kf.append(keyframe)
         self._id_to_row[int(keyframe.id)] = row
-        if mu is not None:
+        if mu is not None and getattr(self, "_track_positions", True):
             self.spatial.add(row, _position(keyframe))
 
         return keyframe
