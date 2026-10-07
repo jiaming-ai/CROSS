@@ -486,3 +486,44 @@ def test_stereo_gate():
     fe.graph.v_std = 0.1
     fe.scale_filter.initialized = False
     assert gate(27.0, 1.0, 1.0) == (True, True)            # no test before the scale is known
+
+
+def test_stereo_gate_failure_model():
+    """The stereo tests' failure model: while a cue keeps failing below the IMU's prediction (a collapse), one a little
+    below (a partial collapse) is rejected although within 4 sigma, one as far above is accepted; a cue failing on both
+    sides (noise) is held to the same tolerance on both; with every recent test passed the test is (nearly) the 4
+    sigma one."""
+    import types
+    from cross.mono.config import MonoConfig
+    from cross.mono.vggt_imu_frontend import VggtImuFrontend
+
+    def frontend():
+        fe = VggtImuFrontend(np.eye(3), MonoConfig(), device="cpu", T_right_in_left=np.eye(4))
+        fe.graph = types.SimpleNamespace(cfg=GraphConfig(), R={0: np.eye(3), 1: np.eye(3)},
+                                         p={0: np.zeros(3), 1: np.zeros(3)}, v_std=0.6)
+        fe.scale_filter = types.SimpleNamespace(initialized=True, lam_std=0.01)
+        return fe
+
+    def gate(fe, v_pred, v_pass, v_pnp=None, t=100.0):
+        fe.m = {"timestamp": t - 0.3}
+        fe._last_trans_ok = t - 0.3
+        fe._rot_checks = [True] * 5
+        fe.graph.p[1] = np.array([0.0, 0.0, v_pred * 0.3])
+        pnp = None if v_pnp is None else (np.eye(3), np.array([0.0, 0.0, v_pnp * 0.3]), np.eye(6) * 0.05 ** 2)
+        ok, pnp_ok, _ = fe._stereo_gate(0, 1, 0.0, np.array([0.0, 0.0, v_pass * 0.3]), True, pnp, t)
+        return ok, pnp_ok
+
+    fe = frontend()
+    for _ in range(20):
+        assert gate(fe, 25.0, 25.3, 25.1) == (True, True)
+    assert gate(fe, 25.0, 22.4)[0]                         # 2.6 below (2.9 sigma) with every recent test passed
+    assert gate(fe, 25.0, 27.6)[0]
+    for _ in range(12):                                    # a collapse: passes and corners far below the prediction
+        assert gate(fe, 25.0, 9.0, 6.0) == (False, False)
+    assert not gate(fe, 25.0, 22.4)[0]                     # now a partial collapse is the likelier explanation
+    assert gate(fe, 25.0, 27.6)[0]                         # as far above: no collapse reports more motion
+    fe = frontend()
+    for k in range(12):                                    # noisy passes, failing on both sides
+        assert not gate(fe, 25.0, 35.0 if k % 2 else 15.0)[0]
+    assert not gate(fe, 25.0, 22.4)[0] and not gate(fe, 25.0, 27.6)[0]
+    assert gate(fe, 25.0, 24.2)[0] and gate(fe, 25.0, 25.8)[0]

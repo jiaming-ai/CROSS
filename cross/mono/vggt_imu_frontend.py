@@ -29,6 +29,7 @@ later on a remote GPU server (cross.remote).  A late summary adds its node to th
 IMU carries the state from there to the last tracked frame again (_replay); the correction enters the next reported
 motion, as an in-frame measurement's does."""
 
+import collections
 import json
 from time import perf_counter
 
@@ -132,6 +133,9 @@ class VggtImuFrontend:
         self.time_offset = 0.0
         self.time_offset_done = False
         self._last_trans_ok = None               # time of the last pass translation accepted by the IMU test
+        # stereo translation tests (_stereo_gate): each cue's last 20 tests, -1 / 0 / 1 for > 4 sigma below the IMU's
+        # prediction / within / > 4 sigma above
+        self._cue_tests = {"pass": collections.deque(maxlen=20), "pnp": collections.deque(maxlen=20)}
         self._rest_spread, self._rest_nis, self._rest_prev = [], [], None   # zero-rate updates (_rest_rate)
         self._rot_checks = []                    # outcomes of the last gyro tests of the passes' rotations
         self.rate_log = []
@@ -952,15 +956,23 @@ class VggtImuFrontend:
 
     def _stereo_gate(self, m_node, j, lam_j, t_pass, pass_ok, pnp, timestamp):
         """Translation tests of the stereo case, with the IMU as the arbiter between the pass and the tracked corners'
-        motion (stereo PnP).  A visual translation is accepted when its speed agrees with the IMU's prediction within 4
-        sigma: the pass's sigma from its relative noise and the scale's uncertainty (small: the stereo pair observes
-        it), the corners' from their covariance, the IMU's from the time since the last accepted translation (as in the
-        monocular test, without its factor tolerance, which there covers the learned-depth scale; vgio_stereo_gate_factor
-        > 1 restores it).  The two visual cues are not independent where moving objects fill the view (KITTI 01:
-        vehicles alongside made the corners report ~1 m/s and the passes half the speed at a true 27 m/s), so they
-        override the IMU only when it is not trustworthy (its gyro disagrees with the passes) or after
-        vgio_trans_gate_max_gap s without an accepted translation; then a corner motion that disagrees with the pass is
-        dropped.  Returns (pass translation ok, corners ok, info), or (True, True, None) before the scale is known."""
+        motion (stereo PnP).  A visual translation is accepted when its speed agrees with the IMU's prediction: sigma
+        combines the pass's relative noise and the scale's uncertainty (small: the stereo pair observes it), or the
+        corners' covariance, with the IMU's uncertainty from the time since the last accepted translation and the
+        graph's velocity std (as in the monocular test, without its factor tolerance, which there covers the
+        learned-depth scale; vgio_stereo_gate_factor > 1 restores it).  The tests know that a cue fails, and on which
+        side: a pass that collapses reports less motion, the corners on vehicles alongside mostly less, noisy passes in
+        the dark either way.  A cue is accepted where it is likelier the truth with its noise than a failure on that
+        side of the prediction (uniform over a range as wide as the predicted speed and its band), at the cue's recent
+        rates of tests more than 4 sigma below / above (last 20, a prior of 0.9 / 0.05 / 0.05 with the weight of 10
+        tests): ~3.5 sigma normally, ~2 sigma on the side where the cue keeps failing, never beyond 4 sigma.  Without
+        it, passes a little short of the truth accepted during a collapse walked the velocity down (KITTI 01: 25 -> 15
+        m/s in 13 s), and the test then rejected the recovered passes (map ATE 20-330 m depending on the numerics of the
+        machine).  The two visual cues are not independent where moving objects fill the view (KITTI 01: vehicles
+        alongside made the corners report ~1 m/s and the passes half the speed at a true 27 m/s), so they override the
+        IMU only when it is not trustworthy (its gyro disagrees with the passes) or after vgio_trans_gate_max_gap s
+        without an accepted translation; then a corner motion that disagrees with the pass is dropped.  Returns (pass
+        translation ok, corners ok, info), or (True, True, None) before the scale is known."""
         ic = self.config.imu
         if float(ic.vgio_trans_gate) <= 1.0 or not self.scale_filter.initialized:
             return True, True, None
@@ -974,22 +986,38 @@ class VggtImuFrontend:
         s_imu = float(np.hypot(0.05 + G.cfg.accel_bias_std * gap, v_std))
         g = float(ic.vgio_stereo_gate_factor)
 
-        def agree(v, s):
+        def agree(v, s, cue):
             lr = np.log((v * dt + 0.02) / (v_pred * dt + 0.02))
-            return bool((g > 1.0 and abs(lr) <= np.log(g)) or abs(v - v_pred) <= 4.0 * np.hypot(s, s_imu))
+            if g > 1.0 and abs(lr) <= np.log(g):
+                return True
+            st = float(np.hypot(s, s_imu))
+            e = v - v_pred
+            # the truth with the cue's noise, or a failure on this side of the prediction (uniform over a range as wide
+            # as the predicted speed and its band), at the cue's recent rates (a prior of 0.9 / 0.05 / 0.05 with the
+            # weight of 10 tests); accepted where the first is the likelier, never beyond 4 sigma
+            h = self._cue_tests[cue]
+            side = -1 if e < 0.0 else 1
+            p_in = (sum(1 for x in h if x == 0) + 9.0) / (len(h) + 10.0)
+            p_out = (sum(1 for x in h if x == side) + 0.5) / (len(h) + 10.0)
+            h.append(0 if abs(e) <= 4.0 * st else side)
+            k2 = 2.0 * np.log(p_in * (v_pred + 4.0 * st) / (p_out * st * np.sqrt(2.0 * np.pi)))
+            return bool(e * e <= min(16.0, max(k2, 0.0)) * st * st)
         v_pass = float(np.exp(lam_j) * np.linalg.norm(t_pass)) / dt
         s_pass = float(np.sqrt(G.cfg.trans_rel ** 2 + min(lam_std, 1.0) ** 2)) * v_pass
         info = {"v_imu": round(v_pred, 3), "tol_imu": round(4.0 * s_imu, 3), "v_pass": round(v_pass, 3),
                 "imu_consistent": imu_consistent}
         trusted = imu_consistent and gap <= float(ic.vgio_trans_gate_max_gap)
-        pass_t = agree(v_pass, s_pass) if pass_ok else False
+        pass_t = agree(v_pass, s_pass, "pass") if pass_ok else False
+        if pass_ok:
+            h = self._cue_tests["pass"]
+            info["fails"] = [sum(1 for x in h if x == -1), sum(1 for x in h if x == 1), len(h)]
         pnp_ok = True
         if pnp is not None:
             t_p = pnp[1]
             L = float(np.linalg.norm(t_p))
             u = t_p / max(L, 1e-9)
             v_pnp, s_pnp = L / dt, float(np.sqrt(max(u @ pnp[2][3:6, 3:6] @ u, 0.0))) / dt
-            pnp_ok = agree(v_pnp, s_pnp)
+            pnp_ok = agree(v_pnp, s_pnp, "pnp")
             info.update(v_pnp=round(v_pnp, 3))
             if not trusted:
                 both = abs(v_pass - v_pnp) <= 4.0 * np.hypot(s_pass, s_pnp)
