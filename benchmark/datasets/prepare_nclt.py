@@ -255,6 +255,100 @@ def prepare_images(prep: Path, session: str, source, u2d_dir: Path, cams_used=(1
     print(f"{session}: done, {n_ok} new frames, per camera seen {n_seen}, {time.time() - t0:.0f} s", flush=True)
 
 
+# ----------------------------------------------------------------------------------------------------------- posed
+def _interp_body(rows: np.ndarray, t: np.ndarray):
+    """rows (t x y z qx qy qz qw) -> 4x4 poses at t (linear position, slerp rotation); ok = inside the span."""
+    from scipy.spatial.transform import Rotation, Slerp
+    ok = (t >= rows[0, 0]) & (t <= rows[-1, 0])
+    tc = np.clip(t, rows[0, 0], rows[-1, 0])
+    T = np.tile(np.eye(4), (len(t), 1, 1))
+    T[:, :3, 3] = np.stack([np.interp(tc, rows[:, 0], rows[:, k]) for k in (1, 2, 3)], -1)
+    T[:, :3, :3] = Slerp(rows[:, 0], Rotation.from_quat(rows[:, 4:8]))(tc).as_matrix()
+    return T, ok
+
+
+def prepare_posed(prep: Path, session: str, cam: int = FORWARD_CAM, max_gap_s: float = 1.0):
+    """CROSS posed folder of one camera (cross/dataloader/posed_rgbd.py) at the camera's native ~5 Hz:
+    rgb/<utime>.jpg (hard links to lb3/), poses_left.txt (ground-truth camera poses in the NCLT local NED frame),
+    odom_left.txt (camera poses from the wheel + FOG odometry), times.txt (epoch s), calib.json, imu.txt / imu.json
+    (gyro + accelerometer of the Microstrain IMU in CROSS's IMU format), and the geo inputs on the same clock:
+    gnss.txt, gnss_rtk.txt, ms25.txt (with the magnetometer), ahrs.txt, geo_ref.json (+ T_body_cam, lever arms)."""
+    d = prep / session
+    cams = json.loads((d / "lb3" / "cameras.json").read_text())
+    c = cams[f"cam{cam}"]
+    T_bc = np.asarray(c["T_body_cam"])
+    src = d / "lb3" / f"Cam{cam}"
+    frames = sorted(int(p.stem) for p in src.glob("*.jpg"))
+    t = np.asarray(frames, np.int64) * 1e-6
+    gt = np.loadtxt(d / "gt_body.txt")
+    od = np.loadtxt(d / "odom.txt")
+    T_gt, ok_gt = _interp_body(gt, t)
+    T_od, ok_od = _interp_body(od, t)
+    # GT gaps: frames farther than max_gap_s from a GT sample are unusable (interpolation across a gap)
+    j = np.clip(np.searchsorted(gt[:, 0], t), 1, len(gt) - 1)
+    near = np.minimum(np.abs(gt[j, 0] - t), np.abs(gt[j - 1, 0] - t)) < max_gap_s
+    keep = ok_gt & ok_od & near
+    # one contiguous run (the posed loader assumes consecutive frames): the longest
+    runs, start = [], None
+    for i, k in enumerate(np.r_[keep, False]):
+        if k and start is None:
+            start = i
+        elif not k and start is not None:
+            runs.append((start, i))
+            start = None
+    lo, hi = max(runs, key=lambda r: r[1] - r[0])
+    out = d / f"cam{cam}_posed"
+    if out.exists():
+        import shutil
+        shutil.rmtree(out)
+    (out / "rgb").mkdir(parents=True)
+    for u in frames[lo:hi]:
+        os.link(src / f"{u}.jpg", out / "rgb" / f"{u}.jpg")
+    sel = slice(lo, hi)
+    np.savetxt(out / "poses_left.txt", (T_gt[sel] @ T_bc).reshape(-1, 16), fmt="%.7f")
+    np.savetxt(out / "odom_left.txt", (T_od[sel] @ T_bc).reshape(-1, 16), fmt="%.7f")
+    np.savetxt(out / "times.txt", t[sel], fmt="%.6f")
+    dt = np.diff(t[sel])
+    fps = float(1.0 / np.median(dt))
+    (out / "calib.json").write_text(json.dumps({"K": c["K"], "width": c["width"], "height": c["height"],
+                                                "fps": round(fps, 3), "camera": f"Ladybug3 Cam{cam} (rectified)",
+                                                "world": "NCLT local NED (geo_ref.json)",
+                                                "frame_interval_s": {"median": float(np.median(dt)),
+                                                                     "max": float(dt.max()),
+                                                                     "n_gt_1.5x": int((dt > 1.5 * np.median(dt)).sum())}},
+                                               indent=1))
+    # IMU in CROSS's format: t wx wy wz ax ay az in the IMU frame (= body axes), T_cam_imu
+    imu = np.loadtxt(d / "imu.txt")
+    lo_t, hi_t = t[lo] - 1.0, t[hi - 1] + 1.0
+    m = (imu[:, 0] >= lo_t) & (imu[:, 0] <= hi_t)
+    np.savetxt(out / "imu.txt", np.column_stack([imu[m, 0], imu[m, 7:10], imu[m, 4:7]]), fmt=["%.6f"] + ["%.7g"] * 6,
+               header="t wx wy wz ax ay az (IMU frame; rad/s, m/s^2 specific force; clock of times.txt)", comments="# ")
+    T_cam_imu = np.linalg.inv(T_bc) @ ssc_to_T(EXTRINSICS["imu"])
+    rate = float(1.0 / np.median(np.diff(imu[m, 0])))
+    (out / "imu.json").write_text(json.dumps({
+        "T_cam_imu": T_cam_imu.tolist(), "rate_hz": round(rate, 2), "source": "NCLT Microstrain 3DM-GX3-45 (ms25.csv)",
+        # datasheet: gyro 0.03 deg/s/sqrt(Hz), accel 80 ug/sqrt(Hz); random walks conservative
+        "gyro_noise_density": 5.2e-4, "accel_noise_density": 7.8e-4, "gyro_random_walk": 4e-5, "accel_random_walk": 4e-4,
+        "frame_times": "times.txt"}, indent=1))
+    for name, new in (("gnss.txt", "gnss.txt"), ("gnss_rtk.txt", "gnss_rtk.txt"), ("imu.txt", "ms25.txt"), ("ahrs.txt", "ahrs.txt")):
+        os.link(d / name, out / new)
+    ref = json.loads((d / "geo_ref.json").read_text())
+    ref["camera"] = cam
+    ref["T_body_cam"] = T_bc.tolist()
+    ref["T_cam_body"] = np.linalg.inv(T_bc).tolist()
+    ref["gps_in_cam"] = (np.linalg.inv(T_bc) @ np.r_[EXTRINSICS["gps"][:3], 1.0])[:3].tolist()
+    ref["rtk_in_cam"] = (np.linalg.inv(T_bc) @ np.r_[EXTRINSICS["rtk"][:3], 1.0])[:3].tolist()
+    ref["imu_in_cam"] = T_cam_imu.tolist()
+    ref["files"] = {"gnss.txt": "consumer GPS (Garmin 18x), see the header", "gnss_rtk.txt": "RTK GPS (evaluation)",
+                    "ms25.txt": "t mag(G) acc gyro, body axes", "ahrs.txt": "IMU's magnetic AHRS roll pitch heading",
+                    "poses_left.txt": "GT T_world_cam (world = local NED)", "odom_left.txt": "odometry T_odom_cam"}
+    (out / "geo_ref.json").write_text(json.dumps(ref, indent=1))
+    n = hi - lo
+    print(f"{session} cam{cam}: posed folder with {n} frames ({t[hi - 1] - t[lo]:.0f} s, fps {fps:.2f}; "
+          f"{len(frames) - n} frames outside GT / odometry or in other runs: {len(runs)} runs)", flush=True)
+    return out
+
+
 # --------------------------------------------------------------------------------------------------------- sensors
 def _write(path: Path, header: str, rows: np.ndarray, fmt):
     np.savetxt(path, rows, fmt=fmt, header=header, comments="# ")
@@ -480,8 +574,14 @@ def main():
     s3.add_argument("--workers", type=int, default=8)
     s3.add_argument("--connections", type=int, default=8)
     s3.add_argument("--quality", type=int, default=95)
+    s4 = sub.add_parser("posed")
+    s4.add_argument("prepared", type=Path)
+    s4.add_argument("--session", required=True)
+    s4.add_argument("--cam", type=int, default=FORWARD_CAM)
     a = ap.parse_args()
-    if a.cmd == "images":
+    if a.cmd == "posed":
+        prepare_posed(a.prepared, a.session, a.cam)
+    elif a.cmd == "images":
         prepare_images(a.prepared, a.session, a.tar, a.u2d, tuple(a.cams), a.workers, a.quality, a.connections)
     elif a.cmd == "sensors":
         cams = camera_params(a.raw / "cam_params.zip")
