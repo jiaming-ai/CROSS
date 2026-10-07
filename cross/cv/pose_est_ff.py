@@ -315,9 +315,12 @@ class _VGGTOmegaBackend(_Backend):
     @torch.inference_mode()
     def infer(self, images: torch.Tensor, n_depth: Optional[int] = None, focal: Optional[float] = None) -> FFPrediction:
         """focal: calibrated focal length / image width of the views, for a canonical-camera scale head (None: use
-        the model's predicted FoV)."""
+        the model's predicted FoV).  Without one, the calibrated focal the estimator registered (calib_focal) is used,
+        so every caller of the shared backend (also the VGGT-IMU front end's own passes) gets it."""
         images = images.to(self.device)
         x = images[None]
+        if focal is None:
+            focal = getattr(self, "calib_focal", None)
         if getattr(self.scale_head, "canonical_f", None) is not None:
             if getattr(self, "_focal_buf", None) is None:
                 self._focal_buf = torch.zeros((), device=self.device)
@@ -632,6 +635,8 @@ class PoseEstFeedForward:
         """Calibrated intrinsics at the model's input resolution (the system calls this after its transforms):
         the focal of a canonical-camera scale head (config.scale_focal = "calibrated")."""
         self._focal_norm = float(np.asarray(K)[0, 0]) / max(1, int(width))
+        if getattr(self.config, "scale_focal", "calibrated") == "calibrated":
+            self.backend.calib_focal = self._focal_norm      # also for passes made outside estimate_pose
 
     def _as_model_input(self, views: List[torch.Tensor]) -> torch.Tensor:
         images = torch.stack([v.to(self.device) for v in views], dim=0).float()
