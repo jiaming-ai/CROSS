@@ -106,6 +106,40 @@ svg text { fill: var(--muted); font-size: 10px; }
 .samples label.hl { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); margin: 4px 0; cursor: pointer; }
 @media (max-width: 640px) { .imgrid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); } }
 img.thumb { width: 100%; border-radius: 6px; display: block; }
+.fc-intro { max-width: 900px; }
+svg.lk { display: inline-block; width: 22px; height: 8px; vertical-align: middle; flex: none; }
+svg.ico { display: inline-block; width: 12px; height: 12px; vertical-align: -1px; flex: none; }
+.finding { border-top: 1px solid var(--grid); padding: 12px 0 6px; }
+.finding:first-of-type { border-top: 0; }
+.finding p { margin: 6px 0; max-width: 940px; }
+.fhead { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.fhead b { font-size: 15.5px; font-weight: 650; }
+.fnum { display: inline-flex; width: 22px; height: 22px; border-radius: 999px; background: var(--chip); color: var(--ink-2); align-items: center; justify-content: center; font-size: 12.5px; font-weight: 650; flex: none; }
+.grade { font-size: 11.5px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--grid); color: var(--ink-2); cursor: help; }
+.grade.g-validated { border-color: var(--good-ink); color: var(--good-ink); }
+.grade.g-speculative { border-style: dashed; }
+.fig { margin: 8px 0 4px; }
+.fig svg { max-width: 760px; }
+.dumbbells { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.mbar { display: flex; height: 10px; border-radius: 3px; overflow: hidden; gap: 2px; margin: 2px 0 2px; min-width: 160px; }
+.mbar span { display: block; height: 100%; }
+table.heat th.rot { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; padding: 6px 2px; font-weight: 550; vertical-align: bottom; }
+table.heat td { padding: 4px 6px; }
+table.heat td:not(.lab) { border: 2px solid var(--surface); }
+table.heat tr.grp td { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding-top: 10px; border: 0; background: none; }
+.case { border-top: 1px solid var(--grid); padding: 14px 0 6px; margin-top: 10px; }
+.case h4 { margin: 0 0 2px; font-size: 15px; font-weight: 650; }
+.case p { margin: 6px 0; max-width: 940px; }
+.fc-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 8px; }
+.fc-grid video { width: 100%; display: block; border-radius: 6px; background: #000; }
+@media (max-width: 900px) { .fc-grid { grid-template-columns: minmax(0, 1fr); } }
+.strips { display: grid; gap: 3px; margin-top: 4px; }
+.srow { display: grid; grid-template-columns: minmax(150px, 230px) minmax(0, 1fr) 62px 92px; gap: 8px; align-items: center; }
+.srow .chip { justify-content: flex-start; overflow: hidden; text-overflow: ellipsis; }
+.srow svg.strip { height: 14px; width: 100%; cursor: pointer; background: var(--chip); border-radius: 2px; }
+.srow .fin { font-variant-numeric: tabular-nums; font-size: 12.5px; white-space: nowrap; }
+.srow .now { font-variant-numeric: tabular-nums; text-align: right; }
+@media (max-width: 640px) { .srow { grid-template-columns: minmax(110px, 1fr) minmax(0, 1.4fr) 70px; } .srow .now { display: none; } }
 @media (max-width: 640px) { header h1 { font-size: 21px; } th, td { padding: 5px 7px; } }
 </style>
 </head>
@@ -253,7 +287,8 @@ const legendT1 = () => $("div", {class: "legend"}, $("span", {}, $("span", {clas
 const legendT2 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "key", style: "background:var(--est)"}), "position error in the map frame"),
   $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "no estimate"));
 const legendT3 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "sq", style: "background:var(--good)"}), "✓ final pose within the larger threshold (2 m indoors, 5 m outdoors)"),
-  $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "✗ failed"));
+  $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "✗ failed"),
+  $("span", {}, $("span", {class: "sq", style: "background:var(--hatch)"}), "not counted (outside the map, or the robot stands still)"));
 
 function box(title, sub, svg, extra) { const p = $("div", {class: "plot"}, $("h4", {}, title), $("div", {class: "sub"}, sub)); if (svg) p.append(svg); if (extra) p.append(extra); return p; }
 
@@ -308,6 +343,7 @@ function errPlot(r) {
 }
 
 // T3: one square per trial along the query session, final error on hover
+const NOT_COUNTED = {0: "not counted: the map does not cover it", 2: "not counted: the robot stands still", undefined: "not counted"};
 function trialPlot(r) {
   const title = `${r.map} → ${r.query}`;
   const sub = r.status !== "ok" ? `failed (rc ${r.rc ?? "?"})` :
@@ -316,16 +352,318 @@ function trialPlot(r) {
   const n = r.trials.length, per = Math.min(n, 40), rows = Math.ceil(n / per), cw = 300 / per;
   const svg = s$("svg", {viewBox: `0 0 300 ${rows * cw + 4}`, role: "img", "aria-label": `trial outcomes of ${title}`});
   r.trials.forEach((t, i) => { const [start, ok, fe, ok1, cov] = t;
-    const c = s$("rect", {x: (i % per) * cw + 1, y: Math.floor(i / per) * cw + 1, width: cw - 2, height: cw - 2, rx: 2, fill: cov === 0 ? "var(--hatch)" : ok ? "var(--good)" : "var(--bad)", tabindex: 0});
-    const tipf = ev => showTip(ev, [[cov === 0 ? "not covered by the map" : ok ? "✓ relocalized" : "✗ failed", ""], `trial ${i + 1}, frames ${start}–${start + 99}`, `final error ${fe == null ? "–" : fe.toFixed(2) + " m"}`]);
+    const c = s$("rect", {x: (i % per) * cw + 1, y: Math.floor(i / per) * cw + 1, width: cw - 2, height: cw - 2, rx: 2, fill: cov !== 1 ? "var(--hatch)" : ok ? "var(--good)" : "var(--bad)", tabindex: 0});
+    const tipf = ev => showTip(ev, [[cov !== 1 ? NOT_COUNTED[cov] : ok ? "✓ relocalized" : "✗ failed", ""], `trial ${i + 1}, frames ${start}–${start + 99}`, `final error ${fe == null ? "–" : fe.toFixed(2) + " m"}`]);
     c.addEventListener("pointermove", tipf); c.addEventListener("pointerleave", hideTip); c.addEventListener("focus", ev => { const bb = c.getBoundingClientRect(); tipf({clientX: bb.right, clientY: bb.bottom}); }); c.addEventListener("blur", hideTip);
     svg.append(c); });
   return box(title, sub, svg);
 }
 
-// ---------------------------------------------------------------- failure cases
+// ---------------------------------------------------------------- failure cases: common causes, mechanisms and videos
+// Data: B.failure_page = {analysis (benchmark/failure_analysis.py), cases (benchmark/make_failure_assets.py),
+// text (benchmark/configs/failure_cases.yaml: intro, findings, groups, notes)}.
+const FP = () => B.failure_page || {};
+const GRADE = {validated: "validated: tested on the data", supported: "supported: consistent with the data, not tested directly",
+               speculative: "speculative: plausible, untested"};
+const DSHORT = {openloris: "OpenLORIS", rover: "ROVER", simchange: "SimChange", kitti: "KITTI"};
+const fpct = x => x == null ? "–" : `${Math.round(x)} %`;
+const SHORTSYS = {"cross_stereo|stereo": "CROSS stereo", "cross_stereo_vgio|stereo": "CROSS stereo, VGGT-IMU odom.",
+  "cross_stereo_vo|stereo": "CROSS stereo, visual odom.", "cross_rgbd|rgbd": "CROSS RGB-D", "cross_mono_ff_odom|mono": "CROSS mono",
+  "cross_mono_ff_vgio|mono": "CROSS mono, VGGT-IMU odom.", "orbslam3|stereo": "ORB-SLAM3 stereo", "orbslam3|rgbd": "ORB-SLAM3 RGB-D",
+  "orbslam3|mono": "ORB-SLAM3 mono", "orbslam3_imu|stereo": "ORB-SLAM3 stereo-inertial", "rtabmap|stereo": "RTAB-Map stereo",
+  "rtabmap|rgbd": "RTAB-Map RGB-D", "rtabmap_vo|stereo": "RTAB-Map stereo, visual odom.", "rtabmap_vo|rgbd": "RTAB-Map RGB-D, visual odom.",
+  "vggt_slam|mono": "VGGT-SLAM 2.0", "mast3r_slam|mono": "MASt3R-SLAM"};
+const sysShort = k => SHORTSYS[k] || (([s, su]) => shortLabel(s, su))(k.split("|"));
+
 function renderFailures(v) {
-  v.append($("p", {class: "note"}, "For every system and setup: maps that failed or covered less than 80 % of the sequence (worst T1 maps otherwise), the query sessions with the lowest localization recall (T2), and the query sessions with the most failed relocalization trials (T3). Frame pairs show a failed trial's final query frame next to the map keyframe nearest to it in ground truth, when available."));
+  const P = FP(), A = P.analysis, T = P.text || {};
+  if (!A) { v.append($("p", {class: "note"}, "No failure analysis yet (benchmark/failure_analysis.py).")); renderWorstRuns(v); return; }
+  for (const p of [].concat(T.intro || [])) v.append($("p", {class: "note fc-intro"}, p));
+  // what the failures have in common
+  const fs = $("div", {class: "card"}, $("h3", {}, "What the failures have in common"));
+  (T.findings || []).forEach((f, i) => fs.append(finding(f, i + 1, A)));
+  v.append(fs);
+  // failure rate by cause
+  v.append($("div", {class: "card"}, $("h3", {}, "Failure rate by cause and system"),
+    $("p", {class: "note"}, `Share of failed T3 trials (final position outside the larger threshold) among the trials with each candidate cause, over ${A.n_trials} trials. ` +
+      "▲ marks a rate at least 15 points above what the trials' matchability alone predicts for that system: an effect beyond lost local features. Hover a cell for the prediction and the number of trials; click a cause to see its cases."),
+    causeTable(A)));
+  // cases, by group of causes
+  const cases = P.cases || [];
+  for (const g of T.groups || []) {
+    const cs = cases.filter(c => c.category === g.id);
+    if (!cs.length) continue;
+    const sec = $("div", {class: "card", id: `fc-${g.id}`}, $("h3", {}, g.title));
+    for (const p of [].concat(g.text || [])) sec.append($("p", {}, p));
+    for (const c of cs) sec.append(caseCard(c, (T.notes || {})[c.id]));
+    v.append(sec);
+  }
+  const det = $("details", {class: "card"}, $("summary", {style: "cursor:pointer;font-weight:600"}, "Worst runs per system"));
+  det.addEventListener("toggle", () => { if (det.open && det.children.length === 1) renderWorstRuns(det); });    // built on first open
+  v.append(det);
+}
+
+function finding(f, n, A) {
+  const box = $("div", {class: "finding"});
+  box.append($("div", {class: "fhead"}, $("span", {class: "fnum"}, String(n)), $("b", {}, f.title),
+    $("span", {class: `grade g-${f.grade}`, title: GRADE[f.grade] || ""}, f.grade)));
+  for (const p of [].concat(f.text || [])) box.append($("p", {}, p));
+  if (f.grade_note) box.append($("p", {class: "note"}, `Evidence: ${f.grade_note}.`));
+  for (const name of [].concat(f.figure || [])) {
+    const fig = {matchability: matchChart, causes: causeDumbbells, modes: modeBars, overlap: overlapTable, localize: localizeTable}[name];
+    if (fig) box.append(fig(A, f));
+  }
+  if (f.cases) box.append($("p", {class: "note"}, "Cases: ", ...f.cases.flatMap((id, i) => [i ? ", " : "", $("a", {href: `#fail`, onclick: e => { e.preventDefault(); const el = document.getElementById(`case-${id}`); if (el) el.scrollIntoView({behavior: "smooth"}); }}, id.replace(/_/g, " "))])));
+  return box;
+}
+
+// failure rate against matchability: one line per system
+function matchChart(A, f) {
+  const M = A.matchability, keys = (f.systems || Object.keys(M.fail)).filter(k => M.fail[k]);
+  const W = 560, H = 230, L = 44, R = 150, Tp = 12, Bt = 40, nb = M.bins.length;
+  const X = i => L + (i + 0.5) * (W - L - R) / nb, Y = p => Tp + (1 - p / 100) * (H - Tp - Bt);
+  const svg = s$("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "failure rate against matchability"});
+  for (const p of [0, 25, 50, 75, 100]) { svg.append(s$("line", {x1: L, x2: W - R, y1: Y(p), y2: Y(p), stroke: "var(--grid)", "stroke-width": 1}));
+    const t = s$("text", {x: L - 6, y: Y(p) + 3, "text-anchor": "end"}); t.textContent = `${p} %`; svg.append(t); }
+  M.bins.forEach((b, i) => { const t = s$("text", {x: X(i), y: H - Bt + 14, "text-anchor": "middle"}); t.textContent = b; svg.append(t);
+    const n = s$("text", {x: X(i), y: H - Bt + 26, "text-anchor": "middle"}); n.textContent = `${M.n_trials[i]} trials`; svg.append(n); });
+  const xl = s$("text", {x: (L + W - R) / 2, y: H - 2, "text-anchor": "middle"}); xl.textContent = "SIFT inliers against the map at the true place (best frame of the trial)"; svg.append(xl);
+  const ends = [];
+  for (const k of keys) { const ys = M.fail[k];
+    const pts = ys.map((y, i) => y == null ? null : [X(i), Y(y)]).filter(Boolean);
+    svg.append(s$("polyline", {points: pts.map(p => p.join(",")).join(" "), fill: "none", stroke: sysColor(k), "stroke-width": 2, "stroke-dasharray": sysDash(k), "stroke-linejoin": "round"}));
+    for (const p of pts) svg.append(s$("circle", {cx: p[0], cy: p[1], r: 3.5, fill: sysColor(k), stroke: "var(--surface)", "stroke-width": 2}));
+    if (pts.length) ends.push([pts[pts.length - 1][1], k]); }
+  // direct labels at the right end, spread so they do not collide
+  ends.sort((a, b) => a[0] - b[0]); let last = -1e9;
+  for (const e of ends) { const y = Math.max(e[0], last + 12); last = y;
+    const t = s$("text", {x: W - R + 8, y: y + 3, style: "fill:var(--ink-2)"}); t.textContent = `${sysShort(e[1])}${A.matchability.odds_per_10x[e[1]] ? "  ×" + A.matchability.odds_per_10x[e[1]] : ""}`; svg.append(t); }
+  const cross = s$("line", {y1: Tp, y2: H - Bt, stroke: "var(--axis)", visibility: "hidden"}); svg.append(cross);
+  const hit = s$("rect", {x: L, y: 0, width: W - L - R, height: H - Bt, fill: "transparent"}); svg.append(hit);
+  hit.addEventListener("pointermove", ev => { const bb = svg.getBoundingClientRect(), fx = (ev.clientX - bb.left) / bb.width * W;
+    const i = Math.max(0, Math.min(nb - 1, Math.floor((fx - L) / ((W - L - R) / nb)))); cross.setAttribute("x1", X(i)); cross.setAttribute("x2", X(i)); cross.setAttribute("visibility", "visible");
+    showTip(ev, [[`${M.bins[i]} inliers`, `(${M.n_trials[i]} trials)`], ...keys.map(k => `${sysShort(k)}: ${fpct(M.fail[k][i])} failed`)]); });
+  hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); hideTip(); });
+  const legend = $("div", {class: "legend"}, ...keys.map(k => $("span", {}, lineKey(k), " ", sysShort(k))));
+  return $("div", {class: "vizplot fig"}, legend, svg, $("p", {class: "note"}, "×N: odds ratio of failure per 10× fewer inliers (logistic fit over all trials of the system)."));
+}
+
+// observed failure rate vs the rate matchability predicts, per cause (one panel per system)
+function causeDumbbells(A, f) {
+  const keys = f.systems || ["rtabmap|stereo", "orbslam3|stereo", "cross_stereo|stereo"];
+  const causes = A.causes.filter(c => c.group !== "reference");
+  const wrap = $("div", {class: "dumbbells"});
+  for (const k of keys) {
+    const W = 300, rowH = 17, L = 150, H = causes.length * rowH + 30, X = p => L + p / 100 * (W - L - 10);
+    const svg = s$("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `observed and predicted failure rate per cause, ${sysShort(k)}`});
+    for (const p of [0, 50, 100]) { svg.append(s$("line", {x1: X(p), x2: X(p), y1: 4, y2: H - 22, stroke: "var(--grid)"}));
+      const t = s$("text", {x: X(p), y: H - 10, "text-anchor": "middle"}); t.textContent = `${p} %`; svg.append(t); }
+    causes.forEach((c, i) => { const y = 10 + i * rowH, o = c.fail[k], e = c.expected[k];
+      const t = s$("text", {x: L - 6, y: y + 3, "text-anchor": "end"}); t.textContent = c.label.replace(/ \(.*\)/, ""); svg.append(t);
+      if (o == null || e == null) return;
+      svg.append(s$("line", {x1: X(e), x2: X(o), y1: y, y2: y, stroke: o - e >= 15 ? "var(--bad)" : "var(--axis)", "stroke-width": 2}));
+      svg.append(s$("circle", {cx: X(e), cy: y, r: 3.5, fill: "var(--surface)", stroke: "var(--ink-2)", "stroke-width": 1.5}));
+      const dot = s$("circle", {cx: X(o), cy: y, r: 4, fill: sysColor(k), stroke: "var(--surface)", "stroke-width": 2}); svg.append(dot);
+      const hit = s$("rect", {x: 0, y: y - rowH / 2, width: W, height: rowH, fill: "transparent"}); svg.append(hit);
+      hit.addEventListener("pointermove", ev => showTip(ev, [[c.label, ""], `observed ${fpct(o)} failed (${c.n[k]} trials)`, `predicted from matchability ${fpct(e)}`]));
+      hit.addEventListener("pointerleave", hideTip); });
+    wrap.append($("div", {class: "vizplot"}, $("div", {class: "note", style: "margin:0 0 2px"}, lineKey(k), " ", sysShort(k)), svg));
+  }
+  return $("div", {class: "fig"}, $("div", {class: "legend"},
+    $("span", {}, (() => { const sv = s$("svg", {width: 12, height: 12, class: "ico"}); sv.append(s$("circle", {cx: 6, cy: 6, r: 4, fill: "var(--surface)", stroke: "var(--ink-2)", "stroke-width": 1.5})); return sv; })(), " predicted from matchability"),
+    $("span", {}, (() => { const sv = s$("svg", {width: 12, height: 12, class: "ico"}); sv.append(s$("circle", {cx: 6, cy: 6, r: 4, fill: "var(--ink-2)"})); return sv; })(), " observed"),
+    $("span", {}, $("span", {class: "key", style: "background:var(--bad)"}), "observed ≥ 15 points above the prediction")), wrap);
+}
+
+// how failed trials fail: no pose / far off / near miss
+function modeBars(A, f) {
+  const keys = (f.systems || Object.keys(A.modes)).filter(k => A.modes[k]);
+  const t = $("table", {class: "modes"});
+  t.append($("thead", {}, $("tr", {}, $("th", {}, "system"), $("th", {}, "failed trials"), $("th", {style: "width:45%"}, "how they failed"), $("th", {}, "median error of the failures with a pose"))));
+  const tb = $("tbody");
+  for (const k of keys) { const m = A.modes[k], np = m.no_pose || 0, far = m.far || 0, near = Math.max(0, 100 - np - far);
+    const bar = $("div", {class: "mbar"},
+      $("span", {style: `width:${np}%;background:var(--hatch)`, title: `no pose: ${fpct(np)}`}),
+      $("span", {style: `width:${far}%;background:var(--s-hi)`, title: `pose more than 5× the threshold away: ${fpct(far)}`}),
+      $("span", {style: `width:${near}%;background:var(--s-lo)`, title: `pose within 5× the threshold: ${fpct(near)}`}));
+    tb.append($("tr", {}, $("td", {class: "lab"}, lineKey(k), " ", sysShort(k)), $("td", {}, String(m.n_fail)),
+      $("td", {}, bar, $("span", {class: "note"}, `${fpct(np)} no pose · ${fpct(far)} far off · ${fpct(near)} near miss`)), $("td", {}, m.err_median == null ? "–" : `${m.err_median} m` + (np > 90 ? ` (${Math.round(m.n_fail * (100 - np) / 100)} trials)` : "")))); }
+  t.append(tb);
+  return $("div", {class: "fig scroll"}, $("div", {class: "legend"},
+    $("span", {}, $("span", {class: "sq", style: "background:var(--hatch)"}), "no pose at the end of the trial"),
+    $("span", {}, $("span", {class: "sq", style: "background:var(--s-hi)"}), "a pose more than 5× the threshold away"),
+    $("span", {}, $("span", {class: "sq", style: "background:var(--s-lo)"}), "a pose within 5× the threshold")), t);
+}
+
+function overlapTable(A, f) {
+  const O = A.overlap, keys = (f.systems || Object.keys(O.fail)).filter(k => O.fail[k] && O.fail[k].some(x => x != null));
+  const t = $("table");
+  t.append($("thead", {}, $("tr", {}, $("th", {}, "best overlap during the trial"), $("th", {}, "trials"), ...keys.map(k => $("th", {}, sysShort(k))))));
+  const tb = $("tbody");
+  O.bins.forEach((b, i) => tb.append($("tr", {}, $("td", {class: "lab"}, b), $("td", {}, String(O.n_trials[i])), ...keys.map(k => $("td", {}, fpct(O.fail[k][i]))))));
+  t.append(tb);
+  return $("div", {class: "fig scroll"}, $("p", {class: "note"}, "Trials whose last frame faces away from every nearby map frame (≥ 90°): failure rate by the most map-like view the trial had on the way."), t);
+}
+
+function localizeTable(A, f) {
+  const keys = (f.systems || Object.keys(A.localize)).filter(k => A.localize[k]);
+  const dss = ["openloris", "rover", "simchange"];
+  const t = $("table");
+  t.append($("thead", {}, $("tr", {}, $("th", {}, "system"), ...dss.map(d => $("th", {}, `${DSHORT[d]}: median · ≤ 10 s · never`)))));
+  const tb = $("tbody");
+  for (const k of keys) tb.append($("tr", {}, $("td", {class: "lab"}, sysShort(k)), ...dss.map(d => { const x = (A.localize[k] || {})[d];
+    return $("td", {}, x ? `${x.median_s == null ? "never" : x.median_s + " s"} · ${fpct(x.within_10s)} · ${fpct(x.never)}` : "–"); })));
+  t.append(tb);
+  return $("div", {class: "fig scroll"}, $("p", {class: "note"}, "T2 (whole query sessions): time until the system's position first stays within the smaller threshold for 5 frames; share of sessions localized within 10 s (a T3 trial's length), and never."), t);
+}
+
+function causeTable(A) {
+  const keys = A.systems.map(s => s.key);
+  const t = $("table", {class: "heat"});
+  t.append($("thead", {}, $("tr", {}, $("th", {}, "cause"), $("th", {}, "trials"), $("th", {title: "median SIFT inliers against the map at the true place, best frame of the trial"}, "inliers"),
+    ...keys.map(k => $("th", {class: "rot", title: (A.systems.find(s => s.key === k) || {}).label}, $("span", {}, sysShort(k)))))));
+  const tb = $("tbody"); let lastG = null;
+  const groups = Object.fromEntries((FP().text.groups || []).map(g => [g.id, g]));
+  for (const c of A.causes) {
+    if (c.group !== lastG) { lastG = c.group; tb.append($("tr", {class: "grp"}, $("td", {colspan: keys.length + 3}, c.group === "reference" ? "reference" : (groups[c.group] || {}).short || c.group))); }
+    const tr = $("tr", {}, $("td", {class: "lab", title: c.rule}, groups[c.group] ? $("a", {href: "#fail", onclick: e => { e.preventDefault(); document.getElementById(`fc-${c.group}`)?.scrollIntoView({behavior: "smooth"}); }}, c.label) : c.label),
+      $("td", {}, String(c.n_trials)), $("td", {}, c.inl_max_median == null ? "–" : String(Math.round(c.inl_max_median))));
+    for (const k of keys) { const o = c.fail[k], e = c.expected[k];
+      if (o == null) { tr.append($("td", {class: "dim"}, "·")); continue; }
+      const col = rampColor(o / 100), excess = e != null && o - e >= 15;
+      const td = $("td", {tabindex: "0", style: `background:${col};color:${inkOn(col)};text-align:center`}, `${Math.round(o)}${excess ? " ▲" : ""}`);
+      const tip = ev => showTip(ev, [[`${sysShort(k)}: ${fpct(o)} failed`, ""], c.label, `${c.n[k]} trials` + (e != null ? `; matchability predicts ${fpct(e)}` : "")]);
+      td.addEventListener("pointermove", tip); td.addEventListener("pointerleave", hideTip);
+      td.addEventListener("focus", ev => { const bb = td.getBoundingClientRect(); tip({clientX: bb.right, clientY: bb.bottom}); }); td.addEventListener("blur", hideTip);
+      tr.append(td); }
+    tb.append(tr);
+  }
+  t.append(tb);
+  return $("div", {}, $("div", {class: "scroll"}, t), $("div", {class: "legend", style: "align-items:center"}, $("span", {}, "0 %"),
+    $("span", {style: `display:inline-block;width:120px;height:10px;border-radius:3px;background:linear-gradient(90deg,${RAMP.join(",")})`}), $("span", {}, "100 % failed")));
+}
+
+// ---- one case: video of the frames, top-down map synced to it, per-system error timelines
+function caseCard(c, note) {
+  const keys = Object.keys(c.systems || {});
+  const n = c.n, fps = c.fps || 10, thr = c.thresholds || [1, 2], t3 = c.track === "t3";
+  const sess = q => shortName(q).replace("campus_large_", "");
+  const where = `${DSHORT[c.dataset]} ${c.dataset === "kitti" ? "" : c.scene.replace("campus_large", "campus") + " "}`;
+  const title = t3 ? `${where}· ${sess(c.map) === "map" ? "map" : sess(c.map)} → ${sess(c.sequence)}, frames ${c.start}–${c.start + n - 1}`
+                   : `${where}· mapping ${c.dataset === "kitti" ? "sequence " : ""}${sess(c.sequence)}, frames ${c.start}–${c.start + n - 1}`;
+  const card = $("div", {class: "case", id: `case-${c.id}`});
+  card.append($("h4", {}, (note && note.title) || title), $("div", {class: "note"}, title + (t3 ? ` · threshold ${thr[0]} / ${thr[1]} m` : "")));
+  for (const p of [].concat((note && note.text) || [])) card.append($("p", {}, p));
+  const video = $("video", {src: c.video, muted: "", playsinline: "", preload: "metadata", controls: "", loop: "", "aria-label": `camera frames of ${title}`});
+  video.muted = true;
+  const vcap = $("div", {class: "note"}, t3 ? `Left: the query frames${c.cameras.length > 1 ? " (one row per camera: " + c.cameras.join(", ") + ")" : ""}. Right: the map session's frame at the same place (ground truth; nearest with the most similar view).`
+                                           : `The session's frames${c.cameras.length > 1 ? " (" + c.cameras.join(", ") + ")" : ""}.`);
+  // ---- map view geometry
+  const hidden = {};
+  const gt = c.gt, mg = c.map_gt || [];
+  const core = gt.concat(mg);
+  let x0 = Math.min(...core.map(p => p[0])), x1 = Math.max(...core.map(p => p[0])), y0 = Math.min(...core.map(p => p[1])), y1 = Math.max(...core.map(p => p[1]));
+  const outdoor = c.dataset === "rover" || c.dataset === "kitti";
+  const pad = Math.max(outdoor ? 8 : 2, 0.35 * Math.max(x1 - x0, y1 - y0));
+  x0 -= pad; x1 += pad; y0 -= pad; y1 += pad;
+  const Wm = 420, Hm = Math.max(240, Math.min(c.cameras.length > 1 ? 400 : 300, Wm * (y1 - y0) / Math.max(x1 - x0, 1e-3)));
+  const sc = Math.min((Wm - 16) / (x1 - x0), (Hm - 16) / (y1 - y0));
+  const ox = (Wm - sc * (x1 - x0)) / 2, oy = (Hm - sc * (y1 - y0)) / 2;
+  const px = p => [ox + (p[0] - x0) * sc, Hm - oy - (p[1] - y0) * sc];
+  const inside = q => q[0] >= 4 && q[0] <= Wm - 4 && q[1] >= 4 && q[1] <= Hm - 4;
+  const svg = s$("svg", {viewBox: `0 0 ${Wm} ${Hm}`, role: "img", "aria-label": `top-down view of ${title}`, class: "casemap"});
+  const cid = "cm" + Math.random().toString(36).slice(2);
+  const defs = s$("defs"), cp = s$("clipPath", {id: cid}); cp.append(s$("rect", {x: 0, y: 0, width: Wm, height: Hm})); defs.append(cp); svg.append(defs);
+  const g = s$("g", {"clip-path": `url(#${cid})`}); svg.append(g);
+  const mp = c.map_path || [];
+  g.append(s$("polyline", {points: mp.map(p => px(p).join(",")).join(" "), fill: "none", stroke: "var(--grid)", "stroke-width": t3 ? 5 : 3, "stroke-linejoin": "round", "stroke-linecap": "round"}));
+  g.append(s$("polyline", {points: gt.map(p => px(p).join(",")).join(" "), fill: "none", stroke: "var(--gt)", "stroke-width": 1.5, "stroke-dasharray": "2 3"}));
+  const gtTrail = s$("polyline", {fill: "none", stroke: "var(--ink-2)", "stroke-width": 2.5, "stroke-linejoin": "round"}); g.append(gtTrail);
+  const mapMark = s$("rect", {width: 9, height: 9, fill: "none", stroke: "var(--ink-2)", "stroke-width": 1.5}); if (t3) g.append(mapMark);
+  const arrow = (col, w = 1) => { const e = s$("g"); e.append(s$("circle", {r: 4.5 * w, fill: col, stroke: "var(--surface)", "stroke-width": 1.5}), s$("line", {x1: 0, y1: 0, x2: 13 * w, y2: 0, stroke: col, "stroke-width": 2.5, "stroke-linecap": "round"})); return e; };
+  const gtMark = arrow("var(--ink)", 1.1); g.append(gtMark);
+  const layers = {};
+  for (const k of keys) { const s = c.systems[k]; if (!s.pos) continue;
+    const trail = s$("polyline", {fill: "none", stroke: sysColor(k), "stroke-width": 2, "stroke-dasharray": sysDash(k), "stroke-linejoin": "round", opacity: 0.85});
+    const mark = arrow(sysColor(k)); const off = s$("g");
+    const offTxt = s$("text", {"text-anchor": "middle", style: "fill:var(--ink-2);font-size:10px"});
+    off.append(s$("path", {d: "M-6,-5 L6,0 L-6,5 Z", fill: sysColor(k)}), offTxt);
+    g.append(trail, mark); svg.append(off); layers[k] = {trail, mark, off, offTxt}; }
+  const nice = [0.5, 1, 2, 5, 10, 20, 50, 100].find(v => v * sc > 50) || 100;
+  svg.append(s$("line", {x1: Wm - 12 - nice * sc, x2: Wm - 12, y1: Hm - 6, y2: Hm - 6, stroke: "var(--axis)", "stroke-width": 2}));
+  const sb = s$("text", {x: Wm - 12, y: Hm - 10, "text-anchor": "end"}); sb.textContent = `${nice} m`; svg.append(sb);
+  const clock = s$("text", {x: 8, y: 14}); svg.append(clock);
+  const place = (el, p) => { const q = px(p); el.setAttribute("transform", `translate(${q[0]},${q[1]}) rotate(${-p[2]})`); el.style.display = ""; };
+  const ptsTo = (arr, i) => arr.slice(0, i + 1).filter(Boolean).map(p => px(p).join(",")).join(" ");
+  // ---- timelines
+  const strips = $("div", {class: "strips"});
+  const cursors = [];
+  const rowsOf = {};
+  for (const k of keys) { const s = c.systems[k];
+    const sv = s$("svg", {viewBox: `0 0 ${n} 10`, preserveAspectRatio: "none", class: "strip", role: "img", "aria-label": `error over time, ${sysShort(k)}`});
+    if (s.err) s.err.forEach((e, i) => {
+      const fill = e == null ? null : e < thr[0] ? "var(--s-hi)" : e < thr[1] ? "var(--s-lo)" : "var(--bad)";
+      if (fill) sv.append(s$("rect", {x: i, y: 1, width: 1.02, height: 7, fill}));
+      else sv.append(s$("rect", {x: i, y: 4.5, width: 1.02, height: 1, fill: "var(--axis)"}));
+      if (s.tracked && !s.tracked[i]) sv.append(s$("rect", {x: i, y: 8.6, width: 1.02, height: 1.4, fill: "var(--ink)"})); });
+    else sv.append(s$("rect", {x: 0, y: 4.5, width: n, height: 1, fill: "var(--axis)"}));
+    const cur = s$("rect", {x: 0, y: 0, width: Math.max(0.6, n / 300), height: 10, fill: "var(--ink)"}); sv.append(cur); cursors.push(cur);
+    const fin = t3 ? (s.run_failed ? "run failed" : s.final_err == null ? "✗ no pose" : `${s.final_err < thr[1] ? "✓" : "✗"} ${s.final_err.toFixed(1)} m`)
+                   : (s.ate != null ? `ATE ${s.ate.toFixed(2)} m${s.failed ? " ✗" : ""}` : "–");
+    const finCls = t3 ? (s.final_err != null && s.final_err < thr[1] ? "fail-ok" : "fail-bad") : (s.failed ? "fail-bad" : "");
+    const rerun = t3 && s.match === false;      // poses from a re-run whose final error differs from the published run
+    const lab = $("button", {class: "chip", "aria-pressed": "true", title: s.label + (s.source ? "" : " (no stored poses)") +
+      (rerun ? " (poses from a re-run that differs from the published run; outcome column = published)" : "")}, lineKey(k), sysShort(k) + (rerun ? " *" : ""));
+    lab.addEventListener("click", () => { hidden[k] = !hidden[k]; lab.setAttribute("aria-pressed", String(!hidden[k])); draw(cur_i); });
+    const now = $("span", {class: "now note"});
+    const row = $("div", {class: "srow"}, lab, sv, now, $("span", {class: `fin ${finCls}`}, fin));
+    rowsOf[k] = now; strips.append(row);
+    sv.addEventListener("click", ev => { const bb = sv.getBoundingClientRect(); seek(Math.floor((ev.clientX - bb.left) / bb.width * n)); }); }
+  const legend = $("div", {class: "legend"},
+    $("span", {}, $("span", {class: "sq", style: "background:var(--s-hi)"}), `within ${thr[0]} m`), $("span", {}, $("span", {class: "sq", style: "background:var(--s-lo)"}), `within ${thr[1]} m`),
+    $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), `farther (map-relative error${t3 ? "" : "; mapping: error of the final trajectory"})`),
+    $("span", {}, $("span", {class: "key", style: "background:var(--axis);height:1px"}), "no pose"),
+    t3 ? "" : $("span", {}, $("span", {class: "key", style: "background:var(--ink);height:2px"}), "online tracking lost (ORB-SLAM3, RTAB-Map)"));
+  let cur_i = 0;
+  function draw(i) {
+    cur_i = i;
+    clock.textContent = `${(i / fps).toFixed(1)} s`;
+    gtTrail.setAttribute("points", ptsTo(gt, i)); place(gtMark, gt[i]);
+    if (t3 && mg[i]) { const q = px(mg[i]); mapMark.setAttribute("x", q[0] - 4.5); mapMark.setAttribute("y", q[1] - 4.5); }
+    for (const k of keys) { const s = c.systems[k], L = layers[k];
+      const e = s.err ? s.err[i] : null;
+      rowsOf[k].textContent = !s.pos ? "" : e == null ? "no pose" : `${e.toFixed(1)} m`;
+      if (!L) continue;
+      const vis = !hidden[k];
+      L.trail.style.display = vis ? "" : "none";
+      L.trail.setAttribute("points", ptsTo(s.pos, i));
+      const p = s.pos[i];
+      if (!vis || !p) { L.mark.style.display = "none"; L.off.style.display = "none"; continue; }
+      const q = px(p);
+      if (inside(q)) { place(L.mark, p); L.off.style.display = "none"; }
+      else { L.mark.style.display = "none";     // off the view: an arrow on the border towards it, with its distance from the truth
+        const cx = Wm / 2, cy = Hm / 2, dx = q[0] - cx, dy = q[1] - cy, f = Math.min((Wm / 2 - 14) / Math.abs(dx || 1e-9), (Hm / 2 - 14) / Math.abs(dy || 1e-9));
+        const bx = cx + dx * f, by = cy + dy * f;
+        L.off.setAttribute("transform", `translate(${bx},${by})`); L.off.firstChild.setAttribute("transform", `rotate(${Math.atan2(dy, dx) * 180 / Math.PI})`);
+        L.offTxt.setAttribute("y", by > Hm / 2 ? -9 : 16); L.offTxt.textContent = `${Math.round(Math.hypot(p[0] - gt[i][0], p[1] - gt[i][1]))} m`;
+        L.off.style.display = ""; } }
+    for (const cu of cursors) cu.setAttribute("x", i);
+  }
+  const frameOf = () => Math.max(0, Math.min(n - 1, Math.floor(video.currentTime * fps + 1e-3)));
+  const seek = i => { video.currentTime = (Math.max(0, Math.min(n - 1, i)) + 0.5) / fps; draw(Math.max(0, Math.min(n - 1, i))); };
+  const tick = () => { draw(frameOf()); if (!video.paused) (video.requestVideoFrameCallback ? video.requestVideoFrameCallback(tick) : requestAnimationFrame(tick)); };
+  video.addEventListener("play", tick); video.addEventListener("seeked", () => draw(frameOf())); video.addEventListener("timeupdate", () => { if (video.paused) draw(frameOf()); });
+  draw(0);
+  const mapcap = $("div", {class: "note"}, t3 ? "Top-down, ground-truth frame: map session's path (wide grey), the trial's path (dotted) and position (black), the map frame shown in the video (square), each system's estimate (dot and heading) with its trail. Arrows on the border point to estimates outside the view, labelled with their distance from the truth."
+                                              : "Top-down, ground-truth frame: the whole session (grey), this stretch (dotted) and the position (black), each system's final trajectory (aligned as T1 scores it) up to this frame.");
+  card.append($("div", {class: "fc-grid"}, $("div", {}, video, vcap), $("div", {}, $("div", {class: "vizplot"}, svg), mapcap)));
+  card.append($("div", {class: "note", style: "margin:8px 0 2px"}, t3 ? "Error of each system's pose over the trial (click to seek; the final pose decides success):" : "Position error over the stretch (click to seek):"), legend, strips);
+  if (keys.some(k => t3 && c.systems[k].match === false)) card.append($("p", {class: "note"}, "* Poses from a re-run of this trial alone whose outcome differs from the published run (shown on the right)."));
+  return card;
+}
+
+function renderWorstRuns(v) {
+  v.append($("p", {class: "note"}, "For every system and setup: maps that failed or covered less than 80 % of the sequence (worst T1 maps otherwise), the query sessions with the lowest localization recall (T2), and the query sessions with the most failed relocalization trials (T3)."));
   const keys = Object.keys(B.failures || {}).sort((a, b) => (b.startsWith("cross") - a.startsWith("cross")) || a.localeCompare(b));
   if (!keys.length) { v.append($("div", {class: "empty"}, "No results yet.")); return; }
   for (const k of keys) { const [system, setup] = k.split("|"); const f = B.failures[k];
@@ -334,13 +672,7 @@ function renderFailures(v) {
     const sect = (name, ids, fn) => { if (!ids.length) return; card.append($("h4", {}, name)); const g = $("div", {class: "grid"}); for (const id of ids) g.append(fn(B.runs[id])); card.append(g); };
     sect("T1 · weakest maps", f.t1, r => { const p = trajPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.sequence}`; return p; });
     sect("T2 · lowest localization recall", f.t2, r => { const p = errPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`; return p; });
-    sect("T3 · most failed trials", f.t3, r => { const p = trialPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`;
-      const imgs = (B.assets || []).filter(a => a.includes(`/${r.id}_`)).sort();
-      for (let k = 0; k < imgs.length; k += 2) { const pair = imgs.slice(k, k + 2).sort((x, y) => (y.endsWith("_q.jpg") - x.endsWith("_q.jpg")));
-        p.append($("div", {class: "grid", style: "grid-template-columns:1fr 1fr;gap:6px;margin-top:6px"},
-          ...pair.map(a => $("figure", {style: "margin:0"}, $("img", {class: "thumb", src: a, alt: a.endsWith("_q.jpg") ? "query frame at the end of a failed trial" : "nearest map frame", loading: "lazy"}),
-            $("figcaption", {class: "note"}, a.endsWith("_q.jpg") ? "query, end of failed trial" : "map, nearest in ground truth"))))); }
-      return p; });
+    sect("T3 · most failed trials", f.t3, r => { const p = trialPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`; return p; });
     if (card.children.length === 1) card.append($("div", {class: "empty"}, "No failures recorded."));
     v.append(card); }
 }
@@ -363,14 +695,16 @@ function renderMetrics(v) {
       ul("Each query session is run once, from its first frame to its last, against the stored map of the scene's map session, starting without a pose.",
          "Per frame i: the estimate is the system's latest pose at frame i, if it is at most 1 s (10 frames) old; it is expressed in the ground-truth frame with the alignment computed on the map session (the query session is never re-aligned). e_i = distance between that position and the ground-truth position. A frame without such a pose has e_i = ∞.",
          "Coverage: only frames whose ground-truth position lies within the larger threshold (2 m indoors, 5 m outdoors) of the map session's ground-truth path are evaluated; where the map session never went no system can relocalize. The Datasets tab lists each session's coverage (about 100 % except on ROVER, where the 2023 / spring routes are longer than the 2024 map route).",
-         "LR@x of a session = (number of covered frames with e_i < x) / (number of covered frames), for x = 1 m and 2 m indoors, 3 m and 5 m outdoors.",
+         "Moving robot: only frames at which the robot moves are evaluated (over the 1 s window centred on the frame the ground-truth camera travels at least 0.05 m/s or turns at least 5°/s). A robot standing still, as at the start of every ROVER session, sees one view only.",
+         "A pose counts only if it is a pose in the stored map: a system that has not joined the stored map yet has no estimate at that frame (CROSS before its session merges with the map, ORB-SLAM3 in a new map of its atlas, RTAB-Map before its first link to the map, MASt3R-SLAM and VGGT-SLAM 2.0 before a loop closure or relocalization links a query frame to a map frame).",
+         "LR@x of a session = (number of evaluated frames with e_i < x) / (number of evaluated frames: covered, robot moving), for x = 1 m and 2 m indoors, 3 m and 5 m outdoors.",
          "MS-ATE of a session = RMSE of e_i over the frames that have a pose.",
          "Scene and dataset cells pool all frames of the query sessions (localized frames / all frames), so longer sessions weigh more.")),
     sec("T3 · relocalization success (RS): many short trials per query session",
       ul("Each query session is cut into trials of 100 frames (10 s); a new trial starts every 50 frames (trials overlap by half; a last trial of at least 50 frames is kept). The Datasets tab lists the number of trials per session.",
          "Every trial is an independent run: a fresh system loads the map and processes only the trial's frames, starting without a pose.",
          "The trial's final error is the distance between the system's final pose (its latest pose at the trial's last frame, at most 1 s old) and the pose the map implies for that frame: the nearest map keyframe's estimated pose composed with its ground-truth offset to the query frame, so map drift is not counted as a relocalization error.",
-         "Only trials whose last frame is covered by the map (as in T2) are counted.",
+         "Only trials whose last frame is covered by the map and in which the robot moves in at least half of the frames (as in T2) are counted.",
          "RS@x = trials with final error below x / all counted trials, pooled over the scene's query sessions (x = 1 m and 2 m indoors, 3 m and 5 m outdoors); 95 % Wilson interval of the larger threshold in the last column.")),
     sec("How T2 and T3 differ",
       "T3 asks how often a system relocalizes within 10 s from a cold start, and judges only the end of each trial. T2 asks how much of a whole session the system spends correctly localized in the map, including the time before it first relocalizes and any later losses. A system that relocalizes slowly but then holds on can have T2 above T3; one that relocalizes quickly but loses the map again can have T3 above T2."),
@@ -492,11 +826,16 @@ const SYS_STYLE = {
   "rtabmap|stereo": ["--c7", ""], "rtabmap|rgbd": ["--c7", "6 4"],
   "rtabmap_vo|stereo": ["--c7", "1.5 3"], "rtabmap_vo|rgbd": ["--c7", "8 3 1.5 3"],
   "rtabmap+vio|stereo": ["--c7", "3 2"], "rtabmap+vio|rgbd": ["--c7", "3 2 8 2"],
-  "mast3r_slam|mono": ["--c6", ""], "vggt_slam|mono": ["--c5", ""]};
+  "mast3r_slam|mono": ["--c6", ""], "vggt_slam|mono": ["--c5", ""],
+  "cross_stereo_vgio|stereo": ["--c2", "3 2"], "cross_stereo_fast|stereo": ["--c2", "8 3 1.5 3"],
+  "cross_mono_ff_odom|mono": ["--c3", "3 2"], "cross_mono_ff_vgio|mono": ["--c3", "8 3 1.5 3"], "cross_mono_ff_vio|mono": ["--c3", "1.5 3"],
+  "orbslam3_imu|stereo": ["--c4", "3 2"], "orbslam3_imu|rgbd": ["--c4", "8 3 1.5 3"], "orbslam3_imu|mono": ["--c4", "1.5 1.5"],
+  "rtabmap_vi|stereo": ["--c7", "1.5 1.5"], "rtabmap_vi|rgbd": ["--c7", "8 2"]};
 const SETUP = {rgbd: "RGB-D", stereo: "stereo", mono: "mono"};
 const sysKey = r => `${r.system}|${r.setup}`;
 const sysLabel = (system, setup, d) => `${(B.systems[system] || {}).label || system} · ${d === "kitti" && setup === "rgbd" ? "RGB-D*" : SETUP[setup] || setup}`;
-const ODO = {cross_rgbd: "ext. odometry", cross_stereo: "ext. odometry", cross_mono_odom: "ext. odometry",
+const ODO = {cross_rgbd: "ext. odometry", cross_stereo: "ext. odometry", cross_mono_odom: "ext. odometry", cross_mono_ff_odom: "VGGT-Ω, ext. odometry",
+             cross_stereo_vgio: "VGGT-IMU odometry", cross_mono_ff_vgio: "VGGT-Ω, VGGT-IMU odometry", cross_stereo_fast: "fast, ext. odometry",
              cross_rgbd_vo: "visual odometry", cross_stereo_vo: "visual odometry", cross_mono: "visual odometry",
              "cross_rgbd+vio": "stereo VIO odometry", "cross_stereo+vio": "stereo VIO odometry",
              "cross_mono_odom+vio": "stereo VIO odometry"};
@@ -506,7 +845,7 @@ const shortLabel = (system, setup, d) => {         // compact row label of the p
   return `${((B.systems[system] || {}).label || system)} · ${su}`; };
 const sysColor = k => `var(${(SYS_STYLE[k] || ["--muted"])[0]})`;
 const sysDash = k => (SYS_STYLE[k] || ["", ""])[1];
-const lineKey = k => { const sv = s$("svg", {width: 22, height: 8, viewBox: "0 0 22 8"});
+const lineKey = k => { const sv = s$("svg", {width: 22, height: 8, viewBox: "0 0 22 8", class: "lk"});
   sv.append(s$("line", {x1: 1, x2: 21, y1: 4, y2: 4, stroke: sysColor(k), "stroke-width": 2.5, "stroke-dasharray": sysDash(k), "stroke-linecap": "round"})); return sv; };
 const orderIndex = () => { const o = {}; (B.order || []).forEach(([a, b], i) => o[`${a}|${b}`] = i); return o; };
 const shortName = q => String(q).split("/").pop();
@@ -612,7 +951,7 @@ function renderT3Plots(v, d) {
     const keys = [...new Set(runs.map(sysKey))].sort((a, b) => (oi[a] ?? 99) - (oi[b] ?? 99));
     const thr = runs[0].thresholds || [1, 2];
     const card = $("div", {class: "card"}, $("h3", {}, `${scene}: relocalization outcomes`),
-      $("p", {class: "note"}, `Each column is a 10 s trial at its position along the query sessions (separated by gaps, labelled below); each row a system. Dark: final pose within ${thr[0]} m; light: within ${thr[1]} m only; empty: failed; grey: the map does not cover the trial (not counted). Right: RS@${thr[1]} m for every query session (cell value).`));
+      $("p", {class: "note"}, `Each column is a 10 s trial at its position along the query sessions (separated by gaps, labelled below); each row a system. Dark: final pose within ${thr[0]} m; light: within ${thr[1]} m only; empty: failed; grey: not counted (the map does not cover the trial, or the robot stands still in most of it). Right: RS@${thr[1]} m for every query session (cell value).`));
     const wrap = $("div", {style: "display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px;align-items:start"});
     wrap.append($("div", {class: "scroll"}, outcomeStrips(d, s, runs, keys, thr)), $("div", {class: "scroll"}, rsHeatmap(d, s, runs, keys, thr)));
     card.append(wrap); v.append(card);
@@ -638,9 +977,9 @@ function outcomeStrips(d, s, runs, keys, thr) {
     const n = nT(q);
     keys.forEach((k, i) => { const r = runs.find(rr => rr.query === q && sysKey(rr) === k); if (!r) return; const y = 4 + i * rowH;
       r.trials.forEach((t, j) => { const [start, ok2, fe, ok1, cov] = t;
-        const fill = !cov ? "var(--hatch)" : ok1 ? "var(--s-hi)" : ok2 ? "var(--s-lo)" : null;
+        const fill = cov !== 1 ? "var(--hatch)" : ok1 ? "var(--s-hi)" : ok2 ? "var(--s-lo)" : null;
         const cell = s$("rect", {x: x + j * cw, y: y + 1, width: Math.max(cw - (cw > 3 ? 1 : 0), 0.8), height: rowH - 3, fill: fill || "transparent"});
-        cell.addEventListener("pointermove", ev => showTip(ev, [[!cov ? "not covered by the map" : fe == null ? "no pose" : `${fe.toFixed(2)} m`, ""], sysLabel(r.system, r.setup, d), `${shortName(q)}, frames ${start}–${start + 99}`]));
+        cell.addEventListener("pointermove", ev => showTip(ev, [[cov !== 1 ? NOT_COUNTED[cov] : fe == null ? "no pose" : `${fe.toFixed(2)} m`, ""], sysLabel(r.system, r.setup, d), `${shortName(q)}, frames ${start}–${start + 99}`]));
         cell.addEventListener("pointerleave", hideTip); svg.append(cell); }); });
     const tl = s$("text", {x: x + n * cw / 2, y: keys.length * rowH + 18, "text-anchor": "middle"}); tl.textContent = tag(q).slice(0, Math.max(3, Math.floor(n * cw / 5.5)));
     svg.append(tl); x += n * cw + gap;

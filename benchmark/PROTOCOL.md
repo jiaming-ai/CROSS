@@ -191,11 +191,23 @@ is penalized.
   after shutdown was used, which localizes frames before a late merge in hindsight). The systems without map persistence
   (MASt3R-SLAM, VGGT-SLAM 2.0) still log their keyframe poses only after their final optimization, which favours them. Thresholds: x = 1 m and 2 m indoors, 3 m and 5 m outdoors, the same as T3. This is the headline T2 number because it
   compares systems that report no pose until they relocalize with systems that always report one.
+- **A pose in the map**: a frame has an estimate only when the system reports a pose in the stored map. A system whose
+  session has not joined the stored map yet has none, whatever it reports in a frame of its own: CROSS before its session
+  merges with the map (it starts in a coordinate frame placed outside the map, `System.session_localized`), ORB-SLAM3 while
+  it tracks in a new, unmerged map of its atlas (state 6), RTAB-Map before its first loop or proximity detection to the
+  map, MASt3R-SLAM and VGGT-SLAM 2.0 before a relocalization or loop closure links a query frame to a map frame (their
+  poses before that only continue the map's trajectory across the jump between the two traversals of the stream). Until
+  2026-10-07, CROSS's start-frame poses and the stream systems' continued poses were scored as poses.
 - **MS-ATE** (m): the RMSE over the frames that have an estimate, reported with their fraction.
 - **Coverage**: only query frames that the map covers are evaluated. A frame is covered when its ground-truth position lies
   within the larger threshold (2 m indoors, 5 m outdoors) of the map session's ground-truth path. Where the map session never
   went, no system can relocalize. Coverage is close to 100 % on OpenLORIS and SimChange. On ROVER, the 2023 and spring
   recordings drive a longer route than the September 2024 map session. Coverage fractions are listed per session.
+- **Moving robot**: only frames at which the robot moves are evaluated. A frame counts as moving when, over the 1 s window
+  centred on it, the ground-truth camera travels at least 0.05 m/s or turns at least 5 deg/s (`eval/metrics.py`,
+  `MOVING_RULE`; a dataset may override it in `configs/datasets.yaml`). A robot standing still, as for the first 12-19 s
+  of every ROVER session, sees a single view: whether a system relocalizes from one view is not what the benchmark
+  measures (since 2026-10-07). LR, MS-ATE and the time to localize use the evaluated frames: covered and moving.
 - **Aggregation**: LR and MS-ATE are computed per query session. Scene and dataset cells pool the frames of all query
   sessions (localized frames / all frames), so each session counts in proportion to its length, as T3 pools trials.
 - **Overall LR** of a system: the mean over OpenLORIS, ROVER and SimChange of its pooled LR at each dataset's smaller and
@@ -209,7 +221,8 @@ fixed thresholds per environment: **x = 1 m and 2 m indoors, 3 m and 5 m outdoor
 radii. RS is the fraction of successful trials. The final estimate is the system's
 latest pose in the trial, as reported at that time (see T2). It must be at most 1 s older than the trial's last frame, because some systems (MASt3R-SLAM, VGGT-SLAM 2.0) report poses only at
 keyframes. Monocular systems are aligned with Sim(3) on the map session, so their errors are in metres too.
-- Only trials whose last frame is covered by the map (see T2, Coverage) are counted.
+- Only trials whose last frame is covered by the map (see T2, Coverage) and in which the robot moves in at least half of
+  the frames (see T2, Moving robot) are counted. A trial's final estimate must be a pose in the stored map (see T2).
 - Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset. The CROSS paper used
   200-frame trials at the native 30 Hz, about 7 s. At the benchmark's 10 Hz, 200 frames would be 20 s, which makes
   relocalization easier. The same trials are used for the SimChange v2 runs. Trials overlap by half, so the Wilson intervals
@@ -221,8 +234,8 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 - **Overall RS** of a system: the mean over OpenLORIS, ROVER and SimChange of its pooled RS at each dataset's smaller and
   larger threshold (each dataset weighs the same, whatever its number of trials).
 - **Failed query sessions** (a crash or timeout that persists after re-runs, or a failed map) are shown as *k/N* ✗ (k of
-  the N query sessions failed). Every covered trial of a failed session counts as a failed trial (systems without map
-  persistence: the 5 evenly spaced trials they would have run), and in T2 every covered frame counts as not localized, so a
+  the N query sessions failed). Every counted trial of a failed session counts as a failed trial (systems without map
+  persistence: the 5 evenly spaced trials they would have run), and in T2 every evaluated frame counts as not localized, so a
   system that crashes cannot score higher than one that runs and fails. T1 means leave failed sequences out and give their
   count with the same notation.
 - Systems without map persistence (MASt3R-SLAM, VGGT-SLAM 2.0, DROID-SLAM) run the map session followed by the trial in one

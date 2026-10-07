@@ -4,6 +4,8 @@
 # data (optional): read the sequences from $BENCH_DATA/<data> instead of $BENCH_DATA/<dataset> (the dev split, below).
 # thresholds: the two position thresholds of T2 (localization recall) and T3 (relocalization success), fixed per
 # environment: 1 m and 2 m indoors, 3 m and 5 m outdoors.  r_d (the larger one) is also the radius passed to the runs.
+# moving (optional): overrides of the moving-robot rule of T2 / T3 (benchmark/eval/metrics.py MOVING_RULE: window_s,
+# min_speed m/s, min_rate deg/s, min_fraction of a trial's frames, tracks); none of the datasets overrides it.
 
 openloris:
   environment: indoor

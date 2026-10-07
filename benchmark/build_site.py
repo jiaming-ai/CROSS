@@ -6,7 +6,8 @@ benchmark/results/results.json.
 
 The page is static: open benchmark/site/index.html from the file system or serve the folder (GitHub Pages).
 Tables reuse the aggregation of make_tables.py; every table cell lists the runs behind it, whose trajectories,
-error curves and trial outcomes the page plots.  Failure cases are selected here (see `failures`).
+error curves and trial outcomes the page plots.  Failure cases: the worst runs per system are selected here (see `failures`); the cause analysis and the case videos come
+from benchmark/failure_analysis.py and benchmark/make_failure_assets.py (benchmark/results/failure_*.json).
 The History tab shows the same tables per code version (the `commit` of the runs, from benchmark/results/history.json
 written by collect.py), one row per commit that has results, so a change can be traced back to the commit that made it.
 """
@@ -21,6 +22,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 import make_tables as mt
 
@@ -60,10 +62,12 @@ def slim_run(r, rid):
         c = np.asarray(r["err_curve"], float)
         keep["err"] = np.round(c[:: max(1, len(c) // 400)], 2).tolist()
     if r.get("trials") is not None:
-        # [start, success at the larger threshold, final error, success at the smaller threshold, covered by the map]
+        # [start, success at the larger threshold, final error, success at the smaller threshold, counted (1), or not:
+        #  0 = the map does not cover it, 2 = the robot stands still (make_tables.rescore_t3)]
         keep["trials"] = [[t.get("start"), int(t.get("final_err") is not None and t["final_err"] < thr[1]),
                            None if t.get("final_err") is None else round(t["final_err"], 2),
-                           int(t.get("final_err") is not None and t["final_err"] < thr[0]), int(t.get("covered", True))]
+                           int(t.get("final_err") is not None and t["final_err"] < thr[0]),
+                           1 if t.get("counted", t.get("covered", True)) else (0 if not t.get("covered", True) else 2)]
                           for t in r["trials"]]
     return keep
 
@@ -248,6 +252,12 @@ def main():
     except Exception:       # noqa: BLE001
         commit = None
     assets = sorted(str(p.relative_to(SITE)) for p in (SITE / "assets").rglob("*.jpg")) if (SITE / "assets").is_dir() else []
+    fa, fc = ROOT / "benchmark/results/failure_analysis.json", ROOT / "benchmark/results/failure_cases.json"
+    fspec = ROOT / "benchmark/configs/failure_cases.yaml"
+    failure_page = {"analysis": json.loads(fa.read_text()) if fa.is_file() else None,
+                    "cases": json.loads(fc.read_text())["cases"] if fc.is_file() else [],
+                    "text": {k: v for k, v in yaml.safe_load(fspec.read_text()).items() if k in ("intro", "findings", "groups", "notes")}
+                    if fspec.is_file() else {}}
     legacy = ROOT / "benchmark/results/legacy.json"
     dstats = ROOT / "benchmark/results/datasets.json"
     samples = ROOT / "benchmark/results/dataset_samples.json"       # make_dataset_assets.py
@@ -256,7 +266,7 @@ def main():
         "systems": T.sy, "datasets": {k: {kk: vv for kk, vv in v.items() if kk != "scenes"} | {"scenes": list(v["scenes"])}
                                       for k, v in T.ds.items()},
         "summary": T.summary(), "tables": table_models(T, runs_by_key), "runs": runs,
-        "failures": failures(results, runs_by_key), "assets": assets,
+        "failures": failures(results, runs_by_key), "assets": assets, "failure_page": failure_page,
         "legacy": json.loads(legacy.read_text()) if legacy.is_file() else None,
         "datastats": json.loads(dstats.read_text()) if dstats.is_file() else {},
         "samples": json.loads(samples.read_text()) if samples.is_file() else {},

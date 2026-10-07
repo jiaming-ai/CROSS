@@ -40,7 +40,7 @@ from cross.core.system import System
 from cross.core.types import Camera
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
-from cross.pipeline import add_session_args, mode_config_files, session_factory
+from cross.pipeline import add_session_args, apply_settings, mode_config_files, session_factory
 
 
 def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
@@ -98,19 +98,7 @@ def make_config(args) -> SystemConfig:
     else:
         cfg.pose_est.type = PoseEstType.PNP
     cfg.retrieval.top_k = args.top_k
-    for kv in getattr(args, "set", None) or []:      # generic overrides: section.sub.key=value (YAML-parsed value)
-        import yaml
-        key, val = kv.split("=", 1)
-        obj = cfg
-        parts = key.split(".")
-        for p in parts[:-1]:
-            obj = getattr(obj, p)
-        cur = getattr(obj, parts[-1])
-        v = yaml.safe_load(val)
-        if hasattr(cur, "value") and not isinstance(v, type(cur)):   # enums
-            v = type(cur)(v)
-        setattr(obj, parts[-1], v)
-    return cfg
+    return apply_settings(cfg, getattr(args, "set", None))    # generic overrides: section.sub.key=value
 
 
 def odom_kwargs(args) -> dict:
@@ -256,7 +244,7 @@ def run_reloc(args, out: Path, meta: dict):
     rows = []
     t0 = time.time()
     n_obs = 0
-    from reloc_metrics import build_trials
+    from reloc_metrics import build_trials, drop_unlocalized, is_localized
     q_start = args.query_start
     q_end = args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
@@ -294,6 +282,10 @@ def run_reloc(args, out: Path, meta: dict):
                 row[f"{name}_w"] = float(w[k])
             row["best_k"] = int(np.argmax(w))
             row["n_active"] = int((w > 1e-3).sum())
+            # a session that has not joined the stored map reports its pose in a frame of its own: no pose in the map
+            row["localized"] = is_localized(system)
+            if not row["localized"]:
+                drop_unlocalized(row, ("c0", "best") if row["best_k"] == 0 else ("c0",))
             rows.append(row)
             if idx % 50 == 0:
                 logger.info(f"trial {ti} step {idx}: c0 err {row['c0_t_err']:.2f} m / {row['c0_r_err']:.1f} deg, "

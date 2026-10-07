@@ -34,6 +34,40 @@ def _rot_deg(R):
     return float(np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))))
 
 
+def is_localized(system) -> bool:
+    """Whether a session's current belief is a pose in the stored map (CROSS: System.session_localized via the
+    pipeline's localized(); systems without the notion: always)."""
+    fn = getattr(system, "localized", None)
+    return True if fn is None else bool(fn())
+
+
+def drop_unlocalized(row, names=("c0",)):
+    """A frame whose session has not joined the stored map yet has no pose in the map: its pose is kept for diagnostics
+    under '<name>_pose_unlocalized' and scored as no estimate (infinite error), as the baselines' frames without a
+    pose in the map are (PROTOCOL.md, T2 / T3)."""
+    for name in names:
+        row[f"{name}_pose_unlocalized"] = row.get(f"{name}_pose")
+        row[f"{name}_pose"] = None
+        row[f"{name}_t_err"] = row[f"{name}_r_err"] = float("inf")
+    return row
+
+
+def first_map_link(links, n_map):
+    """Systems without map persistence run the map traversal and the query frames as one stream (stream index < n_map:
+    map, >= n_map: query).  A query frame is localized in the map only from the first query frame that the system
+    linked to a map frame by recognising the place (a loop closure / relocalization link), not by the stream's
+    continuity across the jump from the map's last frame to the query's first.  links: (stream index a, stream index
+    b) pairs of such links.  Returns that first query stream index, or None without any link to the map."""
+    first = None
+    for a, b in links:
+        a, b = int(a), int(b)
+        if (a < n_map) == (b < n_map):
+            continue
+        q = max(a, b)
+        first = q if first is None else min(first, q)
+    return first
+
+
 def map_relative_errors(rows, meta, pose_keys=("c0", "best"), max_kf_dist=None):
     """rows: dicts with 'gt_pose' and '<key>_pose' (16 floats, map frame). meta: kf_gt / kf_est dicts."""
     ids = [k for k in meta["kf_est"] if str(k) in meta["kf_gt"] or k in meta["kf_gt"]]

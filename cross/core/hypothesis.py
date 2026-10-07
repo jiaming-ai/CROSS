@@ -1999,7 +1999,10 @@ class HypothesisManager:
         return getattr(sysm, "_session_start_kf_id", 0) > 0 and (v is None or v.anchor is None)
 
     def _reset_session_anchor(self):
-        """Hypothesis 0 is being replaced (merge / adoption): its link to the stored map is void."""
+        """Hypothesis 0 is being replaced (merge / adoption): its link to the stored map is void (and is checked again
+        on the new hypothesis 0's edges, System.session_localized)."""
+        if hasattr(self.system, "_session_localized"):
+            self.system._session_localized = False
         v = getattr(self.system, "_lc_verifier", None)
         if v is not None:
             v.anchor = None

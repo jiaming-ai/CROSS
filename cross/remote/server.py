@@ -75,7 +75,8 @@ class MapServer:
                             "T0": system.get_current_pose().matrix().detach().cpu().numpy(),
                             "Tbest": mu[int(w.argmax())].matrix().detach().cpu().numpy(),
                             "w": w.detach().cpu().numpy(),
-                            "B0": pose_matrix(mu[0]), "Bbest": pose_matrix(mu[int(w.argmax())])}
+                            "B0": pose_matrix(mu[0]), "Bbest": pose_matrix(mu[int(w.argmax())]),
+                            "localized": bool(system.session_localized()) if hasattr(system, "session_localized") else True}
             cfg = system.config.pose_est
             if cfg.obs_confident_max_interval_steps > 0:
                 # the back end's adaptive cadence for its next frames (System._should_skip_observation), for the edge

@@ -126,6 +126,7 @@ class System:
         # Immutable provenance of the graph present at map load. New query
         # nodes can share its atlas, so atlas IDs do not identify sessions.
         self.loaded_node_ids = frozenset()
+        self._session_localized = False        # session_localized(): hypothesis 0 linked to the stored map
 
 
         ########### tracking ###########
@@ -739,6 +740,29 @@ class System:
 
         # Note: planning system (sparse graph) will be rebuilt on load if enabled
 
+    def session_localized(self) -> bool:
+        """Whether hypothesis 0 is expressed in the frame of the stored map.
+
+        A session that loaded a map starts in a coordinate frame of its own, placed outside the stored map
+        (atlas.new_atlas_center); its pose becomes a pose in the map only when a merge links one of its keyframes to a
+        stored keyframe in hypothesis 0's graph (the merged hypothesis brings its session->map edges along).  Until then
+        the pose must not be reported as a pose in the map.  A mapping session (nothing loaded) is its own map.  Once
+        linked, the session stays localized, since the keyframe that held the link may be a temporary one removed later;
+        replacing hypothesis 0 (merge, adoption) resets the flag and the link is checked again."""
+        if not self.loaded_node_ids:
+            return True
+        if self._session_localized:
+            return True
+        h0 = self.hypothesis_manager.hypotheses.get(0)
+        if h0 is None:
+            return False
+        start, loaded = self._session_start_kf_id, self.loaded_node_ids
+        for kid, nbrs in list(h0.visual_adjacency.items()):
+            if kid >= start and not loaded.isdisjoint(nbrs):
+                self._session_localized = True
+                break
+        return self._session_localized
+
     def load_map(self, load_path: str):
         """Load the map.
         Loads persistent graph structure:
@@ -789,6 +813,7 @@ class System:
         self.loaded_node_ids = frozenset(self.hypothesis_manager.nodes)
         self.hypothesis_manager.reference_support.start(self.loaded_node_ids)
         self._session_start_kf_id = Keyframe._next_id
+        self._session_localized = False
         self._projection_n_nodes = -1                  # re-estimate the vertical from the loaded map
         self._anchor_pending.clear()
         self._contra_pending.clear()
