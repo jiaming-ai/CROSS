@@ -169,6 +169,9 @@ def run_mapping(args, out: Path):
     step_times = []
     kf_frame = {}            # frame index of every keyframe created (temporary ones too: T1 completeness)
     online = [] if getattr(args, "online_poses", False) else None
+    step_log = open(out / "steps.csv", "w") if getattr(args, "step_log", False) else None
+    if step_log is not None:
+        step_log.write("frame,dt_s,nodes,db_keyframes,loop_closure\n")
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
@@ -176,6 +179,10 @@ def run_mapping(args, out: Path):
         system.process(d)
         step_times.append(time.perf_counter() - ts)
         n += 1
+        if step_log is not None:            # per-step cost vs map size (large-map studies)
+            mp = getattr(system, "mapper", system)
+            step_log.write(f"{idx},{step_times[-1]:.5f},{len(mp.hypothesis_manager.nodes)},{mp.db.get_size()},"
+                           f"{int(bool((getattr(mp, 'last_step_diagnostics', None) or {}).get('loop_closure_applied')))}\n")
         if online is not None:               # the pose the session published at this frame (and its odometry's)
             fp = getattr(system, "frontend_pose", None)
             online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
@@ -185,6 +192,8 @@ def run_mapping(args, out: Path):
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
             kf_frame[int(last_kf)] = args.map_start + idx * args.stride
     elapsed = time.time() - t0
+    if step_log is not None:
+        step_log.close()
     frames = system.keyframe_frames() if hasattr(system, "keyframe_frames") else None
     if frames is not None:                  # behind a real link the keyframe ids come back late: by their frames
         kf_gt = {k: gts[f].tolist() for k, f in frames.items() if f < len(gts)}
@@ -393,6 +402,8 @@ def main():
     ap.add_argument("--obs-min-rotation", type=float, default=None)
     ap.add_argument("--obs-max-interval", type=int, default=None)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
+    ap.add_argument("--step-log", action="store_true",
+                    help="mapping: write steps.csv (per-frame step time, graph nodes, database keyframes, loop closures)")
     ap.add_argument("--online-poses", action="store_true",
                     help="map run: score the pose published at every frame (map_meta.json 'online')")
     ap.add_argument("--skip-reloc", action="store_true")

@@ -2276,6 +2276,7 @@ class System:
         ids = {kf.id for _, kf in take}
         return take + [(sc, kf) for sc, kf in ranked if kf.id not in ids]
 
+    @timeit
     def _retrieve_keyframes(self, rgb_image: torch.Tensor):
         """Retrieve the keyframes from the database, with caching for efficiency.
         We skip (to speed up) retrieval if:
