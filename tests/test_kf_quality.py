@@ -94,3 +94,12 @@ def test_stereo_near_field():
     left, right = pair(300)
     q = f.assess(left, rgb_right=right)
     assert q.fractions["near"] > 0.6 and q.junk and q.reason == "near"
+
+
+def test_add_person_keeps_threshold_and_skips_checked():
+    f = _filter()
+    _seed(f)
+    q = f.assess(_textured(31), person=False)
+    assert not q.person_checked
+    r = f.add_person(q, _textured(31))         # the filter's config has person=False: unchanged
+    assert r is q

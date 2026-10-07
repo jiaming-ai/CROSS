@@ -44,6 +44,7 @@ class FrameQuality:
     has_depth: bool = False
     n_person: int = 0
     stage: str = "image"              # "image" (pre-observation cues) or "pass" (refined with the pass depth)
+    person_checked: bool = False      # the person detector has run on this frame
     ms: float = 0.0
     cells: dict = field(default_factory=dict, repr=False)   # per-cell masks (numpy bool), for refinement / figures
 
@@ -156,6 +157,8 @@ class KeyframeQuality:
         <= 0 invalid."""
         d = depth.float().cpu().numpy() if torch.is_tensor(depth) else np.asarray(depth, np.float32)
         d = d.reshape(d.shape[-2:])
+        st = max(1, d.shape[1] // 128)              # <= 128 px across: the cells are 8 px wide there
+        d = d[::st, ::st]
         valid = (d > 0) & np.isfinite(d)
         if valid.sum() < 0.05 * d.size:
             return None
@@ -172,10 +175,12 @@ class KeyframeQuality:
     # ------------------------------------------------------------------ test
     @torch.inference_mode()
     def assess(self, rgb: torch.Tensor, depth: Optional[torch.Tensor] = None,
-               rgb_right: Optional[torch.Tensor] = None) -> FrameQuality:
+               rgb_right: Optional[torch.Tensor] = None, person: Optional[bool] = None) -> FrameQuality:
         """rgb (3, H, W) float in [0, 1] (the transformed image of the step); depth (1, H, W) metric or None; without
         depth, the rectified right image gives the near field by stereo matching (stereo_near).  The cues run on the
-        CPU on a <= 256 px luminance image (one transfer); only the person detector runs on the image's device."""
+        CPU on a <= 256 px luminance image (one transfer).  The person detector (the costly cue, on the image's
+        device) runs when `person` (default: config) is true; otherwise `add_person` adds it later, for the frames
+        that are about to become permanent keyframes."""
         import cv2
         t0 = time.perf_counter()
         cfg = self.cfg
@@ -203,14 +208,41 @@ class KeyframeQuality:
         near = self._near_cells(depth, gh, gw, update=True) if depth is not None else None
         if near is not None:
             cells["near"] = near
-        person, n_person = self._person_cells(x, gh, gw)
-        if person is not None:
-            cells["person"] = person
+        run_person = bool(getattr(cfg, "person", True)) if person is None else (person and bool(getattr(cfg, "person", True)))
+        n_person = 0
+        if run_person:
+            pc, n_person = self._person_cells(x, gh, gw)
+            if pc is not None:
+                cells["person"] = pc
         q = self._decide(cells, stage="image", has_depth=near is not None, n_person=n_person, update=True)
+        q.person_checked = run_person
         q.ms = (time.perf_counter() - t0) * 1e3
         self.stats["assessed"] += 1
         self.stats["ms_total"] += q.ms
         return q
+
+    @torch.inference_mode()
+    def add_person(self, q: FrameQuality, rgb: torch.Tensor) -> FrameQuality:
+        """Add the person cells to a frame assessed without them (same threshold as its first assessment)."""
+        if q is None or q.person_checked or q.junk or not getattr(self.cfg, "person", True):
+            return q
+        t0 = time.perf_counter()
+        gh, gw = next(iter(q.cells.values())).shape
+        pc, n_person = self._person_cells(rgb[0] if rgb.dim() == 4 else rgb, gh, gw)
+        q.person_checked = True
+        if pc is None:
+            q.ms += (time.perf_counter() - t0) * 1e3
+            return q
+        cells = dict(q.cells)
+        cells["person"] = pc
+        r = self._decide(cells, stage=q.stage, has_depth=q.has_depth, n_person=n_person, update=False, threshold=q.threshold)
+        r.person_checked = True
+        r.ms = q.ms + (time.perf_counter() - t0) * 1e3
+        self.stats["ms_total"] += r.ms - q.ms
+        if r.junk:
+            self.stats["junk"] += 1
+            self.stats["by_reason"][r.reason] += 1
+        return r
 
     @torch.inference_mode()
     def refine(self, q: FrameQuality, depth) -> FrameQuality:
@@ -226,6 +258,7 @@ class KeyframeQuality:
         cells["near"] = near if "near" not in cells else (cells["near"] | near)
         was_junk = q.junk
         r = self._decide(cells, stage="pass", has_depth=True, n_person=q.n_person, update=False, threshold=q.threshold)
+        r.person_checked = q.person_checked
         r.ms = q.ms + (time.perf_counter() - t0) * 1e3
         self.stats["ms_total"] += r.ms - q.ms
         if r.junk and not was_junk:
@@ -254,7 +287,7 @@ class KeyframeQuality:
         if junk:
             # the cause that alone removes the most cells (causes listed in order of precedence on ties)
             reason = max(CAUSES, key=lambda c: fractions[c])
-            if stage == "image":
+            if update:
                 self.stats["junk"] += 1
                 self.stats["by_reason"][reason] += 1
         return FrameQuality(info=info, threshold=float(threshold), junk=bool(junk), reason=reason, fractions=fractions,

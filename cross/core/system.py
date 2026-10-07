@@ -1099,7 +1099,10 @@ class System:
         # stored as a permanent keyframe; with skip_observation it is not observed either (as a skipped observation)
         self._frame_quality = None
         if self._kf_quality is not None:
-            self._frame_quality = self._kf_quality.assess(rgb_image, depth_image, rgb_right=rgb_right)
+            # the person detector (the costly cue) runs here only when a junk frame must not be observed; otherwise
+            # only for the frames that are about to become permanent keyframes (_add_new_kf)
+            self._frame_quality = self._kf_quality.assess(rgb_image, depth_image, rgb_right=rgb_right,
+                                                          person=self.config.mapping.keyframe_quality.skip_observation)
             self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
             if self._frame_quality.junk and self.config.mapping.keyframe_quality.skip_observation:
                 self._kf_quality.stats["skipped_observation"] += 1
@@ -1829,6 +1832,8 @@ class System:
                 (self.pose_est_type == PoseEstType.FF and confidence.max() < self.config.pose_est.ff.kf_conf_threshold_new_kf):
                 is_temp_kf = False
 
+        if not is_temp_kf and self._frame_quality is not None and rgb_image is not None:
+            self._frame_quality = self._kf_quality.add_person(self._frame_quality, rgb_image)
         if not is_temp_kf and self._frame_quality is not None and self._frame_quality.junk:
             # a junk view (mapping.keyframe_quality) stays a temporary node: odometry chain kept, no image / descriptor
             is_temp_kf = True
