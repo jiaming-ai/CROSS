@@ -70,6 +70,9 @@ def load_nclt_raw(root: Path, session: str):
     gt = np.genfromtxt(gtf, delimiter=",")
     gt = gt[np.all(np.isfinite(gt[:, :4]), 1)]
     rtk = np.genfromtxt(sdir / "gps_rtk.csv", delimiter=",") if (sdir / "gps_rtk.csv").exists() else None
+    from cross.dataloader.geo import fill_altitude
+    gps = gps[np.argsort(gps[:, 0], kind="stable")]
+    gps[:, 5] = fill_altitude(gps[:, 0] * 1e-6, gps[:, 5])
     fixes = []
     last = None
     for row in gps:

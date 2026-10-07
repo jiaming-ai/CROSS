@@ -21,6 +21,20 @@ from typing import Optional
 import numpy as np
 
 
+def fill_altitude(t: np.ndarray, alt: np.ndarray, max_age: float = 1.0) -> np.ndarray:
+    """Receivers that report the altitude in a separate sentence (NCLT: every other row): a fix without altitude
+    takes the receiver's latest altitude of the last `max_age` seconds.  Horizontal-only factors let the optimisation
+    pitch the trajectory (NCLT 2012-08-04: the end of the map rose by 21 m when half the factors had no altitude)."""
+    out = alt.copy()
+    last_t, last_a = -1e18, np.nan
+    for i in range(len(t)):
+        if np.isfinite(alt[i]):
+            last_t, last_a = t[i], alt[i]
+        elif t[i] - last_t <= max_age:
+            out[i] = last_a
+    return out
+
+
 def _header(path: Path) -> str:
     with open(path) as f:
         lines = [ln for ln in (f.readline() for _ in range(5)) if ln.startswith("#")]
@@ -70,6 +84,7 @@ class GeoStream:
         fixes = fixes[order]
         keep = np.r_[True, np.diff(fixes[:, 0]) > 1e-3]
         fixes = fixes[keep]
+        fixes[:, 3] = fill_altitude(fixes[:, 0], fixes[:, 3])
         tp = root / "times.txt"
         times = np.loadtxt(tp).reshape(-1)[:n_frames] if tp.is_file() else fixes[0, 0] + np.arange(n_frames) / fps
         compass = None
