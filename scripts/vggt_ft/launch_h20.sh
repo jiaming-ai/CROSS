@@ -13,6 +13,8 @@ NPROC=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
 export NCCL_IB_DISABLE=0 NCCL_IB_HCA=mlx5_1,mlx5_2,mlx5_3,mlx5_4 NCCL_IB_GID_INDEX=7 NCCL_SOCKET_IFNAME=eth0
 export NCCL_IB_PCI_RELAXED_ORDERING=1 TORCH_NCCL_ASYNC_ERROR_HANDLING=1 NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 export OMP_NUM_THREADS=4 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# EXTRA_PYTHONPATH: e.g. the labelers' packages for loss.da3_teacher
+[ -n "$EXTRA_PYTHONPATH" ] && export PYTHONPATH=$EXTRA_PYTHONPATH${PYTHONPATH:+:$PYTHONPATH}
 EXP=$(python -c "import yaml,sys; print(yaml.safe_load(open('$CFG'))['exp_name'])")
 for o in "$@"; do case $o in exp_name=*) EXP=${o#exp_name=};; esac; done
 mkdir -p /data0/jz/logs

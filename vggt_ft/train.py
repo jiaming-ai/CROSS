@@ -113,7 +113,35 @@ def scale_distill_target(steach, pred, mask=None):
     return steach["log_scale"].float() + med
 
 
-def compute_losses(pred, batch, lc, hw, teach=None, meta=None, steach=None):
+def da3_scale_losses(pred, raw_pred, da3_t, w_dense=1.0):
+    """Scale-head losses against Depth Anything 3 metric depth (loss.da3_teacher) on windows without metric GT:
+    window target median log(DA3 / predicted depth), per-patch targets as for GT.  da3_t = (window indices, DA3 depth
+    (n,S,H,W), NaN = invalid)."""
+    sel, L = da3_t
+    pd = raw_pred["depth"][sel]
+    valid = torch.isfinite(L) & (L > 0) & (pd[..., 0] > 0)
+    lr = torch.log(torch.where(valid, L, torch.ones_like(L)).clamp(min=1e-6)) - torch.log(pd[..., 0].float().clamp(min=1e-6))
+    keep, tw = [], []
+    for i in range(len(sel)):
+        v = lr[i][valid[i]]
+        if v.numel() > 1000:
+            keep.append(i)
+            tw.append(v.median())
+    if not keep:
+        return None
+    k = torch.tensor(keep, device=L.device)
+    sel_k = torch.tensor(sel, device=L.device)[k]
+    out = {"loss_scale_da3": (pred["log_scale"][sel_k] - torch.stack(tw)).abs().mean()}
+    if "scale_r" in pred and w_dense > 0:
+        tgt_p, frac = dense_scale_target(pd[k], torch.where(valid[k], L[k], torch.zeros_like(L[k])), valid[k],
+                                         tuple(pred["scale_r"].shape[-2:]))
+        wp = (frac > 0.25).float()
+        out["loss_scale_da3"] = out["loss_scale_da3"] + w_dense * ((pred["scale_r"][sel_k] - tgt_p).abs() * wp).sum() \
+            / wp.sum().clamp(min=1)
+    return out
+
+
+def compute_losses(pred, batch, lc, hw, teach=None, meta=None, steach=None, da3_t=None):
     """All losses of one batch (dict of scalars) and the total."""
     depths, masks = batch["depths"], batch["masks"]
     covis_gt = gt_covisibility(depths, masks, batch["extrinsics"], batch["intrinsics"], batch["world_id"])
@@ -196,6 +224,11 @@ def compute_losses(pred, batch, lc, hw, teach=None, meta=None, steach=None):
             wp = (frac > 0.25).float() * m[:, None, None, None]
             out["loss_scale_dense"] = ((pred["scale_r"] - tgt_p).abs() * wp).sum() / wp.sum().clamp(min=1)
             total = total + lc.get("w_scale_dense", 1.0) * out["loss_scale_dense"]
+    if da3_t is not None and "log_scale" in pred:
+        dl = da3_scale_losses(pred, raw_pred, da3_t, lc.get("w_scale_dense", 1.0))
+        if dl is not None:
+            out.update(dl)
+            total = total + lc["da3_teacher"].get("w", 0.5) * dl["loss_scale_da3"]
     if steach is not None and "log_scale" in pred:
         # scale-head distillation from a fine-tuned model's head (loss.scale_teacher), on every window
         with torch.no_grad():
@@ -302,6 +335,12 @@ def main():
         teacher = teacher.to(torch.bfloat16).cuda().eval().requires_grad_(False)
         teacher.camera_head.float()
         teacher.dense_head.float()
+    da3, da3_sets = None, set()
+    if lc.get("da3_teacher"):
+        # Depth Anything 3 metric as the scale teacher of the windows of these (non-metric) datasets
+        from .labelers import DA3Metric
+        da3 = DA3Metric(str(Path(lc["da3_teacher"]["weights"]) / "DA3METRIC-LARGE"), "cuda")
+        da3_sets = set(lc["da3_teacher"]["datasets"])
     scale_teacher = None
     if lc.get("scale_teacher"):
         # a fine-tuned checkpoint whose scale head the student's head learns to reproduce (heads-only runs on a blended
@@ -356,7 +395,14 @@ def main():
                 steach = scale_teacher(batch["images"])
         # known intrinsics: a canonical-camera scale head converts with the calibrated focal (others ignore them)
         pred = fwd(batch["images"], intrinsics=batch["intrinsics"])
-        losses = compute_losses(pred, batch, lc, hw, teach, meta, steach)
+        da3_t = None
+        if da3 is not None:
+            sel = [b for b, ds in enumerate(meta["dataset"]) if ds in da3_sets and not bool(batch["metric"][b])]
+            if sel:
+                im = batch["images"][sel]
+                L = da3.batch(im.flatten(0, 1), batch["intrinsics"][sel].flatten(0, 1))
+                da3_t = (sel, L.view(len(sel), im.shape[1], *im.shape[-2:]))
+        losses = compute_losses(pred, batch, lc, hw, teach, meta, steach, da3_t)
         loss = losses["loss"]
         if not torch.isfinite(loss):
             print(f"step {step}: non-finite loss, skipped", flush=True)
