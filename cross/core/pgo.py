@@ -305,6 +305,7 @@ class PoseGraph:
         target_node_id: int,
         hypothesis_id: int = 0,
         depth: int = 100,
+        with_vertices: bool = True,
     ) -> Tuple[Set[int], List[Vertex]]:
         """
         Expand the odom edges by depth and create vertices for the specified hypothesis.
@@ -326,7 +327,7 @@ class PoseGraph:
         max_idx = min(len(all_node_ids), target_idx + depth)
         odom_node_ids.update(all_node_ids[min_idx:max_idx])
         
-        odom_nodes = [self._vertex(node_id, hypothesis_id) for node_id in odom_node_ids]
+        odom_nodes = [self._vertex(node_id, hypothesis_id) for node_id in odom_node_ids] if with_vertices else []
 
         return odom_node_ids, odom_nodes
 
@@ -481,7 +482,7 @@ class PoseGraph:
         hypotheses = self.hypothesis_manager.hypotheses
         # --- Step 1: Expand odometry nodes by depth for hypothesis 0 ---
         odom_node_ids, odom_nodes = self._expand_odom_nodes(
-            target_node_id, hypothesis_id=0, depth=depth
+            target_node_id, hypothesis_id=0, depth=depth, with_vertices=False
         )
         
         # --- Step 2: Expand visual edges by k-hop for hypothesis 0 ---
@@ -722,7 +723,7 @@ class PoseGraph:
         """
         # Step 1: Expand odometry nodes around target
         odom_node_ids, _odom_nodes = self._expand_odom_nodes(
-            target_node_id, hypothesis_id=0, depth=window_kfs
+            target_node_id, hypothesis_id=0, depth=window_kfs, with_vertices=False
         )
 
         # Step 2: Expand visual edges based on these nodes
@@ -922,23 +923,28 @@ class PoseGraph:
         record_conditional = hasattr(self, 'conditional_belief')
         noise_key = self._noise_cache_key()
         self.n_factors = {"used_visual": 0, "skipped_visual": 0, "odometry": 0, "loop_closure": 0}
+        skip_fn, counts = self.skip_fn, self.n_factors
+        visual_type, odometry_type = EdgeType.VISUAL, EdgeType.ODOMETRY
         for (id1, id2, factors) in self.edges:
             if id1 in all_node_ids and id2 in all_node_ids:
-                if self.skip_fn is not None:
-                    kept = [f for f in factors if not self.skip_fn(f)]
-                    self.n_factors["skipped_visual"] += sum(1 for f in factors if f.type == EdgeType.VISUAL) - sum(1 for f in kept if f.type == EdgeType.VISUAL)
-                    factors = kept
-                    if not factors:
-                        continue
+                # one pass: the factors the information criterion keeps, and the counts by type
+                kept, num_visual_edges = [], 0
                 for f in factors:
-                    if f.type == EdgeType.VISUAL:
-                        self.n_factors["used_visual"] += 1
-                    elif f.type == EdgeType.ODOMETRY:
-                        self.n_factors["odometry"] += 1
+                    if skip_fn is not None and skip_fn(f):
+                        if f.type == visual_type:
+                            counts["skipped_visual"] += 1
+                        continue
+                    kept.append(f)
+                    if f.type == visual_type:
+                        num_visual_edges += 1
+                        counts["used_visual"] += 1
+                    elif f.type == odometry_type:
+                        counts["odometry"] += 1
                     else:
-                        self.n_factors["loop_closure"] += 1
-                num_visual_edges = sum(1 for f in factors if f.type == EdgeType.VISUAL)
-                for factor in factors:
+                        counts["loop_closure"] += 1
+                if not kept:
+                    continue
+                for factor in kept:
                     has_edges = True
                     nonlinear = gtsam.BetweenFactorPose3(id1, id2, self._measurement(factor),
                                                          self._between_noise(factor, num_visual_edges, noise_key))
