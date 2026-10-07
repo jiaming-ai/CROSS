@@ -90,6 +90,13 @@ def load_nclt_raw(root: Path, session: str):
     return odo, fixes, gtd, rtkd
 
 
+def rtk_good(rtkd):
+    """RTK fixes with sky view: >= 5 satellites; sessions whose RTK log reports no satellites (from 2012-09): 3-D fixes."""
+    if np.nanmax(rtkd["sats"]) > 0:
+        return rtkd["sats"] >= 5
+    return rtkd["mode"] >= 3
+
+
 def gt_to_enu(gtd, rtkd, frame: LocalFrame):
     """Ground truth in ENU: the NCLT local frame is north-east-down near (NCLT_LAT0, NCLT_LON0); its exact placement
     is fitted (4-DOF, robust) to the RTK fixes with satellites >= 5, interpolated ground truth at the fix times."""
@@ -97,7 +104,7 @@ def gt_to_enu(gtd, rtkd, frame: LocalFrame):
     approx = np.stack([p[:, 1], p[:, 0], -p[:, 2]], 1)          # NED -> ENU axes
     if rtkd is None:
         return approx, None
-    ok = (rtkd["sats"] >= 5) & (rtkd["t"] > gtd["t"][0]) & (rtkd["t"] < gtd["t"][-1])
+    ok = rtk_good(rtkd) & (rtkd["t"] > gtd["t"][0]) & (rtkd["t"] < gtd["t"][-1])
     alt = rtkd["alt"][ok]
     zok = np.isfinite(alt)
     enu = frame.to_enu(rtkd["lat"][ok], rtkd["lon"][ok], np.where(zok, alt, frame.alt0))
@@ -407,11 +414,11 @@ def evaluate(res, gt_enu, gtd, sky):
 
 
 def sky_visibility(rtkd, gtd):
-    """Sky-visibility label from the RTK receiver (a proxy for outdoor): a fix with >= 5 satellites within 3 s, and
+    """Sky-visibility label from the RTK receiver (a proxy for outdoor): a good fix (rtk_good) within 3 s, and
     indoor stretches shorter than 10 s count as outdoor (gaps of the receiver)."""
     if rtkd is None:
         return lambda t: np.ones(len(t), bool)
-    good = rtkd["t"][rtkd["sats"] >= 5]
+    good = rtkd["t"][rtk_good(rtkd)]
 
     def f(t):
         t = np.asarray(t)
