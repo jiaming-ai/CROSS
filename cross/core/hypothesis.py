@@ -170,6 +170,8 @@ class HypothesisManager:
         # Graph-lock to guard structural reads/writes across threads (nodes/edges/adjacency)
         # Use re-entrant lock since some operations call other locked methods.
         self.graph_lock = threading.RLock()
+        # incremented whenever keyframe poses of hypothesis 0 move (PGO, merges): position indexes rebuild on change
+        self.pose_epoch = 0
 
         # ========== Component Lifecycle Metadata ==========
         self.n_components = n_components
@@ -1887,6 +1889,7 @@ class HypothesisManager:
         Returns:
             Dict summarizing the application with success and cost.
         """
+        self.pose_epoch += 1
         if self.source_states is not None:
             from cross.core.conditional_pgo import apply_result
             with self.graph_lock:
@@ -2015,6 +2018,7 @@ class HypothesisManager:
         """
         Merges the hypothesis after loop closure
         """
+        self.pose_epoch += 1
         self._reset_session_anchor()
         if self.source_states is not None and not conditional_transport_done:
             raise NotImplementedError("Conditional pose/source graph transport is required before merging hypotheses")
@@ -2064,6 +2068,7 @@ class HypothesisManager:
         Adopt hypothesis `comp_idx` as hypothesis 0: its keyframe poses (from its start index on), its
         visual edges and its mixture component replace those of hypothesis 0, and the slot is freed.
         """
+        self.pose_epoch += 1
         if self.source_states is not None:
             raise NotImplementedError("Conditional pose/source graph transport is required before promoting a hypothesis")
         logger.debug(f"Changing hypothesis {comp_idx} to first component")

@@ -105,6 +105,38 @@ class TrackingConfig:
 
 
 @dataclass
+class DescriptorIndexConfig:
+    """Storage and search of the keyframe descriptors (cross/db/index.py).  Default: the full 16384-d BoQ descriptor in
+    float32 with an exact search, i.e. the original database (64 KB per keyframe)."""
+    # PCA projection file (.npz written by cross.db.index.PCAProjection.save): keyframes are stored as short float16
+    # codes (512-d: 1 KB) and scored by the cosine of the codes.  A map saved with a projection always uses its own.
+    projection: Optional[str] = None
+    store_dtype: str = "auto"      # auto: float32 without a projection, float16 with one
+    backend: str = "exact"         # exact | ivf: inverted file (k-means cells), trained once ivf_min_rows rows exist
+    ivf_nlist: int = 0             # cells (0: 4 sqrt(n))
+    ivf_nprobe: int = 16           # cells searched per query
+    ivf_min_rows: int = 200000
+
+
+@dataclass
+class LocalityConfig:
+    """Locality-aware retrieval: the keyframes near where the belief (or an external prior such as GPS,
+    System.add_location_prior) places the robot are scored apart from the global appearance ranking and get
+    `slots` of the top_k, so that at a revisit the right place is not crowded out by look-alike places far away
+    (a problem that grows with the map).  The rest of the slots stay global (relocalization, large drift)."""
+    enabled: bool = False
+    min_keyframes: int = 0         # only when the database holds at least this many keyframes
+    slots: int = 5                 # of top_k, for the best-scoring keyframes inside the search regions
+    k_sigma: float = 3.0           # search radius = r_min + k_sigma * position sigma (+ drift for hypothesis 0)
+    r_min: float = 5.0             # metres
+    drift_rate: float = 0.05       # metres of radius per metre travelled since the last anchoring (loop closure,
+                                   # map edge, external fix); hypothesis 0 only
+    r_max: float = 2000.0
+    min_weight: float = 0.05       # hypotheses with a smaller weight do not open a search region
+    score_threshold: Optional[float] = None   # VPR score floor inside the regions (None: the database's)
+
+
+@dataclass
 class RetrievalConfig:
     vpr_model_type: VPRModelType = VPRModelType.BOQ
     top_k: int = 10
@@ -143,6 +175,8 @@ class RetrievalConfig:
     initial_buffer_size: int = 1000
     historical_slots: int = 0  # reserve within top_k after loading a map; same score thresholds
     historical_min_score: float | None = None  # opt-in exploration floor, saved-map candidates only
+    index: DescriptorIndexConfig = field(default_factory=DescriptorIndexConfig)
+    locality: LocalityConfig = field(default_factory=LocalityConfig)
 
 
 @dataclass

@@ -175,6 +175,11 @@ class System:
         # keyframes with id >= _session_start_kf_id belong to the current session (relocalization: the
         # map keyframes of previous sessions must not be crowded out of the retrieval by them)
         self._session_start_kf_id = 0
+        # locality-aware retrieval (RetrievalConfig.locality): path length since the last anchoring event, external
+        # position priors (System.add_location_prior) and the last step's search regions (diagnostics)
+        self._locality_path = 0.0
+        self._location_priors = []
+        self.last_locality = None
         self._anchor_pending = deque()   # candidate session anchors (anchor_corroborate_window)
         self._contra_pending = deque()   # rejected map measurements that may contradict the anchor (anchor_contradict_min)
         self._session_start_frame = 0
@@ -1033,6 +1038,8 @@ class System:
         if not ret["kidnapped"]:
             self.hypothesis_manager.motion_update(ret["delta_pose"], ret["delta_std"],
                                                   source_factor=ret.get('motion_source_factor'))
+            if self.config.retrieval.locality.enabled:
+                self._locality_path += float(torch.linalg.norm(ret["delta_pose"].tensor().reshape(-1)[:3]))
             logger.debug(f"Updated the current state gmm with odometry at step {self._processed_frame_num}")
         
         else:
@@ -1218,6 +1225,7 @@ class System:
             logger.info(
                 f"LC detected at step {self._processed_frame_num}, hypo id: {lc_result['loop_closure_hypo_id']}"
             )
+            self.note_anchor("loop_closure")
             self._last_merge_step = self._processed_frame_num
             if self._lc_engine is not None:
                 self._lc_engine.submit(lc_result["loop_closure_hypo_id"])
@@ -1244,6 +1252,8 @@ class System:
                 done = self._maybe_verified_loop_closure(ret, new_kf, edge_mapping)
             else:
                 done = self._maybe_intra_hypothesis_loop_closure(ret, new_kf, edge_mapping)
+            if done:
+                self.note_anchor("loop_closure")
             if not done:
                 self.hypothesis_manager.maybe_adopt_dominant_hypothesis()
 
@@ -1738,6 +1748,7 @@ class System:
 
         # Apply smoothing updates to hypothesis 0
         std_reduction = self.config.pgo.std_reduction_factor
+        self.hypothesis_manager.pose_epoch += 1
         with self.hypothesis_manager.graph_lock:
             for node_id, optimized_pose in pg.optimized_poses.items():
                 if node_id in self.hypothesis_manager.nodes:
@@ -1881,6 +1892,7 @@ class System:
                     if verdict is True or (verdict is None and self._lc_verifier.corroborated(kf_i.id)):
                         self._lc_verifier.update_anchor(kf_i.id, current_kf_id, ret["valid_poses"][i])
                         self._anchor_pending.clear()
+                        self.note_anchor("map_edge")
                     elif verdict is None and self._lc_verifier.anchor is None and self.config.mapping.loop_closure.anchor_corroborate_window > 0:
                         # candidate anchor: a later map measurement of another observation may corroborate it
                         self._anchor_pending.append((self._processed_frame_num, int(kf_i.id),
@@ -2195,6 +2207,75 @@ class System:
         # make sure the hypotheses are in the same order as the current state GMM
         return self.hypothesis_manager.align_proposal_prior(hypotheses)
 
+    def note_anchor(self, source: str = "external") -> None:
+        """The current pose was just tied to the map (loop closure, verified map edge, an accepted GPS fix): the
+        drift term of the locality search radius restarts from zero."""
+        self._locality_path = 0.0
+
+    def add_location_prior(self, center, sigma: float, source: str = "external", ttl_steps: int = 1) -> None:
+        """A prior on the robot's current position in the map frame (e.g. a GPS fix carried into the map frame by the
+        geo anchor).  With RetrievalConfig.locality enabled, retrieval scores the keyframes within
+        r_min + k_sigma * sigma of `center` among the locality slots.  Valid for the next `ttl_steps` steps (call it
+        before System.step of the frame it belongs to)."""
+        self._location_priors.append({"center": np.asarray(center, dtype=np.float64).reshape(3), "sigma": float(sigma),
+                                      "source": str(source), "until": self._processed_frame_num + int(ttl_steps)})
+
+    def _locality_regions(self):
+        """Search regions (centers (m, 3), radii (m,), sources) of locality-aware retrieval: one per active hypothesis
+        (hypothesis 0 with the drift term) and one per valid external prior."""
+        lc = self.config.retrieval.locality
+        centers, radii, sources = [], [], []
+        dist = self.hypothesis_manager.dist
+        if dist is not None:
+            mu, sigma, w = dist
+            T = mu.tensor().detach().reshape(-1, 7).cpu().double().numpy()
+            S = sigma.tensor().detach().reshape(-1, 6).cpu().double().numpy()
+            W = w.detach().reshape(-1).cpu().double().numpy()
+            for k in range(len(W)):
+                if W[k] < lc.min_weight and k != 0:
+                    continue
+                r = lc.r_min + lc.k_sigma * float(np.linalg.norm(S[k, :3]))
+                if k == 0:
+                    r += lc.drift_rate * self._locality_path
+                centers.append(T[k, :3]); radii.append(min(r, lc.r_max)); sources.append(f"h{k}")
+        self._location_priors = [p for p in self._location_priors if p["until"] >= self._processed_frame_num]
+        for p in self._location_priors:
+            centers.append(p["center"]); radii.append(min(lc.r_min + lc.k_sigma * p["sigma"], lc.r_max))
+            sources.append(p["source"])
+        return np.asarray(centers, dtype=np.float64).reshape(-1, 3), np.asarray(radii, dtype=np.float64), sources
+
+    def _locality_merge(self, rgb_image, ranked, max_kf_id=None, min_kf_id=None, n=None):
+        """`ranked` [(score, kf)] (global appearance ranking) -> the best keyframes inside the search regions first
+        (up to locality.slots), then the global ranking without them."""
+        lc = self.config.retrieval.locality
+        if not lc.enabled or self.db.get_size() < max(lc.min_keyframes, 1):
+            return ranked
+        centers, radii, sources = self._locality_regions()
+        info = {"regions": len(radii), "radii": [round(float(r), 1) for r in radii], "sources": sources,
+                "candidates": 0, "local": 0}
+        self.last_locality = info
+        if not len(radii):
+            return ranked
+        rows = self.db.rows_near(centers, radii, epoch=self.hypothesis_manager.pose_epoch)
+        if max_kf_id is not None or min_kf_id is not None:
+            ids = self.db.index.ids[torch.as_tensor(rows, dtype=torch.long, device=self.db.device)].cpu().numpy() if len(rows) else rows
+            keep = np.ones(len(rows), dtype=bool)
+            if max_kf_id is not None:
+                keep &= ids < max_kf_id
+            if min_kf_id is not None:
+                keep &= ids >= min_kf_id
+            rows = rows[keep]
+        info["candidates"] = int(len(rows))
+        if not len(rows):
+            return ranked
+        local = self.db.query(rgb_image, rows=rows, top_k=lc.slots,
+                              score_threshold=lc.score_threshold if lc.score_threshold is not None
+                              else (self.config.retrieval.map_score_threshold if max_kf_id is not None else None))
+        take = list(zip(local["scores"], local["keyframes"]))[:lc.slots]
+        info["local"] = len(take)
+        ids = {kf.id for _, kf in take}
+        return take + [(sc, kf) for sc, kf in ranked if kf.id not in ids]
+
     def _retrieve_keyframes(self, rgb_image: torch.Tensor):
         """Retrieve the keyframes from the database, with caching for efficiency.
         We skip (to speed up) retrieval if:
@@ -2235,7 +2316,8 @@ class System:
                                  f"own {[(kf.id, round(sc, 3)) for sc, kf in zip(results['scores'], results['keyframes']) if kf.id >= self._session_start_kf_id][:3]}")
                     own = [(sc, kf) for sc, kf in zip(results["scores"], results["keyframes"]) if kf.id >= self._session_start_kf_id][:own_slots]
                     n_map = max(self.db.top_k - len(own), 0)
-                    map_list = list(zip(map_res["scores"], map_res["keyframes"]))
+                    map_list = self._locality_merge(rgb_image, list(zip(map_res["scores"], map_res["keyframes"])),
+                                                    max_kf_id=self._session_start_kf_id)
                     guided = self._pose_guided_map_keyframes(rgb_image)
                     if guided:
                         ids = {kf.id for _, kf in guided}
@@ -2261,6 +2343,9 @@ class System:
                             results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
                         logger.debug(f"retrieval(map): old kfs {[(kf.id, round(sc, 3)) for sc, kf in zip(old_res['scores'], old_res['keyframes'])][:6]}, "
                                      f"recent {[(kf.id, round(sc, 3)) for sc, kf in recent]}")
+            if self._session_start_kf_id == 0 and self.config.retrieval.locality.enabled:
+                merged = self._locality_merge(rgb_image, list(zip(results["scores"], results["keyframes"])))[:self.db.top_k]
+                results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
             self._last_retrieved_results = results
             self.odom_accumulator.reset_item("since_last_retrieval")
             return results

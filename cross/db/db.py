@@ -1,4 +1,5 @@
 from .boq import BoQ
+from .index import DescriptorIndex, PCAProjection, SpatialIndex, projection_from_config
 import numpy as np
 import torch
 from cross.core.types import Atlas, Keyframe
@@ -62,13 +63,18 @@ class KeyframeDatabase:
         else:
             raise ValueError(f"VPR model {self.vpr_model_type} not supported")
 
-        # Embedding management
+        # Descriptor index (cross/db/index.py): without a projection the float32 buffer of the original database
+        icfg = getattr(cfg, "index", None)
         self._initial_buffer_size = cfg.initial_buffer_size
-        self._embedding_buffer = torch.zeros(
-            (self._initial_buffer_size, self.vpr_model.get_embed_dim()),  # Assuming 2048-dim embeddings
-            device=self.device
-        )
-        self._current_size = 0
+        self.index = DescriptorIndex(
+            self.vpr_model.get_embed_dim(), device=self.device, initial_capacity=self._initial_buffer_size,
+            projection=projection_from_config(getattr(icfg, "projection", None), self.vpr_model.get_embed_dim()),
+            store_dtype=getattr(icfg, "store_dtype", "auto"), backend=getattr(icfg, "backend", "exact"),
+            ivf_nlist=getattr(icfg, "ivf_nlist", 0), ivf_nprobe=getattr(icfg, "ivf_nprobe", 16),
+            ivf_min_rows=getattr(icfg, "ivf_min_rows", 200000))
+        self._row_kf: List[Keyframe] = []          # keyframe of each descriptor row
+        self._id_to_row: Dict[int, int] = {}
+        self.spatial = SpatialIndex()              # keyframe positions, for locality-aware retrieval
 
         # Query parameters
         self.score_threshold_high = cfg.vpr_score_threshold_high
@@ -76,20 +82,19 @@ class KeyframeDatabase:
         self.top_k = cfg.top_k
 
     def _extend_buffer(self, min_size: int):
-        """Extend the embedding buffer if needed."""
-        if min_size <= self._embedding_buffer.shape[0]:
-            return
-            
-        new_size = max(min_size, self._embedding_buffer.shape[0] * 2)
-        new_buffer = torch.zeros(
-            (new_size, self._embedding_buffer.shape[1]),
-            device=self.device
-        )
-        # copy only rows that exist: load_state sets _current_size to the stored count before growing the buffer
-        # (a map with more keyframes than the initial buffer failed to load)
-        n = min(self._current_size, self._embedding_buffer.shape[0])
-        new_buffer[:n] = self._embedding_buffer[:n]
-        self._embedding_buffer = new_buffer
+        """Extend the descriptor buffer if needed."""
+        self.index.reserve(min_size)
+
+    @property
+    def _embedding_buffer(self) -> torch.Tensor:
+        return self.index.buf
+
+    @property
+    def _current_size(self) -> int:
+        return self.index.n
+
+    def keyframe_at(self, row: int) -> Keyframe:
+        return self._row_kf[row]
 
     def get_all_keyframes(self, atlas: Atlas= None) -> List[Keyframe]:
         """Get all keyframes from the database."""
@@ -158,15 +163,14 @@ class KeyframeDatabase:
         list_idx = len(self._keyframe_by_atlas[atlas])
         self._keyframe_by_atlas[atlas].append(keyframe)
         
-        # Ensure buffer has space, 
-        # add 100 to the current size to avoid too many reallocations
-        self._extend_buffer(self._current_size + 100)
-        
-        # Add embedding to buffer
-        self._embedding_buffer[self._current_size] = embedding
-        self._atlas_to_indices[atlas].append(self._current_size)
-        self._index_to_atlas_idx[self._current_size] = (atlas, list_idx)
-        self._current_size += 1
+        # Add the descriptor (the index grows its buffer by 100 rows at least, as before)
+        row = self.index.add(embedding, keyframe.id)
+        self._atlas_to_indices[atlas].append(row)
+        self._index_to_atlas_idx[row] = (atlas, list_idx)
+        self._row_kf.append(keyframe)
+        self._id_to_row[int(keyframe.id)] = row
+        if mu is not None:
+            self.spatial.add(row, _position(keyframe))
 
         return keyframe
 
@@ -201,23 +205,24 @@ class KeyframeDatabase:
         self._atlas_to_indices[atlas].remove(buffer_idx)
         del self._index_to_atlas_idx[buffer_idx]
         
-        # If this was the last element in the buffer, just decrease size
-        if buffer_idx == self._current_size - 1:
-            self._current_size -= 1
+        kf_removed = self._row_kf[buffer_idx]
+        self._id_to_row.pop(int(kf_removed.id), None)
+        moved = self.index.remove_row(buffer_idx)
+        self.spatial.remap_row(buffer_idx, None)
+        if moved is None:
+            self._row_kf.pop()
             return
-            
-        # Otherwise, move the last element to this position
-        last_idx = self._current_size - 1
-        self._embedding_buffer[buffer_idx] = self._embedding_buffer[last_idx]
-        
-        # Update indices for the moved element
+
+        # the last row moved into buffer_idx
+        last_idx = moved
         last_atlas, last_list_idx = self._index_to_atlas_idx[last_idx]
         self._atlas_to_indices[last_atlas].remove(last_idx)
         self._atlas_to_indices[last_atlas].append(buffer_idx)
         self._index_to_atlas_idx[buffer_idx] = (last_atlas, last_list_idx)
         del self._index_to_atlas_idx[last_idx]
-        
-        self._current_size -= 1
+        self._row_kf[buffer_idx] = self._row_kf.pop()
+        self._id_to_row[int(self._row_kf[buffer_idx].id)] = buffer_idx
+        self.spatial.remap_row(last_idx, buffer_idx)
 
     def get_size(self):
         return self._current_size
@@ -267,6 +272,7 @@ class KeyframeDatabase:
         return {
             "keyframes": db_keyframes,
             "embeddings": self._embedding_buffer[:self._current_size].cpu(),
+            "descriptor_index": self.index.state(),   # projection of the stored descriptors (None: full BoQ)
             "atlas_to_indices": {atlas.id: indices for atlas, indices in self._atlas_to_indices.items()},
             "index_to_atlas_idx": {buf_idx: (atlas.id, list_idx) for buf_idx, (atlas, list_idx) in self._index_to_atlas_idx.items()},
             "current_size": self._current_size,
@@ -295,14 +301,6 @@ class KeyframeDatabase:
             atlas = Atlas(id=atlas_data["id"])
             self._atlases[atlas_data["id"]] = atlas
         self._next_atlas_id = db_data["next_atlas_id"]
-        
-        # Restore embeddings
-        embeddings = db_data["embeddings"].to(self.device)
-        self._current_size = db_data["current_size"]
-        
-        # Extend buffer if needed
-        self._extend_buffer(self._current_size)
-        self._embedding_buffer[:self._current_size] = embeddings
         
         # Create a map to track all keyframes by ID
         all_keyframes_map = {}
@@ -345,8 +343,33 @@ class KeyframeDatabase:
         for buffer_idx, (atlas_id, list_idx) in db_data["index_to_atlas_idx"].items():
             atlas = self._atlases[atlas_id]
             self._index_to_atlas_idx[buffer_idx] = (atlas, list_idx)
-        
+
+        # Restore the descriptors (rows in buffer order) and the row -> keyframe maps
+        n = int(db_data["current_size"])
+        self._row_kf = [self._keyframe_by_atlas[a][li] for a, li in (self._index_to_atlas_idx[r] for r in range(n))]
+        self._id_to_row = {int(kf.id): r for r, kf in enumerate(self._row_kf)}
+        self._load_descriptors(db_data["embeddings"][:n], db_data.get("descriptor_index"))
+        self.spatial = SpatialIndex()
+
         return all_keyframes_map
+
+    def _load_descriptors(self, codes: torch.Tensor, index_state: Optional[dict]) -> None:
+        """Stored rows -> index.  A map saved with a projection brings it (it defines the codes); full descriptors
+        of a map without one are projected now when this database is configured with a projection."""
+        proj_state = (index_state or {}).get("projection")
+        if proj_state is not None:
+            proj = PCAProjection.from_state(proj_state)
+            if self.index.projection is None or not np.array_equal(self.index.projection.components.astype(np.float16),
+                                                                   np.asarray(proj_state["components"])):
+                logger.info(f"descriptor index: the map's projection ({proj.dim_in} -> {proj.dim}) replaces the configured one")
+            self.index = DescriptorIndex(self.index.dim_in, device=self.device,
+                                         initial_capacity=self._initial_buffer_size, projection=proj,
+                                         store_dtype=str(codes.dtype).replace("torch.", "") if codes.shape[0] else "auto",
+                                         backend=self.index.backend, ivf_nlist=self.index.ivf_nlist,
+                                         ivf_nprobe=self.index.ivf_nprobe, ivf_min_rows=self.index.ivf_min_rows)
+        elif self.index.projection is not None and codes.shape[0] and codes.shape[1] == self.index.dim_in:
+            codes = torch.cat([self.index.encode(c.to(self.device).float()) for c in codes.split(4096)])
+        self.index.set_rows(codes, [int(kf.id) for kf in self._row_kf])
     
     @timeit
     def similarities(self, img: torch.Tensor, kf_ids) -> dict:
@@ -354,14 +377,26 @@ class KeyframeDatabase:
         want = {int(k) for k in kf_ids}
         if not want or self._current_size == 0:
             return {}
-        q = self.vpr_model.get_embedding(img)
+        q = self.index.encode(self.vpr_model.get_embedding(img))
         out = {}
-        for bi in range(self._current_size):
-            atlas_i, list_i = self._index_to_atlas_idx[bi]
-            kid = int(self._keyframe_by_atlas[atlas_i][list_i].id)
-            if kid in want:
+        for bi in sorted(self._id_to_row[k] for k in want if k in self._id_to_row):
+            kid = int(self._row_kf[bi].id)
+            if self.index.dtype == torch.float32:
                 out[kid] = float(self._embedding_buffer[bi] @ q)
+            else:
+                out[kid] = float(self.index.scores(q, torch.tensor([bi], device=self.device))[0])
         return out
+
+    def _reserved_rows(self, reserved_keyframe_ids) -> torch.Tensor:
+        """Boolean mask over the descriptor rows of the given keyframe ids (cached for the same id collection)."""
+        c = getattr(self, "_reserved_cache", None)
+        n = self._current_size
+        if c is not None and c[0] is reserved_keyframe_ids and c[1] == n:
+            return c[2]
+        ids = torch.as_tensor(sorted(int(k) for k in reserved_keyframe_ids), dtype=torch.long, device=self.device)
+        mask = torch.isin(self.index.ids[:n], ids)
+        self._reserved_cache = (reserved_keyframe_ids, n, mask)
+        return mask
 
     def query(
         self, 
@@ -373,153 +408,137 @@ class KeyframeDatabase:
         max_kf_id: Optional[int] = None,
         min_kf_id: Optional[int] = None,
         score_threshold: Optional[float] = None,
+        rows=None,
+        top_k: Optional[int] = None,
     ) -> List[Tuple[float, Keyframe]]:
         """Query the database for the most likely Keyframe.
 
         Args:
             img: The image to query the place database with, shape (3, H, W)
             target_atlases: Optional list of atlases to restrict the search to
+            rows: Optional descriptor rows to restrict the search to (e.g. the keyframes near a position)
+            top_k: number of results (default: the configured top_k)
 
         Returns:
-            List of (score, Keyframe) tuples in descending order of confidence
+            {"scores": [...], "keyframes": [...]} in descending order of score
         """
-        if reserved_count < 0 or reserved_count > self.top_k:
+        top_k = self.top_k if top_k is None else int(top_k)
+        if reserved_count < 0 or reserved_count > top_k:
             raise ValueError("Historical retrieval slots must be between zero and top_k")
         if reserved_min_score is not None:
             if not 0 <= reserved_min_score <= 1 or not reserved_count:
                 raise ValueError("Historical minimum score needs reserved slots and must be within [0,1]")
-        if self._current_size == 0:
-            return {
-                "scores": [],
-                "keyframes": [],
-            }
+        empty = {"scores": [], "keyframes": []}
+        n = self._current_size
+        if n == 0:
+            return empty
 
-        # Get query embedding and move to correct device
-        query_embedding = self.vpr_model.get_embedding(img)
-        
-        # Get relevant embeddings
-        if target_atlases is not None or max_kf_id is not None or min_kf_id is not None:
-            if target_atlases is not None:
-                valid_indices = []
-                for atlas in target_atlases:
-                    valid_indices.extend(self._atlas_to_indices[atlas])
-            else:
-                valid_indices = list(range(self._current_size))
-            if max_kf_id is not None or min_kf_id is not None:
-                # restrict by keyframe id (e.g. keyframes of previous sessions only)
-                keep = []
-                for bi in valid_indices:
-                    atlas_i, list_i = self._index_to_atlas_idx[bi]
-                    kid = self._keyframe_by_atlas[atlas_i][list_i].id
-                    if (max_kf_id is None or kid < max_kf_id) and (min_kf_id is None or kid >= min_kf_id):
-                        keep.append(bi)
-                valid_indices = keep
-            target_atlases = valid_indices  # reuse the index-mapping branch below
-            if not valid_indices:
-                return {
-                    "scores": [],
-                    "keyframes": [],
-                }
-            database_emb = self._embedding_buffer[valid_indices]
-        else:
-            database_emb = self._embedding_buffer[:self._current_size]
-        
+        # Get query embedding (the stored code of the index: identity without a projection)
+        query_embedding = self.index.encode(self.vpr_model.get_embedding(img))
+
+        # Rows to score (vectorized; same rows in the same order as the original per-keyframe filters)
+        valid = None
+        if target_atlases is not None:
+            valid = torch.as_tensor([bi for atlas in target_atlases for bi in self._atlas_to_indices[atlas]],
+                                    dtype=torch.long, device=self.device)
+        elif rows is not None:
+            valid = torch.as_tensor(np.unique(np.asarray(rows, dtype=np.int64)), dtype=torch.long, device=self.device)
+        if max_kf_id is not None or min_kf_id is not None:
+            keep = self.index.id_mask(max_kf_id, min_kf_id)
+            valid = keep.nonzero(as_tuple=True)[0] if valid is None else valid[keep[valid]]
+        if rows is not None and target_atlases is not None:
+            valid = valid[torch.isin(valid, torch.as_tensor(np.asarray(rows, dtype=np.int64), device=self.device))]
+        ann = self.index.ann_rows(query_embedding) if rows is None else None
+        if ann is not None:
+            # IVF: only the rows of the probed cells (sorted rows; a restriction keeps its own order)
+            valid = ann if valid is None else valid[torch.isin(valid, ann)]
+        if valid is not None and valid.numel() == 0:
+            return empty
+
         # Compute similarity scores
-        scores = database_emb @ query_embedding.unsqueeze(-1)
-        scores = scores.squeeze(-1)  # Only squeeze the last dimension to avoid making it 0-dimensional
-        
+        scores = self.index.scores(query_embedding, valid)
+
         # Filter and sort scores
-        # `scores` are similarity scores against `database_emb`
+        # `scores` are similarity scores against the rows `valid` (or all rows)
         
-        # Find the indices in `scores` (and thus `database_emb`) that pass the threshold
+        # Find the indices in `scores` that pass the threshold
         thr_high = self.score_threshold_high if score_threshold is None else score_threshold
         thr_low = self.score_threshold_low if score_threshold is None else score_threshold
         original_indices_passing_threshold = (scores > thr_high).nonzero(as_tuple=True)[0]
         if original_indices_passing_threshold.numel() == 0:
             original_indices_passing_threshold = (scores > thr_low).nonzero(as_tuple=True)[0]
 
+        reserved_rows = None
+        if reserved_count:
+            reserved_rows = self._reserved_rows(reserved_keyframe_ids)
+            if valid is not None:
+                reserved_rows = reserved_rows[valid]
         if reserved_min_score is not None:
             # Permit at most the reserved budget of weaker historical views.
             # Retain original scores for CROSS's measurement uncertainty; query
             # nodes retain the original high/low thresholds. Geometry and CROSS
             # temporal evidence decide whether any such candidate is usable.
-            historical = []
-            reserved_ids = set(reserved_keyframe_ids)
-            score_values = scores.detach().cpu().tolist()
-            for score_index in scores.argsort(descending=True).tolist():
-                if not score_values[score_index] > reserved_min_score:
-                    break
-                buffer_index = valid_indices[score_index] if target_atlases is not None else score_index
-                atlas, list_index = self._index_to_atlas_idx[buffer_index]
-                if self._keyframe_by_atlas[atlas][list_index].id in reserved_ids:
-                    historical.append(score_index)
-                    if len(historical) == reserved_count:
-                        break
-            if historical:
+            order = scores.argsort(descending=True)
+            passing = torch.cumprod((scores[order].double() > reserved_min_score).to(torch.uint8), 0).bool()
+            historical = order[passing & reserved_rows[order]][:reserved_count]
+            if historical.numel():
                 original_indices_passing_threshold = torch.unique(torch.cat([
-                    original_indices_passing_threshold,
-                    torch.tensor(historical, device=scores.device, dtype=torch.long)]), sorted=True)
+                    original_indices_passing_threshold, historical.to(torch.long)]), sorted=True)
         
         if original_indices_passing_threshold.numel() == 0:
-            return {
-                "scores": [],
-                "keyframes": [],
-            }
+            return empty
             
         # Get the actual scores for these candidates
         scores_of_candidates = scores[original_indices_passing_threshold]
         
         # Sort these candidate scores and get their relative indices (i.e., indices into scores_of_candidates)
-        # These sorted_relative_indices will point to elements in scores_of_candidates (and by extension, original_indices_passing_threshold)
         # in descending order of score.
         sorted_relative_indices = scores_of_candidates.argsort(descending=True)
         
         # Select the top_k relative indices
-        top_k_relative_indices = sorted_relative_indices[:self.top_k]
+        top_k_relative_indices = sorted_relative_indices[:top_k]
         if reserved_count:
             # Reserve candidates within the same verification budget. Original
             # thresholds apply unless the explicit historical floor is set.
-            reserved_ids = set(reserved_keyframe_ids)
-            ranking = sorted_relative_indices.tolist()
-            historical = []
-            for index in ranking:
-                score_index = int(original_indices_passing_threshold[index])
-                buffer_index = valid_indices[score_index] if target_atlases is not None else score_index
-                atlas, list_index = self._index_to_atlas_idx[buffer_index]
-                if self._keyframe_by_atlas[atlas][list_index].id in reserved_ids:
-                    historical.append(index)
-                    if len(historical) == reserved_count:
-                        break
-            chosen = set(historical)
-            for index in ranking:
-                if len(chosen) >= self.top_k:
+            res_in_rank = reserved_rows[original_indices_passing_threshold[sorted_relative_indices]]
+            chosen = set(res_in_rank.nonzero(as_tuple=True)[0][:reserved_count].tolist())   # ranking positions
+            for pos in range(sorted_relative_indices.numel()):
+                if len(chosen) >= top_k:
                     break
-                chosen.add(index)
-            top_k_relative_indices = torch.tensor([index for index in ranking if index in chosen],
-                                                   device=scores.device, dtype=torch.long)
+                chosen.add(pos)
+            top_k_relative_indices = sorted_relative_indices[torch.tensor(sorted(chosen), dtype=torch.long,
+                                                                          device=scores.device)]
         
         # Use these top_k relative indices to get the actual top_k scores
         final_top_k_scores = scores_of_candidates[top_k_relative_indices]
         
-        # And use them to get the top_k original indices (indices into `scores` or `database_emb`)
+        # And use them to get the top_k original indices (indices into `scores`)
         final_top_k_original_db_indices = original_indices_passing_threshold[top_k_relative_indices]
+        if valid is not None:
+            final_top_k_original_db_indices = valid[final_top_k_original_db_indices]
         
-        result_scores = []
-        result_keyframes = []
-        # one transfer for all results (original indices index database_emb, i.e. valid_indices or the buffer)
-        top_scores = final_top_k_scores.tolist()
-        top_indices = final_top_k_original_db_indices.tolist()
-        for score_value, db_index in zip(top_scores, top_indices):
-            buffer_idx = valid_indices[db_index] if target_atlases is not None else db_index
-            if isinstance(buffer_idx, torch.Tensor):
-                buffer_idx = int(buffer_idx)
-            atlas, list_idx = self._index_to_atlas_idx[buffer_idx]
-            result_scores.append(score_value)
-            result_keyframes.append(self._keyframe_by_atlas[atlas][list_idx])
+        # one transfer for all results
+        result_scores = final_top_k_scores.tolist()
+        result_keyframes = [self._row_kf[r] for r in final_top_k_original_db_indices.tolist()]
 
         return {
             "scores": result_scores,
             "keyframes": result_keyframes,
         }
-    
-    
+
+    def refresh_spatial(self, epoch) -> None:
+        """Rebuild the position index from the keyframes' current hypothesis-0 poses."""
+        n = self._current_size
+        pos = np.stack([_position(kf) for kf in self._row_kf[:n]]) if n else np.zeros((0, 3))
+        self.spatial.rebuild(np.arange(n), pos, epoch)
+
+    def rows_near(self, centers, radii, epoch=None) -> np.ndarray:
+        """Descriptor rows of keyframes within radii[i] of centers[i] (map frame)."""
+        if self.spatial.needs_rebuild(epoch, self._current_size):
+            self.refresh_spatial(epoch)
+        return self.spatial.query(centers, radii)
+
+def _position(kf: Keyframe) -> np.ndarray:
+    """Translation of a keyframe's hypothesis-0 pose (map frame)."""
+    t = kf.pose_mu.tensor() if hasattr(kf.pose_mu, "tensor") else kf.pose_mu
+    return t.reshape(-1, 7)[0, :3].detach().cpu().double().numpy()

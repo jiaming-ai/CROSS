@@ -27,13 +27,10 @@ def test_odometry_drift_model():
 
 def test_vpr_buffer_grows_on_map_load():
     """load_state sets the size to the stored count before growing the buffer: the copy must use existing rows only."""
-    from cross.db.db import KeyframeDatabase
-    db = KeyframeDatabase.__new__(KeyframeDatabase)
-    db.device = "cpu"
-    db._embedding_buffer = torch.ones(10, 4)
-    db._current_size = 25                                     # as set by load_state for a 25-keyframe map
-    db._extend_buffer(25)
-    assert db._embedding_buffer.shape[0] >= 25 and torch.all(db._embedding_buffer[:10] == 1)
+    from cross.db.index import DescriptorIndex
+    index = DescriptorIndex(4, device="cpu", initial_capacity=10)
+    index.set_rows(torch.ones(25, 4), range(25))               # a 25-keyframe map into a 10-row buffer
+    assert index.buf.shape[0] >= 25 and torch.all(index.buf[:25] == 1) and index.n == 25
 
 
 def test_uint8_keyframe_storage_roundtrip():
