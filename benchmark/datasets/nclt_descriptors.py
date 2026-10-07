@@ -87,12 +87,18 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("prepared", type=Path)
     ap.add_argument("desc_root", type=Path)
-    ap.add_argument("--session", required=True)
+    ap.add_argument("--session", default=None, help="session to process (none: only rebuild index.json)")
     ap.add_argument("--cams", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--device", default="cuda")
     a = ap.parse_args()
+    if a.session is not None:
+        compute(a)
+    write_index(a.desc_root)
+
+
+def compute(a):
     import torch
     from torchvision import transforms
     from cross.core.types import Camera
@@ -128,9 +134,12 @@ def main():
         utimes = np.array([int(p.stem) for p in paths], np.int64)
         np.savez(out / f"Cam{cam}_meta.npz", **frame_meta(a.prepared, a.session, cam, utimes))
         print(f"{a.session} Cam{cam}: {len(paths)} descriptors, {len(paths) / (time.time() - t0):.0f} img/s", flush=True)
-    # index of everything in desc_root
+
+
+def write_index(desc_root: Path):
+    """index.json of every session / camera in desc_root."""
     idx = {}
-    for sdir in sorted(p for p in a.desc_root.iterdir() if p.is_dir()):
+    for sdir in sorted(p for p in desc_root.iterdir() if p.is_dir()):
         entry = {}
         for f in sorted(sdir.glob("Cam?.npy")):
             n = int(np.load(f, mmap_mode="r").shape[0])
@@ -138,8 +147,8 @@ def main():
         if entry:
             idx[sdir.name] = entry
     total = sum(v["n"] for e in idx.values() for v in e.values())
-    (a.desc_root / "index.json").write_text(json.dumps({"total": total, "dim": 16384, "dtype": "float16",
-                                                        "sessions": idx}, indent=1))
+    (desc_root / "index.json").write_text(json.dumps({"total": total, "dim": 16384, "dtype": "float16",
+                                                      "sessions": idx}, indent=1))
     print(f"index: {total} descriptors in {len(idx)} sessions", flush=True)
 
 

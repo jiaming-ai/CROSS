@@ -235,6 +235,9 @@ def prepare_images(prep: Path, session: str, source, u2d_dir: Path, cams_used=(1
                     continue
                 cam, utime = int(Path(m.name).parent.name[3:]), int(Path(m.name).stem)
                 n_seen[cam] = n_seen.get(cam, 0) + 1
+                if sum(n_seen.values()) % 5000 == 0:
+                    rate = fileobj.rate() if hasattr(fileobj, "rate") else float("nan")
+                    print(f"{session}: read {n_seen} ({rate:.1f} MB/s, {time.time() - t0:.0f} s)", flush=True)
                 if cam not in cams_used or (cam, utime) in done:
                     continue
                 yield cam, utime, tf.extractfile(m).read()
