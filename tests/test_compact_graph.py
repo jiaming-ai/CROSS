@@ -90,3 +90,17 @@ def test_gpu_tensor_kept_as_is():
     t = pp.randn_SE3(device="cuda")
     e = Edge(t, pp.se3(torch.rand(6, device="cuda")), EdgeType.ODOMETRY)
     assert e.mean is t
+
+
+def test_edge_measurement_is_the_np_cache():
+    t = pp.randn_SE3()
+    e = Edge(t, pp.se3(torch.rand(6)), EdgeType.ODOMETRY)
+    m = e.mean_np
+    assert m.dtype == np.float64 and not m.flags.writeable          # read-only: shared with the pose graph
+    assert np.array_equal(m, t.tensor().numpy().astype(np.float64))
+    out = e.mean
+    assert out.dtype == torch.float32 and torch.equal(out.tensor(), t.tensor())
+    out.tensor()[0] = 123.0                                        # a read is a new tensor: the edge is unchanged
+    assert e.mean.tensor()[0] != 123.0
+    e64 = Edge(pp.SE3(t.tensor().double()), pp.se3(torch.rand(6).double()), EdgeType.ODOMETRY)
+    assert e64.mean.dtype == torch.float64 and e64.std.dtype == torch.float64

@@ -166,6 +166,33 @@ def unpack_tensor(arr, ltype):
     return t
 
 
+_EDGE_FLOATS = {torch.float32: np.float32, torch.float64: np.float64}
+
+
+def pack_measurement(v):
+    """(array, ltype, dtype) of an edge measurement: its values as a read-only float64 array, which is also what
+    `Edge.mean_np` / `std_np` hand to the pose graph (one array per field instead of a tensor plus a float64 copy);
+    (v, None, None) for a value kept as it is.  Reading the field gives a new tensor of the original dtype."""
+    if type(v) is PackedTensor:
+        arr, ltype = v.arr, v.ltype
+    else:
+        arr, ltype = pack_tensor(v)
+    if type(arr) is not np.ndarray:
+        return arr, None, None
+    dtype = {np.dtype(np.float32): torch.float32, np.dtype(np.float64): torch.float64}.get(arr.dtype)
+    if dtype is None:
+        return unpack_tensor(arr, ltype), None, None
+    arr = arr.astype(np.float64)                          # a copy: owned, exact (float32 values widen exactly)
+    arr.flags.writeable = False                           # shared with the pose graph through mean_np / std_np
+    return arr, ltype, dtype
+
+
+def unpack_measurement(arr, ltype, dtype):
+    if type(arr) is not np.ndarray:
+        return arr
+    return unpack_tensor(arr.astype(_EDGE_FLOATS[dtype]), ltype)
+
+
 class _TensorField:
     """A keyframe pose field held compactly (pack_tensor); reading it returns a tensor over the stored values."""
 
@@ -276,24 +303,24 @@ class Edge:
     `mean` / `std` are held compactly (pack_tensor) and read back as LieTensors over the stored values; the other
     attributes are slots (a map holds millions of edges), with a __dict__ for metadata set by name.
     """
-    __slots__ = ("_m", "_mt", "_s", "_st", "type", "_cost", "conditional_pose", "n_frames", "conf", "odom_fault",
-                 "_mean_np", "_std_np", "__dict__", "__weakref__")
+    __slots__ = ("_m", "_mt", "_md", "_s", "_st", "_sd", "type", "_cost", "conditional_pose", "n_frames", "conf",
+                 "odom_fault", "_mean_np", "_std_np", "__dict__", "__weakref__")
 
     @property
     def mean(self) -> pp.LieTensor:
-        return unpack_tensor(self._m, self._mt)
+        return unpack_measurement(self._m, self._mt, self._md)
 
     @mean.setter
     def mean(self, value):
-        self._m, self._mt = pack_tensor(value)
+        self._m, self._mt, self._md = pack_measurement(value)
 
     @property
     def std(self) -> pp.LieTensor:
-        return unpack_tensor(self._s, self._st)
+        return unpack_measurement(self._s, self._st, self._sd)
 
     @std.setter
     def std(self, value):
-        self._s, self._st = pack_tensor(value)
+        self._s, self._st, self._sd = pack_measurement(value)
 
     def __init__(
         self,
@@ -337,7 +364,7 @@ class Edge:
         """Measurement as a (7,) float64 numpy array [x y z qx qy qz qw], cached (avoids repeated device syncs)."""
         m = getattr(self, "_mean_np", None)
         if m is None:
-            m = (self._m.astype(np.float64).reshape(-1) if type(self._m) is np.ndarray
+            m = (self._m.reshape(-1) if type(self._m) is np.ndarray       # the stored float64 values themselves
                  else self.mean.tensor().detach().cpu().numpy().astype(np.float64).reshape(-1))
             self._mean_np = m
         return m
@@ -346,7 +373,7 @@ class Edge:
     def std_np(self) -> np.ndarray:
         s = getattr(self, "_std_np", None)
         if s is None:
-            s = (self._s.astype(np.float64).reshape(-1) if type(self._s) is np.ndarray
+            s = (self._s.reshape(-1) if type(self._s) is np.ndarray
                  else self.std.tensor().detach().cpu().numpy().astype(np.float64).reshape(-1))
             self._std_np = s
         return s
