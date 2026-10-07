@@ -98,7 +98,7 @@ class BasaltOdometry:
         self._reader = threading.Thread(target=self._read, daemon=True)
         self._reader.start()
         self._imu_next = 0                       # the next IMU sample to send
-        self.stats = {"frames": 0, "estimates": 0, "missing": 0, "wait_s": 0.0}
+        self.stats = {"frames": 0, "estimates": 0, "missing": 0, "read_s": 0.0, "send_s": 0.0, "wait_s": 0.0}
 
     def _read(self):
         for line in self.proc.stdout:
@@ -131,13 +131,17 @@ class BasaltOdometry:
     def pose(self, frame):
         """The left camera's pose (c2w) at this frame in Basalt's world frame, or None (no estimate yet / in time)."""
         t_ns = _ns(frame["t_imu"])
+        t_in = time.monotonic()
         gl, gr = frame["gray"], frame["gray_right"]
+        t_read = time.monotonic()
         h, w = gl.shape
         self.proc.stdin.write(struct.pack("<cqII", b"F", t_ns, w, h) + gl.tobytes() + gr.tobytes())
         self._send_imu_until(t_ns)
         self.proc.stdin.flush()
         self.stats["frames"] += 1
         t0 = time.monotonic()
+        self.stats["read_s"] += t_read - t_in          # the images (a replay: PNG decoding)
+        self.stats["send_s"] += t0 - t_read
         with self._cv:
             while t_ns not in self._states and not self._done and time.monotonic() - t0 < self.wait:
                 self._cv.wait(timeout=self.wait)
