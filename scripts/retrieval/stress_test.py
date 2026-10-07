@@ -73,8 +73,11 @@ def load_nclt(desc_root, prepared_root, sessions, cams):
                 continue
             desc = np.load(f, mmap_mode="r")
             m = np.load(os.path.join(desc_root, ses, f"Cam{cam}_meta.npz"))
-            pos = m["T_world_cam"][:, :3, 3]
-            gps = np.asarray(m["gps_xyz"], float)
+            # horizontal positions only (NED x, y; z = 0): consumer-GPS altitude is much worse than its position
+            pos = np.asarray(m["T_world_cam"][:, :3, 3], float).copy()
+            pos[:, 2] = 0.0
+            gps = np.asarray(m["gps_xyz"], float).copy()
+            gps[:, 2] = 0.0
             sig = gps_sigma_model(np.asarray(m["t"], float), g[:, 0], np.asarray(m["gps_dt"], float))
             gps[~np.isfinite(sig)] = np.nan
             ok = np.isfinite(pos).all(1)
