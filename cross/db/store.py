@@ -442,8 +442,13 @@ def lie_tensor(arr: np.ndarray, ltype_name: str):
 
 def to_device(t, device):
     """t.to(device), skipped when t is already there (.to returns t itself then; a LieTensor's .to costs ~60 us)."""
-    if t is None or (torch.is_tensor(t) and device is not None and t.device == torch.device(device)):
+    if t is None:
         return t
+    if torch.is_tensor(t) and device is not None:
+        with _no_torch_function():                       # .device of a LieTensor otherwise costs ~18 us
+            same = t.device == torch.device(device)
+        if same:
+            return t
     return t.to(device)
 
 
