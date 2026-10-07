@@ -761,8 +761,13 @@ class StorageConfig:
     png_level: int = 3                   # png / png16 compression level (0-9)
     depth_codec: str = "png16"           # png16 (fp16 bit pattern in a 16-bit PNG, exact) | zstd | raw
     depth_drop_bits: int = 0             # png16: drop this many fp16 mantissa bits (3: <= 0.4 % error, 35 % smaller)
-    descriptor_dtype: str = "float32"    # retrieval descriptors on disk: float32 (exact) | float16
+    # retrieval descriptors on disk: float16 (half the bytes; dev split full tier: every metric unchanged, scores differ
+    # ~1e-7) | float32 (exact)
+    descriptor_dtype: str = "float16"
     decode_cache: int = 1024             # decoded keyframe images kept in memory (LRU, process-wide)
+    # where keyframe images are held: "cpu" (host RAM; the references of an observation are copied to the GPU for its
+    # pass) or "" (the compute device, the old behaviour: GPU memory grows with the map, ~0.6 MB per image)
+    image_device: str = "cpu"
     # live run: keep the images of the newest N keyframes as tensors, encode older ones into a spool file and drop
     # them from memory (decoded again on access); 0: every keyframe image stays in memory (the old behaviour)
     max_ram_images: int = 0

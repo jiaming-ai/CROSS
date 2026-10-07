@@ -81,6 +81,7 @@ class KeyframeDatabase:
         from cross.db.store import ImageSpool, set_decode_cache
         scfg = getattr(getattr(system, "config", None), "storage", None)
         self.storage_config = scfg
+        self.image_device = None            # set by System (storage.image_device); None: keep images where they come
         self._spool = None
         if scfg is not None:
             set_decode_cache(scfg.decode_cache)
@@ -154,6 +155,11 @@ class KeyframeDatabase:
             raw_rgb_image = to_uint8_image(raw_rgb_image)
             raw_rgb_right = to_uint8_image(raw_rgb_right)
             depth_image = depth_image.half() if depth_image is not None else None
+        if self.image_device is not None:
+            # held where storage.image_device says (host RAM by default); converted on the compute device above
+            raw_rgb_image = raw_rgb_image.to(self.image_device) if raw_rgb_image is not None else None
+            raw_rgb_right = raw_rgb_right.to(self.image_device) if raw_rgb_right is not None else None
+            depth_image = depth_image.to(self.image_device) if depth_image is not None else None
         
         # Create PosedRGBD object
         keyframe = Keyframe(

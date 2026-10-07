@@ -371,9 +371,13 @@ class ImageSpool:
         self.pending = []
 
     def add(self, kf) -> None:
-        if not any(torch.is_tensor(kf.stored_image(f)) for f in IMAGE_FIELDS):
+        # host copies taken here, in the caller's thread: the background threads never touch CUDA (a device copy from
+        # another thread can break a CUDA-graph capture of the pose estimator)
+        items = [(f, _to_numpy_image(t), str(t.device), t.dtype) for f in IMAGE_FIELDS
+                 for t in [kf.stored_image(f)] if torch.is_tensor(t)]
+        if not items:
             return
-        fut = self.pool.submit(self._encode, kf)
+        fut = self.pool.submit(self._encode, kf, items)
         self.pending.append(fut)
         if self.max_ram > 0:
             self.resident[kf.id] = (kf, fut)
@@ -382,17 +386,13 @@ class ImageSpool:
                 self.pending.append(self.pool.submit(self._evict, old, ofut))
         self.pending = [p for p in self.pending if not p.done()]
 
-    def _encode(self, kf) -> None:
-        for f in IMAGE_FIELDS:
-            t = kf.stored_image(f)
-            if not torch.is_tensor(t):
-                continue
-            codec = codec_for(f, t.dtype, self.cfg)
-            arr = _to_numpy_image(t)
+    def _encode(self, kf, items) -> None:
+        for f, arr, device, dtype in items:
+            codec = codec_for(f, dtype, self.cfg)
             blob = encode_array(arr, codec, getattr(self.cfg, "image_quality", 95), getattr(self.cfg, "png_level", 3),
                                 getattr(self.cfg, "depth_drop_bits", 0))
             off = self.pack.append([blob])[0]
-            kf.__dict__["_pre_" + f] = ImageRef(self.pack, off, len(blob), codec, arr.shape, str(arr.dtype), str(t.device))
+            kf.__dict__["_pre_" + f] = ImageRef(self.pack, off, len(blob), codec, arr.shape, str(arr.dtype), device)
 
     def _evict(self, kf, encoding) -> None:
         encoding.result()

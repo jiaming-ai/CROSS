@@ -54,15 +54,16 @@ class _LazyImages:
     """The float images of one field of a list of keyframes, decoded only when read (stored right images: the
     estimator uses the first n_ref_anchors that exist)."""
 
-    def __init__(self, keyframes, field: str):
-        self.keyframes, self.field = list(keyframes), field
+    def __init__(self, keyframes, field: str, device=None):
+        self.keyframes, self.field, self.device = list(keyframes), field, device
 
     def __len__(self):
         return len(self.keyframes)
 
     def __getitem__(self, i):
         from cross.db.db import as_float_image
-        return as_float_image(getattr(self.keyframes[i], self.field))
+        t = getattr(self.keyframes[i], self.field)
+        return as_float_image(t.to(self.device) if (t is not None and self.device is not None) else t)
 
     def __iter__(self):
         for i in range(len(self.keyframes)):
@@ -130,7 +131,8 @@ class System:
         self._cur_obs_lock = threading.Lock()
 
         self.device = device
-        self.storage_device = device
+        # keyframe images: host RAM by default (storage.image_device); an observation copies its references to `device`
+        self.storage_device = torch.device(self.config.storage.image_device or device)
         self.state_device = torch.device(self.config.state_device or device)
         self.visualize = visualize
         self.debug = debug
@@ -236,6 +238,7 @@ class System:
             device=device,
             config=self.config.retrieval,
         )
+        self.db.image_device = self.storage_device
 
         # hypothesis manager
         self.hypothesis_manager : HypothesisManager = HypothesisManager(
@@ -465,15 +468,15 @@ class System:
         # insert the initial keyframe
         kf = self.db.insert(
             self._processed_frame_num,
-            rgb_image.to(self.storage_device), 
-            depth_image.to(self.storage_device) if depth_image is not None else None,
+            rgb_image, 
+            depth_image,
             mu=mu,
             sigma=sigma,
             weights=weights,
             atlas=new_atlas,
             timestamp=timestamp,
             temporary=False,
-            raw_rgb_right=rgb_right.to(self.storage_device) if (rgb_right is not None and self._store_right_images) else None,
+            raw_rgb_right=rgb_right if (rgb_right is not None and self._store_right_images) else None,
             pose_charts=self.hypothesis_manager.get_active_charts(),
             metric_source=getattr(self, "_current_metric_source", None),
         )
@@ -904,7 +907,7 @@ class System:
             cache = getattr(getattr(self.pose_est, "backend", None), "token_cache", None)
             cap = cache.capacity if cache is not None else 0
             if cap > 0:
-                self.pose_est.precompute([as_float_image(getattr(k, f)) for k, f in slots[:cap]])
+                self.pose_est.precompute([as_float_image(getattr(k, f).to(self.device)) for k, f in slots[:cap]])
 
         logger.info(f"Map loaded successfully from {load_path}")
         logger.info(f"  - Loaded {len(save_data['db_data']['keyframes'])} permanent keyframes")
@@ -1864,15 +1867,15 @@ class System:
             # insert kf into the database for permanent kf
             keyframe = self.db.insert(
                 self._processed_frame_num,
-                rgb_image.to(self.storage_device), 
-                depth_image.to(self.storage_device) if depth_image is not None else None, 
+                rgb_image, 
+                depth_image, 
                 mu=mu.to(self.state_device), 
                 sigma=sigma.to(self.state_device), 
                 weights=weights.to(self.state_device),    
                 atlas=self.current_atlas,
                 timestamp=timestamp,
                 temporary=is_temp_kf,
-                raw_rgb_right=rgb_right.to(self.storage_device) if (rgb_right is not None and self._store_right_images) else None,
+                raw_rgb_right=rgb_right if (rgb_right is not None and self._store_right_images) else None,
                 pose_charts=pose_charts,
                 metric_source=getattr(self, "_current_metric_source", None),
             )
@@ -2458,8 +2461,9 @@ class System:
             retrieval_scores = retrieval_scores[:max_refs]
             keyframes = keyframes[:max_refs]
         from cross.db.db import as_float_image
-        ref_rgbs = [as_float_image(p.raw_rgb_image) for p in keyframes]
-        ref_depths = [as_float_image(p.depth_image) for p in keyframes] if depth_image is not None else None
+        # stored images (host RAM by default) copied to the compute device for this pass only
+        ref_rgbs = [as_float_image(p.raw_rgb_image.to(self.device)) for p in keyframes]
+        ref_depths = [as_float_image(p.depth_image.to(self.device)) for p in keyframes] if depth_image is not None else None
 
         # insert VO pose est
         if self._prev_obs is not None and self.use_VO:
@@ -2483,7 +2487,7 @@ class System:
             valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
                 ref_rgbs, None, rgb_image, None,
                 curr_image_right=rgb_right,
-                ref_images_right=_LazyImages(keyframes, "raw_rgb_right"),
+                ref_images_right=_LazyImages(keyframes, "raw_rgb_right", self.device),
                 odom_anchor=odom_anchor,
                 ref_rel_poses=self._map_anchor_pairs(keyframes),
                 **source_context,

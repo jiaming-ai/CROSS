@@ -137,6 +137,19 @@ def depth_source(args) -> str:
     return args.depth_source
 
 
+def _memory_sample(frame: int, system) -> list:
+    """[frame, graph nodes, permanent keyframes, GPU memory allocated (MB), host RSS (MB)] (--mem-trace)."""
+    nodes = system.hypothesis_manager.nodes
+    n_perm = sum(1 for k in nodes.values() if not k.temporary)
+    gpu = torch.cuda.memory_allocated() / 2**20 if torch.cuda.is_available() else 0.0
+    rss = 0.0
+    with open("/proc/self/status") as f:
+        for line in f:
+            if line.startswith("VmRSS:"):
+                rss = int(line.split()[1]) / 1024
+    return [int(frame), len(nodes), n_perm, round(gpu, 1), round(rss, 1)]
+
+
 def new_session(args, ds, seed):
     """A CROSS session (cross/pipeline.py) for --mode / --odometry; with external odometry in the stereo / RGB-D*
     modes it passes every frame to System.step unchanged."""
@@ -170,6 +183,7 @@ def run_mapping(args, out: Path):
     step_times = []
     kf_frame = {}            # frame index of every keyframe created (temporary ones too: T1 completeness)
     online = [] if getattr(args, "online_poses", False) else None
+    mem_trace = [] if getattr(args, "mem_trace", 0) else None   # (frame, nodes, permanent, GPU allocated, host RSS)
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
@@ -181,6 +195,8 @@ def run_mapping(args, out: Path):
             fp = getattr(system, "frontend_pose", None)
             online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
         gts.append(d["world_pose"])
+        if mem_trace is not None and idx % args.mem_trace == 0:
+            mem_trace.append(_memory_sample(idx, system))
         if system.last_added_kf_id != last_kf and system.last_added_kf_id is not None:
             last_kf = system.last_added_kf_id
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
@@ -194,7 +210,9 @@ def run_mapping(args, out: Path):
     logger.info(f"Mapping done: {n} frames in {elapsed:.1f}s ({n / elapsed:.2f} FPS), "
                 f"{len(system.hypothesis_manager.nodes)} keyframes ({n_perm} permanent)")
     map_file = out / "map.pkl"
+    t_save = time.perf_counter()
     system.save_map(map_file)
+    t_save = time.perf_counter() - t_save
     if recorder is not None:
         recorder.close()
     # map -> GT alignment from permanent keyframes (component 0 mean)
@@ -212,6 +230,7 @@ def run_mapping(args, out: Path):
     T_gt_from_map = umeyama_se3(src, dst)
     map_ate = float(np.sqrt(np.mean(np.sum(((T_gt_from_map[:3, :3] @ src.T).T + T_gt_from_map[:3, 3] - dst) ** 2, 1))))
     meta = {
+        "save_s": round(t_save, 3),
         "kf_gt": kf_gt, "kf_est": kf_est, "kf_frame": kf_frame, "T_gt_from_map": T_gt_from_map.tolist(), "map_ate_rmse": map_ate,
         "n_frames": n, "elapsed": elapsed, **step_time_stats(step_times), "n_keyframes": len(system.hypothesis_manager.nodes), "n_permanent": n_perm,
         "timing": _timing_summary(),
@@ -220,6 +239,9 @@ def run_mapping(args, out: Path):
     if online is not None:
         from reloc_metrics import online_pose_metrics
         meta["online"] = online_pose_metrics(online, T_gt_from_map)
+    if mem_trace is not None:
+        mem_trace.append(_memory_sample(n, system))
+        meta["mem_trace"] = mem_trace
     if hasattr(system, "remote_stats"):
         meta["remote"] = system.remote_stats()
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
@@ -394,6 +416,8 @@ def main():
     ap.add_argument("--obs-min-rotation", type=float, default=None)
     ap.add_argument("--obs-max-interval", type=int, default=None)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
+    ap.add_argument("--mem-trace", type=int, default=0, metavar="N",
+                    help="map run: every N frames record graph size, GPU and host memory (map_meta.json mem_trace)")
     ap.add_argument("--online-poses", action="store_true",
                     help="map run: score the pose published at every frame (map_meta.json 'online')")
     ap.add_argument("--skip-reloc", action="store_true")

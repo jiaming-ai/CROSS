@@ -75,13 +75,13 @@ def _state(monkeypatch, n=6, depth=True, right=True, scfg=None):
 def test_exact_round_trip(tmp_path, monkeypatch):
     data, _ = _state(monkeypatch)
     legacy = store.materialize(data)
-    st = store.write_map(tmp_path / "map.pkl", data, StorageConfig(image_codec="png"))
+    st = store.write_map(tmp_path / "map.pkl", data, StorageConfig(image_codec="png", descriptor_dtype="float32"))
     assert st["encoded"] == 6 * 3
     back = store.read_map(tmp_path / "map.pkl")
     assert store.is_ref(back["db_data"]["keyframes"][0]["raw_rgb_image"])
     assert same(legacy, back) == []
     for codec in ("webp_lossless", "raw"):
-        store.write_map(tmp_path / codec / "map.pkl", data, StorageConfig(image_codec=codec))
+        store.write_map(tmp_path / codec / "map.pkl", data, StorageConfig(image_codec=codec, descriptor_dtype="float32"))
         assert same(legacy, store.read_map(tmp_path / codec / "map.pkl")) == []
 
 
@@ -117,7 +117,7 @@ def test_symlinked_map_finds_its_data(tmp_path, monkeypatch):
     data, _ = _state(monkeypatch)
     (tmp_path / "maps").mkdir()
     (tmp_path / "query").mkdir()
-    store.write_map(tmp_path / "maps" / "map.pkl", data, StorageConfig())
+    store.write_map(tmp_path / "maps" / "map.pkl", data, StorageConfig(descriptor_dtype="float32"))
     os.symlink(tmp_path / "maps" / "map.pkl", tmp_path / "query" / "map.pkl")
     back = store.read_map(tmp_path / "query" / "map.pkl")
     assert same(store.materialize(data), back) == []
@@ -127,14 +127,14 @@ def test_symlinked_map_finds_its_data(tmp_path, monkeypatch):
 def test_incremental_save_appends_only_new_images(tmp_path, monkeypatch):
     data, _ = _state(monkeypatch, n=4)
     p = tmp_path / "map.pkl"
-    store.write_map(p, data, StorageConfig())
+    store.write_map(p, data, StorageConfig(descriptor_dtype="float32"))
     back = store.read_map(p)
     size0 = store.sidecar_dir(p).joinpath(next(store.sidecar_dir(p).glob("images-*.pack")).name).stat().st_size
     rec = dict(back["db_data"]["keyframes"][-1])
     rec["id"] = 999
     rec["raw_rgb_image"] = _rng_image(np.random.default_rng(5))
     back["db_data"]["keyframes"].append(rec)
-    st = store.write_map(p, back, StorageConfig())
+    st = store.write_map(p, back, StorageConfig(descriptor_dtype="float32"))
     assert st["kept"] == 4 * 3 + 2 and st["encoded"] == 1 and st["copied"] == 0
     packs = list(store.sidecar_dir(p).glob("images-*.pack"))
     assert len(packs) == 1 and packs[0].stat().st_size > size0
@@ -157,9 +157,10 @@ def test_overwriting_a_map_removes_the_old_pack(tmp_path, monkeypatch):
 
 def test_copy_to_another_map_without_reencoding(tmp_path, monkeypatch):
     data, _ = _state(monkeypatch, n=3)
-    store.write_map(tmp_path / "a" / "map.pkl", data, StorageConfig(image_codec="jpeg", image_quality=80))
+    cfg = StorageConfig(image_codec="jpeg", image_quality=80, descriptor_dtype="float32")
+    store.write_map(tmp_path / "a" / "map.pkl", data, cfg)
     a = store.read_map(tmp_path / "a" / "map.pkl")
-    st = store.write_map(tmp_path / "b" / "map.pkl", a, StorageConfig(image_codec="jpeg", image_quality=80))
+    st = store.write_map(tmp_path / "b" / "map.pkl", a, cfg)
     assert st["copied"] == 3 * 3 and st["encoded"] == 0
     assert same(store.materialize(a), store.read_map(tmp_path / "b" / "map.pkl")) == []
 
