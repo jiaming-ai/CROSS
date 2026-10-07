@@ -149,13 +149,15 @@ if __name__ == "__main__" and len(sys.argv) > 1:
 
 def nclt_combined(pd, files=("nclt/nclt_s1_d2048.json", "nclt/nclt_s4_d2048.json", "nclt/nclt_big.json"),
                   out="nclt_recall_vs_size_all.png"):
-    """Recall@1 (25 m) vs database size over every NCLT stress run (1, 3, ... map sessions)."""
+    """Recall@1 (25 m) vs database size, from the NCLT stress run with the largest database (one database
+    composition per curve: its smaller sizes are random subsets of it)."""
     pts = {}
-    for name in files:
-        f = os.path.join(pd, name)
-        if not os.path.exists(f):
-            continue
-        for row in json.load(open(f))["rows"]:
+    runs = [json.load(open(os.path.join(pd, n))) for n in files if os.path.exists(os.path.join(pd, n))]
+    if not runs:
+        return
+    best = max(runs, key=lambda r: r["N"])
+    for row in best["rows"]:
+        if True:
             for m in ("full", "code", "ivf", "belief:10", "belief:100", "gps"):
                 r = row["recall"].get(f"{m}@25m")
                 if r:
@@ -170,7 +172,7 @@ def nclt_combined(pd, files=("nclt/nclt_s1_d2048.json", "nclt/nclt_s4_d2048.json
             p = sorted(pts[m])
             ax.plot([a for a, _ in p], [b for _, b in p], "-o", color=SERIES[i], lw=2, ms=5, label=labels[m])
     ax.set_xscale("log")
-    style(ax, "NCLT cross-season Recall@1 within 25 m vs database size", "database size (descriptors)", "R@1")
+    style(ax, f"NCLT cross-season Recall@1 within 25 m ({best['N']:,} descriptors, subsets)", "database size (descriptors)", "R@1")
     ax.legend(frameon=False, fontsize=7, labelcolor=INK2)
     fig.tight_layout(); fig.savefig(os.path.join(pd, out)); plt.close(fig)
 
