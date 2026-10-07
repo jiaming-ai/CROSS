@@ -195,3 +195,40 @@ def test_proximity_graph_kdtree_matches_the_pairwise_scan():
     assert not topo._pending_pgo
     moved = set(range(0, 400, 3))
     assert {e for e in lazy if moved & set(e)} == {e for e in ref.proximity_edges if moved & set(e)}
+
+
+def test_map_projection_fit_keeps_scores_and_extends_on_scene_change():
+    g = torch.Generator().manual_seed(7)
+    D = 512
+    A = torch.randn(48, D, generator=g)
+    B = torch.randn(48, D, generator=g)
+    common = torch.randn(1, D, generator=g)
+    def draw(basis, n):
+        x = torch.randn(n, basis.shape[0], generator=g) @ basis + 2.0 * common + 0.05 * torch.randn(n, D, generator=g)
+        return torch.nn.functional.normalize(x, dim=-1)
+    XA, XB = draw(A, 900), draw(B, 700)
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=100, fit_at=600, fit_dim=64, extend_dims=48,
+                          extend_margin=0.05, recent=400)
+    for i, x in enumerate(XA[:599]):
+        idx.add(x, i)
+    assert idx.projection is None and idx.dtype == torch.float32          # full descriptors before fit_at
+    idx.add(XA[599], 599)
+    assert idx.map_fitted and idx.dim == 64 and idx.dtype == torch.float16
+    q = XA[700]
+    for i, x in enumerate(XA[600:], start=600):
+        idx.add(x, i)
+    full = XA @ q
+    approx = idx.scores(idx.encode(q))[:900]
+    assert float((approx - full).abs().mean()) < 0.02
+    assert idx.projection.meta["extensions"] == 0
+    for i, x in enumerate(XB, start=900):
+        idx.add(x, i)
+    assert idx.projection.meta["extensions"] >= 1 and idx.dim > 64          # the new kind of place got its dimensions
+    qb = XB[-1]
+    approx_b = idx.scores(idx.encode(qb))[1300:1600]
+    assert float((approx_b - XB[400:700] @ qb).abs().mean()) < 0.05
+    # persistence: the stored codes + projection reproduce the scores
+    st = idx.state()
+    re = DescriptorIndex(D, device="cpu", projection=PCAProjection.from_state(st["projection"]))
+    re.set_rows(idx.buf[:idx.n], idx.ids[:idx.n].tolist())
+    assert torch.allclose(re.scores(re.encode(qb)), idx.scores(idx.encode(qb)), atol=2e-3)

@@ -64,14 +64,10 @@ class KeyframeDatabase:
             raise ValueError(f"VPR model {self.vpr_model_type} not supported")
 
         # Descriptor index (cross/db/index.py): without a projection the float32 buffer of the original database
-        icfg = getattr(cfg, "index", None)
         self._initial_buffer_size = cfg.initial_buffer_size
-        self.index = DescriptorIndex(
-            self.vpr_model.get_embed_dim(), device=self.device, initial_capacity=self._initial_buffer_size,
-            projection=projection_from_config(getattr(icfg, "projection", None), self.vpr_model.get_embed_dim()),
-            store_dtype=getattr(icfg, "store_dtype", "auto"), backend=getattr(icfg, "backend", "exact"),
-            ivf_nlist=getattr(icfg, "ivf_nlist", 0), ivf_nprobe=getattr(icfg, "ivf_nprobe", 16),
-            ivf_min_rows=getattr(icfg, "ivf_min_rows", 200000))
+        icfg = getattr(cfg, "index", None)
+        spec = getattr(icfg, "projection", None)
+        self.index = self._new_index(None if spec == "map" else projection_from_config(spec, self.vpr_model.get_embed_dim()))
         self._row_kf: List[Keyframe] = []          # keyframe of each descriptor row
         self._id_to_row: Dict[int, int] = {}
         self.spatial = SpatialIndex()              # keyframe positions, for locality-aware retrieval
@@ -80,6 +76,17 @@ class KeyframeDatabase:
         self.score_threshold_high = cfg.vpr_score_threshold_high
         self.score_threshold_low = cfg.vpr_score_threshold_low
         self.top_k = cfg.top_k
+
+    def _new_index(self, projection) -> DescriptorIndex:
+        icfg = getattr(self.config, "index", None)
+        g = lambda k, d: getattr(icfg, k, d) if icfg is not None else d   # noqa: E731
+        return DescriptorIndex(
+            self.vpr_model.get_embed_dim(), device=self.device, initial_capacity=self._initial_buffer_size,
+            projection=projection, store_dtype=g("store_dtype", "auto"), backend=g("backend", "exact"),
+            ivf_nlist=g("ivf_nlist", 0), ivf_nprobe=g("ivf_nprobe", 16), ivf_min_rows=g("ivf_min_rows", 200000),
+            fit_at=g("fit_at", 0) if g("projection", None) == "map" else 0, fit_dim=g("fit_dim", 512),
+            extend=g("extend", True), extend_margin=g("extend_margin", 0.05), extend_dims=g("extend_dims", 64),
+            max_dim=g("max_dim", 1024), recent=g("recent", 1024))
 
     def _extend_buffer(self, min_size: int):
         """Extend the descriptor buffer if needed."""
@@ -355,22 +362,21 @@ class KeyframeDatabase:
 
     def _load_descriptors(self, codes: torch.Tensor, index_state: Optional[dict]) -> None:
         """Stored rows -> index.  A map saved with a projection brings it (it defines the codes); full descriptors
-        of a map without one are projected now when this database is configured with a projection."""
+        of a map without one are projected now when this database is configured with a projection (a fixed one, or a
+        map projection once the map holds fit_at keyframes)."""
         proj_state = (index_state or {}).get("projection")
         if proj_state is not None:
             proj = PCAProjection.from_state(proj_state)
-            if self.index.projection is None or not np.array_equal(self.index.projection.components.astype(np.float16),
-                                                                   np.asarray(proj_state["components"])):
+            if self.index.projection is not None and not np.array_equal(
+                    self.index.projection.components.astype(np.float16), np.asarray(proj_state["components"])):
                 logger.info(f"descriptor index: the map's projection ({proj.dim_in} -> {proj.dim}) replaces the configured one")
-            self.index = DescriptorIndex(self.index.dim_in, device=self.device,
-                                         initial_capacity=self._initial_buffer_size, projection=proj,
-                                         store_dtype=str(codes.dtype).replace("torch.", "") if codes.shape[0] else "auto",
-                                         backend=self.index.backend, ivf_nlist=self.index.ivf_nlist,
-                                         ivf_nprobe=self.index.ivf_nprobe, ivf_min_rows=self.index.ivf_min_rows)
+            self.index = self._new_index(proj)
         elif self.index.projection is not None and codes.shape[0] and codes.shape[1] == self.index.dim_in:
             codes = torch.cat([self.index.encode(c.to(self.device).float()) for c in codes.split(4096)])
+        else:
+            self.index = self._new_index(self.index.projection)
         self.index.set_rows(codes, [int(kf.id) for kf in self._row_kf])
-    
+
     @timeit
     def similarities(self, img: torch.Tensor, kf_ids) -> dict:
         """VPR cosine similarity of the query image to the given keyframes (by id), {kf_id: score}."""

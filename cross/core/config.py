@@ -108,9 +108,18 @@ class TrackingConfig:
 class DescriptorIndexConfig:
     """Storage and search of the keyframe descriptors (cross/db/index.py).  Default: the full 16384-d BoQ descriptor in
     float32 with an exact search, i.e. the original database (64 KB per keyframe)."""
-    # PCA projection file (.npz written by cross.db.index.PCAProjection.save): keyframes are stored as short float16
-    # codes (512-d: 1 KB) and scored by the cosine of the codes.  A map saved with a projection always uses its own.
+    # None: full descriptors.  "map": fit an uncentred projection on the map's own descriptors once the database
+    # holds `fit_at` keyframes (smaller maps are unchanged), then store fit_dim float16 codes (1 KB instead of 64 KB per
+    # keyframe), extending the subspace when the scene changes (cross.db.index.DescriptorIndex).  A path: a fixed
+    # projection (.npz, PCAProjection.save).  A map saved with a projection always uses its own.
     projection: Optional[str] = None
+    fit_at: int = 4096
+    fit_dim: int = 512
+    extend: bool = True            # extend the map projection's subspace when the explained energy drops
+    extend_margin: float = 0.05
+    extend_dims: int = 64
+    max_dim: int = 1024
+    recent: int = 1024             # full descriptors of the latest keyframes kept for an extension
     store_dtype: str = "auto"      # auto: float32 without a projection, float16 with one
     backend: str = "exact"         # exact | ivf: inverted file (k-means cells), trained once ivf_min_rows rows exist
     ivf_nlist: int = 0             # cells (0: 4 sqrt(n))

@@ -139,25 +139,47 @@ class DescriptorIndex:
 
     Rows are dense (0..n-1); removal moves the last row into the hole (the database mirrors it).  Without a
     projection the buffer is the original float32 embedding buffer (same growth, same matmul), so scores are
-    bit-identical to the database before this class existed."""
+    bit-identical to the database before this class existed.
+
+    Map-fitted projection (`fit_at` > 0, no fixed projection): the full descriptors are kept until the database
+    holds `fit_at` rows; then an uncentred projection to `fit_dim` dimensions is fitted on them (a projection fitted on
+    the map's own descriptors keeps recall and scores: 512 dims, mean |score error| 0.003-0.005 on ROVER / OpenLORIS /
+    SimChange cross-session queries; one fitted on other data does not), every row is re-encoded and the full
+    descriptors are dropped.  The explained energy |V^T x|^2 of each new descriptor is tracked; when its running mean
+    falls `extend_margin` below the level at the fit (the robot entered another kind of place, e.g. outdoors after
+    indoors), the subspace is extended by the main directions of the residuals of the `recent` last descriptors
+    (whose full descriptors are kept): older rows get zeros in the new dimensions, up to `max_dim`."""
 
     def __init__(self, dim_in: int, device: str = "cuda", initial_capacity: int = 1000,
                  projection: Optional[PCAProjection] = None, store_dtype: str = "auto", backend: str = "exact",
-                 ivf_nlist: int = 0, ivf_nprobe: int = 16, ivf_min_rows: int = 200000, ann_shortlist: int = 256):
+                 ivf_nlist: int = 0, ivf_nprobe: int = 16, ivf_min_rows: int = 200000, ann_shortlist: int = 256,
+                 fit_at: int = 0, fit_dim: int = 512, extend: bool = True, extend_margin: float = 0.05,
+                 extend_dims: int = 64, max_dim: int = 1024, recent: int = 1024):
         self.dim_in = int(dim_in)
         self.device = device
         self.projection = projection
         self.dim = projection.dim if projection is not None else self.dim_in
+        self._store_dtype = store_dtype
         if store_dtype == "auto":
             store_dtype = "float16" if projection is not None else "float32"
         self.dtype = getattr(torch, store_dtype)
         self.backend = backend
         self.ivf_nlist, self.ivf_nprobe, self.ivf_min_rows = int(ivf_nlist), int(ivf_nprobe), int(ivf_min_rows)
         self.ann_shortlist = int(ann_shortlist)
+        self.fit_at, self.fit_dim = int(fit_at), int(fit_dim)
+        self.extend, self.extend_margin, self.extend_dims = bool(extend), float(extend_margin), int(extend_dims)
+        self.max_dim, self.recent_size = int(max_dim), int(recent)
+        self._recent: list = []          # (kf_id, full descriptor fp16) of the latest rows, after a map fit
+        self._e_ema = None
+        self._since_extend = 0
         self.buf = torch.zeros((int(initial_capacity), self.dim), device=device, dtype=self.dtype)
         self.ids = torch.full((int(initial_capacity),), -1, device=device, dtype=torch.long)
         self.n = 0
         self._ivf: Optional[_IVF] = None
+
+    @property
+    def map_fitted(self) -> bool:
+        return self.projection is not None and bool(self.projection.meta.get("map_fit"))
 
     # -------------------------------------------------------------- storage
     def encode(self, desc: torch.Tensor) -> torch.Tensor:
@@ -182,14 +204,93 @@ class DescriptorIndex:
         """Append one descriptor (full VPR descriptor) for keyframe kf_id; returns its row."""
         self.reserve(self.n + 100)
         row = self.n
-        self.buf[row] = self.encode(desc).to(self.dtype)
+        code = self.encode(desc)
+        self.buf[row] = code.to(self.dtype)
         self.ids[row] = int(kf_id)
         self.n += 1
+        if self.map_fitted:
+            self._track(desc, code, kf_id)
+        elif self.projection is None and self.fit_at > 0 and self.n >= self.fit_at:
+            self.fit_projection()
         if self._ivf is not None:
             self._ivf.add(self.buf[row:row + 1].float(), row)
         elif self.backend == "ivf" and self.n >= self.ivf_min_rows:
             self._train_ivf()
         return row
+
+    def fit_projection(self) -> None:
+        """Fit the map projection on the stored full descriptors, re-encode every row (see the class docstring)."""
+        X = self.buf[:self.n].float()
+        g = torch.Generator(device="cpu").manual_seed(0)
+        perm = torch.randperm(self.n, generator=g).to(X.device)
+        n_hold = max(1, self.n // 10)
+        dim = min(self.fit_dim, self.n - n_hold - 1)
+        proj = PCAProjection.fit(X[perm[n_hold:]], dim, meta={"map_fit": True})
+        held = proj.apply(X[perm[:n_hold]])
+        proj.meta["e_ref"] = float((held.pow(2).sum(1) / X[perm[:n_hold]].pow(2).sum(1)).mean())
+        proj.meta["fit_rows"] = int(self.n)
+        proj.meta["extensions"] = 0
+        recent = [(int(self.ids[r]), X[r].half()) for r in range(max(0, self.n - self.recent_size), self.n)]
+        codes = proj.apply(X)
+        self._set_projection(proj, codes)
+        self._recent = recent
+        self._e_ema = proj.meta["e_ref"]
+        self._since_extend = 0
+        logger.info(f"descriptor index: map projection {self.dim_in} -> {dim} fitted on {self.n} keyframes "
+                    f"(held-out explained energy {proj.meta['e_ref']:.3f}); {self.n * self.dim_in * 4 / 1e6:.0f} MB -> "
+                    f"{self.n * dim * 2 / 1e6:.1f} MB")
+
+    def _set_projection(self, proj: PCAProjection, codes: torch.Tensor) -> None:
+        self.projection = proj
+        self.dim = proj.dim
+        self.dtype = torch.float16 if self._store_dtype == "auto" else getattr(torch, self._store_dtype)
+        nb = torch.zeros((self.buf.shape[0], self.dim), device=self.device, dtype=self.dtype)
+        nb[:codes.shape[0]] = codes.to(self.dtype)
+        self.buf = nb
+        if self._ivf is not None:
+            self._train_ivf()
+
+    def _track(self, desc: torch.Tensor, code: torch.Tensor, kf_id: int) -> None:
+        """Explained energy of a new descriptor; extend the subspace when the scene has changed."""
+        x = desc.to(self.device).float()
+        e = float(code.float().pow(2).sum() / x.pow(2).sum().clamp_min(1e-12))
+        a = 1.0 / 200
+        self._e_ema = e if self._e_ema is None else (1 - a) * self._e_ema + a * e
+        self._recent.append((int(kf_id), x.half()))
+        if len(self._recent) > self.recent_size:
+            self._recent.pop(0)
+        self._since_extend += 1
+        e_ref = self.projection.meta.get("e_ref", 1.0)
+        if (self.extend and self.dim < self.max_dim and self._e_ema < e_ref - self.extend_margin
+                and self._since_extend >= max(2 * self.extend_dims, 200) and len(self._recent) >= 2 * self.extend_dims):
+            self._extend_subspace()
+
+    def _extend_subspace(self) -> None:
+        V = torch.from_numpy(self.projection.components).to(self.device)
+        Xr = torch.stack([x for _, x in self._recent]).float()
+        R = Xr - (Xr @ V) @ V.T
+        a = min(self.extend_dims, self.max_dim - self.dim)
+        _, _, W = torch.svd_lowrank(R, q=min(a + 16, min(R.shape)), niter=6)
+        W = W[:, :a]
+        W = W - V @ (V.T @ W)                       # keep the basis orthonormal
+        W = torch.linalg.qr(W).Q
+        Vn = torch.cat([V, W], 1)
+        meta = dict(self.projection.meta)
+        proj = PCAProjection(np.zeros(self.dim_in, np.float32), Vn.cpu().numpy(), None, meta)
+        codes = torch.zeros((self.n, Vn.shape[1]), device=self.device)
+        codes[:, :self.dim] = self.buf[:self.n].float()
+        rows = {int(k): i for i, k in enumerate(self.ids[:self.n].tolist())}
+        for kf, x in self._recent:
+            if kf in rows:
+                codes[rows[kf]] = proj.apply(x.float())
+        held = proj.apply(Xr)
+        proj.meta["e_ref"] = float((held.pow(2).sum(1) / Xr.pow(2).sum(1)).mean())
+        proj.meta["extensions"] = int(meta.get("extensions", 0)) + 1
+        logger.info(f"descriptor index: scene change (explained energy {self._e_ema:.3f} < {meta.get('e_ref', 1):.3f} - "
+                    f"{self.extend_margin}); subspace {self.dim} -> {Vn.shape[1]} dims")
+        self._set_projection(proj, codes)
+        self._e_ema = proj.meta["e_ref"]
+        self._since_extend = 0
 
     def remove_row(self, row: int) -> Optional[int]:
         """Remove `row`; the last row moves into it.  Returns the moved row's old index (None if row was last)."""
@@ -207,7 +308,8 @@ class DescriptorIndex:
         return last
 
     def set_rows(self, codes: torch.Tensor, kf_ids: Sequence[int]) -> None:
-        """Replace the content by stored codes (load)."""
+        """Replace the content by stored codes (load).  Full descriptors of a map at least `fit_at` rows long are
+        projected now when the index fits map projections."""
         n = int(codes.shape[0])
         self.n = 0
         self.reserve(n)
@@ -215,6 +317,8 @@ class DescriptorIndex:
         self.buf[:n] = codes.to(self.device, self.dtype)
         self.ids[:n] = torch.as_tensor(list(kf_ids), dtype=torch.long, device=self.device)
         self._ivf = None
+        if self.projection is None and self.fit_at > 0 and n >= self.fit_at:
+            self.fit_projection()
         if self.backend == "ivf" and n >= self.ivf_min_rows:
             self._train_ivf()
 
