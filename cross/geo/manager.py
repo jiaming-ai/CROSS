@@ -29,6 +29,17 @@ from .geodesy import LocalFrame, geojson_linestring, geojson_points
 from .gnss import GnssErrorModel, GnssFix, GnssGate, GnssGateConfig, GnssModelConfig, GnssNoiseModel, MEDIAN_CHI2_2
 
 
+def pose7_to_matrix(v) -> np.ndarray:
+    """[tx ty tz qx qy qz qw] -> 4x4 (numpy; ~10 us, a pypose SE3 -> matrix costs ~250 us per call)."""
+    x, y, z, w = float(v[3]), float(v[4]), float(v[5]), float(v[6])
+    T = np.eye(4)
+    T[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                 [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                 [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
+    T[:3, 3] = [float(v[0]), float(v[1]), float(v[2])]
+    return T
+
+
 def _up_from_vertical(v: np.ndarray, first_R: Optional[np.ndarray] = None) -> np.ndarray:
     """Up direction of the map frame from the place projection's vertical (sign: opposite to the first keyframe's
     camera y axis, which points down for a forward-looking camera)."""

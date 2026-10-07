@@ -2078,7 +2078,9 @@ class System:
     def _geo_step(self, delta_pose, obs: dict, timestamp):
         """Odometry increment and the frame's GNSS fix / compass sample to the geo manager."""
         geo = self._geo
-        geo.on_motion(delta_pose.matrix().detach().cpu().numpy().astype(np.float64) if delta_pose is not None else None)
+        if delta_pose is not None:              # every step, also without GNSS input: kept cheap (no pypose call)
+            from cross.geo.manager import pose7_to_matrix
+            geo.on_motion(pose7_to_matrix(torch.Tensor.as_subclass(delta_pose, torch.Tensor).detach().reshape(-1)[:7].cpu().numpy()))
         geo.tick(float(timestamp))
         gnss, compass = obs.get("gnss"), obs.get("compass")
         if gnss is None and compass is None:
