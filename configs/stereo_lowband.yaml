@@ -1,0 +1,19 @@
+# Low-bandwidth stereo profile (opt-in: --config configs/stereo_lowband.yaml, layered after configs/stereo.yaml) for
+# the stereo mode with external odometry that is trusted (wheel, INS, a VIO's output), e.g. a remote session over a
+# thin link: the back end observes on the left image only (pose_est.ff.right_image: the scale of a pass from the
+# previous observation with the odometry between them and from pairs of map references; the right image is not
+# stored and, in remote sessions, not sent) and half as often.
+#   Development split (outputs/2026-10-07_remote_cadence; wheel / OXTS / simulated odometry, Basalt VIO on KITTI 07
+#   and SimChange, none of which fails): T1 0.144 vs 0.157 m, T2 LR@1 0.886 vs 0.885, T3 27 vs 29 of 33, a third of
+#   the uplink, a third fewer observations.
+#   Not the default: without the right image no translation is metric without the odometry, so the odometry scale
+#   guard (mapping.loop_closure.odom_guard_*) cannot see an odometry failure.  ROVER campus_large night with the Basalt
+#   VIO (a runaway): map ATE 38.2 m with this profile, 36.3 m with the left image at the stereo.yaml cadence, 13.2 m
+#   with the pair at half the rate, 11.2 m with the default (the guard fired twice; with the left image never).
+#   The fast preset (--fast) with this profile lost T3 28 -> 24: do not combine them.
+pose_est:
+  obs_min_translation: 0.6
+  obs_min_rotation: 0.3
+  obs_max_interval_steps: 6
+  ff:
+    right_image: left

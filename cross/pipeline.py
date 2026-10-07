@@ -317,14 +317,12 @@ def mono_ff_config(cfg):
 
 def mode_config_files(mode: str, odometry: str, fast: bool = False) -> list:
     """The configuration files shipped for a mode and odometry (layered in this order, before the user's --config):
-    the stereo mode configs/stereo.yaml (+ configs/stereo_odom.yaml with external odometry: left image, half the
-    observation rate; + configs/stereo_fast.yaml with --fast).  Other modes: none (their presets are in code:
-    mono_ff_config, mono profiles)."""
+    the stereo mode configs/stereo.yaml (+ configs/stereo_fast.yaml with --fast).  Other modes: none (their presets
+    are in code: mono_ff_config, mono profiles).  Opt-in profiles go in --config (configs/stereo_lowband.yaml: left
+    image, half the rate; not a default because it blinds the odometry scale guard)."""
     files = []
     if mode == "stereo":
         files.append(os.path.join(CONFIG_DIR, "stereo.yaml"))
-        if odometry == "external":
-            files.append(os.path.join(CONFIG_DIR, "stereo_odom.yaml"))
         if fast:
             files.append(FAST_STEREO_PRESET)
     return files

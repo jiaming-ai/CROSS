@@ -58,8 +58,8 @@ def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
 
 
 def make_config(args) -> SystemConfig:
-    # the mode's shipped configuration files (cross.pipeline.mode_config_files: configs/stereo.yaml, + stereo_odom.yaml
-    # with external odometry, + stereo_fast.yaml with --fast), then the user's --config; explicit options below win
+    # the mode's shipped configuration files (cross.pipeline.mode_config_files: configs/stereo.yaml, + stereo_fast.yaml
+    # with --fast), then the user's --config; explicit options below win
     configs = mode_config_files(args.mode, args.odometry, getattr(args, "fast", False) and args.estimator == "ff")
     configs += list(args.config or [])
     cfg = load_config(*configs) if configs else SystemConfig()

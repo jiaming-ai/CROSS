@@ -111,8 +111,7 @@ def main():
     )
 
     # Build config: layer YAML files, then apply CLI overrides
-    # the mode's shipped configuration files (configs/stereo.yaml, + stereo_odom.yaml with external odometry, + the
-    # --fast preset), then the user's
+    # the mode's shipped configuration files (configs/stereo.yaml, + the --fast preset), then the user's
     configs = mode_config_files(args.mode, args.odometry, args.fast) + list(args.config)
     if args.fast and args.mode != "stereo":
         logger.warning("--fast only has a preset for the stereo mode; ignored")

@@ -651,9 +651,10 @@ class FeedForwardConfig:
     # right images of the references: use_curr_anchor, n_ref_anchors); "left": the back end observes on the left image
     # alone, with the metric scale from the previous observation and the odometry between them (use_odom_anchor) and
     # from pairs of map references (use_map_anchors), set by cross.pipeline.apply_right_image; the right image is not
-    # stored and, in remote sessions, not sent.  configs/stereo_odom.yaml (external odometry, which carries the scale)
-    # sets left: development split, wheel / OXTS odometry, left vs pair T1 0.139 / 0.157 m, T2 0.895 / 0.885, T3 28 / 29
-    # of 33, half the uplink (outputs/2026-10-07_remote_cadence)
+    # stored and, in remote sessions, not sent.  The opt-in profile configs/stereo_lowband.yaml sets it (with trusted
+    # external odometry: half the uplink on the development split) - not the default: with the left image no
+    # translation is metric without the odometry, and the odometry scale guard cannot see an odometry failure (ROVER
+    # night with a VIO runaway: map ATE 36-38 m vs 11 m with the pair; outputs/2026-10-07_remote_cadence)
     right_image: str = "pair"
     use_odom_anchor: bool = False        # previous frame + odometry as an additional metric anchor
     odom_anchor_min_translation: float = 0.15

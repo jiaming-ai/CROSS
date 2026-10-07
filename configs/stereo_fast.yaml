@@ -1,11 +1,11 @@
-# Fast stereo mode (--fast; layered last, on configs/stereo.yaml and, with external odometry, stereo_odom.yaml): 6
+# Fast stereo mode (--fast; layered on configs/stereo.yaml): 6
 # images per forward pass instead of 10 (the current pair and 4 retrieved references, no reference right images).  An
 # observation takes ~35 % less time (RTX 5090: 73 ms vs 116 ms per observation step).  On all OpenLORIS office / home /
 # cafe queries relocalization success was within the run-to-run noise of the default (86/90 vs 84-87/90 trials at 1 m),
 # maps 0.7-1.9 cm less accurate.  The default (10 images) remains the reference configuration.
-#   The fast mode keeps the stereo pair and the stereo.yaml cadence also with external odometry: the current pair is
-#   its only scale anchor, and with the left image alone at half the rate (stereo_odom.yaml) the development split lost
-#   T3 28 -> 24 of 33 and office1-7 relocalized at frame 166 instead of 49 (outputs/2026-10-07_remote_cadence).
+#   The fast mode keeps the stereo pair and the stereo.yaml cadence (also after a --config profile): the current pair is
+#   its only scale anchor, and with the left image alone at half the rate (stereo_lowband.yaml) the development split
+#   lost T3 28 -> 24 of 33 and office1-7 relocalized at frame 166 instead of 49 (outputs/2026-10-07_remote_cadence).
 pose_est:
   obs_min_translation: 0.3
   obs_min_rotation: 0.15

@@ -132,22 +132,23 @@ def test_odometry_frontend_composes_dataset_motion():
 
 
 def test_mode_config_files_and_left_image():
-    """The shipped configuration of each mode and odometry: the stereo mode with external odometry observes on the left
-    image (no stereo anchors) and half as often; its VGGT-inertial and visual odometries keep the pair and the cadence."""
+    """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry; the
+    opt-in low-bandwidth profile observes on the left image (no stereo anchors) at half the rate; --fast keeps the pair."""
+    import os
     from cross.core.config import load_config
-    from cross.pipeline import apply_right_image, mode_config_files
-    ext = apply_right_image(load_config(*mode_config_files("stereo", "external")))
-    own = apply_right_image(load_config(*mode_config_files("stereo", "vgio")))
+    from cross.pipeline import CONFIG_DIR, apply_right_image, mode_config_files
+    lowband = os.path.join(CONFIG_DIR, "stereo_lowband.yaml")
     assert mode_config_files("rgbd", "external") == [] and mode_config_files("mono", "external") == []
-    assert [p.rsplit("/", 1)[-1] for p in mode_config_files("stereo", "visual", fast=True)] == ["stereo.yaml", "stereo_fast.yaml"]
-    pe = ext.pose_est
+    assert [p.rsplit("/", 1)[-1] for p in mode_config_files("stereo", "external", fast=True)] == ["stereo.yaml", "stereo_fast.yaml"]
+    for odometry in ("external", "vgio", "visual"):
+        pe = apply_right_image(load_config(*mode_config_files("stereo", odometry))).pose_est
+        assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
+        assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 2
+    pe = apply_right_image(load_config(*mode_config_files("stereo", "external"), lowband)).pose_est
     assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.6, 0.3, 6)
     assert pe.ff.right_image == "left" and not pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
     assert pe.ff.use_odom_anchor and pe.ff.use_map_anchors and not pe.ff.store_right_images
-    pe = own.pose_est
-    assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
-    assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 2
-    # the fast preset keeps the pair (its only scale anchor) and the stereo.yaml cadence with external odometry too
+    # the fast preset keeps the pair (its only scale anchor) and the stereo.yaml cadence
     pe = apply_right_image(load_config(*mode_config_files("stereo", "external", fast=True))).pose_est
     assert (pe.obs_min_translation, pe.obs_max_interval_steps, pe.ff.right_image, pe.ff.max_refs) == (0.3, 3, "pair", 4)
     assert pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0

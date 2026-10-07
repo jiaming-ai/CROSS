@@ -4,8 +4,8 @@
 pose_est:
   type: ff
   # the feed-forward observation (retrieval + one multi-view forward pass) costs ~0.3 s: observe after 0.3 m or
-  # 0.15 rad of motion, at least every third frame.  With external odometry configs/stereo_odom.yaml is layered on top
-  # (left image, half the rate); the VGGT-inertial and visual odometries keep these values and the stereo pair
+  # 0.15 rad of motion, at least every third frame (all stereo-mode results were obtained with these values).  Opt-in
+  # low-bandwidth profile with trusted external odometry: configs/stereo_lowband.yaml (left image, half the rate)
   obs_min_translation: 0.3
   obs_min_rotation: 0.15
   obs_max_interval_steps: 3

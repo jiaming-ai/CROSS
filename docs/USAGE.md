@@ -106,7 +106,7 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | file | use |
 |---|---|
 | `configs/stereo.yaml` | stereo mode preset (loaded by `--mode stereo`): VGGT-Omega, observation gating |
-| `configs/stereo_odom.yaml` | layered on `stereo.yaml` with external odometry (wheel, INS, a VIO's output): the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) and half as often; `right_image: pair` and the `stereo.yaml` cadence in your own `--config` restore the pair; the `--fast` preset (`configs/stereo_fast.yaml`) keeps the pair |
+| `configs/stereo_lowband.yaml` | opt-in (`--config`) for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away), not with `--fast` |
 | `configs/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius); `outdoor_noown.yaml` is its variant for the same scale |
 | `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
 | `configs/mono_*.json` | mono profiles: the arguments of `python -m cross.mono.run`. `mono_benchmark_10hz.json` for offline runs at 10 Hz, `mono_streaming_dpvo_v2_20hz.json` for real time; select with `--mono-profile`, extra arguments with `--mono-args` |
@@ -154,8 +154,8 @@ only maps. Another query in the same scene is another call with the same `--out`
 `System`, and `examples/planner.py` loads a map and plans paths on it.
 
 Stereo-mode quick-run options: `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation gating;
-default: the mode's configuration file), `--max-refs`, `--n-ref-anchors`. With external odometry the stereo mode needs no
-right camera (`configs/stereo_odom.yaml`: left image, scale from the odometry; see the README OpenLORIS example).
+default: the mode's configuration file), `--max-refs`, `--n-ref-anchors`. Without a right camera pass
+`--set pose_est.ff.right_image=left` (scale from the odometry; see the README OpenLORIS example).
 
 ## 5. Benchmark
 
@@ -242,7 +242,8 @@ python scripts/map_and_reloc.py ... --odometry vgio --remote --remote-rtt 0.1   
 #   --set pose_est.obs_confident_max_interval_steps=10   fewer observations while localized; the edge follows (no images)
 #   vgio measures on the back end's passes in the stereo mode (imu.vgio_align, on there; off for mono, where it costs
 #   scale accuracy): 20 % fewer uploads;  --mono-args '--imu-config vgio_align=false' turns it off
-#   stereo + external odometry: only the left image is sent (configs/stereo_odom.yaml): half the uplink
+#   --config configs/stereo_lowband.yaml   stereo + trusted external odometry: left image only, half the rate (a third
+#                                          of the uplink; the odometry scale guard is blind then)
 #   --remote --remote-compute zero --remote-upload all   reproduces the local session exactly
 python benchmark/dev.py run --systems cross_stereo_vgio --variant rtt100 --args "--remote --remote-rtt 0.1 --online-poses"
 ```
