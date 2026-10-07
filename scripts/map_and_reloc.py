@@ -38,6 +38,7 @@ if "--out" in sys.argv and "CROSS_LOG_FILE" not in os.environ:
 from cross.core.config import FFBackend, PoseEstType, SystemConfig, load_config
 from cross.core.system import System
 from cross.core.types import Camera
+from cross.db import store as map_store
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
 from cross.pipeline import add_session_args, mode_config_files, session_factory
@@ -214,7 +215,7 @@ def run_mapping(args, out: Path):
         "kf_gt": kf_gt, "kf_est": kf_est, "kf_frame": kf_frame, "T_gt_from_map": T_gt_from_map.tolist(), "map_ate_rmse": map_ate,
         "n_frames": n, "elapsed": elapsed, **step_time_stats(step_times), "n_keyframes": len(system.hypothesis_manager.nodes), "n_permanent": n_perm,
         "timing": _timing_summary(),
-        "map_file_bytes": map_file.stat().st_size if map_file.exists() else None,
+        "map_file_bytes": map_store.map_bytes(map_file) if map_file.exists() else None,   # map.pkl + map.pkl.store/
     }
     if online is not None:
         from reloc_metrics import online_pose_metrics

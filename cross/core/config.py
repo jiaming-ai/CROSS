@@ -760,6 +760,7 @@ class StorageConfig:
     image_quality: int = 95              # jpeg / webp quality
     png_level: int = 3                   # png / png16 compression level (0-9)
     depth_codec: str = "png16"           # png16 (fp16 bit pattern in a 16-bit PNG, exact) | zstd | raw
+    depth_drop_bits: int = 0             # png16: drop this many fp16 mantissa bits (3: <= 0.4 % error, 35 % smaller)
     descriptor_dtype: str = "float32"    # retrieval descriptors on disk: float32 (exact) | float16
     decode_cache: int = 1024             # decoded keyframe images kept in memory (LRU, process-wide)
     # live run: keep the images of the newest N keyframes as tensors, encode older ones into a spool file and drop

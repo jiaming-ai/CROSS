@@ -95,8 +95,10 @@ def _np_dtype(name: str):
     return np.dtype(name)
 
 
-def encode_array(arr: np.ndarray, codec: str, quality: int = 95, png_level: int = 3) -> bytes:
-    """Encode one image array: colour (3, H, W) uint8 (RGB), depth (1, H, W) float16, anything else with raw / zstd."""
+def encode_array(arr: np.ndarray, codec: str, quality: int = 95, png_level: int = 3, depth_drop_bits: int = 0) -> bytes:
+    """Encode one image array: colour (3, H, W) uint8 (RGB), depth (1, H, W) float16, anything else with raw / zstd.
+    depth_drop_bits (png16): round away that many low mantissa bits of the fp16 depth (relative error <= 2^(b-11));
+    the noise in the low bits of resized sensor depth is what keeps it from compressing."""
     if codec == "raw":
         return np.ascontiguousarray(arr).tobytes()
     if codec == "zstd":
@@ -106,6 +108,12 @@ def encode_array(arr: np.ndarray, codec: str, quality: int = 95, png_level: int 
         if arr.dtype != np.float16:
             raise ValueError("png16 stores float16 depth")
         a = np.ascontiguousarray(arr.reshape(arr.shape[-2:])).view(np.uint16)
+        if depth_drop_bits > 0:
+            b = int(depth_drop_bits)
+            keep = np.uint16(0xFFFF ^ ((1 << b) - 1))
+            finite = (a & np.uint16(0x7C00)) != np.uint16(0x7C00)          # leave inf / nan alone
+            r = ((a.astype(np.uint32) + (1 << (b - 1))) & keep).astype(np.uint16)
+            a = np.where(finite, r, a)
         ok, buf = cv2.imencode(".png", a, [cv2.IMWRITE_PNG_COMPRESSION, png_level])
     else:
         if arr.dtype != np.uint8 or arr.ndim != 3 or arr.shape[0] not in (1, 3):
@@ -370,7 +378,8 @@ class ImageSpool:
                 continue
             codec = codec_for(f, t.dtype, self.cfg)
             arr = _to_numpy_image(t)
-            blob = encode_array(arr, codec, getattr(self.cfg, "image_quality", 95), getattr(self.cfg, "png_level", 3))
+            blob = encode_array(arr, codec, getattr(self.cfg, "image_quality", 95), getattr(self.cfg, "png_level", 3),
+                                getattr(self.cfg, "depth_drop_bits", 0))
             off = self.pack.append([blob])[0]
             setattr(kf, f, ImageRef(self.pack, off, len(blob), codec, arr.shape, str(arr.dtype), str(t.device)))
 
@@ -595,7 +604,7 @@ def _encode_images(records: list, directory: Path, cfg, stats: dict, on_written=
             return v.blob(), None, v.length, v.codec, v.shape, v.dtype
         arr = _to_numpy_image(v)
         codec = codec_for(f, v.dtype, cfg)
-        blob = encode_array(arr, codec, quality, level)
+        blob = encode_array(arr, codec, quality, level, getattr(cfg, "depth_drop_bits", 0))
         return blob, None, len(blob), codec, arr.shape, str(arr.dtype)
 
     t0 = time.perf_counter()

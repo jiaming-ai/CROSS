@@ -235,3 +235,14 @@ def test_spooled_images_are_repointed_to_the_saved_map(monkeypatch, tmp_path):
     assert st2["copied"] == 0 and st2["kept"] == 9 + 3 and st2["encoded"] == 6 - 3 + 1
     back = store.read_map(p)
     assert torch.equal(back["db_data"]["keyframes"][-1]["raw_rgb_image"].load(), kf_new.raw_rgb_image)
+
+
+def test_depth_drop_bits_bounds_the_relative_error():
+    rng = np.random.default_rng(1)
+    d = (rng.random((1, 40, 50)) * 30 + 0.01).astype(np.float16)
+    d[0, :3] = 0
+    for b in (2, 3, 4):
+        back = store.decode_array(store.encode_array(d, "png16", depth_drop_bits=b), "png16", d.shape, "float16")
+        x, y = d.astype(np.float32), back.astype(np.float32)
+        m = x > 0
+        assert np.all(y[~m] == 0) and np.max(np.abs(y[m] - x[m]) / x[m]) <= 2.0 ** (b - 11) + 1e-6

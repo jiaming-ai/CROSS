@@ -69,6 +69,7 @@ def main():
     ap.add_argument("--png-level", type=int, default=StorageConfig.png_level)
     ap.add_argument("--depth-codec", default=StorageConfig.depth_codec)
     ap.add_argument("--descriptor-dtype", default=StorageConfig.descriptor_dtype)
+    ap.add_argument("--depth-drop-bits", type=int, default=StorageConfig.depth_drop_bits)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--verify", action="store_true", help="read both back and compare every field")
     ap.add_argument("--stats", help="write the size / time statistics (JSON) here")
@@ -76,6 +77,7 @@ def main():
 
     cfg = StorageConfig(format=a.format, image_codec=a.image_codec, image_quality=a.image_quality,
                         png_level=a.png_level, depth_codec=a.depth_codec, descriptor_dtype=a.descriptor_dtype,
+                        depth_drop_bits=a.depth_drop_bits,
                         encode_workers=a.workers)
     t0 = time.perf_counter()
     data = store.read_map(a.src)

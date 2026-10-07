@@ -56,6 +56,7 @@ from loguru import logger  # noqa: E402
 from cross.core.config import SystemConfig, load_config  # noqa: E402
 from cross.core.system import System  # noqa: E402
 from cross.core.types import Camera  # noqa: E402
+from cross.db import store as map_store  # noqa: E402
 from cross.dataloader.posed_rgbd import PosedRGBDLoader  # noqa: E402
 from cross.pipeline import add_session_args, session_factory  # noqa: E402
 from reloc_metrics import (build_trials, drop_unlocalized, is_localized, map_relative_errors, summarize_errors,  # noqa: E402
@@ -185,7 +186,7 @@ def run_mapping(args, out: Path) -> dict:
     ate = float(np.sqrt(np.mean(np.sum(((T[:3, :3] @ src.T).T + T[:3, 3] - dst) ** 2, 1))))
     meta = {"kf_gt": kf_gt, "kf_est": kf_est, "kf_frame": kf_frame, "T_gt_from_map": T.tolist(), "map_ate_rmse": ate, "n_frames": n,
             "elapsed": elapsed, "n_keyframes": len(nodes), "n_permanent": n_perm, "timing": _timing_summary(),
-            "map_file_bytes": map_file.stat().st_size if map_file.exists() else None}
+            "map_file_bytes": map_store.map_bytes(map_file) if map_file.exists() else None}
     if online is not None:
         from reloc_metrics import online_pose_metrics
         meta["online"] = online_pose_metrics(online, T)
