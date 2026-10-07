@@ -817,7 +817,10 @@ class GeoConfig:
     drift_rate: Optional[float] = None        # growth of the prediction's std per metre since the last used fix (None: odom_k_t)
     pred_floor: float = 0.5                   # metres added to the prediction's std (lever arm, time stamps)
     uere: float = 3.0                         # receivers that report HDOP only: sigma_h = uere * HDOP
-    sigma_v_factor: float = 2.0               # vertical / horizontal noise without a reported vertical accuracy
+    # vertical / horizontal noise of a fix without its own vertical accuracy: consumer altitude wanders +-10 m over
+    # minutes (NCLT); 27-session study: vertical error 5.09 (2x) / 4.71 (4x) / 7.34 m (8x, one 26 m outlier), horizontal
+    # unchanged; without altitude the horizontal factors pitch the map (30.7 m)
+    sigma_v_factor: float = 4.0
     window_s: float = 20.0                    # relative-consistency window (s)
     min_fixes: int = 5                        # fixes of an epoch before any is used
     holdoff_s: float = 10.0                   # age of an epoch before its fixes are used (reacquisition)
