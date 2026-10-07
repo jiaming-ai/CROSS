@@ -116,6 +116,8 @@ consecutive windows of 30 frames.
   stretch that departed and from then on, so the visual measurements and loop closures correct the map. The guard then
   follows the fault window by window.
 - **Relocalization sessions** (`odom_guard_map`): the map measurements' fixes feed the guard too.
+- **Stereo needs the pair.** With the left image only (`pose_est.ff.right_image: left`, the profile
+  `configs/stereo_lowband.yaml`) a pass's scale comes from the odometry, so the guard cannot see a fault and stays off.
 
 **IMU.** The monocular visual-inertial setups (CROSS mono with `--odometry vio`) get the IMU rigidly attached to the
 monocular camera, at its native rate, with its calibrated extrinsics and noise (`benchmark/datasets/prepare_imu.py`,
