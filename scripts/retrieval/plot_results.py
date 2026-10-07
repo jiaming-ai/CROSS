@@ -142,6 +142,6 @@ def nclt_dims(pd):
 
 
 if __name__ == "__main__" and len(sys.argv) > 1:
-    nclt_scaling(sys.argv[1])
+    nclt_scaling(sys.argv[1], "nclt/nclt_s1_d2048.json", "nclt_recall_vs_size.png", " (2048-d codes)")
     nclt_scaling(sys.argv[1], "nclt/nclt_big.json", "nclt_recall_vs_size_million.png")
     nclt_dims(sys.argv[1])
