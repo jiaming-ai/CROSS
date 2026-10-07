@@ -248,6 +248,8 @@ def main():
         row = {"size": int(n), "bytes_full_fp16": int(n * proj.dim_in * 2), "bytes_code_fp16": int(n * proj.dim * 2)}
         t0 = time.perf_counter()
         codes = encode_rows(DB["desc"], db_idx, proj, dev)
+        row["code_explained_db"] = float(codes[: min(n, 20000)].float().pow(2).sum(1).mean())
+        row["code_explained_q"] = float(Qc.pow(2).sum(1).mean())
         torch.cuda.synchronize()
         row["t_encode_s"] = time.perf_counter() - t0
         index = DescriptorIndex(proj.dim_in, device=dev, initial_capacity=n, projection=proj, backend="exact")
@@ -260,9 +262,16 @@ def main():
 
         if "full" in a.methods and n * proj.dim_in * 2 < 200e9:
             t0 = time.perf_counter()
-            _, ti = topk_full(DB["desc"], db_idx, Qfull, K, dev)
+            ts_full, ti = topk_full(DB["desc"], db_idx, Qfull, K, dev)
             row["t_full_eval_s"] = time.perf_counter() - t0
             evaluate("full", ti.cpu().numpy())
+            # score fidelity of the codes on the K best full matches of every query (as projection_study.py)
+            loc = torch.as_tensor(np.searchsorted(db_idx, ti.cpu().numpy()), device=dev)
+            sc = torch.stack([(codes[loc[j]].float() @ Qc[j]) for j in range(len(qi))])
+            err = (sc - ts_full).abs()
+            row["code_score_mae_topK"] = float(err.mean())
+            row["code_score_p95_topK"] = float(err.flatten().quantile(0.95))
+            row["code_thr03_agree"] = float(((sc > 0.3) == (ts_full > 0.3)).float().mean())
         tops = []
         for i in range(0, len(qi), 256):   # chunked over queries
             tops.append(((Qc[i:i + 256].half() @ codes.T).float()).topk(min(K, n), dim=1).indices)
