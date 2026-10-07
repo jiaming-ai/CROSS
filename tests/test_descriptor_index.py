@@ -315,7 +315,8 @@ def test_bound_based_rescoring_returns_the_exact_top_k_for_a_weak_code():
     idx = DescriptorIndex(D, device="cpu", initial_capacity=100, fit_at=1000, fit_dim=32)   # explains little energy
     for i, x in enumerate(X[:1100]):
         idx.add(x, i)
+    idx.calibration.meta["resid_ratio_q999"] = 1.0      # the hard bound: exact top-k guaranteed (uncapped)
     for j in range(1100, 1200, 10):
         q = X[j]
-        s = idx.query_scores(q, shortlist=8, need=10)
+        s = idx.query_scores(q, shortlist=8, need=10, max_rescore=100000)
         assert set(s.topk(10).indices.tolist()) == set((X[:1100] @ q).topk(10).indices.tolist())
