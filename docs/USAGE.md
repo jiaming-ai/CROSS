@@ -237,6 +237,9 @@ python scripts/map_and_reloc.py ... --odometry vgio --remote --remote-rtt 0.1   
 #   --remote-jitter 0.05  --remote-outage every:30:3  --remote-jpeg 90  --remote-uplink-mbps 5
 #   --remote-max-backlog 0.3 (default; 0: off)   a server behind the edge skips stale observations instead of queueing
 #   --remote-obs-cap 0.1   the edge sends an observation only if the server could start it within 0.1 s
+#   --set pose_est.obs_confident_max_interval_steps=10   fewer observations while localized; the edge follows (no images)
+#   --mono-args '--imu-config vgio_align=true'   vgio measures on the back end's passes: fewer uploads (stereo; mono
+#                                                loses scale accuracy)
 #   --remote --remote-compute zero --remote-upload all   reproduces the local session exactly
 python benchmark/dev.py run --systems cross_stereo_vgio --variant rtt100 --args "--remote --remote-rtt 0.1 --online-poses"
 ```

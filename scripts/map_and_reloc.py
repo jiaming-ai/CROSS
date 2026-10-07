@@ -254,8 +254,10 @@ def run_reloc(args, out: Path, meta: dict):
     q_end = args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
     remote_trials = []
+    n_new = 0                                     # keyframes the trials added to the map (summed over the sessions)
     for ti, (ts_, te_) in enumerate(trials):
         if ti > 0:
+            n_new += len(system.hypothesis_manager.nodes) - n_map_kfs
             # every trial is an independent relocalization session: a fresh one.  load_map on the used session would
             # keep its belief and step counters, and only a missing first motion (external odometry: delta_pose None)
             # re-initialized it; with a frontend (VGGT + IMU, DPVO) the trial started from the last trial's belief
@@ -290,7 +292,7 @@ def run_reloc(args, out: Path, meta: dict):
                 logger.info(f"trial {ti} step {idx}: c0 err {row['c0_t_err']:.2f} m / {row['c0_r_err']:.1f} deg, "
                             f"best(k={row['best_k']}) {row['best_t_err']:.2f} m, w0={row['w0']:.2f}")
     elapsed = time.time() - t0
-    n_new = len(system.hypothesis_manager.nodes) - n_map_kfs
+    n_new += len(system.hypothesis_manager.nodes) - n_map_kfs
     if hasattr(system, "remote_stats"):
         remote_trials.append(system.remote_stats())
     system.release()
