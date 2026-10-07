@@ -776,6 +776,11 @@ class GeoConfig:
     opt_min_factors: int = 3                  # GNSS factors since the last optimisation before a drift test
     opt_min_keyframes: int = 20               # keyframes between two GNSS-triggered optimisations
     robust_c: Optional[float] = None          # Cauchy kernel scale (None: sqrt of the 2-dof chi-square at `confidence`)
+    # ablations (all True = the method): `gate` False uses every fix (no consistency tests, no hold-off), `decimate`
+    # False makes every used fix a factor (no correlation-time spacing), `robust` False drops the Cauchy kernel
+    gate: bool = True
+    decimate: bool = True
+    robust: bool = True
     retrieval_gate: bool = True               # relocalization: map keyframes far from the fix are not retrieved
     proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
     retrieval_margin_m: float = 10.0          # retrieval gate radius beyond the fix's chi-square radius (views of the

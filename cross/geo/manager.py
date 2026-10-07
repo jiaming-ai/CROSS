@@ -70,7 +70,7 @@ class GeoManager:
         self.n_kf = 0
         self.compass_last = None
         self.now = None
-        self.robust_c = float(cfg.robust_c) if cfg.robust_c is not None else math.sqrt(self.k2)
+        self.robust_c = (float(cfg.robust_c) if cfg.robust_c is not None else math.sqrt(self.k2)) if cfg.robust else None
         self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0, "retrieval_gated": 0}
 
     # ------------------------------------------------------------------ state
@@ -142,7 +142,13 @@ class GeoManager:
             sig = self.odom_k_t * max(d_since, 0.0) + max(belief_std_t, 0.0) + self.cfg.pred_floor
             P = self.anchor.position_cov_enu(p)[:2, :2] + sig ** 2 * np.eye(2)
             pred = (self.anchor.to_enu(p)[:2], P)
-        dec = self.gate.process(fix, enu, lev[:2], pred)
+        if self.cfg.gate:
+            dec = self.gate.process(fix, enu, lev[:2], pred)
+        else:
+            from .gnss import GnssDecision
+            sig = self.noise.sigma(fix)
+            dec = GnssDecision(sig is not None, "ungated" if sig is not None else "no_fix", enu,
+                               *(sig if sig is not None else (float("nan"), float("nan"))))
         self.last_decision = dec
         if not dec.used:
             return dec
@@ -163,7 +169,7 @@ class GeoManager:
                 self.fix_log = self.fix_log[-self.cfg.max_fix_log:]
             # one factor per correlation time of the receiver error, on the latest keyframe (and every fix whose offset
             # the gate attributed to the chain's drift)
-            if fix.t - self.last_factor_t >= self.err.tau or dec.drift_reset:
+            if not self.cfg.decimate or fix.t - self.last_factor_t >= self.err.tau or dec.drift_reset:
                 if dec.drift_reset:
                     self.drift_flag = True
                 self.factors[rec["kf"]] = {"enu": rec["enu"], "sh": rec["sh"], "sv": rec["sv"], "delta": rec["delta"],

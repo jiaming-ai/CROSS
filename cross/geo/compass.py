@@ -46,6 +46,31 @@ def tilt_compensated_yaw(mag, accel, frame: str = "frd") -> float:
     return float(wrap(math.pi / 2 - bearing))
 
 
+def levelled_field(mag, accel, frame: str = "frd") -> np.ndarray:
+    """Horizontal components (north-ish x along the body's forward projection, y to its right) of the magnetic field,
+    levelled with roll / pitch from the accelerometer (forward-right-down body frame)."""
+    m = np.asarray(mag, float)
+    a = np.asarray(accel, float)
+    if frame == "flu":
+        m = m * np.array([1, -1, -1])
+        a = a * np.array([1, -1, -1])
+    g = -a / max(np.linalg.norm(a), 1e-9)
+    roll = math.atan2(g[1], g[2])
+    pitch = math.atan2(-g[0], math.hypot(g[1], g[2]))
+    cr, sr, cp, sp = math.cos(roll), math.sin(roll), math.cos(pitch), math.sin(pitch)
+    return np.array([m[0] * cp + m[1] * sr * sp + m[2] * cr * sp, m[1] * cr - m[2] * sr])
+
+
+def fit_circle(xy: np.ndarray):
+    """Algebraic (Kasa) circle fit: (centre (2,), radius)."""
+    x, y = xy[:, 0], xy[:, 1]
+    A = np.c_[x, y, np.ones(len(x))]
+    b = -(x ** 2 + y ** 2)
+    D, E, F = np.linalg.lstsq(A, b, rcond=None)[0]
+    c = np.array([-D / 2, -E / 2])
+    return c, math.sqrt(max(c @ c - F, 0.0))
+
+
 def field_inclination(mag, accel, frame: str = "frd"):
     """(|B|, inclination) of the field: inclination = angle between B and the horizontal plane (positive down)."""
     m = np.asarray(mag, float)
@@ -79,6 +104,10 @@ class Compass:
         self.offset_std = None if self.offset is None else 0.0
         self.stats = {"samples": 0, "disturbed": 0, "used": 0}
         self.ref_fixed = None                                       # (median, spread) stored with a map
+        # hard-iron calibration: levelled horizontal field samples of good conditions binned by heading; the circle
+        # through them is centred on the hard-iron offset once the robot has turned through most headings
+        self.hi_bins = {}
+        self.hard_iron = None
 
     def _reference(self):
         if len(self.ref_good) < 50 and self.ref_fixed is not None:
@@ -114,7 +143,12 @@ class Compass:
             if self.disturbed(sample["mag"], sample["accel"], outdoor_ok):
                 self.stats["disturbed"] += 1
                 return None
-            yaw = tilt_compensated_yaw(sample["mag"], sample["accel"], self.cfg.frame)
+            h = levelled_field(sample["mag"], sample["accel"], self.cfg.frame)
+            if outdoor_ok:
+                self._add_hard_iron_sample(h)
+            if self.hard_iron is not None:
+                h = h - self.hard_iron
+            yaw = float(wrap(math.pi / 2 - math.atan2(-h[1], h[0])))
         elif "yaw" in sample:
             yaw = float(sample["yaw"])
         elif "bearing_deg" in sample:
@@ -123,6 +157,16 @@ class Compass:
             return None
         self.stats["used"] += 1
         return yaw, sigma
+
+    def _add_hard_iron_sample(self, h: np.ndarray, n_bins: int = 36, per_bin: int = 20):
+        k = int(((math.atan2(h[1], h[0]) + math.pi) / (2 * math.pi)) * n_bins) % n_bins
+        b = self.hi_bins.setdefault(k, deque(maxlen=per_bin))
+        b.append(h.copy())
+        if len(self.hi_bins) >= int(0.75 * n_bins) and self.stats["samples"] % 50 == 0:
+            xy = np.concatenate([np.asarray(v) for v in self.hi_bins.values()])
+            c, r = fit_circle(xy)
+            if r > 0 and np.linalg.norm(c) < r:          # a plausible offset (smaller than the field itself)
+                self.hard_iron = c
 
     def add_offset_sample(self, compass_yaw: float, camera_yaw_enu: float):
         """A heading pair while the map is anchored and GNSS is good: calibrates the compass offset."""
@@ -148,6 +192,7 @@ class Compass:
 
     def state(self) -> dict:
         return {"offset": self.offset, "offset_std": self.offset_std,
+                "hard_iron": None if self.hard_iron is None else [float(x) for x in self.hard_iron],
                 "offset_spread": getattr(self, "offset_spread", None), "stats": dict(self.stats),
                 "reference": None if self._reference() is None else [list(map(float, x)) for x in self._reference()]}
 
@@ -156,6 +201,8 @@ class Compass:
             self.offset = float(s["offset"])
             self.offset_std = s.get("offset_std")
             self.offset_spread = s.get("offset_spread")
+        if s.get("hard_iron") is not None:
+            self.hard_iron = np.asarray(s["hard_iron"], float)
         ref = s.get("reference")
         if ref:
             self.ref_fixed = (np.asarray(ref[0], float), np.asarray(ref[1], float))
