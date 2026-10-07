@@ -443,6 +443,7 @@ class _IVF:
     def train(cls, X: torch.Tensor, nlist: int, iters: int = 12, sample: int = 64, max_sample: int = 500000) -> "_IVF":
         g = torch.Generator(device="cpu").manual_seed(0)
         n = X.shape[0]
+        max_sample = min(max_sample, int(1e9 // (4 * X.shape[1])))      # at most ~1 GB of float32 training rows
         take = torch.randperm(n, generator=g)[: min(n, nlist * sample, max_sample)].to(X.device)
         S = X[take].float()
         C = S[torch.randperm(S.shape[0], generator=g)[:nlist].to(X.device)].clone()
