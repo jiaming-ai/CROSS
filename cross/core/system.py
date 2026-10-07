@@ -256,8 +256,11 @@ class System:
             self._lc_verifier = LoopClosureVerifier(self, lc_cfg)
             # the odometry scale guard needs translations that are metric without the odometry: PnP on depth, or the
             # feed-forward estimator with a stereo rig (not the monocular mode, whose scale comes from the odometry)
+            # (with pose_est.ff.right_image "left" a pass's scale comes from the odometry and map pairs: not metric on its own)
+            ff_cfg = getattr(getattr(self.config, "pose_est", None), "ff", None)
+            stereo_anchors = str(getattr(ff_cfg, "right_image", "pair") or "pair") == "pair"
             self._lc_verifier.guard_metric = self.pose_est_type == PoseEstType.PNP or (
-                self.pose_est_type == PoseEstType.FF and T_right_in_left is not None)
+                self.pose_est_type == PoseEstType.FF and T_right_in_left is not None and stereo_anchors)
             # calibrated metric scale of the feed-forward estimator (measured / true translation, from the odometry)
             if float(getattr(lc_cfg.noise, "visual_scale", 1.0) or 1.0) != 1.0 and hasattr(self, "pose_est"):
                 self.pose_est.metric_scale_correction = float(lc_cfg.noise.visual_scale)
