@@ -1,0 +1,322 @@
+"""Descriptor / spatial indexes of the keyframe database (cross/db/index.py) and locality-aware retrieval."""
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import torch
+
+from cross.db.index import DescriptorIndex, PCAProjection, ScoreCalibration, SpatialIndex
+
+
+def _unit(n, d, seed=0):
+    g = torch.Generator().manual_seed(seed)
+    return torch.nn.functional.normalize(torch.randn(n, d, generator=g), dim=-1)
+
+
+def test_exact_index_matches_plain_matmul_and_grows_like_the_old_buffer():
+    X = _unit(250, 32)
+    idx = DescriptorIndex(32, device="cpu", initial_capacity=100)
+    for i, x in enumerate(X):
+        assert idx.add(x, 1000 + i) == i
+    assert idx.n == 250 and idx.buf.shape[0] >= 350 and idx.dtype == torch.float32
+    q = X[7]
+    assert torch.equal(idx.scores(q), (X @ q.unsqueeze(-1)).squeeze(-1))
+    rows = torch.tensor([5, 3, 200])
+    assert torch.equal(idx.scores(q, rows), (X[rows] @ q.unsqueeze(-1)).squeeze(-1))
+    m = idx.id_mask(max_kf_id=1100, min_kf_id=1050)
+    assert m.nonzero().flatten().tolist() == list(range(50, 100))
+
+
+def test_remove_moves_the_last_row():
+    X = _unit(10, 8)
+    idx = DescriptorIndex(8, device="cpu", initial_capacity=4)
+    for i, x in enumerate(X):
+        idx.add(x, i)
+    assert idx.remove_row(3) == 9 and idx.n == 9 and int(idx.ids[3]) == 9
+    assert torch.equal(idx.buf[3], X[9])
+    assert idx.remove_row(8) is None and idx.n == 8
+
+
+def test_pca_projection_keeps_cosines_of_low_rank_data_and_roundtrips(tmp_path):
+    g = torch.Generator().manual_seed(1)
+    basis = torch.randn(16, 256, generator=g)
+    X = torch.nn.functional.normalize(torch.randn(2000, 16, generator=g) @ basis, dim=-1)
+    p = PCAProjection.fit(X, 16, center=True, normalize=True)
+    assert p.meta["explained"] > 0.99
+    Z = p.apply(X[:50])
+    full = X[:50] @ X[:50].T
+    # centring changes cosines; ranking of neighbours is what must survive
+    assert (Z @ Z.T).argsort(1)[:, -3:].eq(full.argsort(1)[:, -3:]).float().mean() > 0.9
+    f = tmp_path / "pca.npz"
+    p.save(str(f))
+    q = PCAProjection.load(str(f))
+    assert torch.allclose(q.apply(X[:5]), p.apply(X[:5]), atol=2e-3)
+    idx = DescriptorIndex(256, device="cpu", initial_capacity=10, projection=q)
+    for i, x in enumerate(X[:30]):
+        idx.add(x, i)
+    assert idx.dtype == torch.float16 and idx.buf.shape[1] == 16
+    s = idx.scores(idx.encode(X[4]))
+    assert int(s.argmax()) == 4 and abs(float(s[4]) - 1.0) < 2e-3
+    # default (uncentred, not renormalized): code inner products approximate the full cosines
+    u = PCAProjection.fit(X, 16)
+    Z = u.apply(X[:50])
+    assert float((Z @ Z.T - full).abs().max()) < 1e-3
+
+
+def test_ivf_backend_finds_the_exact_neighbour_most_of_the_time():
+    X = _unit(6000, 32, seed=2)
+    idx = DescriptorIndex(32, device="cpu", initial_capacity=100, backend="ivf", ivf_nprobe=8, ivf_min_rows=4000)
+    for i, x in enumerate(X):
+        idx.add(x, i)
+    assert idx._ivf is not None
+    hits = 0
+    for i in range(0, 6000, 60):
+        q = torch.nn.functional.normalize(X[i] + 0.05 * _unit(1, 32, seed=i)[0], dim=-1)
+        rows = idx.ann_rows(q)
+        assert rows.numel() < 6000
+        hits += int(i in set(rows.tolist()))
+    assert hits >= 90
+
+
+def test_spatial_index_radius_queries_with_pending_rows_and_rebuild():
+    sp = SpatialIndex()
+    P = np.array([[0, 0, 0], [3, 0, 0], [10, 0, 0], [0, 0, 20]], float)
+    sp.rebuild(np.arange(4), P, epoch=0)
+    assert sp.query([[0, 0, 0]], [4.0]).tolist() == [0, 1]
+    sp.add(4, [0.5, 0, 0])
+    assert sp.query([[0, 0, 0], [0, 0, 20]], [1.0, 0.5]).tolist() == [0, 3, 4]
+    assert sp.needs_rebuild(1, 5) and not sp.needs_rebuild(0, 5)
+    sp.remap_row(4, 2)
+    assert 2 in sp.query([[0.5, 0, 0]], [0.1]).tolist()
+
+
+def _db_with_keyframes(n=60, d=16):
+    """A KeyframeDatabase (no VPR model) with keyframes on a line, 2 m apart; embedding of image i = row i."""
+    from cross.db.db import KeyframeDatabase
+    from cross.db.index import DescriptorIndex
+    import pypose as pp
+    X = _unit(n + 5, d, seed=3)
+    db = KeyframeDatabase.__new__(KeyframeDatabase)
+    db.device, db.top_k = "cpu", 5
+    db.score_threshold_high = db.score_threshold_low = -1.0
+    db.index = DescriptorIndex(d, device="cpu", initial_capacity=10)
+    db.spatial = SpatialIndex()
+    db._row_kf, db._id_to_row = [], {}
+    db._keyframe_by_atlas, db._index_to_atlas_idx, db._atlas_to_indices = {None: []}, {}, {None: []}
+    db.vpr_model = SimpleNamespace(get_embedding=lambda i: X[i])
+    for i in range(n):
+        mu = pp.identity_SE3(1)
+        mu.tensor()[0, 0] = 2.0 * i
+        kf = SimpleNamespace(id=i, pose_mu=mu)
+        r = db.index.add(X[i], i)
+        db._row_kf.append(kf); db._id_to_row[i] = r
+        db._keyframe_by_atlas[None].append(kf); db._index_to_atlas_idx[r] = (None, i); db._atlas_to_indices[None].append(r)
+        db.spatial.add(r, [2.0 * i, 0, 0])
+    return db, X
+
+
+def test_query_restricted_to_rows_and_rows_near():
+    db, X = _db_with_keyframes()
+    rows = db.rows_near(np.array([[20.0, 0, 0]]), np.array([4.1]), epoch=0)
+    assert rows.tolist() == [8, 9, 10, 11, 12]
+    res = db.query(10, rows=rows, top_k=3)
+    assert [k.id for k in res["keyframes"]][0] == 10 and all(8 <= k.id <= 12 for k in res["keyframes"])
+    res = db.query(10, rows=rows, max_kf_id=10)
+    assert all(8 <= k.id < 10 for k in res["keyframes"])
+
+
+def test_locality_merge_puts_in_region_keyframes_first():
+    from cross.core.config import SystemConfig
+    from cross.core.system import System
+    import pypose as pp
+    db, X = _db_with_keyframes()
+    cfg = SystemConfig()
+    cfg.retrieval.locality.enabled = True
+    cfg.retrieval.locality.slots = 2
+    cfg.retrieval.locality.r_min = 3.0
+    cfg.retrieval.locality.k_sigma = 0.0
+    sysm = System.__new__(System)
+    sysm.config, sysm.db = cfg, db
+    sysm._locality_path, sysm._location_priors, sysm._processed_frame_num = 0.0, [], 5
+    mu = pp.identity_SE3(2); mu.tensor()[0, 0] = 100.0; mu.tensor()[1, 0] = -50.0
+    sysm.hypothesis_manager = SimpleNamespace(dist=(mu, pp.identity_se3(2), torch.tensor([1.0, 0.0])), pose_epoch=0)
+    ranked = [(0.9, db._row_kf[3]), (0.8, db._row_kf[50]), (0.7, db._row_kf[49])]
+    out = sysm._locality_merge(30, ranked)
+    # region around x = 100 m (keyframes 49..51): the best two of them first, then the global list without them
+    assert [k.id for _, k in out][:2] == sorted([49, 50, 51], key=lambda i: -float(X[i] @ X[30]))[:2]
+    assert [k.id for _, k in out][2:] == [k.id for _, k in ranked if k.id not in {k.id for _, k in out[:2]}]
+    # an external prior opens its own region; it expires after its step
+    sysm.add_location_prior([0.0, 0, 0], sigma=1.0, source="gps")
+    cfg.retrieval.locality.k_sigma = 1.0
+    out = sysm._locality_merge(1, ranked)
+    assert sysm.last_locality["sources"][-1] == "gps"
+    assert out[0][1].id == 1                     # the query's own keyframe, inside the GPS region
+    sysm._processed_frame_num = 10
+    sysm._locality_merge(1, ranked)
+    assert "gps" not in sysm.last_locality["sources"]
+    # disabled: unchanged
+    cfg.retrieval.locality.enabled = False
+    assert sysm._locality_merge(1, ranked) is ranked
+
+
+def _topo_pair():
+    """Random keyframes (some temporary) for the proximity graph."""
+    import threading, pypose as pp
+    from cross.core import simple_topo as new
+    g = torch.Generator().manual_seed(5)
+    nodes = {}
+    for i in range(400):
+        mu = pp.identity_SE3(2)
+        mu.tensor()[0, :3] = torch.rand(3, generator=g) * torch.tensor([20.0, 1.0, 20.0])
+        nodes[i] = SimpleNamespace(id=i, pose_mu=mu, temporary=bool(i % 7 == 0), pose_charts=None)
+    hm = SimpleNamespace(nodes=nodes, odom_edges={(i, i + 1): None for i in range(399)}, graph_lock=threading.RLock(),
+                         chart_aware=False)
+    sysm = SimpleNamespace(hypothesis_manager=hm)
+    return new, sysm, nodes
+
+
+def test_proximity_graph_kdtree_matches_the_pairwise_scan():
+    new, sysm, nodes = _topo_pair()
+    topo = new.SimpleTopo(sysm, new.SimpleTopoConfig(proximity_distance_thresh=0.8))
+    topo.rebuild_graph()
+    P = torch.stack([nodes[i].pose_mu[0].tensor()[:3] for i in nodes if not nodes[i].temporary])
+    ids = [i for i in nodes if not nodes[i].temporary]
+    D = torch.cdist(P[:, [0, 2]], P[:, [0, 2]])
+    want = {(ids[a], ids[b]) for a, b in (D < 0.8).nonzero().tolist() if a < b and abs(ids[a] - ids[b]) != 1}
+    assert set(topo.proximity_edges) == want
+    # a PGO moves some keyframes: the refresh is deferred to the next read and gives the same graph as a rebuild
+    for i in range(0, 400, 3):
+        nodes[i].pose_mu.tensor()[0, 0] += 0.5
+    topo.update_after_pgo(set(range(0, 400, 3)))
+    assert topo._pending_pgo
+    lazy = set(topo.proximity_edges)
+    ref = new.SimpleTopo(sysm, new.SimpleTopoConfig(proximity_distance_thresh=0.8))
+    ref.rebuild_graph()
+    assert not topo._pending_pgo
+    moved = set(range(0, 400, 3))
+    assert {e for e in lazy if moved & set(e)} == {e for e in ref.proximity_edges if moved & set(e)}
+
+
+def test_map_projection_fit_keeps_scores_and_extends_on_scene_change():
+    g = torch.Generator().manual_seed(7)
+    D = 512
+    A = torch.randn(48, D, generator=g)
+    B = torch.randn(48, D, generator=g)
+    common = torch.randn(1, D, generator=g)
+    def draw(basis, n):
+        x = torch.randn(n, basis.shape[0], generator=g) @ basis + 2.0 * common + 0.05 * torch.randn(n, D, generator=g)
+        return torch.nn.functional.normalize(x, dim=-1)
+    XA, XB = draw(A, 900), draw(B, 700)
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=100, fit_at=600, fit_dim=64, extend_dims=48,
+                          extend_margin=0.05, recent=400)
+    for i, x in enumerate(XA[:599]):
+        idx.add(x, i)
+    assert idx.projection is None and idx.dtype == torch.float32          # full descriptors before fit_at
+    idx.add(XA[599], 599)
+    assert idx.map_fitted and idx.dim == 64 and idx.dtype == torch.float16
+    q = XA[700]
+    for i, x in enumerate(XA[600:], start=600):
+        idx.add(x, i)
+    full = XA @ q
+    approx = idx.scores(idx.encode(q))[:900]
+    assert float((approx - full).abs().mean()) < 0.02
+    assert idx.projection.meta["extensions"] == 0
+    for i, x in enumerate(XB, start=900):
+        idx.add(x, i)
+    assert idx.projection.meta["extensions"] >= 1 and idx.dim > 64          # the new kind of place got its dimensions
+    qb = XB[-1]
+    approx_b = idx.scores(idx.encode(qb))[1300:1600]
+    assert float((approx_b - XB[400:700] @ qb).abs().mean()) < 0.05
+    # persistence: the stored codes + projection reproduce the scores
+    st = idx.state()
+    re = DescriptorIndex(D, device="cpu", projection=PCAProjection.from_state(st["projection"]))
+    re.set_rows(idx.buf[:idx.n], idx.ids[:idx.n].tolist())
+    assert torch.allclose(re.scores(re.encode(qb)), idx.scores(idx.encode(qb)), atol=2e-3)
+
+
+def test_map_projection_auto_dimension_follows_the_data():
+    g = torch.Generator().manual_seed(11)
+    D = 512
+    basis = torch.randn(40, D, generator=g)
+    X = torch.nn.functional.normalize(torch.randn(700, 40, generator=g) @ basis + 0.02 * torch.randn(700, D, generator=g), dim=-1)
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=100, fit_at=600, fit_dim=0, fit_energy=0.9, max_dim=256)
+    for i, x in enumerate(X):
+        idx.add(x, i)
+    assert idx.map_fitted and 30 <= idx.dim <= 64 and idx.projection.meta["e_ref"] >= 0.9
+
+
+def test_map_projection_refits_when_the_map_doubles_and_before_saving():
+    g = torch.Generator().manual_seed(13)
+    D = 256
+    A, B = torch.randn(30, D, generator=g), torch.randn(30, D, generator=g)
+    def draw(basis, n):
+        return torch.nn.functional.normalize(torch.randn(n, 30, generator=g) @ basis + 0.02 * torch.randn(n, D, generator=g), dim=-1)
+    X = torch.cat([draw(A, 300), draw(B, 400)])
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=50, fit_at=200, fit_dim=64, extend=False)
+    for i, x in enumerate(X[:599]):
+        idx.add(x, i)
+    assert idx.map_fitted and idx.projection.meta["refits"] == 1 and idx.projection.meta["fit_rows"] == 400
+    idx.add(X[599], 599)
+    idx.finalize()                                   # rows were added since the refit at 400: fit on all 600
+    assert idx.projection.meta["fit_rows"] == 600
+    q = X[550]
+    err = (idx.scores(idx.encode(q))[:600] - X[:600] @ q).abs().mean()
+    assert float(err) < 0.02                         # both kinds of place are in the subspace after the refits
+
+
+def test_projected_scores_keep_the_full_cosine():
+    """Calibrated code scores, the shortlist re-scored exactly while the full descriptors are in RAM; a reloaded
+    (codes-only) index still gives calibrated scores close to the full cosine."""
+    g = torch.Generator().manual_seed(17)
+    D = 512
+    basis = torch.randn(60, D, generator=g)
+    X = torch.nn.functional.normalize(torch.randn(900, 60, generator=g) @ basis + 0.6 * torch.randn(900, D, generator=g)
+                                      + 3.0 * torch.randn(1, D, generator=g), dim=-1)
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=100, fit_at=800, fit_dim=48)
+    for i, x in enumerate(X[:850]):
+        idx.add(x, i)
+    q = X[860]
+    full = X[:850] @ q
+    raw = idx.scores(idx.encode(q))[:850]
+    s = idx.query_scores(q)
+    top = full.topk(20).indices
+    assert torch.allclose(s[top], full[top], atol=1e-3)                      # exact on the shortlist
+    st = idx.state()
+    re = DescriptorIndex(D, device="cpu", projection=PCAProjection.from_state(st["projection"]))
+    re.set_rows(idx.buf[:idx.n], idx.ids[:idx.n].tolist())
+    re.calibration = ScoreCalibration.from_state(st["calibration"])
+    s2 = re.query_scores(q)                                                   # codes only: raw code scores
+    assert torch.allclose(s2, raw, atol=1e-4)
+    iso = re.calibration.apply(raw, 0.9, re._energy[:re.n], model="iso")      # opt-in models stay available
+    assert iso.shape == raw.shape and torch.isfinite(iso).all()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_map_projection_refit_and_extension_on_the_gpu():
+    g = torch.Generator().manual_seed(19)
+    D = 256
+    A, B = torch.randn(20, D, generator=g), torch.randn(20, D, generator=g)
+    def draw(basis, n):
+        return torch.nn.functional.normalize(torch.randn(n, 20, generator=g) @ basis + 0.02 * torch.randn(n, D, generator=g), dim=-1)
+    X = torch.cat([draw(A, 700), draw(B, 500)]).cuda()
+    idx = DescriptorIndex(D, device="cuda", initial_capacity=50, fit_at=300, fit_dim=24, extend_dims=16, recent=300,
+                          max_dim=128)
+    for i, x in enumerate(X):
+        idx.add(x, i)
+    assert idx.map_fitted and (idx.projection.meta["extensions"] >= 1 or idx.projection.meta["refits"] >= 1)
+    s = idx.query_scores(X[1100])
+    assert s.device.type == "cuda" and int(s.argmax()) == 1100
+
+
+def test_bound_based_rescoring_returns_the_exact_top_k_for_a_weak_code():
+    g = torch.Generator().manual_seed(23)
+    D = 512
+    X = torch.nn.functional.normalize(torch.randn(1200, D, generator=g) + 0.5 * torch.randn(1, D, generator=g), dim=-1)
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=100, fit_at=1000, fit_dim=32)   # explains little energy
+    for i, x in enumerate(X[:1100]):
+        idx.add(x, i)
+    idx.calibration.meta["resid_ratio_q999"] = 1.0      # the hard bound: exact top-k guaranteed (uncapped)
+    for j in range(1100, 1200, 10):
+        q = X[j]
+        s = idx.query_scores(q, shortlist=8, need=10, max_rescore=100000)
+        assert set(s.topk(10).indices.tolist()) == set((X[:1100] @ q).topk(10).indices.tolist())

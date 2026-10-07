@@ -45,9 +45,11 @@ class SimpleTopo:
         self._hm = system.hypothesis_manager
         self.config = config or SimpleTopoConfig()
 
-        # Proximity graph storage (undirected, sorted node-id keys)
-        self.proximity_edges: Dict[Tuple[int, int], Edge] = {}
-        self.proximity_adjacency: Dict[int, Set[int]] = {}
+        # Proximity graph storage (undirected, sorted node-id keys).  A PGO only marks the moved keyframes; their
+        # edges are recomputed when the graph is read (the planner), not after every optimisation of a large map.
+        self._prox_edges: Dict[Tuple[int, int], Edge] = {}
+        self._prox_adj: Dict[int, Set[int]] = {}
+        self._pending_pgo: Set[int] = set()
 
         # Lightweight planning state
         self.current_plan: Optional[Dict[str, Any]] = None
@@ -56,19 +58,34 @@ class SimpleTopo:
 
     # ===================== Proximity edge maintenance ===================== #
 
+    @property
+    def proximity_edges(self) -> Dict[Tuple[int, int], Edge]:
+        self._flush_pgo_updates()
+        return self._prox_edges
+
+    @property
+    def proximity_adjacency(self) -> Dict[int, Set[int]]:
+        self._flush_pgo_updates()
+        return self._prox_adj
+
+    def _flush_pgo_updates(self):
+        if self._pending_pgo:
+            affected, self._pending_pgo = self._pending_pgo, set()
+            self._refresh_after_pgo(affected)
+
     def _remove_proximity_edge(self, key: Tuple[int, int]):
         """Remove a stored proximity edge and adjacency entries."""
-        if key in self.proximity_edges:
-            del self.proximity_edges[key]
+        if key in self._prox_edges:
+            del self._prox_edges[key]
         a, b = key
-        if a in self.proximity_adjacency:
-            self.proximity_adjacency[a].discard(b)
-            if not self.proximity_adjacency[a]:
-                del self.proximity_adjacency[a]
-        if b in self.proximity_adjacency:
-            self.proximity_adjacency[b].discard(a)
-            if not self.proximity_adjacency[b]:
-                del self.proximity_adjacency[b]
+        if a in self._prox_adj:
+            self._prox_adj[a].discard(b)
+            if not self._prox_adj[a]:
+                del self._prox_adj[a]
+        if b in self._prox_adj:
+            self._prox_adj[b].discard(a)
+            if not self._prox_adj[b]:
+                del self._prox_adj[b]
 
     def _add_proximity_edge(self, id1: int, id2: int):
         """Add an undirected proximity edge if one does not already exist."""
@@ -78,7 +95,7 @@ class SimpleTopo:
         key = tuple(sorted((id1, id2)))
 
         # Avoid duplicates
-        if key in self.proximity_edges:
+        if key in self._prox_edges:
             return
 
         # Avoid parallel to existing odometry edges
@@ -103,9 +120,9 @@ class SimpleTopo:
             std=pp.se3(torch.tensor([0.05, 0.05, 0.05, 0.1, 0.1, 0.1], device=device)),
             type=EdgeType.PROXIMITY,
         )
-        self.proximity_edges[key] = edge
-        self.proximity_adjacency.setdefault(id1, set()).add(id2)
-        self.proximity_adjacency.setdefault(id2, set()).add(id1)
+        self._prox_edges[key] = edge
+        self._prox_adj.setdefault(id1, set()).add(id2)
+        self._prox_adj.setdefault(id2, set()).add(id1)
 
     def handle_new_node(self, node_id: int):
         """
@@ -138,14 +155,18 @@ class SimpleTopo:
                     self._add_proximity_edge(node_id, other.id)
 
     def update_after_pgo(self, affected_ids: Set[int]):
+        """Mark keyframes whose poses changed after a PGO; their proximity edges are refreshed when the graph is read."""
+        if not affected_ids or not getattr(self.config, "enabled", True):
+            return
+        self._pending_pgo |= set(affected_ids)
+
+    def _refresh_after_pgo(self, affected_ids: Set[int]):
         """
         Refresh proximity edges for nodes whose poses changed after PGO.
 
         This mirrors the previous `_update_proximity_edges_after_pgo` logic but is
         encapsulated here. Assumes affected_ids is a set of keyframe IDs.
         """
-        if not affected_ids or not getattr(self.config, "enabled", True):
-            return
 
         with self._hm.graph_lock:
             # Only consider permanent nodes to avoid churn from temporary cleanup.
@@ -156,8 +177,8 @@ class SimpleTopo:
             }
 
             if not positions:
-                self.proximity_edges.clear()
-                self.proximity_adjacency.clear()
+                self._prox_edges.clear()
+                self._prox_adj.clear()
                 return
 
             affected_ids = set(affected_ids)
@@ -165,7 +186,7 @@ class SimpleTopo:
             # Drop existing proximity edges incident to affected nodes
             to_remove = [
                 key
-                for key in list(self.proximity_edges.keys())
+                for key in list(self._prox_edges.keys())
                 if key[0] in affected_ids or key[1] in affected_ids
             ]
             for key in to_remove:
@@ -194,23 +215,23 @@ class SimpleTopo:
                 pos_tensor = torch.stack(
                     [positions[nid] for nid in node_ids], dim=0
                 )
+                # candidates from a KD-tree on (x, z) (slightly larger radius), then the exact test of the original
+                # per-node scan (same edges in the same order, O(N log N) instead of O(N^2))
+                from scipy.spatial import cKDTree
+                pos_xz = pos_tensor[:, [0, 2]]
+                tree = cKDTree(pos_xz.detach().cpu().double().numpy())
+                thresh = self.config.proximity_distance_thresh
                 for node_id in affected_ids:
                     idx = id_to_idx.get(node_id)
                     if idx is None:
                         continue
+                    cand = sorted(tree.query_ball_point(pos_xz[idx].detach().cpu().double().numpy(), thresh * (1 + 1e-6) + 1e-9))
+                    if not cand:
+                        continue
+                    cand_t = torch.as_tensor(cand, device=pos_tensor.device)
                     # Only consider x and z coordinates
-                    dists = torch.norm(
-                        pos_tensor[:, [0, 2]] - pos_tensor[idx, [0, 2]], dim=1
-                    )
-                    close_indices = (
-                        torch.nonzero(
-                            dists < self.config.proximity_distance_thresh,
-                            as_tuple=False,
-                        )
-                        .flatten()
-                        .tolist()
-                    )
-                    for j in close_indices:
+                    dists = torch.norm(pos_xz[cand_t] - pos_xz[idx], dim=1)
+                    for j in cand_t[dists < thresh].tolist():
                         neighbor_id = node_ids[j]
                         self._add_proximity_edge(node_id, neighbor_id)
 
@@ -222,8 +243,9 @@ class SimpleTopo:
         all pairs of permanent nodes for spatial proximity.
         """
         with self._hm.graph_lock:
-            self.proximity_edges.clear()
-            self.proximity_adjacency.clear()
+            self._pending_pgo = set()
+            self._prox_edges.clear()
+            self._prox_adj.clear()
 
             # Collect permanent nodes
             perm_nodes = [
@@ -238,24 +260,21 @@ class SimpleTopo:
                 [kf.pose_mu[0].tensor()[:3] for kf in perm_nodes], dim=0
             )  # (N, 3)
 
-            # Compute pairwise distances on x and z coordinates only
+            # Pairs closer than the threshold on x and z: KD-tree candidates (instead of an N x N distance matrix),
+            # then the exact test, in the row-major order of the upper triangle as before
+            from scipy.spatial import cKDTree
             pos_xz = positions[:, [0, 2]]  # (N, 2)
-
-            # Compute pairwise distance matrix
-            # Broadcasting: (N, 1, 2) - (1, N, 2) = (N, N, 2)
-            diffs = pos_xz.unsqueeze(1) - pos_xz.unsqueeze(0)  # (N, N, 2)
-            dists = torch.norm(diffs, dim=2)  # (N, N)
-
-            # Find pairs below threshold (upper triangle only to avoid duplicates)
-            mask = dists < self.config.proximity_distance_thresh
-            mask = torch.triu(mask, diagonal=1)  # Zero out diagonal and lower triangle
-
-            # Get indices of pairs to connect
-            pairs = torch.nonzero(mask, as_tuple=False)  # (M, 2)
+            thresh = self.config.proximity_distance_thresh
+            tree = cKDTree(pos_xz.detach().cpu().double().numpy())
+            cand = sorted(tree.query_pairs(thresh * (1 + 1e-6) + 1e-9))
+            pairs = []
+            if cand:
+                ij = torch.as_tensor(cand, device=pos_xz.device)
+                dists = torch.norm(pos_xz[ij[:, 0]] - pos_xz[ij[:, 1]], dim=1)
+                pairs = ij[dists < thresh].tolist()
 
             # Add proximity edges
-            for pair in pairs:
-                i, j = pair.tolist()
+            for i, j in pairs:
                 self._add_proximity_edge(node_ids[i], node_ids[j])
 
     # ===================== Planning over odom + proximity ===================== #
@@ -267,12 +286,8 @@ class SimpleTopo:
         # Proximity neighbors (undirected)
         neighbors.update(self.proximity_adjacency.get(kf_id, set()))
 
-        # Odometry neighbors (treat as undirected for planning)
-        for (id1, id2) in self._hm.odom_edges.keys():
-            if id1 == kf_id:
-                neighbors.add(id2)
-            elif id2 == kf_id:
-                neighbors.add(id1)
+        # Odometry neighbors (treat as undirected for planning; cached adjacency instead of a scan of every edge)
+        neighbors.update(self._hm.odom_adjacency().get(kf_id, ()))
 
         return list(neighbors)
 
