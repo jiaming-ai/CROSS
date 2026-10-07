@@ -475,7 +475,7 @@ class KeyframeDatabase:
         if self.index.projection is None:
             scores = self.index.scores(query_embedding, valid)
         else:
-            scores = self.index.query_scores(query_full, valid, shortlist=4 * top_k)
+            scores = self.index.query_scores(query_full, valid, shortlist=4 * top_k, need=top_k)
 
         # Filter and sort scores
         # `scores` are similarity scores against the rows `valid` (or all rows)

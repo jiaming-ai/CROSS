@@ -508,27 +508,46 @@ class DescriptorIndex:
             return (db @ q.to(self.dtype).unsqueeze(-1)).squeeze(-1).float()
         return (db.float() @ q.float().unsqueeze(-1)).squeeze(-1)
 
-    def query_scores(self, q_full: torch.Tensor, rows: Optional[torch.Tensor] = None, shortlist: int = 0) -> torch.Tensor:
+    def query_scores(self, q_full: torch.Tensor, rows: Optional[torch.Tensor] = None, shortlist: int = 0,
+                     need: int = 10, max_rescore: int = 8192) -> torch.Tensor:
         """Scores of a query (full VPR descriptor) with the full-descriptor cosine's meaning: without a projection the
-        exact scores; with one, calibrated code scores, and the best `shortlist` of them re-scored exactly from the
-        full descriptors where those are in RAM (rows added in this process)."""
+        exact scores; with one, code scores (calibrated if configured), where the full descriptors are in RAM (rows
+        added in this process) re-scored exactly for the best `shortlist` rows and for every row that could still
+        beat the `need`-th best exact score: exact = code + r_q . r_y with |r_q . r_y| <= |r_q| |r_y| and
+        |r|^2 = 1 - |z|^2 for unit descriptors, so the best `need` rows are those of the full descriptors (at most
+        `max_rescore` rows re-scored per query)."""
         zq = self.encode(q_full)
         s = self.scores(zq, rows)
         if self.projection is None:
             return s
         q = q_full.to(self.device).float()
         eq = float(zq.float().pow(2).sum() / q.pow(2).sum().clamp_min(1e-12))
-        ey = self._energy[:self.n] if rows is None else self._energy[torch.as_tensor(rows, device=self.device)]
+        rt = None if rows is None else torch.as_tensor(rows, device=self.device)
+        ey = self._energy[:self.n] if rt is None else self._energy[rt]
         s = self.calibration.apply(s, eq, ey) if self.calibration is not None else s
-        m = min(int(s.numel()), max(int(shortlist), self.shortlist))
-        if self._full is not None and m > 0:
-            top = s.topk(m).indices
-            rr = top if rows is None else torch.as_tensor(rows, device=self.device)[top]
-            rr_cpu = rr.cpu()
-            ok = (rr_cpu < self._full_ok.shape[0])
-            ok[ok.clone()] &= self._full_ok[rr_cpu[ok]]
+        if self._full is None or s.numel() == 0:
+            return s
+        done = torch.zeros(s.numel(), dtype=torch.bool, device=s.device)
+
+        def rescore(idx):
+            rr = (idx if rt is None else rt[idx]).cpu()
+            ok = rr < self._full_ok.shape[0]
+            ok[ok.clone()] &= self._full_ok[rr[ok]]
             if bool(ok.any()):
-                s[top[ok.to(top.device)]] = self._full[rr_cpu[ok]].to(self.device).float() @ q
+                sel = idx[ok.to(idx.device)]
+                s[sel] = self._full[rr[ok]].to(self.device).float() @ q
+                done[sel] = True
+
+        m = min(int(s.numel()), max(int(shortlist), self.shortlist))
+        rescore(s.topk(m).indices)
+        k = min(int(need), int(done.sum()))
+        if k > 0:
+            kth = s[done].topk(k).values[-1]
+            bound = s + math.sqrt(max(0.0, 1.0 - eq)) * torch.sqrt((1.0 - ey).clamp_min(0.0))
+            cand = ((bound >= kth) & ~done).nonzero(as_tuple=True)[0]
+            if cand.numel():
+                cand = cand[bound[cand].argsort(descending=True)[:max_rescore]]
+                rescore(cand)
         return s
 
     def id_mask(self, max_kf_id: Optional[int] = None, min_kf_id: Optional[int] = None) -> torch.Tensor:

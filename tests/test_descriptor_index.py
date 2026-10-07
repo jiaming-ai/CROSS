@@ -306,3 +306,16 @@ def test_map_projection_refit_and_extension_on_the_gpu():
     assert idx.map_fitted and (idx.projection.meta["extensions"] >= 1 or idx.projection.meta["refits"] >= 1)
     s = idx.query_scores(X[1100])
     assert s.device.type == "cuda" and int(s.argmax()) == 1100
+
+
+def test_bound_based_rescoring_returns_the_exact_top_k_for_a_weak_code():
+    g = torch.Generator().manual_seed(23)
+    D = 512
+    X = torch.nn.functional.normalize(torch.randn(1200, D, generator=g) + 0.5 * torch.randn(1, D, generator=g), dim=-1)
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=100, fit_at=1000, fit_dim=32)   # explains little energy
+    for i, x in enumerate(X[:1100]):
+        idx.add(x, i)
+    for j in range(1100, 1200, 10):
+        q = X[j]
+        s = idx.query_scores(q, shortlist=8, need=10)
+        assert set(s.topk(10).indices.tolist()) == set((X[:1100] @ q).topk(10).indices.tolist())
