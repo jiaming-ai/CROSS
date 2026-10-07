@@ -256,7 +256,7 @@ def run_reloc(args, out: Path, meta: dict):
     rows = []
     t0 = time.time()
     n_obs = 0
-    from reloc_metrics import build_trials
+    from reloc_metrics import build_trials, drop_unlocalized, is_localized
     q_start = args.query_start
     q_end = args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
@@ -294,6 +294,10 @@ def run_reloc(args, out: Path, meta: dict):
                 row[f"{name}_w"] = float(w[k])
             row["best_k"] = int(np.argmax(w))
             row["n_active"] = int((w > 1e-3).sum())
+            # a session that has not joined the stored map reports its pose in a frame of its own: no pose in the map
+            row["localized"] = is_localized(system)
+            if not row["localized"]:
+                drop_unlocalized(row, ("c0", "best") if row["best_k"] == 0 else ("c0",))
             rows.append(row)
             if idx % 50 == 0:
                 logger.info(f"trial {ti} step {idx}: c0 err {row['c0_t_err']:.2f} m / {row['c0_r_err']:.1f} deg, "

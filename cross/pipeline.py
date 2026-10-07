@@ -238,6 +238,12 @@ class Pipeline:
             return to_mat(mu[0]), to_mat(mu[int(np.argmax(w))]), w
         return self.map_alignment @ self.frontend_pose, self.best_alignment @ self.frontend_pose, w
 
+    def localized(self) -> bool:
+        """Whether the belief is a pose in the stored map (System.session_localized); a session that has not joined
+        the map yet reports its pose in a frame of its own, which is no pose in the map."""
+        fn = getattr(self.mapper, "session_localized", None)
+        return True if fn is None else bool(fn())
+
     def release(self):
         """Shut the session down and drop its GPU models (a runner creates many sessions)."""
         import atexit

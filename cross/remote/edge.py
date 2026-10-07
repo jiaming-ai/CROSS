@@ -114,6 +114,7 @@ class RemotePipeline:
         self._fpose = {}                         # frame index -> odometry pose reported at that frame
         self._odom = np.eye(4)
         self._map = None                         # the last map reply
+        self._map_loaded = False                 # a stored map was loaded: the belief is a map pose once it joined
         self._sent = {}                          # frame index -> dataset time it was sent
         self.last_estimate = None
         self.frontend_pose = None
@@ -167,6 +168,7 @@ class RemotePipeline:
             self.frontend = self.frontend_factory()
             replaced = True
         self.initialized, self._map, self._fpose, self._odom = False, None, {}, np.eye(4)
+        self._map_loaded = True
         self._sent, self.index = {}, -1
         self.cadence = ObservationCadence(self._pose_est_cfg)
         if hasattr(self.link, "flush") and self.server is None:
@@ -335,6 +337,13 @@ class RemotePipeline:
         A0, Ab = self._alignment()
         F = self._fpose[self.index]
         return A0 @ F, Ab @ F, m["w"]
+
+    def localized(self) -> bool:
+        """Whether the belief is a pose in the stored map: the server's last reply (System.session_localized); before
+        any reply of a session that loaded a map, not.  A mapping session is its own map."""
+        if not self._map_loaded:
+            return True
+        return bool(self._map is not None and self._map.get("localized", True))
 
     def _prune(self):
         keep = min([self._map["index"] if self._map is not None else 0] + list(self._sent))

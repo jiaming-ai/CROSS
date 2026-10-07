@@ -58,7 +58,8 @@ from cross.core.system import System  # noqa: E402
 from cross.core.types import Camera  # noqa: E402
 from cross.dataloader.posed_rgbd import PosedRGBDLoader  # noqa: E402
 from cross.pipeline import add_session_args, session_factory  # noqa: E402
-from reloc_metrics import build_trials, map_relative_errors, summarize_errors, summarize_trials  # noqa: E402
+from reloc_metrics import (build_trials, drop_unlocalized, is_localized, map_relative_errors, summarize_errors,  # noqa: E402
+                           summarize_trials)
 
 
 def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
@@ -227,6 +228,10 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
                 row[f"{name}_t_err"] = float(np.linalg.norm(err[:3, 3]))
                 row[f"{name}_r_err"] = rotation_angle_deg(err[:3, :3])
             row["best_k"] = int(np.argmax(w))
+            # a session that has not joined the stored map reports its pose in a frame of its own: no pose in the map
+            row["localized"] = is_localized(system)
+            if not row["localized"]:
+                drop_unlocalized(row, ("c0", "best") if row["best_k"] == 0 else ("c0",))
             rows.append(row)
         logger.info(f"trial {ti}/{len(trials)}: final c0 err {rows[-1]['c0_t_err']:.2f} m / {rows[-1]['c0_r_err']:.1f} deg")
         if hasattr(system, "remote_stats"):

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Statistics of the prepared benchmark sequences: frames, duration, path length and relocalization trials per session.
+"""Statistics of the prepared benchmark sequences: frames, duration, path length and relocalization trials per session,
+the frames the map covers and the intervals in which the robot stands still (PROTOCOL.md, T2 / T3).
 
   python benchmark/dataset_stats.py --data $BENCH_DATA [--datasets openloris kitti rover simchange] [--out FILE]
 
@@ -18,6 +19,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
+from metrics import moving_frames, moving_rule, still_intervals  # noqa: E402
 from reloc_metrics import build_trials  # noqa: E402
 
 
@@ -28,6 +31,14 @@ def seq_stats(folder: Path, fps: float):
     fps = float(calib.get("fps", fps))
     return {"frames": n, "duration_s": n / fps, "path_m": float(np.linalg.norm(np.diff(P[:, :3, 3], axis=0), axis=1).sum()),
             "extent_m": float(np.linalg.norm(P[:, :3, 3].max(0) - P[:, :3, 3].min(0)))}
+
+
+def motion(folder: Path, rule: dict):
+    """Per-frame moving mask of a session (PROTOCOL.md, moving robot): (moving fraction, still intervals, mask)."""
+    P = np.loadtxt(folder / "poses_left.txt").reshape(-1, 4, 4)
+    fps = json.loads((folder / "calib.json").read_text()).get("fps", 10.0)
+    m = moving_frames(P, fps, **rule)
+    return float(m.mean()) if len(m) else 0.0, still_intervals(m), m
 
 
 def coverage(query_folder: Path, map_folder: Path, radius: float):
@@ -75,10 +86,17 @@ def main():
                         r = rows.setdefault(key, {"role": role, "setups": {}})
                         if sub not in r["setups"]:
                             r["setups"][sub] = seq_stats(f, 10.0)
+                            mov, still, mask = motion(f, moving_rule(c))
+                            r["setups"][sub].update({"moving": mov, "still": still})
                             mf = Path(a.data) / d / sc["map"] / sub
                             if role == "query" and (mf / "calib.json").is_file():
                                 frac, gaps = coverage(f, mf, c["thresholds"][1])
-                                r["setups"][sub].update({"covered": frac, "uncovered": gaps})
+                                n = len(mask)
+                                cov = np.ones(n, bool)
+                                for g0, g1 in gaps:
+                                    cov[g0:g1 + 1] = False
+                                r["setups"][sub].update({"covered": frac, "uncovered": gaps,
+                                                         "evaluated": float((cov & mask).mean()) if n else 0.0})
                     if name in rows and role == "query" and c.get("trial_len"):
                         n = min(v["frames"] for v in rows[name]["setups"].values())
                         rows[name]["trials"] = len(build_trials(n, c["trial_len"], c["trial_stride"]))

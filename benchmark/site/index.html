@@ -287,7 +287,8 @@ const legendT1 = () => $("div", {class: "legend"}, $("span", {}, $("span", {clas
 const legendT2 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "key", style: "background:var(--est)"}), "position error in the map frame"),
   $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "no estimate"));
 const legendT3 = () => $("div", {class: "legend"}, $("span", {}, $("span", {class: "sq", style: "background:var(--good)"}), "✓ final pose within the larger threshold (2 m indoors, 5 m outdoors)"),
-  $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "✗ failed"));
+  $("span", {}, $("span", {class: "sq", style: "background:var(--bad)"}), "✗ failed"),
+  $("span", {}, $("span", {class: "sq", style: "background:var(--hatch)"}), "not counted (outside the map, or the robot stands still)"));
 
 function box(title, sub, svg, extra) { const p = $("div", {class: "plot"}, $("h4", {}, title), $("div", {class: "sub"}, sub)); if (svg) p.append(svg); if (extra) p.append(extra); return p; }
 
@@ -342,6 +343,7 @@ function errPlot(r) {
 }
 
 // T3: one square per trial along the query session, final error on hover
+const NOT_COUNTED = {0: "not counted: the map does not cover it", 2: "not counted: the robot stands still", undefined: "not counted"};
 function trialPlot(r) {
   const title = `${r.map} → ${r.query}`;
   const sub = r.status !== "ok" ? `failed (rc ${r.rc ?? "?"})` :
@@ -350,8 +352,8 @@ function trialPlot(r) {
   const n = r.trials.length, per = Math.min(n, 40), rows = Math.ceil(n / per), cw = 300 / per;
   const svg = s$("svg", {viewBox: `0 0 300 ${rows * cw + 4}`, role: "img", "aria-label": `trial outcomes of ${title}`});
   r.trials.forEach((t, i) => { const [start, ok, fe, ok1, cov] = t;
-    const c = s$("rect", {x: (i % per) * cw + 1, y: Math.floor(i / per) * cw + 1, width: cw - 2, height: cw - 2, rx: 2, fill: cov === 0 ? "var(--hatch)" : ok ? "var(--good)" : "var(--bad)", tabindex: 0});
-    const tipf = ev => showTip(ev, [[cov === 0 ? "not covered by the map" : ok ? "✓ relocalized" : "✗ failed", ""], `trial ${i + 1}, frames ${start}–${start + 99}`, `final error ${fe == null ? "–" : fe.toFixed(2) + " m"}`]);
+    const c = s$("rect", {x: (i % per) * cw + 1, y: Math.floor(i / per) * cw + 1, width: cw - 2, height: cw - 2, rx: 2, fill: cov !== 1 ? "var(--hatch)" : ok ? "var(--good)" : "var(--bad)", tabindex: 0});
+    const tipf = ev => showTip(ev, [[cov !== 1 ? NOT_COUNTED[cov] : ok ? "✓ relocalized" : "✗ failed", ""], `trial ${i + 1}, frames ${start}–${start + 99}`, `final error ${fe == null ? "–" : fe.toFixed(2) + " m"}`]);
     c.addEventListener("pointermove", tipf); c.addEventListener("pointerleave", hideTip); c.addEventListener("focus", ev => { const bb = c.getBoundingClientRect(); tipf({clientX: bb.right, clientY: bb.bottom}); }); c.addEventListener("blur", hideTip);
     svg.append(c); });
   return box(title, sub, svg);
@@ -693,14 +695,16 @@ function renderMetrics(v) {
       ul("Each query session is run once, from its first frame to its last, against the stored map of the scene's map session, starting without a pose.",
          "Per frame i: the estimate is the system's latest pose at frame i, if it is at most 1 s (10 frames) old; it is expressed in the ground-truth frame with the alignment computed on the map session (the query session is never re-aligned). e_i = distance between that position and the ground-truth position. A frame without such a pose has e_i = ∞.",
          "Coverage: only frames whose ground-truth position lies within the larger threshold (2 m indoors, 5 m outdoors) of the map session's ground-truth path are evaluated; where the map session never went no system can relocalize. The Datasets tab lists each session's coverage (about 100 % except on ROVER, where the 2023 / spring routes are longer than the 2024 map route).",
-         "LR@x of a session = (number of covered frames with e_i < x) / (number of covered frames), for x = 1 m and 2 m indoors, 3 m and 5 m outdoors.",
+         "Moving robot: only frames at which the robot moves are evaluated (over the 1 s window centred on the frame the ground-truth camera travels at least 0.05 m/s or turns at least 5°/s). A robot standing still, as at the start of every ROVER session, sees one view only.",
+         "A pose counts only if it is a pose in the stored map: a system that has not joined the stored map yet has no estimate at that frame (CROSS before its session merges with the map, ORB-SLAM3 in a new map of its atlas, RTAB-Map before its first link to the map, MASt3R-SLAM and VGGT-SLAM 2.0 before a loop closure or relocalization links a query frame to a map frame).",
+         "LR@x of a session = (number of evaluated frames with e_i < x) / (number of evaluated frames: covered, robot moving), for x = 1 m and 2 m indoors, 3 m and 5 m outdoors.",
          "MS-ATE of a session = RMSE of e_i over the frames that have a pose.",
          "Scene and dataset cells pool all frames of the query sessions (localized frames / all frames), so longer sessions weigh more.")),
     sec("T3 · relocalization success (RS): many short trials per query session",
       ul("Each query session is cut into trials of 100 frames (10 s); a new trial starts every 50 frames (trials overlap by half; a last trial of at least 50 frames is kept). The Datasets tab lists the number of trials per session.",
          "Every trial is an independent run: a fresh system loads the map and processes only the trial's frames, starting without a pose.",
          "The trial's final error is the distance between the system's final pose (its latest pose at the trial's last frame, at most 1 s old) and the pose the map implies for that frame: the nearest map keyframe's estimated pose composed with its ground-truth offset to the query frame, so map drift is not counted as a relocalization error.",
-         "Only trials whose last frame is covered by the map (as in T2) are counted.",
+         "Only trials whose last frame is covered by the map and in which the robot moves in at least half of the frames (as in T2) are counted.",
          "RS@x = trials with final error below x / all counted trials, pooled over the scene's query sessions (x = 1 m and 2 m indoors, 3 m and 5 m outdoors); 95 % Wilson interval of the larger threshold in the last column.")),
     sec("How T2 and T3 differ",
       "T3 asks how often a system relocalizes within 10 s from a cold start, and judges only the end of each trial. T2 asks how much of a whole session the system spends correctly localized in the map, including the time before it first relocalizes and any later losses. A system that relocalizes slowly but then holds on can have T2 above T3; one that relocalizes quickly but loses the map again can have T3 above T2."),
@@ -947,7 +951,7 @@ function renderT3Plots(v, d) {
     const keys = [...new Set(runs.map(sysKey))].sort((a, b) => (oi[a] ?? 99) - (oi[b] ?? 99));
     const thr = runs[0].thresholds || [1, 2];
     const card = $("div", {class: "card"}, $("h3", {}, `${scene}: relocalization outcomes`),
-      $("p", {class: "note"}, `Each column is a 10 s trial at its position along the query sessions (separated by gaps, labelled below); each row a system. Dark: final pose within ${thr[0]} m; light: within ${thr[1]} m only; empty: failed; grey: the map does not cover the trial (not counted). Right: RS@${thr[1]} m for every query session (cell value).`));
+      $("p", {class: "note"}, `Each column is a 10 s trial at its position along the query sessions (separated by gaps, labelled below); each row a system. Dark: final pose within ${thr[0]} m; light: within ${thr[1]} m only; empty: failed; grey: not counted (the map does not cover the trial, or the robot stands still in most of it). Right: RS@${thr[1]} m for every query session (cell value).`));
     const wrap = $("div", {style: "display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px;align-items:start"});
     wrap.append($("div", {class: "scroll"}, outcomeStrips(d, s, runs, keys, thr)), $("div", {class: "scroll"}, rsHeatmap(d, s, runs, keys, thr)));
     card.append(wrap); v.append(card);
@@ -973,9 +977,9 @@ function outcomeStrips(d, s, runs, keys, thr) {
     const n = nT(q);
     keys.forEach((k, i) => { const r = runs.find(rr => rr.query === q && sysKey(rr) === k); if (!r) return; const y = 4 + i * rowH;
       r.trials.forEach((t, j) => { const [start, ok2, fe, ok1, cov] = t;
-        const fill = !cov ? "var(--hatch)" : ok1 ? "var(--s-hi)" : ok2 ? "var(--s-lo)" : null;
+        const fill = cov !== 1 ? "var(--hatch)" : ok1 ? "var(--s-hi)" : ok2 ? "var(--s-lo)" : null;
         const cell = s$("rect", {x: x + j * cw, y: y + 1, width: Math.max(cw - (cw > 3 ? 1 : 0), 0.8), height: rowH - 3, fill: fill || "transparent"});
-        cell.addEventListener("pointermove", ev => showTip(ev, [[!cov ? "not covered by the map" : fe == null ? "no pose" : `${fe.toFixed(2)} m`, ""], sysLabel(r.system, r.setup, d), `${shortName(q)}, frames ${start}–${start + 99}`]));
+        cell.addEventListener("pointermove", ev => showTip(ev, [[cov !== 1 ? NOT_COUNTED[cov] : fe == null ? "no pose" : `${fe.toFixed(2)} m`, ""], sysLabel(r.system, r.setup, d), `${shortName(q)}, frames ${start}–${start + 99}`]));
         cell.addEventListener("pointerleave", hideTip); svg.append(cell); }); });
     const tl = s$("text", {x: x + n * cw / 2, y: keys.length * rowH + 18, "text-anchor": "middle"}); tl.textContent = tag(q).slice(0, Math.max(3, Math.floor(n * cw / 5.5)));
     svg.append(tl); x += n * cw + gap;

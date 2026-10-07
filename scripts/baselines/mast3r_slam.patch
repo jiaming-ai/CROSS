@@ -1,5 +1,5 @@
 diff --git a/main.py b/main.py
-index 20cfbbc..6496973 100644
+index 20cfbbc..9e54cff 100644
 --- a/main.py
 +++ b/main.py
 @@ -21,7 +21,20 @@ from mast3r_slam.mast3r_utils import (
@@ -24,7 +24,17 @@ index 20cfbbc..6496973 100644
  import torch.multiprocessing as mp
  
  
-@@ -227,6 +240,7 @@ if __name__ == "__main__":
+@@ -89,6 +102,9 @@ def run_backend(cfg, model, states, keyframes, K):
+             success = relocalization(frame, keyframes, factor_graph, retrieval_database)
+             if success:
+                 states.set_mode(Mode.TRACKING)
++                with states.lock:          # the relocalization's edges, for the edge log written at the end
++                    states.edges_ii[:] = factor_graph.ii.cpu().tolist()
++                    states.edges_jj[:] = factor_graph.jj.cpu().tolist()
+             states.dequeue_reloc()
+             continue
+         idx = -1
+@@ -227,6 +243,7 @@ if __name__ == "__main__":
  
      i = 0
      fps_timer = time.time()
@@ -32,7 +42,7 @@ index 20cfbbc..6496973 100644
  
      frames = []
  
-@@ -303,6 +317,12 @@ if __name__ == "__main__":
+@@ -303,6 +320,12 @@ if __name__ == "__main__":
                      if len(states.global_optimizer_tasks) == 0:
                          break
                  time.sleep(0.01)
@@ -45,7 +55,7 @@ index 20cfbbc..6496973 100644
          # log time
          if i % 30 == 0:
              FPS = i / (time.time() - fps_timer)
-@@ -312,6 +332,12 @@ if __name__ == "__main__":
+@@ -312,6 +335,19 @@ if __name__ == "__main__":
      if dataset.save_results:
          save_dir, seq_name = eval.prepare_savedir(args, dataset)
          eval.save_traj(save_dir, f"{seq_name}.txt", dataset.timestamps, keyframes)
@@ -55,6 +65,13 @@ index 20cfbbc..6496973 100644
 +                T_WC = eval.as_SE3(T_kf * lietorch.Sim3(rel))
 +                x, y, z, qx, qy, qz, qw = T_WC.data.numpy().reshape(-1)
 +                f.write(f"{dataset.timestamps[fi]} {x} {y} {z} {qx} {qy} {qz} {qw} {tracked}\n")
++        # edges of the final factor graph as dataset frame ids "i j adjacent" (adjacent = consecutive keyframes): a
++        # non-adjacent edge is a retrieval / relocalization link between places, an adjacent one sequential tracking
++        with states.lock:
++            edges = list(zip(list(states.edges_ii), list(states.edges_jj)))
++        with open(pathlib.Path(save_dir) / f"{seq_name}_edges.txt", "w") as f:
++            for ki, kj in edges:
++                f.write(f"{int(keyframes.dataset_idx[ki])} {int(keyframes.dataset_idx[kj])} {int(abs(ki - kj) == 1)}\n")
          eval.save_reconstruction(
              save_dir,
              f"{seq_name}.ply",

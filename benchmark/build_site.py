@@ -62,10 +62,12 @@ def slim_run(r, rid):
         c = np.asarray(r["err_curve"], float)
         keep["err"] = np.round(c[:: max(1, len(c) // 400)], 2).tolist()
     if r.get("trials") is not None:
-        # [start, success at the larger threshold, final error, success at the smaller threshold, covered by the map]
+        # [start, success at the larger threshold, final error, success at the smaller threshold, counted (1), or not:
+        #  0 = the map does not cover it, 2 = the robot stands still (make_tables.rescore_t3)]
         keep["trials"] = [[t.get("start"), int(t.get("final_err") is not None and t["final_err"] < thr[1]),
                            None if t.get("final_err") is None else round(t["final_err"], 2),
-                           int(t.get("final_err") is not None and t["final_err"] < thr[0]), int(t.get("covered", True))]
+                           int(t.get("final_err") is not None and t["final_err"] < thr[0]),
+                           1 if t.get("counted", t.get("covered", True)) else (0 if not t.get("covered", True) else 2)]
                           for t in r["trials"]]
     return keep
 

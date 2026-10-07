@@ -33,7 +33,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "baselines"))
-from metrics import COMPLETENESS_RULE, ate, completeness, multisession, wilson  # noqa: E402
+from metrics import (COMPLETENESS_RULE, ate, completeness, moving_fraction, moving_frames, moving_rule,  # noqa: E402
+                     multisession, wilson)
 
 PY = sys.executable
 # --odom-source: the odometry file the systems that take odometry read in each sequence folder (None = the dataset's
@@ -297,11 +298,21 @@ class Job:
         gm = gt_poses(self.seq(self.scene["map"]))[:, :3, 3]
         return cKDTree(gm).query(gq)[0] < self.dcfg["thresholds"][1]
 
+    def moving(self, q):
+        """Query frames at which the robot moves (PROTOCOL.md, T2 / T3: moving robot), from the ground truth."""
+        fps = json.loads((self.seq(q) / "calib.json").read_text()).get("fps", 10.0)
+        return moving_frames(gt_poses(self.seq(q)), fps, **moving_rule(self.dcfg))
+
     def t2_from_rows(self, rows, q, key, rel_errors, summ, out_dir=None):
         thr = self.dcfg["thresholds"]
         cov = self.covered(q)
+        mov = self.moving(q)
+        if "t2" not in moving_rule(self.dcfg)["tracks"]:
+            mov = np.ones(len(mov), bool)
         frames = [int(r.get("frame", i)) for i, r in enumerate(rows)]
-        keep = np.array([cov[f] if 0 <= f < len(cov) else True for f in frames], dtype=bool)
+        covered = np.array([cov[f] if 0 <= f < len(cov) else True for f in frames], dtype=bool)
+        moving = np.array([mov[f] if 0 <= f < len(mov) else True for f in frames], dtype=bool)
+        keep = covered & moving              # only covered frames at which the robot moves are evaluated
         e_all = np.array([r.get(key, np.inf) if r.get(key) is not None else np.inf for r in rows], dtype=float)
         rel_all = np.array([np.inf if v is None else v for v in rel_errors], dtype=float)
         rows = [r for r, k in zip(rows, keep) if k]
@@ -313,9 +324,11 @@ class Job:
         m_rel = multisession(rel, thresholds=self.LR_GRID)
         if out_dir is not None:          # per-frame errors: later threshold changes need no rerun
             np.savez_compressed(Path(out_dir) / "errors.npz", err=e_all.astype(np.float32), err_map_relative=rel_all.astype(np.float32),
-                                covered=keep, frame=np.asarray(frames))
+                                covered=covered, moving=moving, frame=np.asarray(frames))
         return {**self.base, "track": "t2", "map": self.scene["map"], "query": q, **m,
-                "covered": float(keep.mean()) if len(keep) else None, "n_frames_all": int(len(keep)),
+                "covered": float(covered.mean()) if len(covered) else None,
+                "moving": float(moving.mean()) if len(moving) else None, "evaluated": float(keep.mean()) if len(keep) else None,
+                "n_frames_all": int(len(keep)),
                 "all_frames": {k: v for k, v in lr_all.items() if k.startswith("lr@") or k == "ms_ate"},
                 "map_relative": {k: v for k, v in m_rel.items() if k.startswith("lr@") or k == "ms_ate"},
                 "err_curve": downsample(np.where(np.isfinite(e), e, -1.0)).round(3),
@@ -325,8 +338,12 @@ class Job:
         tr = summ["trials"]
         n = tr["n_trials"]
         k = int(round((tr["RS"] or 0) * n))
+        mov = self.moving(q)                 # per trial: the fraction of its frames at which the robot moves
+        tl = int(self.dcfg["trial_len"])
         trials = [{"start": t.get("start"), "success": t["success_rd"], "success_strict": t["success_1m_5deg"],
-                   "final_err": t["final_t_err"]} for t in tr["trials"]]
+                   "final_err": t["final_t_err"],
+                   "moving": round(moving_fraction(int(t.get("start") or 0), int(t.get("n") or tl), moving=mov), 3)}
+                  for t in tr["trials"]]
         fails = [t["final_err"] for t in trials if not t["success"] and t["final_err"] is not None and np.isfinite(t["final_err"])]
         return {**self.base, "track": "t3", "map": self.scene["map"], "query": q, "n_trials": n, "n_success": k,
                 "rs": tr["RS"], "rs_ci95": wilson(k, n),

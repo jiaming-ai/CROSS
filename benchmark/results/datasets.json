@@ -8,13 +8,35 @@
       "frames": 269,
       "duration_s": 26.9,
       "path_m": 5.481264957953456,
-      "extent_m": 4.014993413926258
+      "extent_m": 4.014993413926258,
+      "moving": 0.9516728624535316,
+      "still": [
+       [
+        6,
+        17
+       ],
+       [
+        268,
+        268
+       ]
+      ]
      },
      "stereo": {
       "frames": 269,
       "duration_s": 26.9,
       "path_m": 5.456370766008032,
-      "extent_m": 3.999690242553593
+      "extent_m": 3.999690242553593,
+      "moving": 0.9516728624535316,
+      "still": [
+       [
+        6,
+        17
+       ],
+       [
+        268,
+        268
+       ]
+      ]
      }
     }
    },
@@ -27,7 +49,23 @@
       "path_m": 5.878077813315281,
       "extent_m": 4.249368945907247,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9364548494983278,
+      "still": [
+       [
+        12,
+        14
+       ],
+       [
+        25,
+        37
+       ],
+       [
+        74,
+        76
+       ]
+      ],
+      "evaluated": 0.9364548494983278
      },
      "stereo": {
       "frames": 299,
@@ -35,7 +73,27 @@
       "path_m": 5.932270018877915,
       "extent_m": 4.287036576644889,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9331103678929766,
+      "still": [
+       [
+        12,
+        14
+       ],
+       [
+        25,
+        37
+       ],
+       [
+        74,
+        76
+       ],
+       [
+        80,
+        80
+       ]
+      ],
+      "evaluated": 0.9331103678929766
      }
     },
     "trials": 5
@@ -49,7 +107,15 @@
       "path_m": 0.9045521783331663,
       "extent_m": 0.7164766541737955,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.7394957983193278,
+      "still": [
+       [
+        0,
+        30
+       ]
+      ],
+      "evaluated": 0.7394957983193278
      },
      "stereo": {
       "frames": 119,
@@ -57,7 +123,15 @@
       "path_m": 0.9214535934363086,
       "extent_m": 0.7277571329133292,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.7394957983193278,
+      "still": [
+       [
+        0,
+        30
+       ]
+      ],
+      "evaluated": 0.7394957983193278
      }
     },
     "trials": 2
@@ -71,7 +145,15 @@
       "path_m": 6.4644858643123655,
       "extent_m": 4.215634226468612,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.8996539792387543,
+      "still": [
+       [
+        7,
+        35
+       ]
+      ],
+      "evaluated": 0.8996539792387543
      },
      "stereo": {
       "frames": 289,
@@ -79,7 +161,15 @@
       "path_m": 6.534432397419482,
       "extent_m": 4.247958424552034,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.8996539792387543,
+      "still": [
+       [
+        7,
+        35
+       ]
+      ],
+      "evaluated": 0.8996539792387543
      }
     },
     "trials": 5
@@ -93,7 +183,19 @@
       "path_m": 11.24898034280914,
       "extent_m": 4.461717716621883,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9566037735849057,
+      "still": [
+       [
+        20,
+        37
+       ],
+       [
+        339,
+        343
+       ]
+      ],
+      "evaluated": 0.9566037735849057
      },
      "stereo": {
       "frames": 529,
@@ -101,7 +203,19 @@
       "path_m": 11.256704776724677,
       "extent_m": 4.46790216275917,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9584120982986768,
+      "still": [
+       [
+        20,
+        36
+       ],
+       [
+        339,
+        343
+       ]
+      ],
+      "evaluated": 0.9584120982986768
      }
     },
     "trials": 10
@@ -115,7 +229,19 @@
       "path_m": 5.568887691065277,
       "extent_m": 3.999523556978966,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.7799442896935933,
+      "still": [
+       [
+        0,
+        33
+       ],
+       [
+        53,
+        97
+       ]
+      ],
+      "evaluated": 0.7799442896935933
      },
      "stereo": {
       "frames": 359,
@@ -123,7 +249,19 @@
       "path_m": 5.544671572002936,
       "extent_m": 3.972637219547872,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.7799442896935933,
+      "still": [
+       [
+        0,
+        33
+       ],
+       [
+        53,
+        97
+       ]
+      ],
+      "evaluated": 0.7799442896935933
      }
     },
     "trials": 7
@@ -137,7 +275,27 @@
       "path_m": 5.875283444451769,
       "extent_m": 4.366117385397805,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.7131578947368421,
+      "still": [
+       [
+        0,
+        25
+       ],
+       [
+        43,
+        66
+       ],
+       [
+        80,
+        107
+       ],
+       [
+        126,
+        156
+       ]
+      ],
+      "evaluated": 0.7131578947368421
      },
      "stereo": {
       "frames": 380,
@@ -145,7 +303,27 @@
       "path_m": 5.920024731322535,
       "extent_m": 4.399738344495399,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.718421052631579,
+      "still": [
+       [
+        0,
+        24
+       ],
+       [
+        42,
+        65
+       ],
+       [
+        80,
+        106
+       ],
+       [
+        125,
+        155
+       ]
+      ],
+      "evaluated": 0.718421052631579
      }
     },
     "trials": 7
@@ -159,13 +337,43 @@
       "frames": 1521,
       "duration_s": 152.1,
       "path_m": 39.610033936716036,
-      "extent_m": 10.812887778283384
+      "extent_m": 10.812887778283384,
+      "moving": 0.9809335963182118,
+      "still": [
+       [
+        744,
+        755
+       ],
+       [
+        1068,
+        1069
+       ],
+       [
+        1506,
+        1520
+       ]
+      ]
      },
      "stereo": {
       "frames": 1522,
       "duration_s": 152.2,
       "path_m": 39.75307666521148,
-      "extent_m": 10.828905430921932
+      "extent_m": 10.828905430921932,
+      "moving": 0.9816031537450722,
+      "still": [
+       [
+        745,
+        756
+       ],
+       [
+        1069,
+        1069
+       ],
+       [
+        1507,
+        1521
+       ]
+      ]
      }
     }
    },
@@ -178,7 +386,23 @@
       "path_m": 31.035286314450047,
       "extent_m": 9.871169127682144,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9758064516129032,
+      "still": [
+       [
+        279,
+        287
+       ],
+       [
+        463,
+        475
+       ],
+       [
+        990,
+        991
+       ]
+      ],
+      "evaluated": 0.9758064516129032
      },
      "stereo": {
       "frames": 993,
@@ -186,7 +410,23 @@
       "path_m": 31.116535219291606,
       "extent_m": 9.874717478822653,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9758308157099698,
+      "still": [
+       [
+        280,
+        287
+       ],
+       [
+        463,
+        476
+       ],
+       [
+        991,
+        992
+       ]
+      ],
+      "evaluated": 0.9758308157099698
      }
     },
     "trials": 19
@@ -205,7 +445,19 @@
         497,
         599
        ]
-      ]
+      ],
+      "moving": 0.9760820045558086,
+      "still": [
+       [
+        108,
+        118
+       ],
+       [
+        558,
+        567
+       ]
+      ],
+      "evaluated": 0.8701594533029613
      },
      "stereo": {
       "frames": 879,
@@ -218,7 +470,19 @@
         496,
         599
        ]
-      ]
+      ],
+      "moving": 0.9749715585893061,
+      "still": [
+       [
+        108,
+        118
+       ],
+       [
+        558,
+        568
+       ]
+      ],
+      "evaluated": 0.8691695108077361
      }
     },
     "trials": 17
@@ -232,7 +496,15 @@
       "path_m": 20.63940063830927,
       "extent_m": 8.292631819229728,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9760225669957687,
+      "still": [
+       [
+        692,
+        708
+       ]
+      ],
+      "evaluated": 0.9760225669957687
      },
      "stereo": {
       "frames": 709,
@@ -240,7 +512,15 @@
       "path_m": 20.72566254753036,
       "extent_m": 8.298141645860326,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9760225669957687,
+      "still": [
+       [
+        692,
+        708
+       ]
+      ],
+      "evaluated": 0.9760225669957687
      }
     },
     "trials": 14
@@ -254,7 +534,10 @@
       "path_m": 5.682493194580618,
       "extent_m": 3.008141470573268,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      },
      "stereo": {
       "frames": 259,
@@ -262,7 +545,10 @@
       "path_m": 5.677835382540361,
       "extent_m": 3.0120347197115054,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 5
@@ -276,13 +562,51 @@
       "frames": 569,
       "duration_s": 56.9,
       "path_m": 28.065412343809143,
-      "extent_m": 11.502512063833379
+      "extent_m": 11.502512063833379,
+      "moving": 0.9332161687170475,
+      "still": [
+       [
+        0,
+        17
+       ],
+       [
+        35,
+        37
+       ],
+       [
+        535,
+        549
+       ],
+       [
+        567,
+        568
+       ]
+      ]
      },
      "stereo": {
       "frames": 570,
       "duration_s": 57.0,
       "path_m": 28.13665798683179,
-      "extent_m": 11.525331632177224
+      "extent_m": 11.525331632177224,
+      "moving": 0.9333333333333333,
+      "still": [
+       [
+        0,
+        17
+       ],
+       [
+        35,
+        37
+       ],
+       [
+        535,
+        549
+       ],
+       [
+        568,
+        569
+       ]
+      ]
      }
     }
    },
@@ -300,7 +624,43 @@
         263,
         514
        ]
-      ]
+      ],
+      "moving": 0.9565701559020044,
+      "still": [
+       [
+        0,
+        3
+       ],
+       [
+        396,
+        396
+       ],
+       [
+        398,
+        399
+       ],
+       [
+        401,
+        406
+       ],
+       [
+        561,
+        561
+       ],
+       [
+        638,
+        645
+       ],
+       [
+        654,
+        662
+       ],
+       [
+        890,
+        897
+       ]
+      ],
+      "evaluated": 0.6859688195991092
      },
      "stereo": {
       "frames": 900,
@@ -313,7 +673,43 @@
         264,
         516
        ]
-      ]
+      ],
+      "moving": 0.9566666666666667,
+      "still": [
+       [
+        0,
+        4
+       ],
+       [
+        397,
+        397
+       ],
+       [
+        399,
+        400
+       ],
+       [
+        402,
+        407
+       ],
+       [
+        562,
+        562
+       ],
+       [
+        640,
+        646
+       ],
+       [
+        655,
+        663
+       ],
+       [
+        892,
+        899
+       ]
+      ],
+      "evaluated": 0.6855555555555556
      }
     },
     "trials": 17
@@ -327,13 +723,51 @@
       "frames": 2723,
       "duration_s": 272.3,
       "path_m": 221.90592143338984,
-      "extent_m": 84.21305282278098
+      "extent_m": 84.21305282278098,
+      "moving": 0.9860448035255234,
+      "still": [
+       [
+        0,
+        5
+       ],
+       [
+        192,
+        220
+       ],
+       [
+        2379,
+        2379
+       ],
+       [
+        2604,
+        2605
+       ]
+      ]
      },
      "stereo": {
       "frames": 2724,
       "duration_s": 272.4,
       "path_m": 221.39079889480468,
-      "extent_m": 84.21831315874809
+      "extent_m": 84.21831315874809,
+      "moving": 0.9864170337738619,
+      "still": [
+       [
+        0,
+        4
+       ],
+       [
+        191,
+        219
+       ],
+       [
+        2380,
+        2380
+       ],
+       [
+        2605,
+        2606
+       ]
+      ]
      }
     }
    },
@@ -346,7 +780,10 @@
       "path_m": 140.2255615194901,
       "extent_m": 63.58726831434548,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      },
      "stereo": {
       "frames": 1160,
@@ -354,7 +791,10 @@
       "path_m": 140.27021727568246,
       "extent_m": 63.57800043582588,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 23
@@ -368,7 +808,15 @@
       "path_m": 73.41916258904952,
       "extent_m": 52.137192937625706,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9484978540772532,
+      "still": [
+       [
+        518,
+        553
+       ]
+      ],
+      "evaluated": 0.9484978540772532
      },
      "stereo": {
       "frames": 700,
@@ -376,7 +824,15 @@
       "path_m": 72.84976893857302,
       "extent_m": 52.12048492386988,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9471428571428572,
+      "still": [
+       [
+        518,
+        554
+       ]
+      ],
+      "evaluated": 0.9471428571428572
      }
     },
     "trials": 13
@@ -395,7 +851,15 @@
         585,
         627
        ]
-      ]
+      ],
+      "moving": 0.9936305732484076,
+      "still": [
+       [
+        622,
+        625
+       ]
+      ],
+      "evaluated": 0.9315286624203821
      },
      "stereo": {
       "frames": 629,
@@ -408,7 +872,19 @@
         586,
         628
        ]
-      ]
+      ],
+      "moving": 0.9904610492845787,
+      "still": [
+       [
+        622,
+        625
+       ],
+       [
+        627,
+        628
+       ]
+      ],
+      "evaluated": 0.931637519872814
      }
     },
     "trials": 12
@@ -422,7 +898,15 @@
       "path_m": 123.82540181649456,
       "extent_m": 65.17929640287558,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9972583961617546,
+      "still": [
+       [
+        1352,
+        1355
+       ]
+      ],
+      "evaluated": 0.9972583961617546
      },
      "stereo": {
       "frames": 1459,
@@ -430,7 +914,15 @@
       "path_m": 123.9157152927528,
       "extent_m": 65.18326110963525,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9965729952021933,
+      "still": [
+       [
+        1352,
+        1356
+       ]
+      ],
+      "evaluated": 0.9965729952021933
      }
     },
     "trials": 29
@@ -444,13 +936,43 @@
       "frames": 2047,
       "duration_s": 204.7,
       "path_m": 146.57029709935313,
-      "extent_m": 64.64258795926087
+      "extent_m": 64.64258795926087,
+      "moving": 0.898876404494382,
+      "still": [
+       [
+        585,
+        590
+       ],
+       [
+        964,
+        1015
+       ],
+       [
+        1260,
+        1408
+       ]
+      ]
      },
      "stereo": {
       "frames": 2049,
       "duration_s": 204.9,
       "path_m": 150.28997306401928,
-      "extent_m": 65.02224646315776
+      "extent_m": 65.02224646315776,
+      "moving": 0.8999511957052221,
+      "still": [
+       [
+        586,
+        591
+       ],
+       [
+        965,
+        1016
+       ],
+       [
+        1261,
+        1407
+       ]
+      ]
      }
     }
    },
@@ -472,7 +994,31 @@
         624,
         1945
        ]
-      ]
+      ],
+      "moving": 0.9710144927536232,
+      "still": [
+       [
+        1247,
+        1270
+       ],
+       [
+        1288,
+        1301
+       ],
+       [
+        1417,
+        1444
+       ],
+       [
+        1891,
+        1891
+       ],
+       [
+        1902,
+        1908
+       ]
+      ],
+      "evaluated": 0.29063846455150805
      },
      "stereo": {
       "frames": 2553,
@@ -489,7 +1035,27 @@
         622,
         1934
        ]
-      ]
+      ],
+      "moving": 0.9714061887974932,
+      "still": [
+       [
+        1247,
+        1271
+       ],
+       [
+        1288,
+        1301
+       ],
+       [
+        1418,
+        1444
+       ],
+       [
+        1903,
+        1909
+       ]
+      ],
+      "evaluated": 0.2957305131218175
      }
     },
     "trials": 51
@@ -524,7 +1090,43 @@
         2867,
         2936
        ]
-      ]
+      ],
+      "moving": 0.898876404494382,
+      "still": [
+       [
+        1578,
+        1661
+       ],
+       [
+        1674,
+        1714
+       ],
+       [
+        1777,
+        1820
+       ],
+       [
+        1833,
+        1835
+       ],
+       [
+        1852,
+        1865
+       ],
+       [
+        1880,
+        1946
+       ],
+       [
+        1967,
+        1972
+       ],
+       [
+        1983,
+        2020
+       ]
+      ],
+      "evaluated": 0.3908750425604358
      },
      "stereo": {
       "frames": 2938,
@@ -549,7 +1151,39 @@
         2865,
         2937
        ]
-      ]
+      ],
+      "moving": 0.9033356024506467,
+      "still": [
+       [
+        1582,
+        1661
+       ],
+       [
+        1675,
+        1714
+       ],
+       [
+        1777,
+        1820
+       ],
+       [
+        1834,
+        1835
+       ],
+       [
+        1852,
+        1865
+       ],
+       [
+        1880,
+        1946
+       ],
+       [
+        1983,
+        2019
+       ]
+      ],
+      "evaluated": 0.3805309734513274
      }
     },
     "trials": 58
@@ -565,7 +1199,14 @@
       "frames": 4541,
       "duration_s": 454.1,
       "path_m": 3723.7959780634837,
-      "extent_m": 751.1863302338131
+      "extent_m": 751.1863302338131,
+      "moving": 0.999119136754019,
+      "still": [
+       [
+        546,
+        549
+       ]
+      ]
      }
     }
    }
@@ -578,7 +1219,9 @@
       "frames": 1101,
       "duration_s": 110.1,
       "path_m": 2453.6124694725413,
-      "extent_m": 2164.7423264963745
+      "extent_m": 2164.7423264963745,
+      "moving": 1.0,
+      "still": []
      }
     }
    }
@@ -591,7 +1234,14 @@
       "frames": 2761,
       "duration_s": 276.1,
       "path_m": 2205.5703489854227,
-      "extent_m": 641.492842499758
+      "extent_m": 641.492842499758,
+      "moving": 0.9786309308221659,
+      "still": [
+       [
+        2330,
+        2388
+       ]
+      ]
      }
     }
    }
@@ -604,7 +1254,9 @@
       "frames": 1101,
       "duration_s": 110.1,
       "path_m": 1232.4916812050722,
-      "extent_m": 457.5650018013882
+      "extent_m": 457.5650018013882,
+      "moving": 1.0,
+      "still": []
      }
     }
    }
@@ -617,7 +1269,22 @@
       "frames": 1101,
       "duration_s": 110.1,
       "path_m": 694.2990443729823,
-      "extent_m": 283.5585377116402
+      "extent_m": 283.5585377116402,
+      "moving": 0.9673024523160763,
+      "still": [
+       [
+        666,
+        674
+       ],
+       [
+        690,
+        710
+       ],
+       [
+        1095,
+        1100
+       ]
+      ]
      }
     }
    }
@@ -630,7 +1297,9 @@
       "frames": 271,
       "duration_s": 27.1,
       "path_m": 393.6452395417399,
-      "extent_m": 393.6343535611363
+      "extent_m": 393.6343535611363,
+      "moving": 1.0,
+      "still": []
      }
     }
    }
@@ -643,7 +1312,9 @@
       "frames": 1591,
       "duration_s": 159.1,
       "path_m": 1705.4118012361423,
-      "extent_m": 734.9229717997945
+      "extent_m": 734.9229717997945,
+      "moving": 1.0,
+      "still": []
      }
     }
    }
@@ -656,7 +1327,9 @@
       "frames": 1201,
       "duration_s": 120.1,
       "path_m": 919.7489911377825,
-      "extent_m": 694.3279348373741
+      "extent_m": 694.3279348373741,
+      "moving": 1.0,
+      "still": []
      }
     }
    }
@@ -669,7 +1342,14 @@
       "frames": 4071,
       "duration_s": 407.1,
       "path_m": 3223.1722996973267,
-      "extent_m": 898.5454745225871
+      "extent_m": 898.5454745225871,
+      "moving": 0.9965610415131417,
+      "still": [
+       [
+        4008,
+        4021
+       ]
+      ]
      }
     }
    }
@@ -682,7 +1362,9 @@
       "frames": 4661,
       "duration_s": 466.1,
       "path_m": 5067.554539621266,
-      "extent_m": 1120.6018433075133
+      "extent_m": 1120.6018433075133,
+      "moving": 1.0,
+      "still": []
      }
     }
    }
@@ -697,7 +1379,9 @@
       "frames": 1080,
       "duration_s": 108.0,
       "path_m": 105.52716254549605,
-      "extent_m": 29.666856280944945
+      "extent_m": 29.666856280944945,
+      "moving": 1.0,
+      "still": []
      }
     }
    },
@@ -710,7 +1394,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -724,7 +1411,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -738,7 +1428,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -752,7 +1445,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -766,7 +1462,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -780,7 +1479,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -794,7 +1496,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -808,7 +1513,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -822,7 +1530,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -836,7 +1547,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -850,7 +1564,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -864,7 +1581,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -878,7 +1598,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -892,7 +1615,10 @@
       "path_m": 100.1128699098877,
       "extent_m": 30.326436969471594,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 23
@@ -906,7 +1632,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -920,7 +1649,10 @@
       "path_m": 97.45179798919422,
       "extent_m": 29.666423133406493,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -934,7 +1666,10 @@
       "path_m": 48.70880679325233,
       "extent_m": 26.42055239037109,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 9
@@ -948,7 +1683,10 @@
       "path_m": 97.45138964545434,
       "extent_m": 29.66707929729862,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -962,7 +1700,10 @@
       "path_m": 97.45179798919422,
       "extent_m": 29.666423133406493,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -976,7 +1717,10 @@
       "path_m": 97.45179798919422,
       "extent_m": 29.666423133406493,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 19
@@ -990,7 +1734,10 @@
       "path_m": 100.1128699098877,
       "extent_m": 30.326436969471594,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 23
@@ -1004,7 +1751,9 @@
       "frames": 1314,
       "duration_s": 131.4,
       "path_m": 145.8115887597658,
-      "extent_m": 34.486259523225606
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": []
      }
     }
    },
@@ -1017,7 +1766,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1031,7 +1783,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1045,7 +1800,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1059,7 +1817,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1073,7 +1834,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1087,7 +1851,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1101,7 +1868,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1115,7 +1885,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1129,7 +1902,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1143,7 +1919,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1157,7 +1936,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1171,7 +1953,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1185,7 +1970,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1199,7 +1987,10 @@
       "path_m": 139.41457904791343,
       "extent_m": 34.04146307353214,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 28
@@ -1213,7 +2004,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1227,7 +2021,10 @@
       "path_m": 134.0191136726617,
       "extent_m": 34.48469300812412,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1241,7 +2038,10 @@
       "path_m": 67.00390857231852,
       "extent_m": 31.850025157096546,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 12
@@ -1255,7 +2055,10 @@
       "path_m": 134.02036901573274,
       "extent_m": 34.486259523225606,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1269,7 +2072,10 @@
       "path_m": 134.0191136726617,
       "extent_m": 34.48469300812412,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1283,7 +2089,10 @@
       "path_m": 134.0191136726617,
       "extent_m": 34.48469300812412,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 24
@@ -1297,7 +2106,10 @@
       "path_m": 139.41457904791343,
       "extent_m": 34.04146307353214,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 28
@@ -1311,7 +2123,9 @@
       "frames": 159,
       "duration_s": 15.9,
       "path_m": 17.270036435257605,
-      "extent_m": 6.189742797430518
+      "extent_m": 6.189742797430518,
+      "moving": 1.0,
+      "still": []
      }
     }
    },
@@ -1324,7 +2138,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1338,7 +2155,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1352,7 +2172,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1366,7 +2189,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1380,7 +2206,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1394,7 +2223,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1408,7 +2240,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1422,7 +2257,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1436,7 +2274,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1450,7 +2291,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1464,7 +2308,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1478,7 +2325,10 @@
       "path_m": 14.141048937802363,
       "extent_m": 5.872336779988569,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1492,7 +2342,10 @@
       "path_m": 14.141881927544635,
       "extent_m": 5.872565099079723,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1506,7 +2359,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1520,7 +2376,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1534,7 +2393,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1548,7 +2410,10 @@
       "path_m": 15.159530275494522,
       "extent_m": 6.189742797430518,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1562,7 +2427,10 @@
       "path_m": 15.159540089048722,
       "extent_m": 6.1900540854560635,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1576,7 +2444,10 @@
       "path_m": 7.5611445295994955,
       "extent_m": 5.262631475872979,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 1
@@ -1590,7 +2461,10 @@
       "path_m": 15.159540089048722,
       "extent_m": 6.1900540854560635,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 2
@@ -1604,7 +2478,9 @@
       "frames": 713,
       "duration_s": 71.3,
       "path_m": 95.56700826536569,
-      "extent_m": 25.228371504464093
+      "extent_m": 25.228371504464093,
+      "moving": 1.0,
+      "still": []
      }
     }
    },
@@ -1617,7 +2493,10 @@
       "path_m": 91.91262269170583,
       "extent_m": 25.228371504464093,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 13
@@ -1631,7 +2510,10 @@
       "path_m": 91.91262269170583,
       "extent_m": 25.228371504464093,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 13
@@ -1645,7 +2527,10 @@
       "path_m": 91.91262269170583,
       "extent_m": 25.228371504464093,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 13
@@ -1659,7 +2544,10 @@
       "path_m": 91.91262269170583,
       "extent_m": 25.228371504464093,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 13
@@ -1673,7 +2561,10 @@
       "path_m": 91.91262269170583,
       "extent_m": 25.228371504464093,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 13
@@ -1687,7 +2578,10 @@
       "path_m": 91.91262269170583,
       "extent_m": 25.228371504464093,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 13
@@ -1701,7 +2595,10 @@
       "path_m": 95.70354415460324,
       "extent_m": 26.355978245666044,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 16
@@ -1780,7 +2677,10 @@
         627,
         631
        ]
-      ]
+      ],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 0.9640491958372753
      }
     },
     "trials": 21
@@ -1794,7 +2694,10 @@
       "path_m": 91.91262269170583,
       "extent_m": 25.228371504464093,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 13
@@ -1808,7 +2711,10 @@
       "path_m": 91.91288586049076,
       "extent_m": 25.228539162963244,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 13
@@ -1822,7 +2728,10 @@
       "path_m": 45.937440537052424,
       "extent_m": 23.85517605236774,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 7
@@ -1836,7 +2745,15 @@
       "path_m": 93.50471247664137,
       "extent_m": 25.971987904828797,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9267548321464903,
+      "still": [
+       [
+        370,
+        441
+       ]
+      ],
+      "evaluated": 0.9267548321464903
      }
     },
     "trials": 19
@@ -1850,7 +2767,10 @@
       "path_m": 91.91288586049076,
       "extent_m": 25.228539162963244,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 1.0,
+      "still": [],
+      "evaluated": 1.0
      }
     },
     "trials": 13
@@ -1864,7 +2784,15 @@
       "path_m": 93.50471247664137,
       "extent_m": 25.971987904828797,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9267548321464903,
+      "still": [
+       [
+        370,
+        441
+       ]
+      ],
+      "evaluated": 0.9267548321464903
      }
     },
     "trials": 19
@@ -1880,13 +2808,35 @@
       "frames": 7087,
       "duration_s": 708.7,
       "path_m": 276.478694960402,
-      "extent_m": 35.25401559534483
+      "extent_m": 35.25401559534483,
+      "moving": 0.9827853816847749,
+      "still": [
+       [
+        0,
+        117
+       ],
+       [
+        2707,
+        2710
+       ]
+      ]
      },
      "stereo": {
       "frames": 7088,
       "duration_s": 708.8,
       "path_m": 280.20871134923556,
-      "extent_m": 35.89615937913949
+      "extent_m": 35.89615937913949,
+      "moving": 0.9826467268623025,
+      "still": [
+       [
+        0,
+        118
+       ],
+       [
+        2709,
+        2712
+       ]
+      ]
      }
     }
    },
@@ -1912,7 +2862,23 @@
         7859,
         8549
        ]
-      ]
+      ],
+      "moving": 0.9968992248062015,
+      "still": [
+       [
+        1581,
+        1586
+       ],
+       [
+        1642,
+        1647
+       ],
+       [
+        10300,
+        10319
+       ]
+      ],
+      "evaluated": 0.7517441860465116
      },
      "stereo": {
       "frames": 9206,
@@ -1933,7 +2899,23 @@
         6720,
         7390
        ]
-      ]
+      ],
+      "moving": 0.9971757549424288,
+      "still": [
+       [
+        1325,
+        1328
+       ],
+       [
+        1375,
+        1377
+       ],
+       [
+        9187,
+        9205
+       ]
+      ],
+      "evaluated": 0.7554855529002824
      }
     },
     "trials": 184
@@ -1964,7 +2946,19 @@
         9371,
         9659
        ]
-      ]
+      ],
+      "moving": 0.9798136645962733,
+      "still": [
+       [
+        0,
+        171
+       ],
+       [
+        9637,
+        9659
+       ]
+      ],
+      "evaluated": 0.7477225672877846
      },
      "stereo": {
       "frames": 9930,
@@ -1989,7 +2983,19 @@
         9604,
         9929
        ]
-      ]
+      ],
+      "moving": 0.9801611278952669,
+      "still": [
+       [
+        0,
+        173
+       ],
+       [
+        9907,
+        9929
+       ]
+      ],
+      "evaluated": 0.7512588116817724
      }
     },
     "trials": 193
@@ -2003,7 +3009,19 @@
       "path_m": 291.68749425669193,
       "extent_m": 38.36778754322151,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9741961095672886,
+      "still": [
+       [
+        0,
+        183
+       ],
+       [
+        7546,
+        7556
+       ]
+      ],
+      "evaluated": 0.9741961095672886
      },
      "stereo": {
       "frames": 7558,
@@ -2011,7 +3029,19 @@
       "path_m": 294.65263710706165,
       "extent_m": 38.75969942317794,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9741995236835141,
+      "still": [
+       [
+        0,
+        183
+       ],
+       [
+        7547,
+        7557
+       ]
+      ],
+      "evaluated": 0.9741995236835141
      }
     },
     "trials": 151
@@ -2038,7 +3068,19 @@
         6963,
         7453
        ]
-      ]
+      ],
+      "moving": 0.9873927322809619,
+      "still": [
+       [
+        0,
+        116
+       ],
+       [
+        1345,
+        1346
+       ]
+      ],
+      "evaluated": 0.8216972136878906
      },
      "stereo": {
       "frames": 9440,
@@ -2059,7 +3101,19 @@
         6969,
         7451
        ]
-      ]
+      ],
+      "moving": 0.9872881355932204,
+      "still": [
+       [
+        0,
+        117
+       ],
+       [
+        1346,
+        1347
+       ]
+      ],
+      "evaluated": 0.823728813559322
      }
     },
     "trials": 188
@@ -2073,7 +3127,19 @@
       "path_m": 277.9240849469819,
       "extent_m": 35.51555915584469,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9873114338079797,
+      "still": [
+       [
+        0,
+        81
+       ],
+       [
+        7085,
+        7092
+       ]
+      ],
+      "evaluated": 0.9873114338079797
      },
      "stereo": {
       "frames": 7094,
@@ -2081,7 +3147,19 @@
       "path_m": 281.36146782269293,
       "extent_m": 36.04456814089777,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9871722582464054,
+      "still": [
+       [
+        0,
+        82
+       ],
+       [
+        7086,
+        7093
+       ]
+      ],
+      "evaluated": 0.9871722582464054
      }
     },
     "trials": 141
@@ -2095,7 +3173,15 @@
       "path_m": 276.6860593661066,
       "extent_m": 35.87515262571338,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9988623435722411,
+      "still": [
+       [
+        7024,
+        7031
+       ]
+      ],
+      "evaluated": 0.9988623435722411
      },
      "stereo": {
       "frames": 7032,
@@ -2103,7 +3189,15 @@
       "path_m": 280.27619652282397,
       "extent_m": 36.284044435835135,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.999004550625711,
+      "still": [
+       [
+        7025,
+        7031
+       ]
+      ],
+      "evaluated": 0.999004550625711
      }
     },
     "trials": 140
@@ -2117,7 +3211,15 @@
       "path_m": 272.87117929040375,
       "extent_m": 35.088034428250864,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9844618674269423,
+      "still": [
+       [
+        0,
+        108
+       ]
+      ],
+      "evaluated": 0.9844618674269423
      },
      "stereo": {
       "frames": 7013,
@@ -2125,7 +3227,15 @@
       "path_m": 276.7905103262014,
       "extent_m": 35.76189747275542,
       "covered": 1.0,
-      "uncovered": []
+      "uncovered": [],
+      "moving": 0.9847426208469985,
+      "still": [
+       [
+        0,
+        106
+       ]
+      ],
+      "evaluated": 0.9847426208469985
      }
     },
     "trials": 140

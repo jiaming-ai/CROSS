@@ -42,7 +42,7 @@ HEADLESS = Path(__file__).resolve().parent / "vggt_slam_headless.py"
 sys.path.insert(0, str(ROOT / "scripts/baselines"))
 sys.path.insert(0, str(ROOT / "scripts"))
 from eval_traj import evaluate, umeyama  # noqa: E402
-from reloc_metrics import build_trials, summarize_trials, summarize_errors  # noqa: E402
+from reloc_metrics import build_trials, first_map_link, summarize_trials, summarize_errors  # noqa: E402
 
 
 def images(seq: Path):
@@ -125,6 +125,16 @@ def run_stream(frames, stream: Path, log: Path, traj: Path, args):
     return rc, dt, peak, poses
 
 
+def map_link(log: Path, n_map: int):
+    """First query stream index that VGGT-SLAM linked to the map: accepted loop closures (vggt_slam_headless.py prints
+    `VGGT_LOOP <query> <retrieved> <submap first>`) from a query frame to a map frame link the query frame's whole
+    submap (its frames are estimated together), from the submap's first query frame on (reloc_metrics.first_map_link
+    for the rule).  None without such a loop."""
+    text = log.read_text(errors="replace") if log.is_file() else ""
+    loops = [(int(q), int(r), int(s)) for q, r, s in re.findall(r"VGGT_LOOP (\d+) (\d+) (\d+)", text)]
+    return first_map_link([(max(s, n_map), r) for q, r, s in loops if q >= n_map], n_map)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--map", required=True)
@@ -178,8 +188,13 @@ def main():
         per_trial_time.append({"trial": ti, "rc": rc, "seconds": dt, "start": a, "end": b, "n_poses": len(poses),
                                "peak_gpu_gb": peak})
         poses, scale = sim3_to_gt(poses, gt_map, n_map)
+        # query frames count as localized only from the first query submap linked to a map frame by an accepted loop
+        # closure; before that their poses only continue the map's trajectory across the jump between the traversals
+        # (the submap that holds the map's last frames and the query's first, or the chain of submaps after it)
+        link = map_link(out / f"vggt_t{ti}.log", n_map)
+        per_trial_time[-1]["map_link"] = None if link is None else int(link) - n_map + a
         map_poses = {i: (2, T) for i, T in poses.items() if i < n_map}
-        query_poses = {i - n_map + a: (2, T) for i, T in poses.items() if i >= n_map}
+        query_poses = {i - n_map + a: (2 if link is not None and i >= link else 1, T) for i, T in poses.items() if i >= n_map}
         rws, summ = evaluate(map_poses, query_poses, gt_map, gt_query, sim3=True, frame_range=(a, b))
         if rws is None:
             rws = [{"frame": i, "trial": ti, "tracked": False, "c0_rel_t_err": np.inf, "c0_rel_r_err": np.inf,

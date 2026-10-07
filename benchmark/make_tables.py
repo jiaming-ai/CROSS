@@ -16,6 +16,8 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
+from metrics import moving_fraction, moving_rule  # noqa: E402
 SETUP_LABEL = {"rgbd": "RGB-D", "stereo": "stereo", "mono": "mono"}
 PENDING, NA, FAIL = "·", "", "✗"
 
@@ -189,20 +191,50 @@ def uncovered(dataset, query, setup_dir):
     return None
 
 
+def session_setup_stats(dataset, query, setup_dir):
+    """The statistics of one prepared session folder (benchmark/results/datasets.json, from dataset_stats.py), or None."""
+    uncovered(dataset, query, setup_dir)            # loads _COVERAGE
+    for scene in _COVERAGE.get(dataset, {}).values():
+        r = scene.get(query)
+        if r and setup_dir in r.get("setups", {}):
+            return r["setups"][setup_dir]
+    return None
+
+
+def trial_moving_ok(t, rule, still, trial_len):
+    """Whether a T3 trial counts under the moving rule (PROTOCOL.md, T3): the robot moves in at least
+    rule['min_fraction'] of its frames.  The fraction comes from the run (run.py stores it per trial) or from the
+    session's still intervals (datasets.json); a trial with neither counts."""
+    if "t3" not in rule["tracks"]:
+        return True
+    f = t.get("moving")
+    if f is None and still is not None:
+        f = moving_fraction(int(t.get("start") or 0), int(trial_len), still)
+    return f is None or f >= rule["min_fraction"]
+
+
 def rescore_t3(results, ds_cfg):
     """T3 success at the dataset's two fixed position thresholds (1 m / 2 m indoors, 3 m / 5 m outdoors), from the stored
-    final error of every trial: n_s1 / n_s2 successes, rs1 / rs2 rates."""
+    final error of every trial: n_s1 / n_s2 successes, rs1 / rs2 rates.  Only trials whose last frame the map covers and
+    in which the robot moves count (PROTOCOL.md, T3); every trial is annotated with `covered`, `moving_ok` and
+    `counted`."""
     out = []
     for r in results:
         if r.get("track") != "t3" or r.get("status") != "ok" or not r.get("trials") or "rs1" in r:
             out.append(r)          # (already re-scored: keep the same object)
             continue
         t1, t2 = ds_cfg[r["dataset"]]["thresholds"]
-        gaps = uncovered(r["dataset"], r["query"], ds_cfg[r["dataset"]]["setups"].get(r["setup"], ""))
+        setup_dir = ds_cfg[r["dataset"]]["setups"].get(r["setup"], "")
+        gaps = uncovered(r["dataset"], r["query"], setup_dir)
+        st = session_setup_stats(r["dataset"], r["query"], setup_dir) or {}
+        rule = moving_rule(ds_cfg[r["dataset"]])
         tl = int(ds_cfg[r["dataset"]]["trial_len"])
-        annotated = [{**t, "covered": not any(a <= int(t.get("start") or 0) + tl - 1 <= b for a, b in (gaps or []))}
-                     for t in r["trials"]]           # only trials whose last frame the map covers count (PROTOCOL.md, T3)
-        trials = [t for t in annotated if t["covered"]]
+        annotated = []
+        for t in r["trials"]:
+            cov = not any(a <= int(t.get("start") or 0) + tl - 1 <= b for a, b in (gaps or []))
+            mov = trial_moving_ok(t, rule, st.get("still"), tl)
+            annotated.append({**t, "covered": cov, "moving_ok": mov, "counted": cov and mov})
+        trials = [t for t in annotated if t["counted"]]
         e = [t.get("final_err") for t in trials]
         n = len(e)
         r = dict(r)
@@ -218,19 +250,19 @@ def rescore_t3(results, ds_cfg):
 
 
 def query_stats(dataset, query, setup_dir):
-    """(frames, covered fraction, uncovered intervals) of a prepared query session, from benchmark/results/datasets.json."""
-    uncovered(dataset, query, setup_dir)            # loads _COVERAGE
-    for scene in _COVERAGE.get(dataset, {}).values():
-        r = scene.get(query)
-        if r and setup_dir in r.get("setups", {}):
-            st = r["setups"][setup_dir]
-            return st["frames"], st.get("covered", 1.0), st.get("uncovered") or []
-    return None
+    """(frames, covered fraction, uncovered intervals, still intervals or None, evaluated fraction: covered and moving)
+    of a prepared query session, from benchmark/results/datasets.json."""
+    st = session_setup_stats(dataset, query, setup_dir)
+    if st is None:
+        return None
+    cov = st.get("covered", 1.0)
+    return st["frames"], cov, st.get("uncovered") or [], st.get("still"), st.get("evaluated", cov)
 
 
 def count_failed_queries(results, ds_cfg, sy):
     """A query session whose run failed (crash or timeout after re-runs, or a failed map) counts as a failure of every
-    covered frame (T2) and of every covered trial (T3): it adds its frames / trials to the pools with no success.  Systems
+    evaluated frame (T2: covered, robot moving) and of every counted trial (T3): it adds its frames / trials to the pools
+    with no success.  Systems
     without map persistence are scored on at most --concat-max-trials evenly spaced trials, so their failed queries add
     the same selection.  Failed runs of sessions without dataset statistics stay out of the pools."""
     import numpy as np
@@ -246,16 +278,19 @@ def count_failed_queries(results, ds_cfg, sy):
         if st is None:
             out.append(r)
             continue
-        frames, cov, gaps = st
+        frames, cov, gaps, still, evaluated = st
+        rule = moving_rule(cfg)
         r = dict(r, counted_failure=True)
         if r["track"] == "t2":
-            r.update({f"lr@{x:g}": 0.0 for x in LR_GRID}, n_frames=int(round(frames * cov)), est_frac=0.0, ms_ate=None)
+            frac = evaluated if "t2" in rule["tracks"] else cov
+            r.update({f"lr@{x:g}": 0.0 for x in LR_GRID}, n_frames=int(round(frames * frac)), est_frac=0.0, ms_ate=None)
         else:
             tl = int(cfg["trial_len"])
             trials = build_trials(frames, tl, int(cfg["trial_stride"]))
             if sy[r["system"]]["runner"] == "concat" and len(trials) > CONCAT_MAX_TRIALS:
                 trials = [trials[i] for i in np.linspace(0, len(trials) - 1, CONCAT_MAX_TRIALS).round().astype(int)]
-            n = sum(1 for a, _ in trials if not any(g0 <= a + tl - 1 <= g1 for g0, g1 in gaps))
+            n = sum(1 for a, _ in trials if not any(g0 <= a + tl - 1 <= g1 for g0, g1 in gaps)
+                    and trial_moving_ok({"start": a}, rule, still, tl))
             r.update(n_trials=n, n_s1=0, n_s2=0, rs1=0.0, rs2=0.0, trials=[])
         out.append(r)
     return out
@@ -360,9 +395,9 @@ class Tables:
         thr = cfg["thresholds"]
         scenes = [s for s in cfg["scenes"] if cfg["scenes"][s].get("queries")]
         head = ["system · setup"] + [f"{s}" for s in scenes] + ["all queries"]
-        lines = [f"Cells: LR@{thr[0]:g} m / LR@{thr[1]:g} m and MS-ATE (m), pooled over the covered frames of the scene's query sessions (frames within the larger threshold of the map session's path). "
-                 "LR@x = fraction of query frames whose latest pose (at most 1 s old), expressed in the map frame, is within x m of "
-                 "the ground truth; frames without such a pose count as failures, as do all covered frames of a failed query session (k/N ✗). MS-ATE = RMSE over the frames that have a pose.", "",
+        lines = [f"Cells: LR@{thr[0]:g} m / LR@{thr[1]:g} m and MS-ATE (m), pooled over the evaluated frames of the scene's query sessions (frames within the larger threshold of the map session's path, at which the robot moves). "
+                 "LR@x = fraction of these frames whose latest pose in the stored map (at most 1 s old) is within x m of "
+                 "the ground truth; frames without such a pose count as failures (a system that has not joined the stored map yet has none), as do all evaluated frames of a failed query session (k/N ✗). MS-ATE = RMSE over the frames that have a pose.", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
             cells = {(r["map"], r["query"]): r for r in self.idx[("t2", dataset, system, setup)]}
@@ -403,7 +438,7 @@ class Tables:
         note = (f" Rows marked *calibrated* ({', '.join(cal)}) use the noise model calibrated without ground truth on the "
                 "first 600 frames of the map traversal." if cal else "")
         lines = [f"Cells: RS@{t1:g} m / RS@{t2:g} m, the fraction of trials whose final pose lies within {t1:g} m / {t2:g} m of the "
-                 f"pose the map implies, pooled over the scene's trials whose last frame the map covers. (k/N ✗): k of the N query "
+                 f"pose the map implies, pooled over the scene's trials whose last frame the map covers and in which the robot moves in at least half of the frames. (k/N ✗): k of the N query "
                  f"sessions failed; their trials count as failures.{note}", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
@@ -528,7 +563,7 @@ class Tables:
                                      for d in T3_DATASETS] + ["overall"]
         lines = ["Overall = mean over the three datasets of the pooled success at each dataset's smaller / larger threshold "
                  "(a method missing a dataset has no overall value). (k/N ✗): k of the N query sessions failed (crash or "
-                 "timeout after re-runs, or a failed map); every covered trial of a failed session counts as a failure.", "",
+                 "timeout after re-runs, or a failed map); every counted trial of a failed session counts as a failure.", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, sc in self.sy.items():
             if sc.get("hidden"):

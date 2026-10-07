@@ -113,7 +113,7 @@ def main():
         su = cfg["setups"][r["setup"]]
         thr = cfg["thresholds"]
         for t in r["trials"]:
-            if not t.get("covered", True):
+            if not t.get("counted", t.get("covered", True)):
                 continue
             f = feat.get((r["dataset"], r["query"], su, int(t["start"])))
             if f is None:

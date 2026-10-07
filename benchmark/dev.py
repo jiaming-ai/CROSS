@@ -25,6 +25,7 @@ import numpy as np
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
 
 
 def dev_cfg():
@@ -157,7 +158,8 @@ _COV = {}
 
 
 def covered_trial_starts(data: Path, cfg, dataset, scene, query, setup):
-    """Trial starts whose last frame lies within the larger threshold of the map session's path (PROTOCOL.md T3)."""
+    """Trial starts whose last frame lies within the larger threshold of the map session's path and in which the robot
+    moves in at least the rule's fraction of the frames (PROTOCOL.md T3)."""
     key = (dataset, scene, query, setup)
     if key not in _COV:
         from scipy.spatial import cKDTree
@@ -165,12 +167,18 @@ def covered_trial_starts(data: Path, cfg, dataset, scene, query, setup):
         root = data / d.get("data", dataset)
         sub = d["setups"][setup]
 
-        def pos(seq):
-            return np.loadtxt(root / seq / sub / "poses_left.txt").reshape(-1, 4, 4)[:, :3, 3]
-        gq, gm = pos(query), pos(d["scenes"][scene]["map"])
+        from metrics import moving_fraction, moving_frames, moving_rule
+
+        def poses(seq):
+            return np.loadtxt(root / seq / sub / "poses_left.txt").reshape(-1, 4, 4)
+        Gq = poses(query)
+        gq, gm = Gq[:, :3, 3], poses(d["scenes"][scene]["map"])[:, :3, 3]
         ok = cKDTree(gm).query(gq)[0] < d["thresholds"][1]
         L = d["trial_len"]
-        _COV[key] = {s for s in range(len(gq)) if s + L - 1 < len(gq) and ok[s + L - 1]}
+        rule = moving_rule(d)
+        mov = moving_frames(Gq, 10.0, **rule) if "t3" in rule["tracks"] else np.ones(len(Gq), bool)
+        _COV[key] = {s for s in range(len(gq)) if s + L - 1 < len(gq) and ok[s + L - 1]
+                     and moving_fraction(s, L, moving=mov) >= (rule["min_fraction"] if "t3" in rule["tracks"] else 0.0)}
     return _COV[key]
 
 
