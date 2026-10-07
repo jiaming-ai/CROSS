@@ -2167,6 +2167,14 @@ class System:
                     else:
                         informative = True
 
+            # references of the cluster with a high pose-estimator confidence (covisibility): a multi-view check of the
+            # proposal (HypothesisConfig.strong_pass_frames)
+            hc = self.config.mapping.hypothesis
+            strong_refs = 0
+            if getattr(hc, "strong_pass_frames", 0) > 1:
+                bs_c = valid_indices_tuple[0][cluster_indices]
+                strong_refs = len({int(b) for b in bs_c.tolist() if float(confidences[int(b)]) >= hc.strong_pass_min_covis})
+
             hypotheses.append({
                 'pose': representative_pose, # cluster representative pose
                 'std': representative_std, # std from cluster dispersion (se(3))
@@ -2174,6 +2182,7 @@ class System:
                 'source_indices': cluster_sources.tolist(), # M, 2
                 'h0_ok': h0_flag,
                 'informative': informative,
+                'strong_refs': strong_refs,
             })
             if self.hypothesis_manager.chart_aware:
                 hypotheses[-1]['chart_id'] = int(flat_charts[best_candidate_in_cluster_idx])

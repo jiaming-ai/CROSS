@@ -256,6 +256,10 @@ class HypothesisManager:
         if self.reloc_association_evidence and not (cfg.session_recovery and cfg.chart_aware):
             raise ValueError("Association evidence requires session_recovery with chart_aware")
         self.detect_reject_cooldown_steps = cfg.detect_reject_cooldown_steps
+        self.strong_pass_frames = int(getattr(cfg, "strong_pass_frames", 0))
+        self.strong_pass_min_refs = int(getattr(cfg, "strong_pass_min_refs", 2))
+        self.strong_pass_min_covis = float(getattr(cfg, "strong_pass_min_covis", 0.3))
+        self.close_correction_min_llr = float(getattr(cfg, "close_correction_min_llr", 0.0))
         self.verify_outlier_sigma = cfg.verify_outlier_sigma
         self.verify_max_outlier_frac = cfg.verify_max_outlier_frac
 
@@ -397,6 +401,9 @@ class HypothesisManager:
         self.log_conf_hist = torch.zeros(self.n_components, self.llr_hist_length, device=self.device)
         # which history slots hold real evidence (component active and past its birth frame)
         self.hist_valid = torch.zeros(self.n_components, self.llr_hist_length, dtype=torch.bool, device=self.device)
+        # which valid history slots came from a strong pass (strong_pass_frames)
+        self.strong_hist = torch.zeros(self.n_components, self.llr_hist_length, dtype=torch.bool, device=self.device)
+        self._pending_strong = torch.zeros(self.n_components, dtype=torch.bool, device=self.device)
         self._lc_reject_until: Dict[int, int] = {}
 
         # Mark existing hypotheses as realized and give them base TTL
@@ -436,7 +443,7 @@ class HypothesisManager:
         to_realize_mask = unrealized_mask & \
                           (self.last_sum_pos >= self.realize_sum_thresh) & \
                           (hit_valid >= self.realize_hitrate_thresh) & \
-                          (n_valid >= self.realize_min_frames)
+                          (self._effective_frames(n_valid) >= self.realize_min_frames)
         association = self.association_components()
         if bool(association.any()):
             # sequential association evidence: signed sum over the valid window and enough verified frames
@@ -746,6 +753,7 @@ class HypothesisManager:
             self.log_c_hist[component_id, :] = 0
             self.log_conf_hist[component_id, :] = 0
             self.hist_valid[component_id, :] = False
+            self.strong_hist[component_id, :] = False
             self.last_sum_pos[component_id] = 0
             self.last_hit_rate[component_id] = 0
         self.reference_support.clear_component(component_id)
@@ -753,6 +761,16 @@ class HypothesisManager:
         self.component_generations[component_id] += 1
         if self.source_states is not None:
             self.source_states[component_id] = None
+
+    def _effective_frames(self, n_valid: torch.Tensor, rows=None) -> torch.Tensor:
+        """Valid evidence frames, a strong pass counting strong_pass_frames (rows: the components of n_valid)."""
+        if self.strong_pass_frames <= 1:
+            return n_valid
+        strong = (self.strong_hist & self.hist_valid) if rows is None else (self.strong_hist[rows] & self.hist_valid[rows])
+        return n_valid + (self.strong_pass_frames - 1) * strong.sum(dim=1)
+
+    def _is_strong(self, proposal: Dict) -> bool:
+        return self.strong_pass_frames > 1 and int(proposal.get("strong_refs", 0)) >= self.strong_pass_min_refs
 
     def initialize_source_filter(self):
         """Start the conditional filter after initializing the tracking poses.
@@ -870,6 +888,7 @@ class HypothesisManager:
         """
         # --- Step 1: Initialization and Projection ---
         current_mu, current_std, current_weights = self.dist
+        self._pending_strong = torch.zeros(self.n_components, dtype=torch.bool, device=self.device)
 
         # Advance internal step counter for recency tracking
         self.step_counter += 1
@@ -981,6 +1000,7 @@ class HypothesisManager:
             
             # --- A match is found: update the aligned GMM ---
             proposal = proposal_hypotheses[proposal_idx]
+            self._pending_strong[true_comp_idx] = self._is_strong(proposal)
             if true_comp_idx == 0:
                 self.comp0_informative = proposal.get('informative', True)
             aligned_mu[true_comp_idx] = proposal['pose']
@@ -1055,6 +1075,7 @@ class HypothesisManager:
             self._reset_component_evidence(new_comp_idx)
             self.last_alignment_audit[proposal_idx].update(component=new_comp_idx, action="born")
             proposal = proposal_hypotheses[proposal_idx]
+            self._pending_strong[new_comp_idx] = self._is_strong(proposal)
             
             aligned_mu[new_comp_idx] = proposal['pose']
             self.component_charts[new_comp_idx] = proposal['chart_id'] if self.chart_aware else 0
@@ -1338,6 +1359,8 @@ class HypothesisManager:
         self.log_conf_hist[:, self.llr_hist_ptr] = torch.where(active_tracking_mask, log_conf, torch.zeros_like(log_conf))
         # a newborn is seeded with its proposal (zero residual): its birth frame is not evidence
         self.hist_valid[:, self.llr_hist_ptr] = active_tracking_mask & ~self.newborn
+        self.strong_hist[:, self.llr_hist_ptr] = self._pending_strong.to(self.strong_hist.device) & self.hist_valid[:, self.llr_hist_ptr]
+        self._pending_strong = torch.zeros_like(self._pending_strong)
 
         self.llr_hist[:, self.llr_hist_ptr] = pos
         self.llr_hist_ptr = (self.llr_hist_ptr + 1) % self.llr_hist_length
@@ -1433,6 +1456,7 @@ class HypothesisManager:
                     self.realized[dead_full_mask] = False
                     self.ttl[dead_full_mask] = 0
                     self.hist_valid[dead_full_mask] = False
+                    self.strong_hist[dead_full_mask] = False
                     self.log_c_hist[dead_full_mask] = 0.0
                     self.log_u_hist[dead_full_mask] = 0.0
                     self.log_conf_hist[dead_full_mask] = 0.0
@@ -1585,7 +1609,7 @@ class HypothesisManager:
             log_c_pos_sum = (log_c_rel_realized.clamp(-self.detect_llr_cap, self.detect_llr_cap) * valid).sum(dim=1)
             log_c_pos_hit_rate = ((rel > 0) & valid).float().sum(dim=1) / n_valid.clamp(min=1)
             log_conf_hit_rate = ((log_conf_rel_realized + self.detect_conf_rel_margin > 0) & valid).float().sum(dim=1) / n_valid.clamp(min=1)
-            enough = n_valid >= min_frames
+            enough = self._effective_frames(n_valid, realized_ids) >= min_frames
             # the belief must actually have moved to the candidate, and a candidate whose merge was just rejected
             # (geometric verification) is ignored for a while
             weights = self.dist[2][realized_ids]
@@ -1604,6 +1628,9 @@ class HypothesisManager:
                 [a["unanchored_reference_candidate"] for a in reference_audits], device=distances.device, dtype=torch.bool)
             reference_supported = torch.tensor([a["eligible"] for a in reference_audits],
                                                device=distances.device, dtype=torch.bool)
+            if self.close_correction_min_llr > 0:
+                # a close candidate that the measurements strongly prefer to hypothesis 0 corrects it (not a duplicate)
+                close_mask = close_mask & ~((log_c_pos_sum >= self.close_correction_min_llr) & (n_valid >= min_frames))
             separation_gate = torch.where(cross_chart, reference_supported, ~close_mask)
 
             detected_mask = (log_c_pos_sum >= self.detect_overlap_sum_thresh) \
@@ -2053,6 +2080,7 @@ class HypothesisManager:
         # Reset evidence history if present
         self.llr_hist[comp_idx, :] = 0.0
         self.hist_valid[comp_idx, :] = False
+        self.strong_hist[comp_idx, :] = False
         self.log_c_hist[comp_idx, :] = 0.0
         self.log_u_hist[comp_idx, :] = 0.0
         self.log_conf_hist[comp_idx, :] = 0.0
@@ -2109,6 +2137,7 @@ class HypothesisManager:
         self.newborn[comp_idx] = False
         self.llr_hist[comp_idx, :] = 0.0
         self.hist_valid[comp_idx, :] = False
+        self.strong_hist[comp_idx, :] = False
         self.log_c_hist[comp_idx, :] = 0.0
         self.log_u_hist[comp_idx, :] = 0.0
         self.log_conf_hist[comp_idx, :] = 0.0

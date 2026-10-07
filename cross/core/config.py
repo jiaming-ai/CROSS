@@ -520,6 +520,19 @@ class HypothesisConfig:
     reloc_min_verified_frames: int = 3
     reloc_realize_nats: float = 2.0
     detect_reject_cooldown_steps: int = 30   # steps a candidate is ignored after a rejected merge
+    # strong passes (0 = off): a proposal backed by at least strong_pass_min_refs references, each with covisibility
+    # >= strong_pass_min_covis, is a multi-view check by itself; such a pass counts as strong_pass_frames valid evidence
+    # frames in the frame-count gates of realization (realize_min_frames) and detection (detect_min_frames). Without
+    # it, a short real overlap after non-overlapping views (rightly rejected) gives too few frames, and the passes split
+    # over several components (OpenLORIS office1-7, mono: relocalization ~175 frames late)
+    strong_pass_frames: int = 0
+    strong_pass_min_refs: int = 2
+    strong_pass_min_covis: float = 0.3
+    # close correction (0 = off): a candidate within the 3 m separation radius of hypothesis 0 passes the separation
+    # gate when its net evidence against hypothesis 0 over detect_min_frames frames is at least this many nats; the
+    # measurements then say hypothesis 0 is wrong, not that the candidate duplicates it (office1-4, mono: hypothesis 0
+    # 1.6 m off after a wrong-scale fix, the correct candidate 1.7 m away with 15-20 nats never merged)
+    close_correction_min_llr: float = 0.0
     # geometric verification of a merge: fraction of the candidate's visual edges that remain outliers
     # (Mahalanobis norm > verify_outlier_sigma) after the loop-closure optimisation
     verify_outlier_sigma: float = 4.0
@@ -676,6 +689,11 @@ class FeedForwardConfig:
     # places a reference that overlaps nothing else in the pass arbitrarily; every anchor through it shares that error,
     # so the anchors agree and a wrong scale looks certain (mono passes whose only anchors are map pairs)
     map_anchor_min_pair_covis: float = 0.0
+    # view-level scale uncertainty (0 = off): the spread of the scale is also measured by leaving out each reference view
+    # in turn (jackknife), since anchors through one view share its placement error; when one reference view carries
+    # every anchor, the relative scale std is at least this. Three anchors through one disconnected view gave a
+    # 7x scale error with logstd 0.003
+    anchor_view_logstd_floor: float = 0.0
     anchor_weight_by_baseline: bool = True   # weight anchors by predicted baseline length (precision of the ratio)
     anchor_max_rot_err_deg: float = 20.0
     anchor_min_dir_cos: float = 0.5
