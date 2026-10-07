@@ -248,6 +248,12 @@ class LoopClosureConfig:
     # (stereo / depth): in mono the map measurements' scale follows the odometry, and on ROVER night the samples made
     # the guard rescale the wrong way.
     odom_guard_map: bool = False
+    # whether a departure rescales the odometry (False: the guard only keeps the departing samples out of the long-run
+    # ratio).  Off for the stereo mode's VGGT-inertial odometry (cross.pipeline.build_session): that odometry is metric
+    # from the stereo pair and the IMU and tested against the IMU, while the back end's feed-forward passes are the same
+    # VGGT-Omega passes and collapse with them (KITTI 01: ratio 0.45, the odometry rescaled by 0.43 and never back, map
+    # 15 -> 318 m with a healthy frontend; it fired on no other cell of the benchmark)
+    odom_guard_rescale: bool = True
     # the visual noise is split along / across the measured bearing, each with its own online scale (innovations of
     # measurements to keyframes <= 5 odometry edges back, normalised with the un-inflated chain covariance).  The metric
     # scale of the feed-forward estimator comes from the stereo baseline and is its weak part far away: on KITTI the
