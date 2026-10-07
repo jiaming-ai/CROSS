@@ -468,15 +468,17 @@ class System:
         # insert the initial keyframe
         kf = self.db.insert(
             self._processed_frame_num,
-            rgb_image, 
-            depth_image,
+            # on the compute device, as before: the descriptor is computed there (the database then moves the stored
+            # copy to storage.image_device); a CPU image changes the descriptor at the 1e-5 level
+            rgb_image.to(self.device),
+            depth_image.to(self.device) if depth_image is not None else None,
             mu=mu,
             sigma=sigma,
             weights=weights,
             atlas=new_atlas,
             timestamp=timestamp,
             temporary=False,
-            raw_rgb_right=rgb_right if (rgb_right is not None and self._store_right_images) else None,
+            raw_rgb_right=rgb_right.to(self.device) if (rgb_right is not None and self._store_right_images) else None,
             pose_charts=self.hypothesis_manager.get_active_charts(),
             metric_source=getattr(self, "_current_metric_source", None),
         )
@@ -1867,15 +1869,15 @@ class System:
             # insert kf into the database for permanent kf
             keyframe = self.db.insert(
                 self._processed_frame_num,
-                rgb_image, 
-                depth_image, 
+                rgb_image.to(self.device),               # descriptor on the compute device (see _init_system)
+                depth_image.to(self.device) if depth_image is not None else None,
                 mu=mu.to(self.state_device), 
                 sigma=sigma.to(self.state_device), 
                 weights=weights.to(self.state_device),    
                 atlas=self.current_atlas,
                 timestamp=timestamp,
                 temporary=is_temp_kf,
-                raw_rgb_right=rgb_right if (rgb_right is not None and self._store_right_images) else None,
+                raw_rgb_right=rgb_right.to(self.device) if (rgb_right is not None and self._store_right_images) else None,
                 pose_charts=pose_charts,
                 metric_source=getattr(self, "_current_metric_source", None),
             )
