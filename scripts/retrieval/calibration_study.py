@@ -26,19 +26,28 @@ from cross.db.index import PCAProjection, ScoreCalibration   # noqa: E402
 from stress_test import load_nclt, concat, to_rows   # noqa: E402
 
 
-def pairs(Qf, Xf, k=50, n_rand=50, exclude=None, seed=0):
-    """(qi, xi) index pairs: k best full neighbours and n_rand random rows per query."""
-    S = Qf @ Xf.T
-    if exclude is not None:
-        S[exclude] = -9
-    top = S.topk(k, dim=1).indices
+
+def pair_scores(Qf, X, Zq, Z, k=50, n_rand=50, exclude=None, seed=0, chunk=128):
+    """Full and code scores (+ energies) of each query with its k best full neighbours and n_rand random rows."""
     g = torch.Generator(device="cpu").manual_seed(seed)
-    rnd = torch.randint(0, Xf.shape[0], (Qf.shape[0], n_rand), generator=g).to(Qf.device)
-    xi = torch.cat([top, rnd], 1)
-    qi = torch.arange(Qf.shape[0], device=Qf.device)[:, None].expand_as(xi)
-    is_top = torch.zeros_like(xi, dtype=torch.bool)
-    is_top[:, :k] = True
-    return qi.reshape(-1), xi.reshape(-1), is_top.reshape(-1)
+    ez, eq_all = Z.pow(2).sum(1), Zq.pow(2).sum(1)
+    out = {k_: [] for k_ in ("full", "s", "eq", "ey", "top")}
+    for i in range(0, Qf.shape[0], chunk):
+        S = Qf[i:i + chunk] @ X.T
+        Sm = S.clone()
+        if exclude is not None:
+            Sm[exclude[i:i + chunk]] = -9
+        top = Sm.topk(k, dim=1).indices
+        rnd = torch.randint(0, X.shape[0], (S.shape[0], n_rand), generator=g).to(S.device)
+        xi = torch.cat([top, rnd], 1)
+        out["full"].append(torch.gather(S, 1, xi).reshape(-1))
+        out["s"].append(torch.gather(Zq[i:i + chunk] @ Z.T, 1, xi).reshape(-1))
+        out["eq"].append(eq_all[i:i + chunk][:, None].expand_as(xi).reshape(-1))
+        out["ey"].append(ez[xi].reshape(-1))
+        t = torch.zeros_like(xi, dtype=torch.bool)
+        t[:, :k] = True
+        out["top"].append(t.reshape(-1))
+    return {k_: torch.cat(v) for k_, v in out.items()}
 
 
 def metrics(pred, full, is_top):
@@ -79,11 +88,8 @@ def main():
         cal = ScoreCalibration.fit(X[fit_rows], Z[fit_rows])            # on the map's own pairs
         for name, Qf, ex in (("map_heldout", X[mi], excl), ("other_session", Xq, None)):
             Zq = proj.apply(Qf)
-            a_i, x_i, top = pairs(Qf, X, exclude=ex)
-            full = (Qf[a_i] * X[x_i]).sum(1)
-            s = (Zq[a_i] * Z[x_i]).sum(1)
-            eq = Zq[a_i].pow(2).sum(1)
-            ey = Z[x_i].pow(2).sum(1)
+            P = pair_scores(Qf, X, Zq, Z, exclude=ex)
+            full, s, eq, ey, top = P["full"], P["s"], P["eq"], P["ey"], P["top"]
             row = {"dim": d, "set": name, "e_map": float(Z.pow(2).sum(1).mean()), "e_query": float(Zq.pow(2).sum(1).mean())}
             for model in ("raw", "iso", "resid"):
                 pred = cal.apply(s, eq, ey, model=model)
