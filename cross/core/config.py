@@ -751,6 +751,25 @@ class VisualizationConfig:
 
 
 @dataclass
+class StorageConfig:
+    """How a saved map stores its keyframes (cross/db/store.py).  Format v2: `map.pkl` holds the graph as numpy
+    columns, the images and descriptors go to `map.pkl.store/` and are read on demand."""
+    format: str = "v2"                   # v2 | pickle (the old single file: every image and descriptor inside)
+    # colour keyframe images: png / webp_lossless (exact) or jpeg / webp (lossy, image_quality); raw = uncompressed
+    image_codec: str = "webp_lossless"
+    image_quality: int = 95              # jpeg / webp quality
+    png_level: int = 3                   # png / png16 compression level (0-9)
+    depth_codec: str = "png16"           # png16 (fp16 bit pattern in a 16-bit PNG, exact) | zstd | raw
+    descriptor_dtype: str = "float32"    # retrieval descriptors on disk: float32 (exact) | float16
+    decode_cache: int = 1024             # decoded keyframe images kept in memory (LRU, process-wide)
+    # live run: keep the images of the newest N keyframes as tensors, encode older ones into a spool file and drop
+    # them from memory (decoded again on access); 0: every keyframe image stays in memory (the old behaviour)
+    max_ram_images: int = 0
+    spill_dir: Optional[str] = None      # spool directory of max_ram_images (default: a temporary directory)
+    encode_workers: int = 4              # threads that encode images when a map is saved
+
+
+@dataclass
 class SystemConfig:
     """Root configuration for the CROSS system."""
     async_update: bool = False
@@ -765,6 +784,7 @@ class SystemConfig:
     pose_est: PoseEstConfig = field(default_factory=PoseEstConfig)
     depth_pred: DepthPredConfig = field(default_factory=DepthPredConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
 
 
 # ---------------------------------------------------------------------------

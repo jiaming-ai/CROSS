@@ -70,6 +70,16 @@ class KeyframeDatabase:
         )
         self._current_size = 0
 
+        # keyframe image storage (cross/db/store.py): decoded-image cache and, with max_ram_images, the live spool
+        from cross.db.store import ImageSpool, set_decode_cache
+        scfg = getattr(getattr(system, "config", None), "storage", None)
+        self.storage_config = scfg
+        self._spool = None
+        if scfg is not None:
+            set_decode_cache(scfg.decode_cache)
+            if scfg.max_ram_images > 0:
+                self._spool = ImageSpool(scfg, scfg.max_ram_images)
+
         # Query parameters
         self.score_threshold_high = cfg.vpr_score_threshold_high
         self.score_threshold_low = cfg.vpr_score_threshold_low
@@ -167,6 +177,8 @@ class KeyframeDatabase:
         self._atlas_to_indices[atlas].append(self._current_size)
         self._index_to_atlas_idx[self._current_size] = (atlas, list_idx)
         self._current_size += 1
+        if self._spool is not None:
+            self._spool.add(keyframe)
 
         return keyframe
 
@@ -244,14 +256,18 @@ class KeyframeDatabase:
             dict: Database state including keyframes, embeddings, and atlases
         """
         from cross.core.conditional_pose import records
+        if self._spool is not None:
+            self._spool.flush()
         db_keyframes = []
         for atlas in self._keyframe_by_atlas:
             for kf in self._keyframe_by_atlas[atlas]:
                 db_keyframes.append({
                     "id": kf.id,
-                    "raw_rgb_image": kf.raw_rgb_image.cpu() if kf.raw_rgb_image is not None else None,
-                    "depth_image": kf.depth_image.cpu() if kf.depth_image is not None else None,
-                    "raw_rgb_right": kf.raw_rgb_right.cpu() if kf.raw_rgb_right is not None else None,
+                    # what the keyframe holds, not decoded: a tensor (any device) or a store reference
+                    # (cross/db/store.py writes both; store.materialize makes CPU tensors for the old format)
+                    "raw_rgb_image": kf.stored_image("raw_rgb_image"),
+                    "depth_image": kf.stored_image("depth_image"),
+                    "raw_rgb_right": kf.stored_image("raw_rgb_right"),
                     "pose_mu": kf.pose_mu.cpu() if kf.pose_mu is not None else None,
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,

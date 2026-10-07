@@ -50,6 +50,25 @@ torch.set_printoptions(
     linewidth=300,
 )
 
+class _LazyImages:
+    """The float images of one field of a list of keyframes, decoded only when read (stored right images: the
+    estimator uses the first n_ref_anchors that exist)."""
+
+    def __init__(self, keyframes, field: str):
+        self.keyframes, self.field = list(keyframes), field
+
+    def __len__(self):
+        return len(self.keyframes)
+
+    def __getitem__(self, i):
+        from cross.db.db import as_float_image
+        return as_float_image(getattr(self.keyframes[i], self.field))
+
+    def __iter__(self):
+        for i in range(len(self.keyframes)):
+            yield self[i]
+
+
 def _scale_translation(delta, s: float):
     """An odometry reading (4x4 array or pypose SE3, translation first) with its translation multiplied by s."""
     if isinstance(delta, np.ndarray):
@@ -724,8 +743,22 @@ class System:
                 logger.warning(f"map consistency model failed: {ex}")
 
         # --- 5. Save to Disk ---
-        with open(save_path, "wb") as f:
-            pickle.dump(save_data, f)
+        # format v2 (cross/db/store.py): the graph as numpy columns in save_path, images (encoded) and descriptors in
+        # the sidecar directory save_path.store/; "pickle": the old single file with every tensor
+        from cross.db import store as map_store
+        scfg = self.config.storage
+        if scfg.format == "pickle":
+            with open(save_path, "wb") as f:
+                pickle.dump(map_store.materialize(save_data), f)
+            map_store.remove_sidecar(save_path)
+        elif scfg.format == "v2":
+            st = map_store.write_map(save_path, save_data, scfg)
+            logger.info(f"Map storage: graph {st['graph_bytes'] / 1e6:.2f} MB, images {st['pack_bytes'] / 1e6:.1f} MB "
+                        f"({scfg.image_codec}; {st['encoded']} encoded, {st['copied']} copied, {st['kept']} kept), "
+                        f"descriptors {st.get('descriptor_bytes', 0) / 1e6:.1f} MB, {st['write_s']:.2f} s")
+            self.last_save_stats = st
+        else:
+            raise ValueError(f"storage.format: v2 | pickle, not {scfg.format}")
 
         logger.info(f"Map saved successfully to {save_path}")
         logger.info(f"  - Saved {len(db_data['keyframes'])} permanent keyframes")
@@ -777,8 +810,9 @@ class System:
         logger.info(f"Loading map from {load_path}...")
 
         # --- 1. Load Data from Disk ---
-        with open(load_path, "rb") as f:
-            save_data = pickle.load(f)
+        # format v2 or the old single pickle; v2 keyframe images stay in the store until they are used
+        from cross.db import store as map_store
+        save_data = map_store.read_map(load_path)
         if save_data.get("coordinate_charts_version", 0) and not self.hypothesis_manager.chart_aware:
             raise ValueError("This map contains coordinate charts; enable chart-aware mapping to load it")
         if bool(save_data.get('conditional_sources_version',0)) != self.config.mapping.hypothesis.conditional_sources:
@@ -840,13 +874,17 @@ class System:
             self.visualizer.reset(new_session=False)
 
         if self.pose_est_type == PoseEstType.FF and hasattr(self.pose_est, "precompute"):
-            # tokens of every map image now (exact, a few seconds once per process: the cache keeps them across map
-            # reloads), instead of a slower pass whenever a map keyframe is retrieved for the first time
+            # tokens of the map images now (exact, a few seconds once per process: the cache keeps them across map
+            # reloads), instead of a slower pass whenever a map keyframe is retrieved for the first time.  Only as many
+            # as the token cache holds (the first ones, as before); the others are not decoded here
             from cross.db.db import as_float_image
             kfs = self.db.get_all_keyframes()
-            images = [as_float_image(k.raw_rgb_image) for k in kfs if k.raw_rgb_image is not None]
-            images += [as_float_image(k.raw_rgb_right) for k in kfs if getattr(k, "raw_rgb_right", None) is not None]
-            self.pose_est.precompute(images)
+            slots = [(k, "raw_rgb_image") for k in kfs if k.has_image("raw_rgb_image")]
+            slots += [(k, "raw_rgb_right") for k in kfs if k.has_image("raw_rgb_right")]
+            cache = getattr(getattr(self.pose_est, "backend", None), "token_cache", None)
+            cap = cache.capacity if cache is not None else 0
+            if cap > 0:
+                self.pose_est.precompute([as_float_image(getattr(k, f)) for k, f in slots[:cap]])
 
         logger.info(f"Map loaded successfully from {load_path}")
         logger.info(f"  - Loaded {len(save_data['db_data']['keyframes'])} permanent keyframes")
@@ -2425,7 +2463,7 @@ class System:
             valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
                 ref_rgbs, None, rgb_image, None,
                 curr_image_right=rgb_right,
-                ref_images_right=[as_float_image(p.raw_rgb_right) for p in keyframes],
+                ref_images_right=_LazyImages(keyframes, "raw_rgb_right"),
                 odom_anchor=odom_anchor,
                 ref_rel_poses=self._map_anchor_pairs(keyframes),
                 **source_context,
