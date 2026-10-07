@@ -22,8 +22,10 @@ def resize_for_cache(rgb: np.ndarray, K: np.ndarray, max_side: int = 768):
     return rgb, K
 
 
-def zbuffer(points_world: np.ndarray, E: np.ndarray, K: np.ndarray, hw, near: float = 0.05) -> np.ndarray:
-    """Nearest z per pixel of points (N,3) seen by camera E (4x4 camera-from-world, OpenCV), 0 where empty."""
+def zbuffer(points_world: np.ndarray, E: np.ndarray, K: np.ndarray, hw, near: float = 0.05,
+            return_index: bool = False):
+    """Nearest z per pixel of points (N,3) seen by camera E (4x4 camera-from-world, OpenCV), 0 where empty; with
+    return_index also the index of the nearest point per pixel (-1 where empty)."""
     H, W = hw
     P = torch.from_numpy(np.asarray(points_world, np.float32))
     R = torch.from_numpy(np.asarray(E[:3, :3], np.float32))
@@ -38,8 +40,30 @@ def zbuffer(points_world: np.ndarray, E: np.ndarray, K: np.ndarray, hw, near: fl
     idx = v[ok] * W + u[ok]
     d = torch.full((H * W,), float("inf"))
     d.scatter_reduce_(0, idx, z[ok], reduce="amin")
+    if return_index:
+        pid = torch.nonzero(keep).squeeze(1)[ok]
+        win = z[ok] == d[idx]
+        nearest = torch.full((H * W,), -1, dtype=torch.long)
+        nearest[idx[win]] = pid[win]
     d[torch.isinf(d)] = 0
+    if return_index:
+        return d.view(H, W).numpy(), nearest.view(H, W).numpy()
     return d.view(H, W).numpy()
+
+
+def colour_agreement(rgb: np.ndarray, nearest: np.ndarray, colours: np.ndarray, mask: np.ndarray | None = None) -> float:
+    """Pearson correlation of the grey level of each visible projected point's colour (from the reconstruction) with
+    the image's grey level at its pixel: ~0.6-0.9 when cloud, pose and frame line up, ~0 for a wrong pose / frame / scene."""
+    g = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
+    v = nearest >= 0
+    if mask is not None:
+        v &= ~mask
+    if v.sum() < 200:
+        return float("nan")
+    c = colours[nearest[v]].astype(np.float32) @ np.array([0.299, 0.587, 0.114], np.float32)
+    a = g[v]
+    a, c = a - a.mean(), c - c.mean()
+    return float((a * c).sum() / (np.sqrt((a * a).sum() * (c * c).sum()) + 1e-9))
 
 
 def drop_see_through(depth: np.ndarray, win: int = 7, rel: float = 0.08) -> np.ndarray:
@@ -52,12 +76,26 @@ def drop_see_through(depth: np.ndarray, win: int = 7, rel: float = 0.08) -> np.n
     return d
 
 
+def fill_sparse(depth: np.ndarray, iters: int = 3) -> np.ndarray:
+    """Holes of a sparse depth map filled from their nearest (smallest) valid neighbour, up to `iters` px (for edge
+    checks only; the stored depth stays sparse)."""
+    d = depth.copy()
+    for _ in range(iters):
+        m = d <= 0
+        if not m.any():
+            break
+        big = np.where(d > 0, d, np.float32(1e6)).astype(np.float32)
+        n = cv2.erode(big, np.ones((3, 3), np.uint8))
+        d[m & (n < 1e6)] = n[m & (n < 1e6)]
+    return d
+
+
 def edge_alignment(rgb: np.ndarray, depth: np.ndarray, tol_px: int = 2, rel_jump: float = 0.1) -> float:
     """Share of depth-discontinuity pixels within tol_px of an RGB (Canny) edge: high when the projection lines up with
     the image, low for a wrong pose / frame index (a check, not a filter on its own)."""
     g = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     e = cv2.Canny(cv2.GaussianBlur(g, (5, 5), 0), 50, 150) > 0
-    d = depth.astype(np.float32)
+    d = fill_sparse(depth.astype(np.float32))
     v = d > 0
     big = np.where(v, d, 0)
     dx = np.zeros_like(d, bool)
