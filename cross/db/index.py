@@ -395,6 +395,11 @@ class DescriptorIndex:
         if self.map_fitted and self._refit_ok and self.n > int(self.projection.meta.get("fit_rows", 0)):
             self.fit_projection()
 
+    def _fill_energy(self, n: int, chunk: int = 65536) -> None:
+        """|code|^2 of rows [0, n) (chunked: no float32 copy of the whole buffer)."""
+        for i in range(0, n, chunk):
+            self._energy[i:min(n, i + chunk)] = self.buf[i:min(n, i + chunk)].float().pow(2).sum(1)
+
     def _set_projection(self, proj: PCAProjection, codes: torch.Tensor) -> None:
         self.projection = proj
         self.dim = proj.dim
@@ -403,7 +408,7 @@ class DescriptorIndex:
         nb[:codes.shape[0]] = codes.to(self.dtype)
         self.buf = nb
         self._energy = torch.zeros(self.buf.shape[0], device=self.device)
-        self._energy[:codes.shape[0]] = nb[:codes.shape[0]].float().pow(2).sum(1)
+        self._fill_energy(codes.shape[0])
         if self._ivf is not None:
             self._train_ivf()
 
@@ -481,7 +486,7 @@ class DescriptorIndex:
         self.buf[:n] = codes.to(self.device, self.dtype)
         self.ids[:n] = torch.as_tensor(list(kf_ids), dtype=torch.long, device=self.device)
         if self.projection is not None:
-            self._energy[:n] = self.buf[:n].float().pow(2).sum(1)
+            self._fill_energy(n)
         self._ivf = None
         self._full = self._full_ok = None
         self._refit_ok = self.fit_at > 0 and self.projection is None
