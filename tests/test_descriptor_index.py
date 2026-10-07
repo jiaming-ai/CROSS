@@ -157,3 +157,41 @@ def test_locality_merge_puts_in_region_keyframes_first():
     # disabled: unchanged
     cfg.retrieval.locality.enabled = False
     assert sysm._locality_merge(1, ranked) is ranked
+
+
+def _topo_pair():
+    """Random keyframes (some temporary) for the proximity graph."""
+    import threading, pypose as pp
+    from cross.core import simple_topo as new
+    g = torch.Generator().manual_seed(5)
+    nodes = {}
+    for i in range(400):
+        mu = pp.identity_SE3(2)
+        mu.tensor()[0, :3] = torch.rand(3, generator=g) * torch.tensor([20.0, 1.0, 20.0])
+        nodes[i] = SimpleNamespace(id=i, pose_mu=mu, temporary=bool(i % 7 == 0), pose_charts=None)
+    hm = SimpleNamespace(nodes=nodes, odom_edges={(i, i + 1): None for i in range(399)}, graph_lock=threading.RLock(),
+                         chart_aware=False)
+    sysm = SimpleNamespace(hypothesis_manager=hm)
+    return new, sysm, nodes
+
+
+def test_proximity_graph_kdtree_matches_the_pairwise_scan():
+    new, sysm, nodes = _topo_pair()
+    topo = new.SimpleTopo(sysm, new.SimpleTopoConfig(proximity_distance_thresh=0.8))
+    topo.rebuild_graph()
+    P = torch.stack([nodes[i].pose_mu[0].tensor()[:3] for i in nodes if not nodes[i].temporary])
+    ids = [i for i in nodes if not nodes[i].temporary]
+    D = torch.cdist(P[:, [0, 2]], P[:, [0, 2]])
+    want = {(ids[a], ids[b]) for a, b in (D < 0.8).nonzero().tolist() if a < b and abs(ids[a] - ids[b]) != 1}
+    assert set(topo.proximity_edges) == want
+    # a PGO moves some keyframes: the refresh is deferred to the next read and gives the same graph as a rebuild
+    for i in range(0, 400, 3):
+        nodes[i].pose_mu.tensor()[0, 0] += 0.5
+    topo.update_after_pgo(set(range(0, 400, 3)))
+    assert topo._pending_pgo
+    lazy = set(topo.proximity_edges)
+    ref = new.SimpleTopo(sysm, new.SimpleTopoConfig(proximity_distance_thresh=0.8))
+    ref.rebuild_graph()
+    assert not topo._pending_pgo
+    moved = set(range(0, 400, 3))
+    assert {e for e in lazy if moved & set(e)} == {e for e in ref.proximity_edges if moved & set(e)}
