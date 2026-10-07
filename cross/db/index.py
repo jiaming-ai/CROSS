@@ -26,15 +26,22 @@ logger = logging.getLogger(__name__)
 # Projection
 # --------------------------------------------------------------------------------------------------------------------
 class PCAProjection:
-    """x -> normalize(((x - mean) @ components) * scale): a linear projection of L2-normalized descriptors to `dim`
-    dimensions, L2-normalized again, so that the inner product of two codes is a cosine like the original score.
-    `scale` is 1 (plain PCA) or eigenvalue^-power (whitening, power 0.5 = full whitening)."""
+    """x -> ((x - mean) @ components) * scale, optionally L2-normalized: a linear projection of the L2-normalized
+    descriptors to `dim` dimensions.
+
+    The default (`fit(center=False, normalize=False)`: the top right-singular vectors of the raw descriptors, codes
+    not renormalized) keeps the score scale: the inner product of two codes approximates the cosine of the full
+    descriptors (from below, by the residual-residual term: mean |error| 0.02 at 512 dims over the 50 best matches),
+    which CROSS uses as weights, measurement noise and the new-keyframe test.  Centring and renormalizing (plain PCA)
+    or whitening keep the ranking but move the scores (0.1-0.3 at 512 dims), so the score thresholds would need
+    recalibration."""
 
     def __init__(self, mean: np.ndarray, components: np.ndarray, scale: Optional[np.ndarray] = None,
-                 meta: Optional[dict] = None):
-        self.mean = np.asarray(mean, dtype=np.float32)                 # (D,)
+                 meta: Optional[dict] = None, normalize: bool = False):
+        self.mean = np.asarray(mean, dtype=np.float32)                 # (D,) (zeros: uncentred)
         self.components = np.asarray(components, dtype=np.float32)     # (D, d)
         self.scale = None if scale is None else np.asarray(scale, dtype=np.float32)   # (d,)
+        self.normalize = bool(normalize)
         self.meta = dict(meta or {})
         self._dev: Dict[str, tuple] = {}
 
@@ -47,11 +54,11 @@ class PCAProjection:
         return int(self.components.shape[1])
 
     @classmethod
-    def fit(cls, X: torch.Tensor, dim: int, whiten_power: float = 0.0, niter: int = 6, eps: float = 1e-6,
-            meta: Optional[dict] = None) -> "PCAProjection":
-        """PCA of the rows of X (N, D) by randomized SVD (torch.svd_lowrank on X's device)."""
+    def fit(cls, X: torch.Tensor, dim: int, center: bool = False, normalize: bool = False, whiten_power: float = 0.0,
+            niter: int = 6, eps: float = 1e-6, meta: Optional[dict] = None) -> "PCAProjection":
+        """Top-`dim` right-singular vectors of X (N, D) (centred first if `center`), by randomized SVD on X's device."""
         X = X.float()
-        mean = X.mean(0)
+        mean = X.mean(0) if center else torch.zeros(X.shape[1], device=X.device)
         Xc = X - mean
         q = min(dim + 32, min(Xc.shape))
         torch.manual_seed(0)
@@ -64,9 +71,10 @@ class PCAProjection:
             scale = scale / scale.max()
         m = dict(meta or {})
         total = float((Xc ** 2).sum() / max(X.shape[0] - 1, 1))
-        m.update(n_fit=int(X.shape[0]), whiten_power=float(whiten_power),
+        m.update(n_fit=int(X.shape[0]), whiten_power=float(whiten_power), center=bool(center),
                  explained=float(eig.sum() / max(total, 1e-12)))
-        return cls(mean.cpu().numpy(), V.cpu().numpy(), None if scale is None else scale.cpu().numpy(), m)
+        return cls(mean.cpu().numpy(), V.cpu().numpy(), None if scale is None else scale.cpu().numpy(), m,
+                   normalize=normalize)
 
     def _on(self, device) -> tuple:
         key = str(device)
@@ -79,24 +87,25 @@ class PCAProjection:
         return self._dev[key]
 
     def apply(self, x: torch.Tensor) -> torch.Tensor:
-        """(D,) or (B, D) -> (d,) or (B, d), float32, unit norm."""
+        """(D,) or (B, D) -> (d,) or (B, d), float32 (unit norm only if `normalize`)."""
         mean, comp = self._on(x.device)
         y = (x.float() - mean) @ comp
-        return torch.nn.functional.normalize(y, dim=-1)
+        return torch.nn.functional.normalize(y, dim=-1) if self.normalize else y
 
     def state(self) -> dict:
         return {"type": "pca", "mean": self.mean, "components": self.components.astype(np.float16),
-                "scale": self.scale, "meta": self.meta}
+                "scale": self.scale, "meta": self.meta, "normalize": self.normalize}
 
     @classmethod
     def from_state(cls, s: dict) -> "PCAProjection":
-        return cls(s["mean"], np.asarray(s["components"], dtype=np.float32), s.get("scale"), s.get("meta"))
+        return cls(s["mean"], np.asarray(s["components"], dtype=np.float32), s.get("scale"), s.get("meta"),
+                   normalize=bool(s.get("normalize", False)))
 
     def save(self, path: str) -> None:
         s = self.state()
         np.savez(path, mean=s["mean"], components=s["components"],
                  scale=s["scale"] if s["scale"] is not None else np.zeros(0, np.float32),
-                 meta=np.array(repr(s["meta"])))
+                 normalize=np.array(self.normalize), meta=np.array(repr(s["meta"])))
 
     @classmethod
     def load(cls, path: str) -> "PCAProjection":
@@ -108,7 +117,8 @@ class PCAProjection:
         except Exception:
             meta = {}
         meta["file"] = str(path)
-        return cls(z["mean"], z["components"].astype(np.float32), scale, meta)
+        return cls(z["mean"], z["components"].astype(np.float32), scale, meta,
+                   normalize=bool(z["normalize"]) if "normalize" in z.files else False)
 
 
 def projection_from_config(spec, dim_in: int) -> Optional[PCAProjection]:

@@ -41,7 +41,7 @@ def test_pca_projection_keeps_cosines_of_low_rank_data_and_roundtrips(tmp_path):
     g = torch.Generator().manual_seed(1)
     basis = torch.randn(16, 256, generator=g)
     X = torch.nn.functional.normalize(torch.randn(2000, 16, generator=g) @ basis, dim=-1)
-    p = PCAProjection.fit(X, 16)
+    p = PCAProjection.fit(X, 16, center=True, normalize=True)
     assert p.meta["explained"] > 0.99
     Z = p.apply(X[:50])
     full = X[:50] @ X[:50].T
@@ -57,6 +57,10 @@ def test_pca_projection_keeps_cosines_of_low_rank_data_and_roundtrips(tmp_path):
     assert idx.dtype == torch.float16 and idx.buf.shape[1] == 16
     s = idx.scores(idx.encode(X[4]))
     assert int(s.argmax()) == 4 and abs(float(s[4]) - 1.0) < 2e-3
+    # default (uncentred, not renormalized): code inner products approximate the full cosines
+    u = PCAProjection.fit(X, 16)
+    Z = u.apply(X[:50])
+    assert float((Z @ Z.T - full).abs().max()) < 1e-3
 
 
 def test_ivf_backend_finds_the_exact_neighbour_most_of_the_time():
