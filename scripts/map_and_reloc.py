@@ -171,7 +171,7 @@ def run_mapping(args, out: Path):
     online = [] if getattr(args, "online_poses", False) else None
     step_log = open(out / "steps.csv", "w") if getattr(args, "step_log", False) else None
     if step_log is not None:
-        step_log.write("frame,dt_s,nodes,db_keyframes,loop_closure\n")
+        step_log.write("frame,dt_s,nodes,db_keyframes,loop_closure,rss_mb,gpu_mb\n")
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
