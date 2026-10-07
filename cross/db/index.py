@@ -170,6 +170,14 @@ class DescriptorIndex:
         self.extend, self.extend_margin, self.extend_dims = bool(extend), float(extend_margin), int(extend_dims)
         self.max_dim, self.recent_size = int(max_dim), int(recent)
         self._recent: list = []          # (kf_id, full descriptor fp16) of the latest rows, after a map fit
+        # map-fit mode: the full descriptors of the rows added in this process (CPU float16, 32 KB per keyframe), so
+        # that the projection can be refitted on the whole map when it doubles and before it is saved; rows of a
+        # loaded map have codes only (None marks them) and are covered by subspace extension instead
+        self.refit_max_rows = 16384
+        self._full: Optional[torch.Tensor] = None
+        self._full_ok: Optional[torch.Tensor] = None
+        self._next_refit = 0
+        self._refit_ok = self.fit_at > 0 and projection is None    # every row's full descriptor is at hand
         self._e_ema = None
         self._since_extend = 0
         self.buf = torch.zeros((int(initial_capacity), self.dim), device=device, dtype=self.dtype)
@@ -208,8 +216,13 @@ class DescriptorIndex:
         self.buf[row] = code.to(self.dtype)
         self.ids[row] = int(kf_id)
         self.n += 1
+        if self._refit_ok:
+            self._keep_full(row, desc)
         if self.map_fitted:
-            self._track(desc, code, kf_id)
+            if self._refit_ok and self.n >= self._next_refit:
+                self.fit_projection()                       # the map doubled since the last fit: refit on all of it
+            else:
+                self._track(desc, code, kf_id)
         elif self.projection is None and self.fit_at > 0 and self.n >= self.fit_at:
             self.fit_projection()
         if self._ivf is not None:
@@ -218,15 +231,40 @@ class DescriptorIndex:
             self._train_ivf()
         return row
 
+    def _keep_full(self, row: int, desc: torch.Tensor) -> None:
+        if self._full is None:
+            self._full = torch.zeros((max(1024, 2 * self.fit_at), self.dim_in), dtype=torch.float16)
+            self._full_ok = torch.zeros(self._full.shape[0], dtype=torch.bool)
+        if row >= self._full.shape[0]:
+            m = max(row + 1, 2 * self._full.shape[0])
+            f = torch.zeros((m, self.dim_in), dtype=torch.float16)
+            f[:self._full.shape[0]] = self._full
+            ok = torch.zeros(m, dtype=torch.bool)
+            ok[:self._full_ok.shape[0]] = self._full_ok
+            self._full, self._full_ok = f, ok
+        self._full[row] = desc.detach().reshape(-1).to("cpu", torch.float16)
+        self._full_ok[row] = True
+
+    def _full_rows(self, rows: torch.Tensor) -> torch.Tensor:
+        return self._full[rows].to(self.device).float()
+
     def fit_projection(self) -> None:
-        """Fit the map projection on the stored full descriptors, re-encode every row (see the class docstring).
+        """Fit the map projection on the full descriptors of the map (a uniform sample of at most refit_max_rows),
+        re-encode every row, schedule the next refit at twice the size (see the class docstring).
         fit_dim <= 0: the smallest number of dimensions whose held-out explained energy reaches fit_energy (at most
         max_dim): a few hundred for a room or a campus seen by one camera, the cap for a diverse outdoor map."""
-        X = self.buf[:self.n].float()
+        n = self.n
+        if self._full is None or not bool(self._full_ok[:n].all()):
+            if self.projection is not None:
+                return
+            for r in range(n):                      # the rows are still full descriptors (a legacy map at load)
+                self._keep_full(r, self.buf[r])
+            self._refit_ok = True
         g = torch.Generator(device="cpu").manual_seed(0)
-        perm = torch.randperm(self.n, generator=g).to(X.device)
-        n_hold = max(1, self.n // 10)
-        held, train = X[perm[:n_hold]], X[perm[n_hold:]]
+        sample = torch.randperm(n, generator=g)[: min(n, self.refit_max_rows)]
+        X = self._full_rows(sample)
+        n_hold = max(1, X.shape[0] // 10)
+        held, train = X[:n_hold], X[n_hold:]
         dmax = min(self.fit_dim if self.fit_dim > 0 else self.max_dim, train.shape[0] - 1)
         proj = PCAProjection.fit(train, dmax, meta={"map_fit": True})
         Z = proj.apply(held)
@@ -238,17 +276,24 @@ class DescriptorIndex:
             dim = max(dim, min(64, dmax))
             proj = PCAProjection(proj.mean, proj.components[:, :dim], None, proj.meta)
         proj.meta["e_ref"] = float(curve[dim - 1])
-        proj.meta["fit_rows"] = int(self.n)
+        proj.meta["fit_rows"] = int(n)
         proj.meta["extensions"] = 0
-        recent = [(int(self.ids[r]), X[r].half()) for r in range(max(0, self.n - self.recent_size), self.n)]
-        codes = proj.apply(X)
+        proj.meta["refits"] = int(self.projection.meta.get("refits", -1)) + 1 if self.map_fitted else 0
+        codes = torch.cat([proj.apply(self._full_rows(torch.arange(i, min(i + 8192, n))))
+                           for i in range(0, n, 8192)])
         self._set_projection(proj, codes)
-        self._recent = recent
+        self._recent = [(int(self.ids[r]), self._full[r].clone()) for r in range(max(0, n - self.recent_size), n)]
         self._e_ema = proj.meta["e_ref"]
         self._since_extend = 0
-        logger.info(f"descriptor index: map projection {self.dim_in} -> {dim} fitted on {self.n} keyframes "
-                    f"(held-out explained energy {proj.meta['e_ref']:.3f}); {self.n * self.dim_in * 4 / 1e6:.0f} MB -> "
-                    f"{self.n * dim * 2 / 1e6:.1f} MB")
+        self._next_refit = 2 * n
+        logger.info(f"descriptor index: map projection {self.dim_in} -> {dim} fitted on {n} keyframes "
+                    f"(held-out explained energy {proj.meta['e_ref']:.3f}, refit {proj.meta['refits']}); "
+                    f"{n * self.dim_in * 4 / 1e6:.0f} MB -> {n * dim * 2 / 1e6:.1f} MB")
+
+    def finalize(self) -> None:
+        """Before the map is saved: refit on the whole map if rows were added since the last fit."""
+        if self.map_fitted and self._refit_ok and self.n > int(self.projection.meta.get("fit_rows", 0)):
+            self.fit_projection()
 
     def _set_projection(self, proj: PCAProjection, codes: torch.Tensor) -> None:
         self.projection = proj
@@ -312,6 +357,10 @@ class DescriptorIndex:
             return None
         self.buf[row] = self.buf[last]
         self.ids[row] = self.ids[last]
+        if self._full is not None and last < self._full.shape[0]:
+            self._full[row] = self._full[last]
+            self._full_ok[row] = self._full_ok[last]
+            self._full_ok[last] = False
         self.n -= 1
         if self._ivf is not None:
             self._ivf.move(last, row)
@@ -327,8 +376,15 @@ class DescriptorIndex:
         self.buf[:n] = codes.to(self.device, self.dtype)
         self.ids[:n] = torch.as_tensor(list(kf_ids), dtype=torch.long, device=self.device)
         self._ivf = None
+        self._full = self._full_ok = None
+        self._refit_ok = self.fit_at > 0 and self.projection is None
+        if self._refit_ok:
+            for r in range(n):
+                self._keep_full(r, self.buf[r])
         if self.projection is None and self.fit_at > 0 and n >= self.fit_at:
             self.fit_projection()
+        if self.map_fitted and not self._refit_ok:
+            self._next_refit = 1 << 62            # loaded codes: later growth is covered by subspace extension
         if self.backend == "ivf" and n >= self.ivf_min_rows:
             self._train_ivf()
 

@@ -257,6 +257,7 @@ class KeyframeDatabase:
             dict: Database state including keyframes, embeddings, and atlases
         """
         from cross.core.conditional_pose import records
+        self.index.finalize()            # map projection: refit on the whole map before its codes are stored
         db_keyframes = []
         for atlas in self._keyframe_by_atlas:
             for kf in self._keyframe_by_atlas[atlas]:

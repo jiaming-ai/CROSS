@@ -243,3 +243,22 @@ def test_map_projection_auto_dimension_follows_the_data():
     for i, x in enumerate(X):
         idx.add(x, i)
     assert idx.map_fitted and 30 <= idx.dim <= 64 and idx.projection.meta["e_ref"] >= 0.9
+
+
+def test_map_projection_refits_when_the_map_doubles_and_before_saving():
+    g = torch.Generator().manual_seed(13)
+    D = 256
+    A, B = torch.randn(30, D, generator=g), torch.randn(30, D, generator=g)
+    def draw(basis, n):
+        return torch.nn.functional.normalize(torch.randn(n, 30, generator=g) @ basis + 0.02 * torch.randn(n, D, generator=g), dim=-1)
+    X = torch.cat([draw(A, 300), draw(B, 400)])
+    idx = DescriptorIndex(D, device="cpu", initial_capacity=50, fit_at=200, fit_dim=40, extend=False)
+    for i, x in enumerate(X[:599]):
+        idx.add(x, i)
+    assert idx.map_fitted and idx.projection.meta["refits"] == 1 and idx.projection.meta["fit_rows"] == 400
+    idx.add(X[599], 599)
+    idx.finalize()                                   # rows were added since the refit at 400: fit on all 600
+    assert idx.projection.meta["fit_rows"] == 600
+    q = X[550]
+    err = (idx.scores(idx.encode(q))[:600] - X[:600] @ q).abs().mean()
+    assert float(err) < 0.02                         # both kinds of place are in the subspace after the refits
