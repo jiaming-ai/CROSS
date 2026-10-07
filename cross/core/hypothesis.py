@@ -2248,6 +2248,7 @@ class HypothesisManager:
         """
         from cross.core.conditional import SourceState
         from cross.core.conditional_pose import ConditionalPose, restore
+        from cross.db.store import to_device      # .to() skipped on the same device (large maps: 2 LieTensors per edge)
         # --- 1. Restore temporary keyframes ---
         all_keyframes_map = existing_keyframes.copy()
 
@@ -2255,14 +2256,14 @@ class HypothesisManager:
             atlas = db.get_atlas(kf_data["atlas_id"]) if kf_data["atlas_id"] is not None else None
 
             kf = Keyframe(
-                pose_mu=normalize_SE3(kf_data["pose_mu"]).to(storage_device) if kf_data["pose_mu"] is not None else None,   # maps saved before the renormalization fix carry |q| < 1
-                pose_std=kf_data["pose_std"].to(storage_device) if kf_data["pose_std"] is not None else None,
-                pose_weights=kf_data["pose_weights"].to(storage_device) if kf_data["pose_weights"] is not None else None,
+                pose_mu=to_device(normalize_SE3(kf_data["pose_mu"]), storage_device) if kf_data["pose_mu"] is not None else None,   # maps saved before the renormalization fix carry |q| < 1
+                pose_std=to_device(kf_data["pose_std"], storage_device),
+                pose_weights=to_device(kf_data["pose_weights"], storage_device),
                 atlas=atlas,
                 timestamp=kf_data["timestamp"],
                 temporary=kf_data["temporary"],
                 last_pgo_step=kf_data["last_pgo_step"],
-                pose_charts=kf_data["pose_charts"].to(storage_device) if kf_data.get("pose_charts") is not None else None,
+                pose_charts=to_device(kf_data.get("pose_charts"), storage_device),
                 metric_source=kf_data.get("metric_source"),
                 conditional_poses=restore(kf_data.get("conditional_poses")),
             )
@@ -2282,8 +2283,8 @@ class HypothesisManager:
         self.odom_edges_version = getattr(self, "odom_edges_version", 0) + 1
         for edge_key, edge_data in hypo_data["odom_edges"].items():
             edge = Edge(
-                mean=edge_data["mean"].to(device),
-                std=edge_data["std"].to(device),
+                mean=to_device(edge_data["mean"], device),
+                std=to_device(edge_data["std"], device),
                 type=EdgeType[edge_data["type"]],
             )
             edge.n_frames = edge_data.get("n_frames")
@@ -2309,8 +2310,8 @@ class HypothesisManager:
             for edge_key, edge_list_data in hypo_data_item["visual_edges"].items():
                 for edge_data in edge_list_data:
                     edge = VisualEdge(
-                        mean=edge_data["mean"].to(device),
-                        std=edge_data["std"].to(device),
+                        mean=to_device(edge_data["mean"], device),
+                        std=to_device(edge_data["std"], device),
                         type=EdgeType[edge_data["type"]],
                         from_comp_id=edge_data["from_comp_id"],
                         to_comp_id=edge_data["to_comp_id"],

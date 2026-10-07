@@ -424,6 +424,29 @@ _NP_OK = {torch.float16, torch.float32, torch.float64, torch.uint8, torch.int8, 
           torch.bool}
 
 
+def _no_torch_function():
+    """Context in which tensor subclasses (pypose LieTensor) behave as plain tensors."""
+    import contextlib
+    ctx = getattr(torch._C, "DisableTorchFunctionSubclass", None)
+    return ctx() if ctx is not None else contextlib.nullcontext()
+
+
+def lie_tensor(arr: np.ndarray, ltype_name: str):
+    """pp.LieTensor(torch.from_numpy(arr), ltype=pp.<ltype_name>) without its torch-function overhead (3x faster; a
+    map holds two LieTensors per edge)."""
+    import pypose as pp
+    t = torch.Tensor.as_subclass(torch.from_numpy(arr), pp.LieTensor)
+    t.__dict__["ltype"] = getattr(pp, ltype_name)
+    return t
+
+
+def to_device(t, device):
+    """t.to(device), skipped when t is already there (.to returns t itself then; a LieTensor's .to costs ~60 us)."""
+    if t is None or (torch.is_tensor(t) and device is not None and t.device == torch.device(device)):
+        return t
+    return t.to(device)
+
+
 def _encode_column(vals: list):
     """One column of values -> a compact representation (exact)."""
     present = [v for v in vals if v is not None]
@@ -432,13 +455,13 @@ def _encode_column(vals: list):
     mask = None if len(present) == len(vals) else np.array([v is not None for v in vals], dtype=bool)
     v0 = present[0]
     tk = _tensor_kind(v0)
-    if tk is not None and v0.dtype in _NP_OK:
-        same = all(_tensor_kind(v) == tk and v.dtype == v0.dtype and v.shape == v0.shape and not v.requires_grad
-                   for v in present)
-        if same:
-            arr = np.stack([v.detach().cpu().numpy() if tk[0] == "tensor" else v.tensor().detach().cpu().numpy()
-                            for v in present]) if present else None
-            return {"k": tk[0], "ltype": tk[1], "mask": mask, "a": arr}
+    if tk is not None and all(_tensor_kind(v) == tk for v in present):
+        # tensor attributes and conversions without the LieTensor torch-function overhead (~50 us per access)
+        with _no_torch_function():
+            meta0 = (v0.dtype, tuple(v0.shape))
+            if v0.dtype in _NP_OK and all((v.dtype, tuple(v.shape)) == meta0 and not v.requires_grad for v in present):
+                arr = np.stack([v.cpu().numpy() if v.device.type != "cpu" else v.numpy() for v in present])
+                return {"k": tk[0], "ltype": tk[1], "mask": mask, "a": arr}
     if all(type(v) is bool for v in present):
         return {"k": "py", "t": "bool", "mask": mask, "a": np.array(present, dtype=bool)}
     if all(type(v) is int for v in present):
@@ -462,10 +485,9 @@ def _decode_column(col, n: int) -> list:
     mask = col.get("mask")
     a = col["a"]
     if k in ("tensor", "lie"):
+        # one owned tensor per row (no views of a shared buffer: a view would pickle / deep-copy the whole column)
         if k == "lie":
-            import pypose as pp
-            ltype = getattr(pp, col["ltype"])
-            vals = [pp.LieTensor(torch.from_numpy(np.array(x)), ltype=ltype) for x in a]
+            vals = [lie_tensor(np.array(x), col["ltype"]) for x in a]
         else:
             vals = [torch.from_numpy(np.array(x)) for x in a]
     elif k == "py":
