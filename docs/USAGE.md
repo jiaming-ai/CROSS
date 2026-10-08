@@ -65,7 +65,13 @@ frame a VGGT-Omega forward pass (the back end's own pass when it observes then) 
 current frame, the last measured frame and a keyframe ~2 s older. A sliding-window pose graph (`cross/imu/vgi_graph.py`)
 optimizes these relative poses, the preintegrated IMU, gauge links between passes, tracked-corner rotations and the
 online calibration (gyro and accelerometer biases, gravity, the passes' rotation scale, the camera-IMU time offset).
-Each pass has a scale of its own: in the mono mode learned metric depth (DA3) observes it, with a bias state. In the
+Each pass has a scale of its own: in the mono mode learned metric depth observes it, with a bias state: DA3, or the
+metric-scale head of a `vggt_ft` checkpoint (`--set pose_est.ff.checkpoint=<ckpt> --mono-args "--imu-config
+depth_prior_source=head"`; no second network). `--imu-config vgio_depth_calib=true` (off by default) measures the
+learned depth's offset in the place against the IMU (a twin of the graph without learned depth, sampled where the IMU
+observes the scale), keeps it with the map, and starts later sessions from it: on ROVER it makes relocalization trials
+more precise (T3 within 1 m: +12 % with DA3, +7 % with the head), but long sessions in other light lose (learned depth's
+offset changes from day to night). In the
 stereo mode (`--mode stereo --odometry vgio`) the stereo pair adds two constraints: classical stereo depth (SGBM) of the
 current pair against the pass's depth map observes the pass's scale (no learned depth, no bias state), and the tracked
 corners lifted to 3-D with that depth give the metric motion between measured frames (PnP, with its own covariance).
