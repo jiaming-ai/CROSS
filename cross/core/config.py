@@ -680,6 +680,7 @@ class KeyframeQualityConfig:
     near_rel: float = 0.25
     person: bool = True             # person detections (SSDLite) remove their cells
     person_score: float = 0.5
+    person_cuda_graph: bool = True  # detector backbone + heads replayed as a CUDA graph (same detections, ~10x faster)
     stereo_near: bool = True        # stereo input without depth: the near field from SGBM on the rectified pair
     # feed-forward modes: add the near cells of the pass's depth of the current view.  Off: VGGT-Omega's depth of a
     # close occluder follows its apparent size (a pasted person at 0.4-0.75 m came out at 1.6-2.8 m)

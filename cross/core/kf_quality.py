@@ -115,8 +115,10 @@ class KeyframeQuality:
             return None, 0
         if self._detector is None:
             try:
-                from cross.mono.person_detector import make_person_detector
-                self._detector = make_person_detector(rgb.device)
+                from cross.mono.person_detector import GraphedPersonDetector, make_person_detector
+                det = make_person_detector(rgb.device)
+                # CUDA-graph replay of the backbone and heads: the same detections, ~10x less time in a busy process
+                self._detector = GraphedPersonDetector(det) if getattr(self.cfg, "person_cuda_graph", True) else det
             except Exception as err:          # noqa: BLE001  e.g. no weights offline: the other cues still work
                 logger.warning(f"keyframe quality: person detector unavailable ({type(err).__name__}: {err}); "
                                "continuing without the person cue")
@@ -135,14 +137,15 @@ class KeyframeQuality:
             mask[max(int(y0 * h / H), 0):int(np.ceil(y1 * h / H)), max(int(x0 * w / W), 0):int(np.ceil(x1 * w / W))] = True
         return self._pool(mask, gh, gw) > 0.5, int(len(boxes))
 
-    def _stereo_depth(self, y_left: np.ndarray, rgb_right: torch.Tensor, W: int) -> Optional[np.ndarray]:
+    def _stereo_depth(self, y_left: np.ndarray, rgb_right: torch.Tensor, W: int,
+                      y_right: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
         """Metric depth of the left view from semi-global matching of the rectified pair at <= 256 px width (an
         occluder near the camera has a large disparity).  The disparity range covers depths down to near_abs / 2."""
         import cv2
         if not self.fx or not self.baseline:
             return None
         L = (np.clip(y_left, 0, 1) * 255).astype(np.uint8)
-        R = (np.clip(self._luminance(rgb_right, L.shape[1]), 0, 1) * 255).astype(np.uint8)
+        R = (np.clip(y_right if y_right is not None else self._luminance(rgb_right, L.shape[1]), 0, 1) * 255).astype(np.uint8)
         fx = self.fx * L.shape[1] / W
         need = fx * self.baseline / (0.5 * float(getattr(self.cfg, "near_abs", 0.8)))
         nd = int(min(max(16 * int(np.ceil(need / 16)), 16), 128))
@@ -153,23 +156,30 @@ class KeyframeQuality:
         return np.where(disp > 0.5, fx * self.baseline / np.maximum(disp, 1e-3), 0.0).astype(np.float32)
 
     @staticmethod
-    def _luminance(t: torch.Tensor, width: int) -> np.ndarray:
-        """Luminance (h, width) float in [0, 1] on the CPU: one small transfer of a (3, H, W) image in [0, 1]."""
+    def _luminance_dev(t: torch.Tensor, width: int) -> torch.Tensor:
+        """Luminance (h, width) float in [0, 1] of a (3, H, W) image in [0, 1], on the image's device."""
         t = t.float()
         t = t[0] if t.dim() == 4 else t
         y = (0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2]) if t.shape[0] == 3 else t[0]
         H, W = y.shape
         if width < W:
             y = F.interpolate(y[None, None], size=(max(int(round(H * width / W)), 1), width), mode="area")[0, 0]
-        return y.cpu().numpy()
+        return y
+
+    @staticmethod
+    def _luminance(t: torch.Tensor, width: int) -> np.ndarray:
+        """Luminance (h, width) float in [0, 1] on the CPU: one small transfer of a (3, H, W) image in [0, 1]."""
+        return KeyframeQuality._luminance_dev(t, width).cpu().numpy()
 
     def _near_cells(self, depth, gh: int, gw: int, update: bool):
         """Cells whose valid depth is mostly closer than d_near; depth (1, H, W) / (H, W) metric (tensor or array),
         <= 0 invalid."""
-        d = depth.float().cpu().numpy() if torch.is_tensor(depth) else np.asarray(depth, np.float32)
-        d = d.reshape(d.shape[-2:])
-        st = max(1, d.shape[1] // 128)              # <= 128 px across: the cells are 8 px wide there
-        d = d[::st, ::st]
+        st = max(1, depth.shape[-1] // 128)          # <= 128 px across: the cells are 8 px wide there
+        if torch.is_tensor(depth):                   # subsample first: the same values, a fraction of the copy
+            d = depth.reshape(depth.shape[-2:])[::st, ::st].float().cpu().numpy()
+        else:
+            d = np.asarray(depth, np.float32)
+            d = d.reshape(d.shape[-2:])[::st, ::st]
         valid = (d > 0) & np.isfinite(d)
         if valid.sum() < 0.05 * d.size:
             return None
@@ -199,7 +209,13 @@ class KeyframeQuality:
         H, W = x.shape[-2:]
         gw = int(getattr(cfg, "grid", 16))
         gh = max(int(round(gw * H / W)), 1)
-        y = self._luminance(x, min(W, 256))
+        y_right = None
+        if depth is None and rgb_right is not None and getattr(cfg, "stereo_near", True) and self.fx and self.baseline:
+            yl = self._luminance_dev(x, min(W, 256))
+            yr = self._luminance_dev(rgb_right, yl.shape[1])
+            y, y_right = torch.stack([yl, yr]).cpu().numpy() if yr.shape == yl.shape else (yl.cpu().numpy(), yr.cpu().numpy())
+        else:
+            y = self._luminance(x, min(W, 256))
         gx = cv2.Sobel(y, cv2.CV_32F, 1, 0, ksize=3, borderType=cv2.BORDER_REPLICATE) / 8
         gy = cv2.Sobel(y, cv2.CV_32F, 0, 1, ksize=3, borderType=cv2.BORDER_REPLICATE) / 8
         cell_g = self._pool(np.sqrt(gx * gx + gy * gy), gh, gw)
@@ -222,7 +238,7 @@ class KeyframeQuality:
 
         cells = {"clipped": clipped, "flat": flat & ~clipped}
         if depth is None and rgb_right is not None and getattr(cfg, "stereo_near", True):
-            depth = self._stereo_depth(y, rgb_right, W)
+            depth = self._stereo_depth(y, rgb_right, W, y_right=y_right)
         near = self._near_cells(depth, gh, gw, update=True) if depth is not None else None
         if near is not None:
             cells["near"] = near
@@ -249,7 +265,9 @@ class KeyframeQuality:
         pc, n_person = self._person_cells(rgb[0] if rgb.dim() == 4 else rgb, gh, gw)
         q.person_checked = True
         if pc is None:
-            q.ms += (time.perf_counter() - t0) * 1e3
+            dt = (time.perf_counter() - t0) * 1e3
+            q.ms += dt
+            self.stats["ms_total"] += dt
             return q
         cells = dict(q.cells)
         cells["person"] = pc
