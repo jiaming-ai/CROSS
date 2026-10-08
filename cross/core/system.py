@@ -2132,11 +2132,6 @@ class System:
             # (retrieval.locality: the keyframes near it get the locality slots)
             for center, sigma, source in geo.location_priors():
                 self.add_location_prior(center, sigma, source=source, ttl_steps=1)
-        if getattr(self.config.geo, "integrity", False):
-            self.geo_withheld = bool(geo.withheld and in_map)
-            if self.geo_withheld:
-                geo.stats["withheld_steps"] += 1
-                self.last_step_diagnostics["geo_withheld"] = True
         if dec is not None and dec.used and in_map and geo.anchored:
             self.note_anchor("gnss")             # an accepted fix ties the pose to the map: locality drift restarts
             self.last_step_diagnostics["gnss"] = {"used": bool(dec.used), "reason": dec.reason,

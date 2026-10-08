@@ -121,28 +121,21 @@ class PCAProjection:
 
 
 class ScoreCalibration:
-    """Maps code inner products back to the full-descriptor cosine they approximate (VPR thresholds, the new-keyframe
-    test and retrieval weights use the score's value).  Fitted on the map's own pairs (each sampled row's best
-    full-descriptor neighbours outside +-`exclude` rows, plus random rows).  The applied model is `raw` by default:
-    on NCLT (projection fitted on the whole map) the raw code scores are within 0.002-0.004 of the full cosine at 2048
-    dims, and a calibration fitted on the map's pairs reduces the in-map error but increases it for queries of another
-    season (512 dims: 0.013 -> 0.020), whose explained energy is lower (0.30 vs 0.69).  Models:
+    """Residual margin of projected (code) scores, fitted on the map's own pairs (each sampled row's best
+    full-descriptor neighbours outside +-`exclude` rows, plus random rows): how much of its bound |r_q| |r_y| the
+    residual inner product reaches among the best matches (99.9 % quantile, `meta["resid_ratio_q999"]`), with
+    e = |z|^2 the explained energy of a unit descriptor and r = sqrt(1 - e).  DescriptorIndex.query_scores uses it as
+    the re-scoring margin.  Code scores are used as they are: on NCLT (projection fitted on the whole map) they are
+    within 0.002-0.004 of the full cosine at 2048 dims; models mapping them back to the cosine (isotonic, residual
+    regression) reduced the in-map error but increased it for another season's queries and were removed
+    (outputs/2026-10-08_option_pruning; code in the tag large-scale-options-2026-10-08)."""
 
-      iso    isotonic map of the code score
-      resid  s + beta r_q r_y cos(z_q, z_y) + c: the residual inner product as a fitted fraction of its bound, with
-             e = |z|^2 the explained energy of a unit descriptor and r = sqrt(1 - e) (uses the query's own energy, so
-             it adapts to queries the projection explains less well, e.g. another season)"""
-
-    def __init__(self, iso_x=None, iso_y=None, beta: float = 0.0, c: float = 0.0, model: str = "raw",
-                 meta: Optional[dict] = None):
-        self.iso_x = None if iso_x is None else np.asarray(iso_x, np.float32)
-        self.iso_y = None if iso_y is None else np.asarray(iso_y, np.float32)
-        self.beta, self.c, self.model = float(beta), float(c), model
+    def __init__(self, meta: Optional[dict] = None):
         self.meta = dict(meta or {})
 
     @classmethod
-    def fit(cls, X: torch.Tensor, Z: torch.Tensor, n_q: int = 2000, k: int = 50, n_rand: int = 50, exclude: int = 20,
-            model: str = "raw") -> "ScoreCalibration":
+    def fit(cls, X: torch.Tensor, Z: torch.Tensor, n_q: int = 2000, k: int = 50, n_rand: int = 50,
+            exclude: int = 20) -> "ScoreCalibration":
         n = X.shape[0]
         g = torch.Generator(device="cpu").manual_seed(1)
         qi = torch.randperm(n, generator=g)[: min(n_q, n)].to(X.device)
@@ -163,25 +156,7 @@ class ScoreCalibration:
             eqs.append(ez[q][:, None].expand_as(xi).reshape(-1))
             eys.append(ez[xi].reshape(-1))
         full, s = torch.cat(fulls), torch.cat(ss)
-        eq_all, ey_all = torch.cat(eqs), torch.cat(eys)
-        # isotonic regression of full on s (pool adjacent violators on the sorted pairs), knots for np.interp
-        o = torch.argsort(s)
-        xs, ys = s[o].cpu().numpy().astype(np.float64), full[o].cpu().numpy().astype(np.float64)
-        vals, wts, ends = [], [], []
-        for i, y in enumerate(ys):
-            vals.append(y); wts.append(1.0); ends.append(i)
-            while len(vals) > 1 and vals[-2] > vals[-1]:
-                v = (vals[-2] * wts[-2] + vals[-1] * wts[-1]) / (wts[-2] + wts[-1])
-                w = wts[-2] + wts[-1]
-                vals[-2:], wts[-2:], ends[-2:] = [v], [w], [ends[-1]]
-        fitted = np.repeat(vals, np.asarray(wts, dtype=int))
-        idx = np.unique(np.linspace(0, len(xs) - 1, 256).astype(int))
-        iso_x, iso_y = xs[idx], fitted[idx]
-        # residual model: full - s ~ beta * r_q r_y cos + c
-        eq, ey = eq_all.clamp(0, 1), ey_all.clamp(0, 1)
-        f = torch.sqrt((1 - eq) * (1 - ey)) * s / torch.sqrt(eq * ey).clamp_min(1e-6)
-        A = torch.stack([f, torch.ones_like(f)], 1).double()
-        sol = torch.linalg.lstsq(A, (full - s).double()[:, None]).solution.flatten()
+        eq, ey = torch.cat(eqs).clamp(0, 1), torch.cat(eys).clamp(0, 1)
         # how much of its bound |r_q| |r_y| the residual inner product reaches among the best matches (99.9 %): the
         # re-scoring margin of DescriptorIndex.query_scores
         rq_ry = torch.sqrt((1 - eq) * (1 - ey)).clamp_min(1e-6)
@@ -189,41 +164,16 @@ class ScoreCalibration:
         is_top[:, :kk] = True
         ratio = ((full - s).abs() / rq_ry)[is_top.reshape(-1)]
         r999 = float(ratio.quantile(0.999)) if ratio.numel() < 2 ** 24 else float(ratio[:2 ** 24].quantile(0.999))
-        return cls(iso_x, iso_y, float(sol[0]), float(sol[1]), model,
-                   {"pairs": int(len(s)), "n_rows": int(n), "resid_ratio_q999": r999})
-
-    def apply(self, s: torch.Tensor, eq, ey, model: Optional[str] = None) -> torch.Tensor:
-        model = model or self.model
-        if model == "raw":
-            return s
-        if model == "iso" and self.iso_x is not None:
-            return torch.as_tensor(np.interp(s.detach().cpu().numpy(), self.iso_x, self.iso_y),
-                                   dtype=s.dtype, device=s.device)
-        eq = torch.as_tensor(eq, dtype=s.dtype, device=s.device).clamp(0, 1)
-        ey = torch.as_tensor(ey, dtype=s.dtype, device=s.device).clamp(0, 1)
-        f = torch.sqrt((1 - eq) * (1 - ey)) * s / torch.sqrt(eq * ey).clamp_min(1e-6)
-        return s + self.beta * f + self.c
+        return cls({"pairs": int(len(s)), "n_rows": int(n), "resid_ratio_q999": r999})
 
     def state(self) -> dict:
-        return {"iso_x": self.iso_x, "iso_y": self.iso_y, "beta": self.beta, "c": self.c, "model": self.model,
-                "meta": self.meta}
+        return {"model": "raw", "meta": self.meta}
 
     @classmethod
     def from_state(cls, st: Optional[dict]) -> Optional["ScoreCalibration"]:
         if not st:
             return None
-        return cls(st.get("iso_x"), st.get("iso_y"), st.get("beta", 0.0), st.get("c", 0.0), st.get("model", "resid"),
-                   st.get("meta"))
-
-
-def projection_from_config(spec, dim_in: int) -> Optional[PCAProjection]:
-    """None (no projection) or a PCAProjection loaded from a .npz path."""
-    if spec in (None, "", "none", False):
-        return None
-    p = PCAProjection.load(str(spec))
-    if p.dim_in != dim_in:
-        raise ValueError(f"descriptor projection {spec} expects {p.dim_in}-d descriptors, the VPR model gives {dim_in}")
-    return p
+        return cls(st.get("meta"))      # maps saved with the removed models load with their margin only
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -250,7 +200,7 @@ class DescriptorIndex:
                  ivf_nlist: int = 0, ivf_nprobe: int = 16, ivf_min_rows: int = 200000, ann_shortlist: int = 256,
                  fit_at: int = 0, fit_dim: int = 0, fit_energy: float = 0.9, extend: bool = True,
                  extend_margin: float = 0.05, extend_dims: int = 64, max_dim: int = 2048, recent: int = 1024,
-                 shortlist: int = 64, calibration: str = "raw", max_rescore: int = 256, keep_full_max: int = 131072):
+                 shortlist: int = 64, max_rescore: int = 256, keep_full_max: int = 131072):
         self.dim_in = int(dim_in)
         self.device = device
         self.projection = projection
@@ -274,9 +224,8 @@ class DescriptorIndex:
         self._full_ok: Optional[torch.Tensor] = None
         self._next_refit = 0
         self._refit_ok = self.fit_at > 0 and projection is None    # every row's full descriptor is at hand
-        self.calibration: Optional[ScoreCalibration] = None        # code score -> full cosine (projected rows)
+        self.calibration: Optional[ScoreCalibration] = None        # residual margin of the code scores (projected rows)
         self.shortlist = int(shortlist)                             # rows re-scored exactly (full descriptors in RAM)
-        self.calibration_model = calibration
         self.max_rescore = int(max_rescore)                        # extra rows re-scored by the bound (per query)
         self.keep_full_max = int(keep_full_max)                    # rows whose full descriptors are kept in RAM
         self.last_rescored = 0
@@ -395,8 +344,7 @@ class DescriptorIndex:
                            for i in range(0, n, 8192)])
         self._set_projection(proj, codes)
         sel = torch.linspace(0, n - 1, min(n, 8192)).long()           # in insertion (time) order
-        self.calibration = ScoreCalibration.fit(self._full_rows(sel), self.buf[sel.to(self.device)].float(), exclude=5,
-                                                model=self.calibration_model)
+        self.calibration = ScoreCalibration.fit(self._full_rows(sel), self.buf[sel.to(self.device)].float(), exclude=5)
         self._recent = [(int(self.ids[r]), self._full[r].clone()) for r in range(max(0, n - self.recent_size), n)]
         self._e_ema = proj.meta["e_ref"]
         self._since_extend = 0
@@ -467,7 +415,7 @@ class DescriptorIndex:
                     f"{self.extend_margin}); subspace {self.dim} -> {Vn.shape[1]} dims")
         self._set_projection(proj, codes)
         Zr = torch.stack([proj.apply(x.float().to(self.device)) for _, x in self._recent])
-        self.calibration = ScoreCalibration.fit(Xr, Zr, exclude=5, model=self.calibration_model)
+        self.calibration = ScoreCalibration.fit(Xr, Zr, exclude=5)
         self._e_ema = proj.meta["e_ref"]
         self._since_extend = 0
 
@@ -545,7 +493,6 @@ class DescriptorIndex:
         eq = float(zq.float().pow(2).sum() / q.pow(2).sum().clamp_min(1e-12))
         rt = None if rows is None else torch.as_tensor(rows, device=self.device)
         ey = self._energy[:self.n] if rt is None else self._energy[rt]
-        s = self.calibration.apply(s, eq, ey) if self.calibration is not None else s
         if self._full is None or s.numel() == 0:
             return s
         done = torch.zeros(s.numel(), dtype=torch.bool, device=s.device)

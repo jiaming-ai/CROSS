@@ -244,8 +244,6 @@ class Pipeline:
         """Whether the belief is a pose in the stored map (System.session_localized); a session that has not joined
         the map yet reports its pose in a frame of its own, which is no pose in the map."""
         fn = getattr(self.mapper, "session_localized", None)
-        if getattr(self.mapper, "geo_withheld", False):
-            return False                      # geo.integrity: GNSS contradicts the pose in the map
         return True if fn is None else bool(fn())
 
     def release(self):
