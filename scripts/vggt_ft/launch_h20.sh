@@ -6,7 +6,7 @@
 # /data0/jz/logs/<exp>_node<rank>.log.
 set -e
 CFG=$1; shift
-cd /mnt/datasets-livsyn/jz/code/CROSS-ft
+cd ${CODE_DIR:-/mnt/datasets-livsyn/jz/code/CROSS-ft}     # CODE_DIR: another deployed copy
 . /mnt/datasets-livsyn/jz/envs/ft/bin/activate
 export CUDA_VISIBLE_DEVICES=${GPUS:-0,1,2,3,4,5,6,7}
 NPROC=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
