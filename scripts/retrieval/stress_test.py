@@ -16,6 +16,7 @@ Methods (each evaluated on the same queries):
   belief:S    code search + locality slots around a predicted position = truth + N(0, S^2) per horizontal axis
               (radius r_min + 3 S), as System._locality_merge does (slots local, rest global)
   gps         code search + locality slots around the query's GPS fix (radius r_min + 3 sigma_gps; no fix: global only)
+  gpsfocus:G  the GPS region (5 m + 3.72 sigma_gps) takes max(ks) - G slots, G global (System._geo_focus)
 Recall@k: a query counts when the database has a frame within the radius; correct when one of the top k is.
 """
 import argparse
@@ -24,6 +25,7 @@ import os
 import sys
 import time
 
+import math
 import numpy as np
 import torch
 
@@ -321,7 +323,8 @@ def main():
         sp = SpatialIndex()
         sp.rebuild(np.arange(n), dbpos, epoch=0)
 
-        def prior_merge(centers, radii, label):
+        def prior_merge(centers, radii, label, slots=None):
+            slots = a.slots if slots is None else slots
             out = np.full((len(qi), K), -1, dtype=np.int64)
             n_local = []
             for j in range(len(qi)):
@@ -334,7 +337,7 @@ def main():
                 if len(rows):
                     rt = torch.as_tensor(rows, device=dev)
                     s = (codes[rt].float() @ Qc[j]).float()
-                    loc = rows[s.topk(min(a.slots, len(rows))).indices.cpu().numpy()].tolist()
+                    loc = rows[s.topk(min(slots, len(rows))).indices.cpu().numpy()].tolist()
                 else:
                     loc = []
                 merged = loc + [g for g in glob if g not in set(loc)]
@@ -351,6 +354,18 @@ def main():
                 c = qpos.copy()
                 c[:, :2] += rng.normal(0, sig, size=(len(qi), 2))
                 prior_merge(list(c), np.full(len(qi), a.r_min + 3 * sig), m)
+            if m.startswith("gpsfocus") and QS["gps"] is not None:
+                # System._geo_focus: the region sqrt(chi2_2(0.999)) sigma + 5 m takes the budget but G global slots
+                G = int(m.split(":")[1]) if ":" in m else 2
+                g = QS["gps"][qi]
+                gs = QS["gps_sigma"][qi]
+                ok = np.isfinite(g).all(1) & np.isfinite(gs)
+                centers = [g[j] if ok[j] else None for j in range(len(qi))]
+                ftop = prior_merge(centers, 5.0 + math.sqrt(13.8155) * np.where(ok, gs, 0), m, slots=max(a.ks) - G)
+                for r in a.radii:
+                    for split_name, mask in (("fix", ok), ("nofix", ~ok)):
+                        if mask.any():
+                            res[f"{m}@{int(r)}m_{split_name}"] = recall(ftop[mask], qpos[mask], dbpos, r, a.ks)
             if m == "gps" and QS["gps"] is not None:
                 g = QS["gps"][qi]
                 gs = QS["gps_sigma"][qi]
