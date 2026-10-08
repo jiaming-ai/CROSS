@@ -1153,7 +1153,13 @@ class System:
                 )
             return
 
+        # a background optimisation that has finished (or is due, async_pgo_lag_steps) is applied before this frame is
+        # processed: the frame is then handled on the corrected map, as after a synchronous optimisation
+        bg_ret = {}
+        self._poll_async_pgo(bg_ret)
+
         ret = self._construct_motion_dist()
+        ret.update(bg_ret)
 
         if rgb_image is not None:
             self._prev_obs = (rgb_image, depth_image, confidence_map)
@@ -1410,7 +1416,6 @@ class System:
 
         # Apply any pending PGO results from the async engine and optionally force smoothing
         applied = self._apply_pending_pgo_results(ret)
-        self._poll_async_pgo(ret)         # (not `applied`: that forces a local smoothing, which the synchronous path never ran)
         # Periodic local smoothing
         self._maybe_local_smoothing(force=applied)
         # a realized hypothesis that has taken over the belief for long without a loop closure becomes hypothesis 0
@@ -1831,7 +1836,9 @@ class System:
                 "pose_graph": None, "optimized_poses": {}}
         n_tail = 0
         if res["applied"]:
-            fresh = step == meta["step"] and hm.pose_epoch == meta["pose_epoch"]
+            # nothing was processed since the fork (applied in its own step, or at the start of the next one): the state is
+            # the one the job saw, and the write-back is the synchronous one
+            fresh = step - meta["step"] <= 1 and hm.pose_epoch == meta["pose_epoch"]
             if fresh:
                 poses = {int(i): pp.SE3(torch.from_numpy(res["opt"][k].copy())) for k, i in enumerate(res["ids"])}
                 info = hm.apply_pgo_result({"success": True, "pose_graph": None, "optimized_poses": poses, "other_hypothesis_id": 0})

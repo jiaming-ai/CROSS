@@ -313,3 +313,20 @@ def test_keyframes_moved_by_something_else_meanwhile_get_the_correction_added_to
             assert np.allclose(np.array(pp.SE3(torch.from_numpy(pl[k])).matrix()), expect, atol=2e-5), k
         else:
             assert np.array_equal(ps[k], pl[k]), k
+
+
+@pytest.mark.parametrize("test_before_apply", [False, True])
+def test_a_result_applied_at_the_start_of_the_next_step_is_the_synchronous_one(test_before_apply):
+    """Nothing was processed between the fork (end of step s) and the application (start of step s+1): lag 1 = synchronous."""
+    s1 = make_system(test_before_apply, True)
+    s2 = make_system(test_before_apply, True, async_lag=1)
+    keys, ref = s1.new_keys, min(a for a, b in s1.new_keys)
+    s1._verified_lc_optimise({}, list(keys), ref)
+    s2._submit_async_pgo({}, list(keys), ref, list(keys))
+    assert s2._apgo.busy
+    s2._processed_frame_num += 1
+    assert s2._poll_async_pgo({}) is True
+    p1, p2 = poses(s1.hypothesis_manager), poses(s2.hypothesis_manager)
+    assert all(np.array_equal(p1[k], p2[k]) for k in p1)
+    assert [(a, b) for (a, b, f) in s1._lc_verifier.quarantine] == [(a, b) for (a, b, f) in s2._lc_verifier.quarantine]
+    assert s2._apgo.stats["stale_steps"] == 0
