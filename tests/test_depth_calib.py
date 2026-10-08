@@ -32,7 +32,7 @@ def test_offset_from_certain_samples_and_kept_for_the_next_session():
     time is the offset, written to the store (the back end, saved with the map); a new session of the same learned
     depth starts from it, one of another learned depth does not."""
     store = types.SimpleNamespace(odometry_calib={})
-    fe = _frontend(store)
+    fe = _frontend(store, vgio_depth_calib_apply="session")
     fe._start(_calib())
     twin = types.SimpleNamespace(lam={}, std=0.05)
     twin.solve = lambda need_std=True: {"lam_std": twin.std}
@@ -50,16 +50,22 @@ def test_offset_from_certain_samples_and_kept_for_the_next_session():
     stored = store.odometry_calib["learned_depth"]
     assert abs(stored["offset"] - 0.4) < 0.05 and stored["samples"] == 30 and stored["source"].startswith("da3:")
 
-    fe2 = _frontend(store)
+    fe2 = _frontend(store)                                      # "stored": the map's offset, fixed in the session
     fe2._start(_calib())
     assert fe2.depth_calib == stored["offset"]
+    fe2.twin = twin
+    twin.std = 0.05
+    for k in range(60, 120):
+        twin.lam[k] = 0.0
+        fe2._depth_calibrate(k, (0.9, 0.2), timestamp=float(k))   # this session sees another offset
+    assert fe2.depth_calib == stored["offset"] and abs(store.odometry_calib["learned_depth"]["offset"] - 0.9) < 1e-6
     fe3 = _frontend(store, depth_prior_source="head")
     fe3._start(_calib())
     assert fe3.depth_calib == 0.0
 
 
 def test_offset_bounded_by_the_scale_band():
-    fe = _frontend()
+    fe = _frontend(vgio_depth_calib_apply="session")
     fe._start(_calib())
     fe.twin = types.SimpleNamespace(lam={0: 0.0}, solve=lambda need_std=True: {"lam_std": 0.01},
                                     marginalize=lambda: None)

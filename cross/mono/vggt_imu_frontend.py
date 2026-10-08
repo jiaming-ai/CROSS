@@ -237,6 +237,8 @@ class VggtImuFrontend:
             if stored and stored.get("source") == self._calib_source():
                 self.depth_calib = float(stored["offset"])
                 self.stats["depth_calib_stored"] = round(self.depth_calib, 4)
+            if ic.vgio_depth_calib_apply not in ("stored", "session"):
+                raise ValueError(f"imu.vgio_depth_calib_apply: 'stored' or 'session', not {ic.vgio_depth_calib_apply!r}")
         if ic.vgio_graph_time_offset:
             self.time_offset_done = True         # the graph estimates the offset
         self.scale_filter = _GraphEstimate(self.graph)
@@ -1029,13 +1031,16 @@ class VggtImuFrontend:
             S = self._calib_samples
             if len(S) >= ic.vgio_depth_calib_min_samples and S[-1][0] - S[0][0] >= ic.vgio_depth_calib_min_span:
                 lim = float(np.log(ic.scale_band))
-                self.depth_calib = float(np.clip(np.median([v for _, v in S]), -lim, lim))
-                self.stats["depth_calib"] = round(self.depth_calib, 4)
+                offset = float(np.clip(np.median([v for _, v in S]), -lim, lim))
+                self.stats["depth_calib_session"] = round(offset, 4)
+                if ic.vgio_depth_calib_apply == "session":
+                    self.depth_calib = offset
                 store = self._calib_dict(create=True)
                 if store is not None:
-                    store["learned_depth"] = {"offset": round(self.depth_calib, 5), "source": self._calib_source(),
+                    store["learned_depth"] = {"offset": round(offset, 5), "source": self._calib_source(),
                                               "samples": len(S), "span_s": round(S[-1][0] - S[0][0], 1)}
         out["depth_calib"] = round(self.depth_calib, 4)
+        out["depth_calib_session"] = self.stats.get("depth_calib_session")
         return out
 
     def _keyframe_consistency(self, obs, c2w_c, c2w_m, index, ratio):

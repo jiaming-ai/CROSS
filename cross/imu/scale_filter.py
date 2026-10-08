@@ -126,10 +126,16 @@ class ImuConfig:
     # the learned depth, so its scale is the IMU's and the passes' alone, with its marginal std.  Where that std is
     # below vgio_depth_calib_max_std (the IMU observes the scale: accelerations, turns), learned depth minus the twin's
     # scale is a sample of the learned depth's bias in this place; once vgio_depth_calib_min_samples samples spanning
-    # vgio_depth_calib_min_span seconds exist, their median is subtracted from the learned-depth observations (at most
-    # log scale_band).  Where the IMU does not observe the scale (KITTI's 10 Hz OXTS at constant speed) no sample is
-    # taken and learned depth is used as before.  The median over many windows ignores a short visual outlier.
+    # vgio_depth_calib_min_span seconds exist, their median (at most log scale_band) is the place's offset, kept with
+    # the map.  Where the IMU does not observe the scale (slow indoor robots) no sample is taken.  Front-end suite
+    # (outputs/2026-10-08_depth_calib): within 0.05 of the true bias on KITTI 00/01/07, ROVER day / autumn and cafe,
+    # for DA3 and the scale head; overconfident at night (ROVER night: 0.6-0.7 off).
+    # vgio_depth_calib_apply: "stored" subtracts the offset stored with the map (a later session starts at the
+    # place's scale; within a session the graph's bias state learns it anyway), "session" also the session's own
+    # offset as soon as it exists (KITTI 01: the twin was confidently 0.3 off for its first 25 s, and the scale
+    # shrank by 20 % for a stretch).
     vgio_depth_calib: bool = False
+    vgio_depth_calib_apply: str = "stored"
     vgio_depth_calib_max_std: float = 0.1
     vgio_depth_calib_min_samples: int = 30
     vgio_depth_calib_min_span: float = 20.0
