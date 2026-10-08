@@ -2096,6 +2096,8 @@ class System:
         t = float(gnss.get("t", timestamp)) if gnss is not None else float(timestamp)
         dec = geo.observe(t, gnss, compass, T, in_map, belief_std_t=std_t, last_kf_id=self.last_added_kf_id,
                           nodes=self.hypothesis_manager.nodes)
+        if dec is not None:
+            self.last_step_diagnostics["gnss_reason"] = dec.reason
         if self.config.geo.retrieval_gate:
             # the fix in the map frame (through the anchor) as a location prior of this step's retrieval
             # (retrieval.locality: the keyframes near it get the locality slots)
