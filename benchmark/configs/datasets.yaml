@@ -161,6 +161,25 @@ dev_kitti:
     "07": {map: "07"}  # T1 only: the shortest KITTI loop (its closure is at the end, so it is not clipped)
   t1: maps
 
+# Corridor check (dev.py --tier corridor): the OpenLORIS corridor scene of the benchmark, map T1 and the four queries'
+# T2 / T3.  Long, repetitive and texture-poor: long loop-closure edges between the corridor's end and start decide the map
+# (fine-tuned VGGT-Omega: twice as many accepted, less accurate; 2026-10-07).
+corridor_openloris:
+  dev: true
+  tier: corridor
+  data: openloris
+  environment: indoor
+  r_d: 2.0
+  thresholds: [1.0, 2.0]
+  trial_len: 100
+  trial_stride: 50
+  odometry: wheel
+  odom_fallback: {vio: wheel}
+  setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
+  scenes:
+    corridor: {map: corridor1-1, queries: [corridor1-2, corridor1-3, corridor1-4, corridor1-5]}
+  t1: maps
+
 # Confirmation set (dev.py --tier val): every OpenLORIS office / home / cafe query of the benchmark, T2 and T3 only
 # (106 T3 trials).  For a change that passed the dev split, before the full benchmark.
 val_openloris:
