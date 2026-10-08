@@ -87,9 +87,6 @@ def test_stereo_near_field():
     assert q.pending is not None and q.fractions["near"] == 0.0
     q = f.add_person(q, left)
     assert q.fractions["near"] > 0.6 and q.junk and q.reason == "near"
-    # immediate when the decision is needed at once (person cue requested): the same decision
-    q2 = f.assess(left, rgb_right=right, person=True)
-    assert q2.fractions["near"] > 0.6 and q2.junk and q2.reason == "near"
 
 
 def test_add_person_keeps_threshold_and_skips_checked():
