@@ -226,13 +226,31 @@ class GeoManager:
         T = kf.pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)
         return T[:3, 3] + T[:3, :3] @ delta
 
+    def _positions(self, nodes: dict, recs: list) -> list:
+        """`_position` of every record (None where the keyframe is gone for good).  The poses of the keyframes still in the
+        graph are converted to matrices in one batch: a pypose indexing + matrix() per fix costs ~250 us, and a long
+        session logs 10^4 fixes (same values)."""
+        out = [None] * len(recs)
+        present = [i for i, r in enumerate(recs) if r["kf"] in nodes]
+        if present:
+            import pypose as pp
+            import torch
+            rows = torch.stack([nodes[recs[i]["kf"]].plain_row("pose_mu", 0) for i in present])
+            Ts = pp.SE3(rows).matrix().detach().cpu().numpy().astype(np.float64)
+            for j, i in enumerate(present):
+                T = Ts[j]
+                out[i] = T[:3, 3] + T[:3, :3] @ recs[i]["delta"]
+        for i, r in enumerate(recs):
+            if out[i] is None:
+                out[i] = self._position(nodes, r["kf"], r["delta"])
+        return out
+
     def fit_anchor(self, nodes: dict) -> bool:
         """Fit T_ENU<-map to the used fixes of this map, at the current poses of the keyframes they are attached to."""
         if self.anchor_fixed:
             return self.anchor.ok
         recs, pm = [], []
-        for r in self.fix_log:
-            p = self._position(nodes, r["kf"], r["delta"])
+        for r, p in zip(self.fix_log, self._positions(nodes, self.fix_log)):
             if p is not None:
                 recs.append(r)
                 pm.append(p)
@@ -352,8 +370,7 @@ class GeoManager:
         sc = self.noise.scale
         # posterior residuals of every used fix of this map (attached to keyframes): noise scale and correlation time
         e, rr, tt, ee = [], [], [], []
-        for rec in self.fix_log:
-            p = self._position(nodes, rec["kf"], rec["delta"])
+        for rec, p in zip(self.fix_log, self._positions(nodes, self.fix_log)):
             if p is None:
                 continue
             r = rec["enu"][:2] - self.anchor.to_enu(p)[:2]

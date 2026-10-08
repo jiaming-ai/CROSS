@@ -409,3 +409,29 @@ def test_manager_focus_region_follows_the_trusted_fix():
     assert 5.0 + 2.0 * 3.0 < r < 5.0 + 2.0 * 6.0                     # sqrt(chi2_2) x sigma + margin
     m.tick(10.0)
     assert m.focus_region() is None                                  # older than fix_max_age_s
+
+
+def test_batched_fix_positions_equal_the_per_fix_positions_exactly():
+    """GeoManager._positions (one batched pose -> matrix conversion) must give the values of _position per fix."""
+    import types
+    import pypose as pp
+    import torch
+    from cross.core.config import GeoConfig
+    from cross.core.types import Keyframe
+    from cross.geo.manager import GeoManager
+
+    rng = np.random.default_rng(5)
+    mgr = GeoManager(GeoConfig(enabled=True))
+    nodes = {}
+    for i in range(40):
+        q = rng.normal(size=4); q /= np.linalg.norm(q)
+        mu = torch.tensor([[*rng.normal(0, 50, 3), *q]] * 3, dtype=torch.float32)
+        kf = Keyframe(pp.SE3(mu), pp.se3(torch.full((3, 6), 0.05)), torch.tensor([1.0, 0.0, 0.0]), None, None)
+        kf.id = i
+        nodes[i] = kf
+    recs = [{"kf": int(k), "delta": rng.normal(0, 1, 3)} for k in rng.integers(0, 40, 25)] + [{"kf": 99, "delta": np.zeros(3)}]
+    mgr.kf_odo = {}                                           # (a fix whose keyframe is gone and cannot be re-attached)
+    batched = mgr._positions(nodes, recs)
+    for r, b in zip(recs, batched):
+        one = mgr._position(nodes, r["kf"], r["delta"])
+        assert (one is None and b is None) or np.array_equal(one, b)
