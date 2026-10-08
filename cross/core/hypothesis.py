@@ -1,16 +1,18 @@
+import bisect
 import math
 from cross.visualization.viz_graph import visualize_pose_graph
 from cross.utils.profile import timeit
 import pypose as pp
 from typing import Tuple, List, Dict, Set, Optional, Any
 import torch
+import dataclasses
 from dataclasses import dataclass, field
 from loguru import logger
 import collections
 import threading
 import numpy as np
 
-from cross.core.types import Keyframe, Edge, VisualEdge, EdgeType
+from cross.core.types import Keyframe, Edge, VisualEdge, EdgeType, unpacked
 from cross.utils.lie_tensor import project_SE3, normalize_se3
 from cross.utils.lie_tensor import project_SE3, normalize_SE3
 from cross.core.pgo import (
@@ -170,6 +172,8 @@ class HypothesisManager:
         # Graph-lock to guard structural reads/writes across threads (nodes/edges/adjacency)
         # Use re-entrant lock since some operations call other locked methods.
         self.graph_lock = threading.RLock()
+        # incremented whenever keyframe poses of hypothesis 0 move (PGO, merges): position indexes rebuild on change
+        self.pose_epoch = 0
 
         # ========== Component Lifecycle Metadata ==========
         self.n_components = n_components
@@ -256,6 +260,10 @@ class HypothesisManager:
         if self.reloc_association_evidence and not (cfg.session_recovery and cfg.chart_aware):
             raise ValueError("Association evidence requires session_recovery with chart_aware")
         self.detect_reject_cooldown_steps = cfg.detect_reject_cooldown_steps
+        self.strong_pass_frames = int(getattr(cfg, "strong_pass_frames", 0))
+        self.strong_pass_min_refs = int(getattr(cfg, "strong_pass_min_refs", 2))
+        self.strong_pass_min_covis = float(getattr(cfg, "strong_pass_min_covis", 0.3))
+        self.close_correction_min_llr = float(getattr(cfg, "close_correction_min_llr", 0.0))
         self.verify_outlier_sigma = cfg.verify_outlier_sigma
         self.verify_max_outlier_frac = cfg.verify_max_outlier_frac
 
@@ -279,6 +287,18 @@ class HypothesisManager:
         self.create_hypothesis_branch(0, 0)
 
         self.visualize_pose_graph = cfg.visualize_pose_graph
+
+    def odom_adjacency(self) -> Dict[int, Set[int]]:
+        """Undirected adjacency of the odometry edges (planners), rebuilt when the odometry edges change."""
+        key = (getattr(self, "odom_edges_version", 0), len(self.odom_edges))
+        cache = getattr(self, "_odom_adj_cache", None)
+        if cache is None or cache[0] != key:
+            adj: Dict[int, Set[int]] = {}
+            for (a, b) in list(self.odom_edges.keys()):
+                adj.setdefault(a, set()).add(b)
+                adj.setdefault(b, set()).add(a)
+            self._odom_adj_cache = (key, adj)
+        return self._odom_adj_cache[1]
 
     @property
     def proximity_edges(self) -> Dict[Tuple[int, int], Edge]:
@@ -397,6 +417,9 @@ class HypothesisManager:
         self.log_conf_hist = torch.zeros(self.n_components, self.llr_hist_length, device=self.device)
         # which history slots hold real evidence (component active and past its birth frame)
         self.hist_valid = torch.zeros(self.n_components, self.llr_hist_length, dtype=torch.bool, device=self.device)
+        # which valid history slots came from a strong pass (strong_pass_frames)
+        self.strong_hist = torch.zeros(self.n_components, self.llr_hist_length, dtype=torch.bool, device=self.device)
+        self._pending_strong = torch.zeros(self.n_components, dtype=torch.bool, device=self.device)
         self._lc_reject_until: Dict[int, int] = {}
 
         # Mark existing hypotheses as realized and give them base TTL
@@ -436,7 +459,7 @@ class HypothesisManager:
         to_realize_mask = unrealized_mask & \
                           (self.last_sum_pos >= self.realize_sum_thresh) & \
                           (hit_valid >= self.realize_hitrate_thresh) & \
-                          (n_valid >= self.realize_min_frames)
+                          (self._effective_frames(n_valid) >= self.realize_min_frames)
         association = self.association_components()
         if bool(association.any()):
             # sequential association evidence: signed sum over the valid window and enough verified frames
@@ -509,6 +532,10 @@ class HypothesisManager:
         def noise(f):
             cov = v.noise.factor_cov_gtsam(f)          # anisotropic visual factor: full covariance (gtsam order)
             return cov if cov is not None else v.noise.factor_sigmas_pypose(f)
+        # for visual and odometry factors the result depends only on the factor (measurement, noise metadata) and the
+        # calibrated model's parameters: the pose graph may cache it per factor under this key
+        noise.cache_types = (EdgeType.VISUAL, EdgeType.ODOMETRY)
+        noise.cache_key = lambda: (id(v.noise), dataclasses.astuple(v.noise.cfg))
         return noise
 
     def pgo_skip_fn(self):
@@ -746,6 +773,7 @@ class HypothesisManager:
             self.log_c_hist[component_id, :] = 0
             self.log_conf_hist[component_id, :] = 0
             self.hist_valid[component_id, :] = False
+            self.strong_hist[component_id, :] = False
             self.last_sum_pos[component_id] = 0
             self.last_hit_rate[component_id] = 0
         self.reference_support.clear_component(component_id)
@@ -753,6 +781,16 @@ class HypothesisManager:
         self.component_generations[component_id] += 1
         if self.source_states is not None:
             self.source_states[component_id] = None
+
+    def _effective_frames(self, n_valid: torch.Tensor, rows=None) -> torch.Tensor:
+        """Valid evidence frames, a strong pass counting strong_pass_frames (rows: the components of n_valid)."""
+        if self.strong_pass_frames <= 1:
+            return n_valid
+        strong = (self.strong_hist & self.hist_valid) if rows is None else (self.strong_hist[rows] & self.hist_valid[rows])
+        return n_valid + (self.strong_pass_frames - 1) * strong.sum(dim=1)
+
+    def _is_strong(self, proposal: Dict) -> bool:
+        return self.strong_pass_frames > 1 and int(proposal.get("strong_refs", 0)) >= self.strong_pass_min_refs
 
     def initialize_source_filter(self):
         """Start the conditional filter after initializing the tracking poses.
@@ -870,6 +908,7 @@ class HypothesisManager:
         """
         # --- Step 1: Initialization and Projection ---
         current_mu, current_std, current_weights = self.dist
+        self._pending_strong = torch.zeros(self.n_components, dtype=torch.bool, device=self.device)
 
         # Advance internal step counter for recency tracking
         self.step_counter += 1
@@ -981,6 +1020,7 @@ class HypothesisManager:
             
             # --- A match is found: update the aligned GMM ---
             proposal = proposal_hypotheses[proposal_idx]
+            self._pending_strong[true_comp_idx] = self._is_strong(proposal)
             if true_comp_idx == 0:
                 self.comp0_informative = proposal.get('informative', True)
             aligned_mu[true_comp_idx] = proposal['pose']
@@ -1055,6 +1095,7 @@ class HypothesisManager:
             self._reset_component_evidence(new_comp_idx)
             self.last_alignment_audit[proposal_idx].update(component=new_comp_idx, action="born")
             proposal = proposal_hypotheses[proposal_idx]
+            self._pending_strong[new_comp_idx] = self._is_strong(proposal)
             
             aligned_mu[new_comp_idx] = proposal['pose']
             self.component_charts[new_comp_idx] = proposal['chart_id'] if self.chart_aware else 0
@@ -1338,6 +1379,8 @@ class HypothesisManager:
         self.log_conf_hist[:, self.llr_hist_ptr] = torch.where(active_tracking_mask, log_conf, torch.zeros_like(log_conf))
         # a newborn is seeded with its proposal (zero residual): its birth frame is not evidence
         self.hist_valid[:, self.llr_hist_ptr] = active_tracking_mask & ~self.newborn
+        self.strong_hist[:, self.llr_hist_ptr] = self._pending_strong.to(self.strong_hist.device) & self.hist_valid[:, self.llr_hist_ptr]
+        self._pending_strong = torch.zeros_like(self._pending_strong)
 
         self.llr_hist[:, self.llr_hist_ptr] = pos
         self.llr_hist_ptr = (self.llr_hist_ptr + 1) % self.llr_hist_length
@@ -1433,6 +1476,7 @@ class HypothesisManager:
                     self.realized[dead_full_mask] = False
                     self.ttl[dead_full_mask] = 0
                     self.hist_valid[dead_full_mask] = False
+                    self.strong_hist[dead_full_mask] = False
                     self.log_c_hist[dead_full_mask] = 0.0
                     self.log_u_hist[dead_full_mask] = 0.0
                     self.log_conf_hist[dead_full_mask] = 0.0
@@ -1585,7 +1629,7 @@ class HypothesisManager:
             log_c_pos_sum = (log_c_rel_realized.clamp(-self.detect_llr_cap, self.detect_llr_cap) * valid).sum(dim=1)
             log_c_pos_hit_rate = ((rel > 0) & valid).float().sum(dim=1) / n_valid.clamp(min=1)
             log_conf_hit_rate = ((log_conf_rel_realized + self.detect_conf_rel_margin > 0) & valid).float().sum(dim=1) / n_valid.clamp(min=1)
-            enough = n_valid >= min_frames
+            enough = self._effective_frames(n_valid, realized_ids) >= min_frames
             # the belief must actually have moved to the candidate, and a candidate whose merge was just rejected
             # (geometric verification) is ignored for a while
             weights = self.dist[2][realized_ids]
@@ -1604,6 +1648,9 @@ class HypothesisManager:
                 [a["unanchored_reference_candidate"] for a in reference_audits], device=distances.device, dtype=torch.bool)
             reference_supported = torch.tensor([a["eligible"] for a in reference_audits],
                                                device=distances.device, dtype=torch.bool)
+            if self.close_correction_min_llr > 0:
+                # a close candidate that the measurements strongly prefer to hypothesis 0 corrects it (not a duplicate)
+                close_mask = close_mask & ~((log_c_pos_sum >= self.close_correction_min_llr) & (n_valid >= min_frames))
             separation_gate = torch.where(cross_chart, reference_supported, ~close_mask)
 
             detected_mask = (log_c_pos_sum >= self.detect_overlap_sum_thresh) \
@@ -1646,7 +1693,8 @@ class HypothesisManager:
         return { 'loop_closure': False, 'loop_closure_hypo_id': None }
     
     def handle_loop_closure(
-        self, hypo_id: int, target_node_id: Optional[int] = None, apply: bool = True, global_opt: bool = False
+        self, hypo_id: int, target_node_id: Optional[int] = None, apply: bool = True, global_opt: bool = False,
+        window_ref: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Handle loop closure.
@@ -1658,6 +1706,9 @@ class HypothesisManager:
         Args:
             hypo_id: The hypothesis ID to merge with hypothesis 0
             target_node_id: The central node to expand from (defaults to latest keyframe)
+            window_ref: the oldest keyframe of the loop edges that trigger this optimisation; with
+                mapping.loop_closure.pgo_window_min_nodes set, a session graph of that size is optimised only from
+                window_ref (minus pgo_window_margin keyframes) on, older keyframes that share a factor with it fixed
         
         Returns:
             Dict[str, Any]: Information required for visualization and logging. 
@@ -1687,6 +1738,7 @@ class HypothesisManager:
         if target_node_id is None:
             target_node_id = max(self.nodes.keys())
         result["target_node_id"] = target_node_id
+        result["window"] = None
 
         if hypo_id == 0:
             logger.info("Handling intra-hypothesis loop closure: optimising the graph of hypothesis 0")
@@ -1698,6 +1750,14 @@ class HypothesisManager:
         lc_cfg = getattr(getattr(getattr(self.system, "config", None), "mapping", None), "loop_closure", None)
         full = global_opt or (bool(getattr(lc_cfg, "full_session_pgo", False))
                               and int(getattr(self.system, "_session_start_kf_id", 0)) == 0)
+        window, boundary = None, set()
+        min_nodes = int(getattr(lc_cfg, "pgo_window_min_nodes", 0) or 0)
+        if (window_ref is not None and hypo_id == 0 and full and not global_opt and min_nodes > 0
+                and len(self.nodes) >= min_nodes and not self.chart_aware and self.source_states is None):
+            ids = sorted(self.nodes.keys())
+            i = bisect.bisect_left(ids, int(window_ref)) - int(getattr(lc_cfg, "pgo_window_margin", 0) or 0)
+            if i > 0:
+                window = ids[i]
         with self.graph_lock:
             pg = PoseGraph(
                 self,
@@ -1708,10 +1768,13 @@ class HypothesisManager:
                 skip_fn=self.pgo_skip_fn(),
             )
             try:
-                pg.construct_for_loop_closure(
-                    target_node_id=target_node_id,
-                    other_hypothesis_id=hypo_id,
-                )
+                if window is not None:
+                    boundary = pg.construct_window(window)
+                else:
+                    pg.construct_for_loop_closure(
+                        target_node_id=target_node_id,
+                        other_hypothesis_id=hypo_id,
+                    )
             except ValueError as ex:
                 # an inconsistent proposal (a chart-aware graph that does not reach the proposed reference chart, seen
                 # once in a ROVER relocalization of the mono mode) skips this loop closure instead of ending the session
@@ -1735,7 +1798,10 @@ class HypothesisManager:
         # Fix the earliest keyframe from hypothesis 0; in a relocalization session (map loaded from a
         # previous session) all map keyframes stay fixed: the merge aligns the new session to the map
         session_start = getattr(self.system, "_session_start_kf_id", 0)
-        if global_opt:
+        if window is not None:
+            # windowed optimisation: the keyframes before the window that share a factor with it stay where they are
+            fixed_ids = set(boundary) if boundary else {min(original_kf_ids)}
+        elif global_opt:
             # joint optimisation of the merged map (all sessions): only the very first keyframe is fixed, so the
             # cross-session edges reconcile the sessions with each other instead of pinning every earlier session
             fixed_ids = {min(original_kf_ids)}
@@ -1747,7 +1813,20 @@ class HypothesisManager:
             # the reference-chart anchor selected by the chart join keeps the output coordinates
             fixed_ids = ({k for k in fixed_ids if k != min(original_kf_ids)} | {pg.preferred_fixed_node}) \
                 if session_start > 0 and not global_opt else {pg.preferred_fixed_node}
-        fixed_node_id = pg.preferred_fixed_node if self.chart_aware else min(fixed_ids)
+        # GNSS factors (cross.geo): in a mapping session they determine the map's position and heading, so the first
+        # keyframe gets a soft prior (its tilt only) instead of the hard fix; in a relocalization session the map stays
+        # fixed and the factors pull the session's keyframes
+        geo = getattr(self.system, "_geo", None)
+        if geo is not None and not self.chart_aware and self.source_states is None:
+            pg.unary_position_factors = geo.pgo_factors(self.nodes, set(original_kf_ids))
+            if pg.unary_position_factors:
+                pg.unary_robust_c = geo.robust_c
+                if session_start == 0 and fixed_ids == {min(original_kf_ids)}:
+                    k0 = min(original_kf_ids)
+                    R0 = self.nodes[k0].pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)[:3, :3]
+                    pg.soft_priors = {k0: geo.soft_gauge_cov(R0)}
+                    fixed_ids = set()
+        fixed_node_id = pg.preferred_fixed_node if self.chart_aware else (min(fixed_ids) if fixed_ids else None)
         optim_node_ids = set(original_kf_ids + temp_vertex_ids) - fixed_ids
 
         if self.visualize_pose_graph:
@@ -1847,6 +1926,7 @@ class HypothesisManager:
                 "optimized_poses": pg.optimized_poses,
                 "optim_nodes_ids": optim_node_ids,
                 "fixed_nodes_ids": fixed_ids,
+                "window": window,
                 "message": None,
             }
         )
@@ -1887,6 +1967,7 @@ class HypothesisManager:
         Returns:
             Dict summarizing the application with success and cost.
         """
+        self.pose_epoch += 1
         if self.source_states is not None:
             from cross.core.conditional_pgo import apply_result
             with self.graph_lock:
@@ -1914,18 +1995,20 @@ class HypothesisManager:
                 optimized_poses = {i: p for i, p in optimized_poses.items() if i in pg.source_node_poses}
                 affected_ids = set(optimized_poses)
                 affected_ids |= self._transport_merged_charts(pg, optimized_poses)
-            for node_id, optimized_pose in optimized_poses.items():
-                if node_id in self.nodes:
-                    kf = self.nodes[node_id]
-                    kf.pose_mu[0] = optimized_pose
-                    if self.chart_aware:
-                        kf.pose_charts[0] = pg.output_chart
-                    # The keyframe's std is left as it is: the optimisation does not compute marginals, and halving
-                    # it at every optimisation (the previous behaviour) underflowed to exactly zero after ~100
-                    # optimisations (HSSD house: 1037 of 1045 keyframes at std 0), after which the belief fusion
-                    # produced garbage poses that no later optimisation could repair
-                    kf.last_pgo_step = int(self.step_counter)
-                    logger.debug(f"Applied PGO update to KF {node_id}")
+            step = int(self.step_counter)
+            # plain tensor assignment (same values; pypose's dispatch costs ~90 us per keyframe)
+            with torch._C.DisableTorchFunctionSubclass():
+                for node_id, optimized_pose in optimized_poses.items():
+                    if node_id in self.nodes:
+                        kf = self.nodes[node_id]
+                        kf.pose_mu[0] = optimized_pose
+                        if self.chart_aware:
+                            kf.pose_charts[0] = pg.output_chart
+                        # The keyframe's std is left as it is: the optimisation does not compute marginals, and halving
+                        # it at every optimisation (the previous behaviour) underflowed to exactly zero after ~100
+                        # optimisations (HSSD house: 1037 of 1045 keyframes at std 0), after which the belief fusion
+                        # produced garbage poses that no later optimisation could repair
+                        kf.last_pgo_step = step
 
             if other_hypo != 0 and other_hypo in self.hypotheses:
                 self.merge_hypotheses(other_hypo)
@@ -2015,6 +2098,7 @@ class HypothesisManager:
         """
         Merges the hypothesis after loop closure
         """
+        self.pose_epoch += 1
         self._reset_session_anchor()
         if self.source_states is not None and not conditional_transport_done:
             raise NotImplementedError("Conditional pose/source graph transport is required before merging hypotheses")
@@ -2053,6 +2137,7 @@ class HypothesisManager:
         # Reset evidence history if present
         self.llr_hist[comp_idx, :] = 0.0
         self.hist_valid[comp_idx, :] = False
+        self.strong_hist[comp_idx, :] = False
         self.log_c_hist[comp_idx, :] = 0.0
         self.log_u_hist[comp_idx, :] = 0.0
         self.log_conf_hist[comp_idx, :] = 0.0
@@ -2064,6 +2149,7 @@ class HypothesisManager:
         Adopt hypothesis `comp_idx` as hypothesis 0: its keyframe poses (from its start index on), its
         visual edges and its mixture component replace those of hypothesis 0, and the slot is freed.
         """
+        self.pose_epoch += 1
         if self.source_states is not None:
             raise NotImplementedError("Conditional pose/source graph transport is required before promoting a hypothesis")
         logger.debug(f"Changing hypothesis {comp_idx} to first component")
@@ -2109,6 +2195,7 @@ class HypothesisManager:
         self.newborn[comp_idx] = False
         self.llr_hist[comp_idx, :] = 0.0
         self.hist_valid[comp_idx, :] = False
+        self.strong_hist[comp_idx, :] = False
         self.log_c_hist[comp_idx, :] = 0.0
         self.log_u_hist[comp_idx, :] = 0.0
         self.log_conf_hist[comp_idx, :] = 0.0
@@ -2248,6 +2335,7 @@ class HypothesisManager:
         """
         from cross.core.conditional import SourceState
         from cross.core.conditional_pose import ConditionalPose, restore
+        from cross.db.store import to_device      # .to() skipped on the same device (large maps: 2 LieTensors per edge)
         # --- 1. Restore temporary keyframes ---
         all_keyframes_map = existing_keyframes.copy()
 
@@ -2255,14 +2343,14 @@ class HypothesisManager:
             atlas = db.get_atlas(kf_data["atlas_id"]) if kf_data["atlas_id"] is not None else None
 
             kf = Keyframe(
-                pose_mu=normalize_SE3(kf_data["pose_mu"]).to(storage_device) if kf_data["pose_mu"] is not None else None,   # maps saved before the renormalization fix carry |q| < 1
-                pose_std=kf_data["pose_std"].to(storage_device) if kf_data["pose_std"] is not None else None,
-                pose_weights=kf_data["pose_weights"].to(storage_device) if kf_data["pose_weights"] is not None else None,
+                pose_mu=to_device(normalize_SE3(unpacked(kf_data["pose_mu"])), storage_device) if kf_data["pose_mu"] is not None else None,   # maps saved before the renormalization fix carry |q| < 1
+                pose_std=to_device(kf_data["pose_std"], storage_device),
+                pose_weights=to_device(kf_data["pose_weights"], storage_device),
                 atlas=atlas,
                 timestamp=kf_data["timestamp"],
                 temporary=kf_data["temporary"],
                 last_pgo_step=kf_data["last_pgo_step"],
-                pose_charts=kf_data["pose_charts"].to(storage_device) if kf_data.get("pose_charts") is not None else None,
+                pose_charts=to_device(kf_data.get("pose_charts"), storage_device),
                 metric_source=kf_data.get("metric_source"),
                 conditional_poses=restore(kf_data.get("conditional_poses")),
             )
@@ -2282,8 +2370,8 @@ class HypothesisManager:
         self.odom_edges_version = getattr(self, "odom_edges_version", 0) + 1
         for edge_key, edge_data in hypo_data["odom_edges"].items():
             edge = Edge(
-                mean=edge_data["mean"].to(device),
-                std=edge_data["std"].to(device),
+                mean=to_device(edge_data["mean"], device),
+                std=to_device(edge_data["std"], device),
                 type=EdgeType[edge_data["type"]],
             )
             edge.n_frames = edge_data.get("n_frames")
@@ -2309,8 +2397,8 @@ class HypothesisManager:
             for edge_key, edge_list_data in hypo_data_item["visual_edges"].items():
                 for edge_data in edge_list_data:
                     edge = VisualEdge(
-                        mean=edge_data["mean"].to(device),
-                        std=edge_data["std"].to(device),
+                        mean=to_device(edge_data["mean"], device),
+                        std=to_device(edge_data["std"], device),
                         type=EdgeType[edge_data["type"]],
                         from_comp_id=edge_data["from_comp_id"],
                         to_comp_id=edge_data["to_comp_id"],

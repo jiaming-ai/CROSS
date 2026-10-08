@@ -689,6 +689,9 @@ class PoseEstFeedForward:
         """
         cfg = self.config
         t_start = time.perf_counter()
+        # (model-gauge depth of the current view, metric factor) of this pass: the keyframe quality filter's near
+        # field; read before the next pass (CUDA-graph outputs are reused)
+        self.last_curr_depth = None
         B = int(ref_image.shape[0])
         views = [curr_image] + [ref_image[i] for i in range(B)]
         view_tags = ["curr_L"] + [f"ref{i}_L" for i in range(B)]
@@ -775,6 +778,7 @@ class PoseEstFeedForward:
             pred.c2w, anchors, method=cfg.scale_method,
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
             weight_by_baseline=cfg.anchor_weight_by_baseline,
+            view_logstd_floor=float(getattr(cfg, "anchor_view_logstd_floor", 0.0) or 0.0),
         )
         src = getattr(cfg, "scale_source", "anchors")
         if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
@@ -789,7 +793,10 @@ class PoseEstFeedForward:
             return torch.empty((0, 7)), np.zeros(B, dtype=bool), torch.empty(0)
 
         # calibrated metric-scale correction (the estimator's translations divided by their measured/true ratio)
-        c2w_metric = scale_camera_centers(pred.c2w, scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0), origin_index=0)
+        metric = scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0)
+        c2w_metric = scale_camera_centers(pred.c2w, metric, origin_index=0)
+        if pred.depth is not None and pred.depth.shape[0] > 0:
+            self.last_curr_depth = (pred.depth[0], metric)
         if self._R_model_to_cam is not None:
             c2w_metric = c2w_metric @ self._R_model_to_cam
 

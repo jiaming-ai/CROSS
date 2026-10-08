@@ -126,5 +126,7 @@ class PosedRGBDLoader(Dataloader):
                 item["delta_pose"] = T
             if self.imu is not None:
                 item.update(self.imu.window(prev, i), imu_calib=self.imu.calib)
+            if getattr(self, "geo", None) is not None:     # GNSS fix / compass sample (cross/dataloader/geo.py)
+                item.update(self.geo.window(prev, i, item["timestamp"]))
             prev = i
             yield item

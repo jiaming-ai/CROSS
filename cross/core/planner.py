@@ -264,12 +264,8 @@ class Planner:
 
         # Add odometry neighbors only if temporary keyframes are enabled
         if self.use_temporary_keyframes:
-            # Add odometry neighbors (both directions, includes temporary keyframes)
-            for (id1, id2) in self.hypothesis_manager.odom_edges.keys():
-                if id1 == kf_id:
-                    neighbors.add(id2)
-                elif id2 == kf_id:
-                    neighbors.add(id1)
+            # Add odometry neighbors (both directions, includes temporary keyframes; cached adjacency)
+            neighbors.update(self.hypothesis_manager.odom_adjacency().get(kf_id, ()))
 
         return list(neighbors)
 

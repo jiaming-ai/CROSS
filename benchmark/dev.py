@@ -28,16 +28,17 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
 
 
-def dev_cfg():
+def dev_cfg(datasets=None):
     ds = yaml.safe_load((ROOT / "benchmark/configs/datasets.yaml").read_text())
-    return {k: v for k, v in ds.items() if v.get("dev")}
+    return {k: v for k, v in ds.items() if v.get("dev") and (not datasets or k in datasets)}
 
 
 def scenes(cfg, tier):
     """(dataset, scene, map, queries) of a tier: quick = the scenes with a `quick` list, and those queries; full = every
     scene of the dev entries; val = the entries marked `tier: val` (a larger confirmation set)."""
     for dataset, d in cfg.items():
-        if (d.get("tier") == "val") != (tier == "val"):
+        # an entry with a `tier` of its own (val, occ) belongs to that tier only; the others form quick / full
+        if d.get("tier") is not None and d.get("tier") != tier or d.get("tier") is None and tier not in ("quick", "full"):
             continue
         for scene, sc in d["scenes"].items():
             if tier == "quick":
@@ -49,7 +50,7 @@ def scenes(cfg, tier):
 
 
 def job_lists(a):
-    cfg = dev_cfg()
+    cfg = dev_cfg(a.datasets)
     sy = yaml.safe_load((ROOT / "benchmark/configs/systems.yaml").read_text())
     maps, queries = [], []
     for system in a.systems:
@@ -83,6 +84,8 @@ def run_jobs(jobs, a, log_dir: Path):
                 cmd += ["--args", a.args]
             if a.force:
                 cmd += ["--force"]
+            if a.keep_rows:
+                cmd += ["--keep-rows"]
             name = "_".join(job[1::2][:4] + job[-1:] + ([a.variant] if a.variant else [])).replace("/", "-")
             env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu))
             t0 = time.time()
@@ -111,7 +114,7 @@ def cmd_run(a):
     for j in failed:
         print("  failed:", " ".join(j))
     # a failed run still writes a result.json (status failed), and query jobs of a failed map write none: list both
-    cfg = dev_cfg()
+    cfg = dev_cfg(a.datasets)
     for system in a.systems:
         run = system + (f"@{a.variant}" if a.variant else "")
         for f in sorted(Path(a.out).glob(f"*/*/{run}/*/s*/t[123]/**/result.json")):
@@ -203,7 +206,7 @@ def wall(cells):
 
 
 def cmd_compare(a):
-    cfg = dev_cfg()
+    cfg = dev_cfg(a.datasets)
     out, data = Path(a.out), Path(a.data)
     runs = [load_run(out, r, cfg, a.tier) for r in a.runs]
     base = runs[0]
@@ -289,7 +292,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("run", "compare"):
         p = sub.add_parser(name)
-        p.add_argument("--tier", choices=["quick", "full", "val"], default="quick")
+        p.add_argument("--tier", choices=["quick", "full", "val", "occ"], default="quick")
+        p.add_argument("--datasets", nargs="*", default=None, help="only these dev entries of datasets.yaml")
         p.add_argument("--data", default=os.environ.get("BENCH_DATA"))
         p.add_argument("--out", default=os.environ.get("BENCH_DEV_RESULTS"))
     r = sub.choices["run"]
@@ -300,6 +304,7 @@ def main():
     r.add_argument("--args", default="", help="extra CROSS arguments of this variant")
     r.add_argument("--seed", type=int, default=0)
     r.add_argument("--force", action="store_true")
+    r.add_argument("--keep-rows", action="store_true", help="keep the per-frame rows of the query runs (reloc_rows.json)")
     c = sub.choices["compare"]
     c.add_argument("runs", nargs="+", help="<system>[@<variant>]; the first one is the reference")
     a = ap.parse_args()

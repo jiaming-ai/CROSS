@@ -49,10 +49,11 @@ def get_memory_usage(system, detailed: bool = True) -> Dict:
     db_memory["keyframes"]["count"] = len(all_kfs)
     
     for kf in all_kfs:
-        if kf.raw_rgb_image is not None:
-            db_memory["keyframes"]["rgb_images"] += get_tensor_memory(kf.raw_rgb_image)
-        if kf.depth_image is not None:
-            db_memory["keyframes"]["depth_images"] += get_tensor_memory(kf.depth_image)
+        # images held in memory (a stored map's images are decoded on access and counted only there)
+        if torch.is_tensor(kf.stored_image("raw_rgb_image")):
+            db_memory["keyframes"]["rgb_images"] += get_tensor_memory(kf.stored_image("raw_rgb_image"))
+        if torch.is_tensor(kf.stored_image("depth_image")):
+            db_memory["keyframes"]["depth_images"] += get_tensor_memory(kf.stored_image("depth_image"))
         if kf.pose_mu is not None:
             db_memory["keyframes"]["pose_data"] += get_lietensor_memory(kf.pose_mu)
         if kf.pose_std is not None:
@@ -109,10 +110,10 @@ def get_memory_usage(system, detailed: bool = True) -> Dict:
     for kf in system.hypothesis_manager.nodes.values():
         if kf.temporary:
             temp_kf_count += 1
-            if kf.raw_rgb_image is not None:
-                hypo_memory["temporary_keyframes"]["rgb_images"] += get_tensor_memory(kf.raw_rgb_image)
-            if kf.depth_image is not None:
-                hypo_memory["temporary_keyframes"]["depth_images"] += get_tensor_memory(kf.depth_image)
+            if torch.is_tensor(kf.stored_image("raw_rgb_image")):
+                hypo_memory["temporary_keyframes"]["rgb_images"] += get_tensor_memory(kf.stored_image("raw_rgb_image"))
+            if torch.is_tensor(kf.stored_image("depth_image")):
+                hypo_memory["temporary_keyframes"]["depth_images"] += get_tensor_memory(kf.stored_image("depth_image"))
             if kf.pose_mu is not None:
                 hypo_memory["temporary_keyframes"]["pose_data"] += get_lietensor_memory(kf.pose_mu)
             if kf.pose_std is not None:

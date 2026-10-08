@@ -115,6 +115,18 @@ Override one value with `--set section.key=value` (the `scripts/` runners; `run.
 YAML file and pass it with `--config`. Some options (charts, session recovery, historical retrieval slots, ...) are off by default and are
 enabled by the mono profiles.
 
+**Keyframe quality filter** (`mapping.keyframe_quality`, `cross/core/kf_quality.py`). Views that are mostly blocked or
+empty are not stored as permanent keyframes: a person or object right in front of the camera, a wall or shelf at arm's
+length, darkness, glare, a covered lens. They waste storage, and views of the same occluder at different places look
+alike, so they get retrieved at the wrong place. Such a frame becomes a temporary node: the odometry chain is kept,
+with no image and no descriptor. The test is the share of the view that shows textured, well-exposed scene content
+at a normal distance. The near field comes from sensor depth, or from stereo matching in the stereo mode; people are
+found by a small detector. Thresholds are relative to the session's running medians.
+A view that is only textureless (a white wall) is kept unless it shows no structure above the sensor noise. On by
+default; `--set mapping.keyframe_quality.enabled=false` turns it off, and `skip_observation=true` also skips observing
+with such a frame (not recommended: it lost relocalization in tests). The test set with injected junk views is
+`benchmark/datasets/inject_junk.py` (`benchmark/dev.py ... --tier occ`).
+
 **Camera mounting and the vertical.** Relocalization proposals are clustered, and matched to hypotheses, in place
 coordinates: position on the horizontal plane plus heading (`mapping.projection`). The default assumes a
 forward-looking camera on a ground robot, so the vertical is the camera's y axis in the first frame and height is
@@ -152,6 +164,38 @@ The map is written to `--out` (`map.pkl`, `map_meta.json`); `--skip-map` reuses 
 only maps. Another query in the same scene is another call with the same `--out`/`--skip-map`. In code, use
 `System.save_map(path)` / `System.load_map(path)`; `examples/multi_session.py` runs several sequences through one
 `System`, and `examples/planner.py` loads a map and plans paths on it.
+
+**Map files.** A map is `map.pkl` (the graph: keyframe poses, edges, metadata) plus the directory `map.pkl.store/`
+next to it (keyframe images and retrieval descriptors); copy or move both together. Keyframe images of a loaded map
+are read from disk when they are used, so a large map does not have to fit in memory. The `storage` config section
+chooses the encoding: `storage.image_codec` `webp_lossless` (default; exact) or `png`, or the lossy `jpeg` / `webp` at
+`storage.image_quality`; `storage.depth_drop_bits` (lossy depth, RGB-D); `storage.descriptor_dtype` (`float16` by default, `float32`);
+`storage.image_device` (`cpu` by default: keyframe images in host RAM, copied to the GPU only for the pass that uses them);
+`storage.max_ram_images` (2000 by default; 0 = all) keeps only the newest keyframes' images in memory during a long session. Maps written by
+older versions (one `map.pkl` with everything inside) still load; `storage.format pickle` writes that format, and
+`python scripts/convert_map.py old/map.pkl new/map.pkl [--image-codec jpeg --image-quality 95] --verify` converts a map.
+
+**GNSS and compass: maps on Earth.** With a GNSS receiver (and optionally a magnetometer), `--gnss` (both
+runners; config `geo.enabled`) anchors the map to latitude / longitude: every keyframe of the saved map gets its
+position on Earth (`python scripts/geo/export_map_geo.py out/map.pkl --out out/map_geo` writes GeoJSON / KML). The
+fixes are quality-controlled before they are used, so weak GNSS (indoors, near buildings, right after reacquisition)
+gets no weight instead of pulling the map: each fix must agree with the robot's own track over the last 20 s (a
+receiver that holds a stale position while the robot moves fails this), a new epoch after a gap waits 10 s, and a fix
+must agree with the map's prediction at the verified loop closure's chi-square level. Used fixes become pose-graph
+factors with a robust kernel, spaced one correlation time of the receiver error apart (estimated online; consumer
+receivers repeat the same error for tens of seconds), and the graph is optimised when they say the map drifted. In a
+relocalization session on a geo-anchored map, the current fix drops references that contradict it (a calibrated compass
+also drops references with a contradicting heading) and is a location prior of retrieval (`System.add_location_prior`:
+with `retrieval.locality.enabled` the stored keyframes near the fix get the locality slots).
+Input: a prepared folder (or its parent) with `gnss.txt` (`t lat lon alt [mode num_sats [hdop [sigma_h]]]`, times on
+the clock of `times.txt`), optionally `mag.txt` / `ms25.txt` (magnetometer + accelerometer, forward-right-down) or
+`heading.txt` (see `cross/dataloader/geo.py`); in code, `obs["gnss"] = {"t", "lat", "lon", "alt", ...}` and
+`obs["compass"]` per step. `--gnss-degrade sigma=8,bias=15,drop=0.3,outage=60:120` degrades the query's fixes
+(testing). Main options (`geo.*`): `gate`, `decimate`, `robust` (the method; switch off for ablations),
+`use_altitude` (on: horizontal-only factors let the optimisation tilt the map), `sigma_v_factor` (4: consumer altitude
+is poor), `retrieval_gate` (the fix as a location prior), `proposal_gate`, `compass_gate`. On by default (`--no-gnss` /
+`geo.enabled=false` turns it off): `--gnss` only feeds the folder's GNSS data; without GNSS input the system's results
+are unchanged, and a geo-anchored map keeps its anchor and keyframe latitude / longitude when it is saved again.
 
 Stereo-mode quick-run options: `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation gating;
 default: the mode's configuration file), `--max-refs`, `--n-ref-anchors`. Without a right camera pass

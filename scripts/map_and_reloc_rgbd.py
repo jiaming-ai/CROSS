@@ -56,6 +56,7 @@ from loguru import logger  # noqa: E402
 from cross.core.config import SystemConfig, load_config  # noqa: E402
 from cross.core.system import System  # noqa: E402
 from cross.core.types import Camera  # noqa: E402
+from cross.db import store as map_store  # noqa: E402
 from cross.dataloader.posed_rgbd import PosedRGBDLoader  # noqa: E402
 from cross.pipeline import add_session_args, session_factory  # noqa: E402
 from reloc_metrics import (build_trials, drop_unlocalized, is_localized, map_relative_errors, summarize_errors,  # noqa: E402
@@ -102,6 +103,10 @@ def make_config(args) -> SystemConfig:
     cfg = load_config(*args.config) if args.config else SystemConfig()
     cfg.async_update = False
     cfg.retrieval.top_k = args.top_k
+    if getattr(args, "gnss", False):
+        cfg.geo.enabled = True
+    if getattr(args, "no_gnss", False):
+        cfg.geo.enabled = False
     for kv in args.set or []:            # generic overrides: section.sub.key=value (YAML-parsed value)
         import yaml
         key, val = kv.split("=", 1)
@@ -118,8 +123,11 @@ def make_config(args) -> SystemConfig:
 
 
 def make_loader(path, args, seed):
-    return PosedRGBDLoader(path, snr=args.snr, seed=seed, odom_scale_bias=args.odom_scale_bias,
-                           odom_yaw_drift_deg_per_m=args.odom_yaw_drift, odom_file=args.odom_file)
+    ds = PosedRGBDLoader(path, snr=args.snr, seed=seed, odom_scale_bias=args.odom_scale_bias,
+                         odom_yaw_drift_deg_per_m=args.odom_yaw_drift, odom_file=args.odom_file)
+    from cross.dataloader.geo import attach
+    attach(ds, path, args, query=str(path) == str(args.query))
+    return ds
 
 
 def new_system(args, ds, seed=None):
@@ -147,6 +155,8 @@ def run_mapping(args, out: Path) -> dict:
     ds = make_loader(args.map, args, args.seed)
     system = new_system(args, ds)
     kf_gt, kf_frame, n, last_kf, gts = {}, {}, 0, None, []
+    from reloc_metrics import step_diagnostics, quality_summary
+    steps = [] if getattr(args, "dump_steps", False) else None
     t0 = time.time()
     online = [] if getattr(args, "online_poses", False) else None
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
@@ -154,6 +164,8 @@ def run_mapping(args, out: Path) -> dict:
             d["delta_pose"] = None
         system.process(d)
         n += 1
+        if steps is not None:
+            steps.append({"frame": args.map_start + idx * args.stride, **step_diagnostics(system)})
         if online is not None:               # the pose the session published at this frame (and its odometry's)
             fp = getattr(system, "frontend_pose", None)
             online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
@@ -185,7 +197,11 @@ def run_mapping(args, out: Path) -> dict:
     ate = float(np.sqrt(np.mean(np.sum(((T[:3, :3] @ src.T).T + T[:3, 3] - dst) ** 2, 1))))
     meta = {"kf_gt": kf_gt, "kf_est": kf_est, "kf_frame": kf_frame, "T_gt_from_map": T.tolist(), "map_ate_rmse": ate, "n_frames": n,
             "elapsed": elapsed, "n_keyframes": len(nodes), "n_permanent": n_perm, "timing": _timing_summary(),
-            "map_file_bytes": map_file.stat().st_size if map_file.exists() else None}
+            "map_file_bytes": map_store.map_bytes(map_file) if map_file.exists() else None}
+    if quality_summary(system) is not None:
+        meta["kf_quality"] = quality_summary(system)
+    if steps is not None:
+        (out / "steps_map.json").write_text(json.dumps(steps))
     if online is not None:
         from reloc_metrics import online_pose_metrics
         meta["online"] = online_pose_metrics(online, T)
@@ -206,6 +222,8 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
     q_start, q_end = args.query_start, args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
     rows, n_obs, remote_trials = [], 0, []
+    from reloc_metrics import step_diagnostics, quality_summary
+    quality_trials = []
     t0 = time.time()
     t_steps = 0.0
     for ti, (ts_, te_) in enumerate(trials):
@@ -232,10 +250,13 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
             row["localized"] = is_localized(system)
             if not row["localized"]:
                 drop_unlocalized(row, ("c0", "best") if row["best_k"] == 0 else ("c0",))
+            if getattr(args, "dump_steps", False):
+                row["diag"] = step_diagnostics(system)
             rows.append(row)
         logger.info(f"trial {ti}/{len(trials)}: final c0 err {rows[-1]['c0_t_err']:.2f} m / {rows[-1]['c0_r_err']:.1f} deg")
         if hasattr(system, "remote_stats"):
             remote_trials.append(system.remote_stats())
+        quality_trials.append(quality_summary(system))
         release(system)
     elapsed = time.time() - t0
     rel = map_relative_errors(rows, meta)
@@ -256,6 +277,8 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
     }
     if remote_trials:
         summary["remote"] = remote_trials[0] if len(remote_trials) == 1 else {"trials": remote_trials}
+    if any(q is not None for q in quality_trials):
+        summary["kf_quality_trials"] = quality_trials
     (out / "reloc_rows.json").write_text(json.dumps(rows))
     (out / "reloc_summary.json").write_text(json.dumps(summary, indent=1))
     logger.info(f"RS {summary['RS']:.3f} (1 m / 5 deg {summary['RS_1m_5deg']:.3f}) over {len(trials)} trials, "
@@ -273,6 +296,8 @@ def main():
     ap.add_argument("--snr", type=float, default=10.0, help="odometry noise SNR (<= 0: perfect odometry)")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift (deg per metre)")
+    from cross.dataloader.geo import add_args as add_geo_args
+    add_geo_args(ap)
     ap.add_argument("--odom-file", default=None, help="odometry file of the prepared folders to use instead of "
                     "odom_left.txt when present (e.g. odom_vio.txt from benchmark/datasets/prepare_vio.py)")
     ap.add_argument("--seed", type=int, default=0, help="seed of the odometry noise (query sessions use seed + 1)")
@@ -290,6 +315,8 @@ def main():
                     help="map run: score the pose published at every frame (map_meta.json 'online')")
     ap.add_argument("--skip-reloc", action="store_true")
     ap.add_argument("--dump-graph", action="store_true", help="write the mapping pose graph (graph_s0.json) for the noise calibration")
+    ap.add_argument("--dump-steps", action="store_true", help="per-step diagnostics (keyframe quality, retrieved keyframes): "
+                    "steps_map.json of the map run, 'diag' in every query row")
     add_session_args(ap)
     args = ap.parse_args()
     if args.snr is not None and args.snr <= 0:

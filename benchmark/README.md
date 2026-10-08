@@ -21,7 +21,7 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 |---|---|
 | `configs/datasets.yaml` | datasets, scenes, map/query splits, success radius, trial length |
 | `configs/systems.yaml` | systems, their setups and how they are run |
-| `datasets/` | download scripts (`download_*.sh`) and converters to the benchmark folder layout (`prepare_*.py`) |
+| `datasets/` | download scripts (`download_*.sh`) and converters to the benchmark folder layout (`prepare_*.py`); NCLT for the large-scale / GPS tests (`nclt_download.py`, `prepare_nclt.py`, `nclt_descriptors.py`) |
 | `run.py` | runs one job (`--task map | t1 | query`) and writes `result.json` ([schema](eval/schema.md)) |
 | `jobs.py` | prints the job list of a dataset / set of systems (one `run.py` argument line per job) |
 | `dev.py` | runs the development split and compares two runs ([DEV.md](DEV.md)); `datasets/make_dev.py` writes its clipped sequences |
@@ -55,6 +55,29 @@ python benchmark/make_failure_assets.py --data $BENCH_DATA --runs $BENCH_RESULTS
 
 Query jobs build the scene's map themselves when it is missing (with a lock, so parallel workers share one map).
 A job whose input folders are not prepared yet exits with code 3 without writing a result.
+
+### NCLT: large-scale and GPS tests (not part of the protocol)
+
+NCLT (University of Michigan North Campus Long-Term, IJRR 2016) has 27 sessions of a Segway driving indoors and
+outdoors (~6 km each) with consumer GPS, RTK GPS, a magnetometer, wheel + FOG odometry, lidar-SLAM ground truth and a
+Ladybug3 (5 horizontal cameras, ~90-115 GB of images per session). It serves the GPS / compass anchoring and the
+million-image retrieval tests.
+
+```bash
+python benchmark/datasets/nclt_download.py $NCLT/raw --kinds calib gt cov sensors       # small files, all sessions
+python benchmark/datasets/prepare_nclt.py sensors $NCLT/raw $NCLT/prepared              # standardised sensors
+python benchmark/datasets/prepare_nclt.py stats $NCLT/prepared                          # GPS / compass vs GT
+# frames of the 5 horizontal cameras, streamed from S3 (or --tar <session>_lb3.tar.gz); U2D_ALL_1616X1232.tar.gz
+# from the NCLT site, extracted into $NCLT/u2d
+python benchmark/datasets/prepare_nclt.py images $NCLT/prepared --session 2012-01-08 --u2d $NCLT/u2d
+python benchmark/datasets/prepare_nclt.py posed $NCLT/prepared --session 2012-01-08     # CROSS folder, forward Cam5
+python benchmark/datasets/nclt_descriptors.py $NCLT/prepared $NCLT/desc --session 2012-01-08   # BoQ descriptors
+```
+
+World frame: NCLT's local NED frame (x north, y east, z down), linearised WGS84 at 42.293227 N, 83.709657 W, 270 m
+(`prepare_nclt.to_local` / `from_local`). Frames: undistorted, upright, 640 x 480 (88 x 71 deg). The consumer GPS
+reports no fix quality (no satellites / HDOP) and goes silent indoors; `gnss_rtk.txt` `err_m` is the distance to the
+ground truth (evaluation only). `prepare_nclt.py` documents every file.
 
 Baselines: ORB-SLAM3 and RTAB-Map run through the drivers in `scripts/baselines/` (`orbslam3_reloc.cc`,
 `rtabmap_reloc.cc`, built with `scripts/baselines/CMakeLists.txt` against ORB-SLAM3 and RTAB-Map). MASt3R-SLAM and
