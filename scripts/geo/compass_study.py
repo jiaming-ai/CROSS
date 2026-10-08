@@ -1,6 +1,6 @@
 """Compass heading on NCLT (prepared sessions: imu.txt with the magnetometer, gnss.txt, gt_body.txt): error of the
 tilt-compensated magnetometer heading against the ground-truth yaw, outdoors (a GPS fix within 1 s) and indoors (no
-fix), for cross.geo.compass.Compass with / without disturbance detection and hard-iron calibration.  The heading
+fix), for cross.geo.compass.Compass with / without disturbance detection.  The heading
 offset (declination + mounting) is calibrated online as in the system: against the reference heading while GPS is
 good (here the ground-truth yaw stands in for the GNSS-anchored map's heading).
 
@@ -43,11 +43,9 @@ def run(d: Path, variant: str, step: int):
     k = np.clip(np.searchsorted(g[:, 0], t), 1, len(g) - 1)
     gap = np.minimum(np.abs(g[k, 0] - t), np.abs(g[k - 1, 0] - t))
     fix = gap <= 1.0
-    c = Compass(CompassConfig(min_offset_samples=30, hard_iron=(variant == "full")))
+    c = Compass(CompassConfig(min_offset_samples=30))
     if variant == "raw":
         c.disturbed = lambda *a, **kw: False
-    if variant in ("raw", "no_hard_iron"):
-        c._add_hard_iron_sample = lambda *a, **kw: None
     err = np.full(len(t), np.nan)
     flagged = np.zeros(len(t), bool)
     for i in range(len(t)):
@@ -60,8 +58,7 @@ def run(d: Path, variant: str, step: int):
         cam = c.camera_yaw(h[0])
         if cam is not None:
             err[i] = abs(float(wrap(cam - yaw_enu[i])))
-    out = {"n": int(len(t)), "frac_fix": float(fix.mean()), "offset_deg": None if c.offset is None else math.degrees(c.offset),
-           "hard_iron": None if c.hard_iron is None else [float(x) for x in c.hard_iron]}
+    out = {"n": int(len(t)), "frac_fix": float(fix.mean()), "offset_deg": None if c.offset is None else math.degrees(c.offset)}
     for lab, m in (("fix", fix), ("no_fix", ~fix)):
         e = np.degrees(err[m & np.isfinite(err)])
         out[lab] = {"frac_flagged": float(flagged[m].mean()) if m.sum() else None,
@@ -79,7 +76,7 @@ def main():
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     for s in a.sessions:
-        res = {v: run(a.prepared / s, v, a.step) for v in ("raw", "no_hard_iron", "full")}
+        res = {v: run(a.prepared / s, v, a.step) for v in ("raw", "disturbance")}
         (a.out / f"compass_{s}.json").write_text(json.dumps(res, indent=1))
         print(s, " | ".join(f"{v}: fix p50/p90 {r['fix']['p50']:.1f}/{r['fix']['p90']:.1f} flag {r['fix']['frac_flagged']:.2f}; "
                             f"no-fix p50/p90 {(r['no_fix']['p50'] or float('nan')):.1f}/{(r['no_fix']['p90'] or float('nan')):.1f} "

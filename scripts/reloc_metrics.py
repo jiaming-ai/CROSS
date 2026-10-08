@@ -215,8 +215,6 @@ def step_diagnostics(system) -> dict:
         out["gn"] = d["gnss_reason"]
     if d.get("geo_focus"):
         out["gf"] = [d["geo_focus"]["radius"], d["geo_focus"]["candidates"]]
-    if d.get("geo_withheld"):
-        out["gw"] = 1
     return out
 
 
