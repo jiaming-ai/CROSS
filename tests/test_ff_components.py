@@ -99,3 +99,6 @@ def test_long_reference_confidence():
     assert np.allclose(long_reference_confidence(covis, dists, head, head_min_dist=3.0), [0.8, 0.05, 0.6])
     assert np.allclose(long_reference_confidence(covis, dists, None, head_min_dist=3.0), covis)
     assert np.allclose(long_reference_confidence(covis, dists, head, long_conf_dist=4.0), [0.8, 0.64, 0.8 / 3])
+    # only the masked references (the session's own keyframes) are scaled
+    assert np.allclose(long_reference_confidence(covis, dists, head, long_conf_dist=4.0, long_mask=[True, False, True]),
+                       [0.8, 0.8, 0.8 / 3])

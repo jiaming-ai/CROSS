@@ -392,10 +392,11 @@ def _load_scale_encoder(sd: dict, patch_embed, scale_head_cfg: Optional[dict], d
     return enc.eval().to(device)
 
 
-def long_reference_confidence(covis, dists, head=None, head_min_dist: float = 0.0, long_conf_dist: float = 0.0):
+def long_reference_confidence(covis, dists, head=None, head_min_dist: float = 0.0, long_conf_dist: float = 0.0,
+                              long_mask=None):
     """Per-reference confidence with the long-reference options: beyond head_min_dist (m) the covisibility head must
-    agree (min of the score and the head), beyond long_conf_dist (m) the confidence is scaled by long_conf_dist /
-    distance; 0 turns either off."""
+    agree (min of the score and the head), beyond long_conf_dist (m) the confidence of the references selected by
+    long_mask (all if None) is scaled by long_conf_dist / distance; 0 turns either off."""
     c = np.array(covis, dtype=np.float64)
     d = np.asarray(dists, dtype=np.float64)
     if head_min_dist > 0 and head is not None:
@@ -403,6 +404,8 @@ def long_reference_confidence(covis, dists, head=None, head_min_dist: float = 0.
         c[far] = np.minimum(c[far], np.asarray(head, dtype=np.float64)[far])
     if long_conf_dist > 0:
         far = d > long_conf_dist
+        if long_mask is not None:
+            far &= np.asarray(long_mask, dtype=bool)
         c[far] *= long_conf_dist / d[far]
     return c
 
@@ -839,8 +842,11 @@ class PoseEstFeedForward:
         head_min_dist = float(getattr(cfg, "covis_head_min_dist", 0.0) or 0.0)
         if head_min_dist > 0 and pred.covis is None:
             raise ValueError("covis_head_min_dist needs a checkpoint with a covisibility head (vggt_ft)")
+        long_mask = None
+        if getattr(cfg, "long_ref_conf_scope", "session") == "session" and kwargs.get("ref_loaded") is not None:
+            long_mask = ~np.asarray(kwargs["ref_loaded"], dtype=bool)[:B]       # not the loaded map's keyframes
         covis = long_reference_confidence(covis, dists, None if pred.covis is None else pred.covis[0, ref_idx],
-                                          head_min_dist, float(getattr(cfg, "long_ref_conf_dist", 0.0) or 0.0))
+                                          head_min_dist, float(getattr(cfg, "long_ref_conf_dist", 0.0) or 0.0), long_mask)
         for i in range(B):
             T_ref_cam, dist = T_refs[i], float(dists[i])
             ok = (covis[i] >= cfg.min_covis) and (dist <= cfg.max_rel_distance)
