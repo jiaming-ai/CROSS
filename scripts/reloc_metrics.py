@@ -203,8 +203,6 @@ def step_diagnostics(system) -> dict:
         out["q"] = d["frame_quality"]
     if d.get("keyframe_rejected"):
         out["rej"] = d["keyframe_rejected"]
-    if d.get("observation_skipped_junk"):
-        out["jskip"] = 1
     ra = d.get("retrieval_audit")
     if ra:
         out["ret"] = [[int(a["keyframe_id"]), round(float(a["retrieval_score"]), 3), int(bool(a["verified"]))] for a in ra]

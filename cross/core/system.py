@@ -1225,25 +1225,12 @@ class System:
             return
 
         # keyframe quality (mapping.keyframe_quality): a junk view (close occluder, clipped, textureless) is never
-        # stored as a permanent keyframe; with skip_observation it is not observed either (as a skipped observation)
+        # stored as a permanent keyframe.  The cheap image cues run here; the person detector and the stereo near field
+        # only for the frames that are about to become permanent keyframes (_add_new_kf)
         self._frame_quality = None
         if self._kf_quality is not None:
-            # the person detector (the costly cue) runs here only when a junk frame must not be observed; otherwise
-            # only for the frames that are about to become permanent keyframes (_add_new_kf)
-            self._frame_quality = self._kf_quality.assess(rgb_image, depth_image, rgb_right=rgb_right,
-                                                          person=self.config.mapping.keyframe_quality.skip_observation)
+            self._frame_quality = self._kf_quality.assess(rgb_image, depth_image, rgb_right=rgb_right, person=False)
             self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
-            if self._frame_quality.junk and self.config.mapping.keyframe_quality.skip_observation:
-                self._kf_quality.stats["skipped_observation"] += 1
-                current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
-                ret.update(current_mu=current_mu, current_sigma=current_sigma, current_weights=current_weights,
-                           hypotheses=self.hypothesis_manager.hypotheses, observation_skipped=True, valid_keyframes=[])
-                self.last_step_diagnostics["observation_skipped_junk"] = True
-                if self.visualize:
-                    self.visualizer.visualize_tracking_step(
-                        kf=None, state_info=ret, gt_info=kwargs.get("data"), step_idx=self._processed_frame_num,
-                    )
-                return
 
         # temporal anchor for the feed-forward estimator: previous observed frame + odometry
         odom_anchor = None
@@ -1265,11 +1252,6 @@ class System:
         # update the observation likelihood
         ################################
         ret.update(self._construct_observation_dist(rgb_image, depth_image, rgb_right=rgb_right, odom_anchor=odom_anchor))
-        if (self._frame_quality is not None and self.config.mapping.keyframe_quality.pass_depth
-                and getattr(self.pose_est, "last_curr_depth", None) is not None):
-            d_model, metric = self.pose_est.last_curr_depth
-            self._frame_quality = self._kf_quality.refine(self._frame_quality, d_model.float() * metric)
-            self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
         self.last_step_diagnostics["verified_keyframes"] = len(ret["valid_keyframes"])
         self.last_step_diagnostics["retrieval_audit"] = ret["retrieval_audit"]
         self.last_step_diagnostics["loaded_node_count"] = len(self.loaded_node_ids)
