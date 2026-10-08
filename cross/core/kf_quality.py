@@ -125,11 +125,15 @@ class KeyframeQuality:
                 self._detector = False
                 return None, 0
         dev = self._detector_device(rgb)
+        thr = float(getattr(self.cfg, "person_score", 0.5))
         with torch.inference_mode():
             # the step's image lives in host RAM: the detector runs on the GPU (SSDLite on the CPU took ~13 ms a call)
-            res = self._detector([rgb.to(dev, non_blocking=True).float().clamp(0, 1)])[0]
-        keep = (res["labels"] == 1) & (res["scores"] >= float(getattr(self.cfg, "person_score", 0.5)))
-        boxes = res["boxes"][keep].cpu().numpy()
+            x = rgb.to(dev, non_blocking=True).float().clamp(0, 1)
+            if hasattr(self._detector, "persons"):
+                boxes = self._detector.persons(x, thr).cpu().numpy()
+            else:
+                res = self._detector([x])[0]
+                boxes = res["boxes"][(res["labels"] == 1) & (res["scores"] >= thr)].cpu().numpy()
         if len(boxes) == 0:
             return None, 0
         H, W = rgb.shape[-2:]
@@ -167,11 +171,10 @@ class KeyframeQuality:
         """Luminance (h, width) float in [0, 1] of a (3, H, W) image in [0, 1], on the image's device."""
         t = t.float()
         t = t[0] if t.dim() == 4 else t
-        y = (0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2]) if t.shape[0] == 3 else t[0]
-        H, W = y.shape
-        if width < W:
-            y = F.interpolate(y[None, None], size=(max(int(round(H * width / W)), 1), width), mode="area")[0, 0]
-        return y
+        H, W = t.shape[-2:]
+        if width < W:          # area-downsample the channels first (one pass), then weight: ~4x cheaper on the CPU
+            t = F.interpolate(t[None], size=(max(int(round(H * width / W)), 1), width), mode="area")[0]
+        return (0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2]) if t.shape[0] == 3 else t[0]
 
     @staticmethod
     def _luminance(t: torch.Tensor, width: int) -> np.ndarray:
