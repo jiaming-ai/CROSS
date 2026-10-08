@@ -49,7 +49,7 @@ class FFPrediction:
 
 
 class _Backend:
-    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None) -> FFPrediction:
+    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None, focal: Optional[float] = None) -> FFPrediction:
         """n_depth: depth is needed for the first n_depth views only (None: all)."""
         raise NotImplementedError
 
@@ -219,8 +219,11 @@ class _VGGTOmegaBackend(_Backend):
                 dino = dino.reshape(B, S, -1, dino.shape[-1]) if dino is not None else None
                 kw = {}
                 if getattr(self.scale_head, "canonical_f", None) is not None:
-                    # canonical-camera head: converted with the model's own focal (CROSS passes no intrinsics here)
-                    kw["focal"] = 0.5 / torch.tan(pose_enc[..., 8].float() / 2)
+                    # canonical-camera head: the calibrated focal / width when the system set one (buffer filled
+                    # before each pass, so CUDA graphs see the current value), else the model's own focal
+                    pred_f = 0.5 / torch.tan(pose_enc[..., 8].float() / 2)
+                    fb = getattr(self, "_focal_buf", None)
+                    kw["focal"] = torch.where(fb > 0, fb, pred_f) if fb is not None else pred_f
                 if getattr(self, "scale_encoder", None) is not None:
                     n = min(self.scale_encoder.frames, S)
                     xe = (x[:, :n] - m.aggregator._resnet_mean) / m.aggregator._resnet_std
@@ -310,9 +313,18 @@ class _VGGTOmegaBackend(_Backend):
         return tuple(o.clone() for o in out)
 
     @torch.inference_mode()
-    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None) -> FFPrediction:
+    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None, focal: Optional[float] = None) -> FFPrediction:
+        """focal: calibrated focal length / image width of the views, for a canonical-camera scale head (None: use
+        the model's predicted FoV).  Without one, the calibrated focal the estimator registered (calib_focal) is used,
+        so every caller of the shared backend (also the VGGT-IMU front end's own passes) gets it."""
         images = images.to(self.device)
         x = images[None]
+        if focal is None:
+            focal = getattr(self, "calib_focal", None)
+        if getattr(self.scale_head, "canonical_f", None) is not None:
+            if getattr(self, "_focal_buf", None) is None:
+                self._focal_buf = torch.zeros((), device=self.device)
+            self._focal_buf.fill_(float(focal) if focal else 0.0)
         k = x.shape[1] if n_depth is None else min(int(n_depth), x.shape[1])
         keys = self.fingerprints(images) if self.token_cache is not None else None
         out = None
@@ -477,7 +489,7 @@ class _DA3Backend(_Backend):
         self.process_res = process_res
 
     @torch.inference_mode()
-    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None) -> FFPrediction:
+    def infer(self, images: torch.Tensor, n_depth: Optional[int] = None, focal: Optional[float] = None) -> FFPrediction:
         # DA3 preprocesses from uint8 arrays; keep the first view as the reference.
         arr = (images.clamp(0, 1) * 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
         pred = self.model.inference(
@@ -619,6 +631,13 @@ class PoseEstFeedForward:
     def set_stereo_calibration(self, T_right_in_left: np.ndarray):
         self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
 
+    def set_camera(self, K: np.ndarray, width: int, height: int):
+        """Calibrated intrinsics at the model's input resolution (the system calls this after its transforms):
+        the focal of a canonical-camera scale head (config.scale_focal = "calibrated")."""
+        self._focal_norm = float(np.asarray(K)[0, 0]) / max(1, int(width))
+        if getattr(self.config, "scale_focal", "calibrated") == "calibrated":
+            self.backend.calib_focal = self._focal_norm      # also for passes made outside estimate_pose
+
     def _as_model_input(self, views: List[torch.Tensor]) -> torch.Tensor:
         images = torch.stack([v.to(self.device) for v in views], dim=0).float()
         if images.max() > 1.5:
@@ -753,7 +772,8 @@ class PoseEstFeedForward:
             n_depth = 0
         else:
             n_depth = 1 + B
-        pred = self.backend.infer(images, n_depth=n_depth)
+        focal = getattr(self, "_focal_norm", None) if getattr(cfg, "scale_focal", "calibrated") == "calibrated" else None
+        pred = self.backend.infer(images, n_depth=n_depth, focal=focal)
         torch.cuda.synchronize()
         t_model = time.perf_counter() - t_model
         if frontend_anchor and prev_idx is not None:
