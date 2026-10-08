@@ -685,6 +685,9 @@ class KeyframeQualityConfig:
     # SGBM only for the candidates of a permanent keyframe (the only frames whose decision is used, unless
     # skip_observation); the running scene-depth median is then taken over those frames
     lazy_stereo_near: bool = True
+    # 1: the full cues on every observed frame.  k > 1: on every k-th observed frame (the session's running medians)
+    # and on the candidates for a permanent keyframe; the decisions then use medians over that subsample
+    assess_every: int = 1
     # feed-forward modes: add the near cells of the pass's depth of the current view.  Off: VGGT-Omega's depth of a
     # close occluder follows its apparent size (a pasted person at 0.4-0.75 m came out at 1.6-2.8 m)
     pass_depth: bool = False

@@ -118,3 +118,24 @@ def test_mostly_flat_view_is_kept_unless_almost_empty():
     g = torch.Generator().manual_seed(5)        # an empty view: a uniform surface with sensor noise only
     q = f.assess((0.5 + 0.01 * torch.randn(3, 240, 320, generator=g)).clamp(0, 1))
     assert q.junk and q.reason == "flat" and q.snr < 1.5
+
+
+def test_deferred_assessment_completes_at_the_candidate():
+    """assess_every > 1: frames between the statistics frames return a deferred assessment; completing it for a
+    keyframe candidate gives the same decision as a full assessment with the same running statistics."""
+    import copy
+    import torch
+    from cross.core.config import KeyframeQualityConfig
+    from cross.core.kf_quality import KeyframeQuality
+    g = torch.Generator().manual_seed(0)
+    frames = [torch.rand(3, 96, 128, generator=g) for _ in range(12)]
+    cfg = KeyframeQualityConfig(person=False, assess_every=3, warmup=2)
+    kq = KeyframeQuality(cfg, device="cpu")
+    qs = [kq.assess(f, person=False) for f in frames[:8]]
+    assert any(q.stage == "deferred" for q in qs) and any(q.stage == "image" for q in qs)
+    ref = copy.deepcopy(kq)
+    blank = torch.zeros(3, 96, 128)
+    q = kq.assess(blank, person=False)
+    done = kq.add_person(q, blank)
+    full = ref.assess(blank, person=False, _full=True)
+    assert done.stage == "image" and done.junk == full.junk and abs(done.info - full.info) < 1e-12

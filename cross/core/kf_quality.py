@@ -87,6 +87,7 @@ class KeyframeQuality:
         self.depth_ref = _RunningMedian(n)      # typical (median) scene depth
         self.info_ref = _RunningMedian(n)       # typical informative fraction
         self.n_assessed = 0
+        self._seen = 0
         self.stats = {"assessed": 0, "junk": 0, "rejected_permanent": 0, "skipped_observation": 0,
                       "by_reason": {c: 0 for c in CAUSES}, "ms_total": 0.0}
         self._detector = None
@@ -208,7 +209,8 @@ class KeyframeQuality:
     # ------------------------------------------------------------------ test
     @torch.inference_mode()
     def assess(self, rgb: torch.Tensor, depth: Optional[torch.Tensor] = None,
-               rgb_right: Optional[torch.Tensor] = None, person: Optional[bool] = None) -> FrameQuality:
+               rgb_right: Optional[torch.Tensor] = None, person: Optional[bool] = None,
+               _full: bool = False) -> FrameQuality:
         """rgb (3, H, W) float in [0, 1] (the transformed image of the step); depth (1, H, W) metric or None; without
         depth, the rectified right image gives the near field by stereo matching (stereo_near).  The cues run on the
         CPU on a <= 256 px luminance image (one transfer).  The person detector (the costly cue, on the image's
@@ -217,6 +219,16 @@ class KeyframeQuality:
         import cv2
         t0 = time.perf_counter()
         cfg = self.cfg
+        # assess_every > 1: the full cues run on every k-th observed frame (the running medians) and on the candidates
+        # for a permanent keyframe (completed in add_person); the other frames return a deferred assessment
+        every = int(getattr(cfg, "assess_every", 1))
+        now = bool(getattr(cfg, "person", True)) if person is None else bool(person)
+        self._seen += 1
+        if not _full and every > 1 and not now and self.n_assessed >= int(getattr(cfg, "warmup", 5)) and self._seen % every:
+            q = FrameQuality(info=1.0, threshold=0.0, junk=False, reason=None, fractions={c: 0.0 for c in CAUSES},
+                             stage="deferred")
+            q.pending = ("deferred", rgb, depth, rgb_right)
+            return q
         x = rgb[0] if rgb.dim() == 4 else rgb
         H, W = x.shape[-2:]
         gw = int(getattr(cfg, "grid", 16))
@@ -277,6 +289,9 @@ class KeyframeQuality:
     def add_person(self, q: FrameQuality, rgb: torch.Tensor) -> FrameQuality:
         """Complete the assessment of a candidate for a permanent keyframe (same threshold as its first assessment):
         the deferred stereo near field, then the person cells."""
+        if q is not None and q.pending is not None and isinstance(q.pending[0], str):      # deferred assessment
+            _, rgb_d, depth_d, right_d = q.pending
+            q = self.assess(rgb_d, depth_d, rgb_right=right_d, person=False, _full=True)
         if q is not None and q.pending is not None:
             q = self._complete_stereo(q)
         if q is None or q.person_checked or q.junk or not getattr(self.cfg, "person", True):
