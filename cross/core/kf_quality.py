@@ -116,7 +116,7 @@ class KeyframeQuality:
         if self._detector is None:
             try:
                 from cross.mono.person_detector import GraphedPersonDetector, make_person_detector
-                det = make_person_detector(rgb.device)
+                det = make_person_detector(self._detector_device(rgb))
                 # CUDA-graph replay of the backbone and heads: the same detections, ~10x less time in a busy process
                 self._detector = GraphedPersonDetector(det) if getattr(self.cfg, "person_cuda_graph", True) else det
             except Exception as err:          # noqa: BLE001  e.g. no weights offline: the other cues still work
@@ -124,8 +124,10 @@ class KeyframeQuality:
                                "continuing without the person cue")
                 self._detector = False
                 return None, 0
+        dev = self._detector_device(rgb)
         with torch.inference_mode():
-            res = self._detector([rgb.float().clamp(0, 1)])[0]
+            # the step's image lives in host RAM: the detector runs on the GPU (SSDLite on the CPU took ~13 ms a call)
+            res = self._detector([rgb.to(dev, non_blocking=True).float().clamp(0, 1)])[0]
         keep = (res["labels"] == 1) & (res["scores"] >= float(getattr(self.cfg, "person_score", 0.5)))
         boxes = res["boxes"][keep].cpu().numpy()
         if len(boxes) == 0:
@@ -136,6 +138,11 @@ class KeyframeQuality:
         for x0, y0, x1, y1 in boxes:
             mask[max(int(y0 * h / H), 0):int(np.ceil(y1 * h / H)), max(int(x0 * w / W), 0):int(np.ceil(x1 * w / W))] = True
         return self._pool(mask, gh, gw) > 0.5, int(len(boxes))
+
+    def _detector_device(self, rgb: torch.Tensor):
+        """The person detector's device: the system's compute device when it is a GPU, else the image's."""
+        dev = torch.device(self.device) if self.device is not None else rgb.device
+        return dev if (dev.type == "cuda" and torch.cuda.is_available()) else rgb.device
 
     def _stereo_depth(self, y_left: np.ndarray, rgb_right: torch.Tensor, W: int,
                       y_right: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
