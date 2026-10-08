@@ -163,7 +163,7 @@ def rel(hm, a, b):
 def test_late_result_moves_the_keyframes_added_meanwhile_with_the_latest_one(lag):
     sync = make_system(False, False)
     late = make_system(False, False, async_lag=lag)
-    late._apgo.est_job_s = 1.0                               # (free-running: a long job, so that it goes to the background)
+    late._apgo.sec_per_vertex = 1e-3                          # (free-running: a long job, so that it goes to the background)
     hm = late.hypothesis_manager
     keys, ref = late.new_keys, min(a for a, b in late.new_keys)
     sync._verified_lc_optimise({}, list(keys), ref)
@@ -261,14 +261,25 @@ def test_gnss_triggered_optimisation_in_the_background_keeps_later_factors_pendi
 
 def test_short_jobs_stay_in_the_front_end_in_free_running_mode():
     s = make_system(False, False, async_lag=-1)
-    before = poses(s.hypothesis_manager)
+    hm = s.hypothesis_manager
+    assert hm.pgo_vertex_count(60) == 240                       # (whole session: the map is below pgo_window_min_nodes)
+    before = poses(hm)
     s._submit_async_pgo({}, list(s.new_keys), 60, list(s.new_keys))
-    assert not s._apgo.busy and s._apgo.stats["submitted"] == 0 and s._apgo.est_job_s > 0     # ran in the front end
-    assert any(not np.array_equal(before[k], v) for k, v in poses(s.hypothesis_manager).items())
-    s._apgo.est_job_s = 1.0                                                                   # a long one: background
+    assert not s._apgo.busy and s._apgo.stats["submitted"] == 0 and s._apgo.sec_per_vertex != 5e-5     # ran in the front end
+    assert any(not np.array_equal(before[k], v) for k, v in poses(hm).items())
+    s._apgo.sec_per_vertex = 1e-3                                                                      # a slow machine: 0.24 s
     s._submit_async_pgo({}, list(s.new_keys), 60, list(s.new_keys))
     assert s._apgo.busy
     s._apgo.cancel(requeue=False)
+
+
+def test_vertex_count_of_a_windowed_optimisation():
+    hm = make_manager(n=240, window_min_nodes=100)
+    hm.system.config.mapping.loop_closure.pgo_window_margin = 10
+    assert hm.pgo_vertex_count(None) == 240
+    assert hm.pgo_vertex_count(200) == 240 - (200 - 10)         # the window from keyframe 190
+    assert hm.pgo_vertex_count(5) == 240                        # a loop back to the start: everything
+
 
 
 def test_a_hung_worker_is_killed_after_the_timeout():

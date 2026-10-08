@@ -297,7 +297,7 @@ class AsyncPgo:
         # synchronous path).  The expectation is the running mean of the optimisations seen so far (synchronous or not).
         self.min_job_s = float(min_job_s)
         self.timeout_s = 900.0            # a worker that has not finished by then is killed (and the job re-queued)
-        self.est_job_s = 0.0
+        self.sec_per_vertex = 5e-5        # cost of an optimisation per keyframe it optimises (13k: 42 us, 50k: 60 us), learned online
         self.est_overhead_s = 0.03
         self.job: Optional[ForkedJob] = None
         self.job_meta: dict = {}
@@ -307,13 +307,16 @@ class AsyncPgo:
         self.stats = {"submitted": 0, "applied": 0, "discarded": 0, "failed": 0, "fork_s": 0.0, "apply_s": 0.0,
                       "compute_s": 0.0, "wait_s": 0.0, "stale_steps": 0, "resubmitted": 0}
 
-    def worth_it(self) -> bool:
-        """Should the next optimisation go to the background?  (Always in the reproducible modes, lag >= 0.)"""
-        return self.lag >= 0 or self.est_job_s > max(self.min_job_s, 2.0 * self.est_overhead_s)
+    def worth_it(self, vertices: int) -> bool:
+        """Should an optimisation of `vertices` keyframes go to the background?  (Always in the reproducible modes,
+        lag >= 0.)  Its duration is estimated from the size of the graph and the cost per keyframe seen so far."""
+        return self.lag >= 0 or self.sec_per_vertex * vertices > max(self.min_job_s, 2.0 * self.est_overhead_s)
 
-    def observe(self, job_s: float, overhead_s: Optional[float] = None) -> None:
-        """Duration of an optimisation (its compute time) and, for a background one, what it cost the front end."""
-        self.est_job_s = job_s if self.est_job_s == 0.0 else 0.5 * self.est_job_s + 0.5 * job_s
+    def observe(self, job_s: float, vertices: int, overhead_s: Optional[float] = None) -> None:
+        """Duration of an optimisation (its compute time) of `vertices` keyframes and, for a background one, what it
+        cost the front end."""
+        if vertices >= 100:
+            self.sec_per_vertex = 0.5 * self.sec_per_vertex + 0.5 * job_s / vertices
         if overhead_s is not None:
             self.est_overhead_s = 0.5 * self.est_overhead_s + 0.5 * overhead_s
 

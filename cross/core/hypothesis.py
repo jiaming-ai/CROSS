@@ -2042,6 +2042,19 @@ class HypothesisManager:
                     # produced garbage poses that no later optimisation could repair
                     kf.last_pgo_step = step
 
+    def pgo_vertex_count(self, window_ref: Optional[int] = None) -> int:
+        """How many keyframes the next `handle_loop_closure(0, window_ref=window_ref)` will optimise (its cost grows
+        with it): the window of a windowed optimisation, the whole session, or the neighbourhood of the latest keyframe."""
+        lc_cfg = getattr(getattr(getattr(self.system, "config", None), "mapping", None), "loop_closure", None)
+        n = len(self.nodes)
+        full = bool(getattr(lc_cfg, "full_session_pgo", False)) and int(getattr(self.system, "_session_start_kf_id", 0)) == 0
+        min_nodes = int(getattr(lc_cfg, "pgo_window_min_nodes", 0) or 0)
+        if window_ref is not None and full and min_nodes > 0 and n >= min_nodes and not self.chart_aware and self.source_states is None:
+            i = bisect.bisect_left(sorted(self.nodes), int(window_ref)) - int(getattr(lc_cfg, "pgo_window_margin", 0) or 0)
+            if i > 0:
+                return n - i
+        return n if full else min(n, 2000)
+
     def apply_stale_pgo_result(self, ids, opt, fork, max_id: int, fresh_poses: bool) -> Dict[str, Any]:
         """Apply an optimisation of hypothesis 0 that was computed on the state at an earlier step (a background job,
         cross.core.async_pgo) to the present state.

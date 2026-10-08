@@ -143,7 +143,7 @@ profile) graphs stay synchronous. Details:
 - In free-running mode (`async_pgo_lag_steps=-1`, the default) the result is applied as soon as the worker is done, so
   *when* it lands depends on the machine's speed and a run is not bit-reproducible. An optimisation expected to take less
   than `async_pgo_min_s` (0.1 s; and twice the cost of a fork, ~60 ms in a CUDA process) runs in the front end as before, so
-  small maps are unchanged.
+  small maps are unchanged (the expectation is the number of keyframes it covers times the cost per keyframe measured so far).
 - `async_pgo_lag_steps=k` (k >= 0) applies the result exactly k steps after the trigger (the front end waits when the
   worker is not done), so the run is reproducible; `0` is the synchronous behaviour, bit-identical to `async_pgo=false`.
   Use it to test, or for benchmarks.

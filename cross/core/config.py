@@ -240,7 +240,8 @@ class LoopClosureConfig:
     async_pgo_lag_steps: int = -1
     # free-running mode: optimisations expected to take less than this (and than twice the front end's cost of a background
     # job: fork, collecting, applying) run in the front end as before; a map that small stays bit-identical to the
-    # synchronous path.  The expectation is the running mean of the optimisation times so far.  Not used with a lag >= 0.
+    # synchronous path.  The expectation is the number of keyframes the optimisation covers (its window) times the cost
+    # per keyframe seen so far (50 us to start with).  Not used with a lag >= 0.
     async_pgo_min_s: float = 0.1
     # "verified": consistency-tested loop closure of hypothesis 0 (cross/core/lc_verify.py) with calibrated noise in
     #             the pose-graph optimisation; one decision parameter (`confidence`, chi-square level, 6 dof).

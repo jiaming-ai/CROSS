@@ -1729,10 +1729,11 @@ class System:
         if ap.busy:
             ap.note_pending(loop_keys)        # only the inconsistent loop edges: the other new edges would not have triggered
             return True
-        if not ap.worth_it():                 # a short optimisation: cheaper in the front end than a fork
+        nv = self.hypothesis_manager.pgo_vertex_count(window_ref)
+        if not ap.worth_it(nv):               # a short optimisation: cheaper in the front end than a fork
             t0 = time.perf_counter()
             done = self._verified_lc_optimise(ret, new_keys, window_ref)
-            ap.observe(time.perf_counter() - t0)
+            ap.observe(time.perf_counter() - t0, nv)
             return done
         ap.submit(new_keys, window_ref, step, loop_keys=loop_keys)
         self._last_pgo_step = step
@@ -1806,7 +1807,7 @@ class System:
         ap.stats["applied"] += 1
         ap.stats["apply_s"] += time.perf_counter() - t0
         ap.stats["compute_s"] += res["t_compute"]
-        ap.observe(res["t_compute"], meta["fork_s"] + meta.get("wait_s", 0.0) + time.perf_counter() - t0)
+        ap.observe(res["t_compute"], res["first"]["vertices"], meta["fork_s"] + meta.get("wait_s", 0.0) + time.perf_counter() - t0)
         v.stats["pgo_time"] = v.stats.get("pgo_time", 0.0) + meta["fork_s"] + meta.get("wait_s", 0.0) + (time.perf_counter() - t0)
         f1 = dict(res["first"])
         f1.update(res.get("second", {}))               # the solution that was applied
@@ -1857,7 +1858,7 @@ class System:
         ap.stats["applied"] += 1
         ap.stats["apply_s"] += time.perf_counter() - t0
         ap.stats["compute_s"] += res["t_compute"]
-        ap.observe(res["t_compute"], meta["fork_s"] + meta.get("wait_s", 0.0) + time.perf_counter() - t0)
+        ap.observe(res["t_compute"], res["first"]["vertices"], meta["fork_s"] + meta.get("wait_s", 0.0) + time.perf_counter() - t0)
         if self._lc_verifier is not None:
             self._lc_verifier.stats["pgo_time"] = self._lc_verifier.stats.get("pgo_time", 0.0) + meta["fork_s"] \
                 + meta.get("wait_s", 0.0) + (time.perf_counter() - t0)
@@ -2348,7 +2349,8 @@ class System:
             return
         ap = self._apgo
         use_ap = ap is not None and ap.usable()
-        if use_ap and (ap.busy or ap.worth_it()):
+        nv = hm.pgo_vertex_count(geo.window_ref_kf) if use_ap else 0
+        if use_ap and (ap.busy or ap.worth_it(nv)):
             if not ap.busy:         # one background job at a time; the trigger stays true and fires again when it is free
                 ap.submit([], geo.window_ref_kf, self._processed_frame_num, kind="geo", n_kf=n_kf, pending=list(geo.pending))
                 if ap.lag == 0:
@@ -2369,7 +2371,7 @@ class System:
                         f"noise scale {geo.noise.scale:.2f}, factor interval {geo.err.tau:.0f} s)")
             ret["geo_pgo"] = True
             if use_ap:
-                ap.observe(time.perf_counter() - t0)
+                ap.observe(time.perf_counter() - t0, nv)
         else:
             geo.pending = []
             geo.last_opt_kf = n_kf
