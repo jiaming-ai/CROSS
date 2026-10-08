@@ -171,10 +171,11 @@ class KeyframeQuality:
         """Luminance (h, width) float in [0, 1] of a (3, H, W) image in [0, 1], on the image's device."""
         t = t.float()
         t = t[0] if t.dim() == 4 else t
-        H, W = t.shape[-2:]
-        if width < W:          # area-downsample the channels first (one pass), then weight: ~4x cheaper on the CPU
-            t = F.interpolate(t[None], size=(max(int(round(H * width / W)), 1), width), mode="area")[0]
-        return (0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2]) if t.shape[0] == 3 else t[0]
+        y = (0.299 * t[0] + 0.587 * t[1] + 0.114 * t[2]) if t.shape[0] == 3 else t[0]
+        H, W = y.shape
+        if width < W:
+            y = F.interpolate(y[None, None], size=(max(int(round(H * width / W)), 1), width), mode="area")[0, 0]
+        return y
 
     @staticmethod
     def _luminance(t: torch.Tensor, width: int) -> np.ndarray:
