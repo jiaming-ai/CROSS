@@ -185,8 +185,12 @@ must agree with the map's prediction at the verified loop closure's chi-square l
 factors with a robust kernel, spaced one correlation time of the receiver error apart (estimated online; consumer
 receivers repeat the same error for tens of seconds), and the graph is optimised when they say the map drifted. In a
 relocalization session on a geo-anchored map, the current fix drops references that contradict it (a calibrated compass
-also drops references with a contradicting heading) and is a location prior of retrieval (`System.add_location_prior`:
-with `retrieval.locality.enabled` the stored keyframes near the fix get the locality slots).
+also drops references with a contradicting heading), and the stored keyframes within ~3.7 sigma + 5 m of a trusted fix
+take the map retrieval budget except two global slots (`geo.retrieval_focus`, on; NCLT cross-season relocalization 60 vs
+56 of 75 trials within 5 m, degraded GPS no worse than none). Opt-in: `geo.session_holdoff_s` (a session's first fixes
+are used after this many seconds instead of 10: GPS from ~4 s instead of ~13 s, no outcome changed on NCLT) and
+`geo.integrity` (fixes that agree with the track but contradict the localized pose withhold it: on NCLT it withheld
+mostly correct poses).
 Input: a prepared folder (or its parent) with `gnss.txt` (`t lat lon alt [mode num_sats [hdop [sigma_h]]]`, times on
 the clock of `times.txt`), optionally `mag.txt` / `ms25.txt` (magnetometer + accelerometer, forward-right-down) or
 `heading.txt` (see `cross/dataloader/geo.py`); in code, `obs["gnss"] = {"t", "lat", "lon", "alt", ...}` and
