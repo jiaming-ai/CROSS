@@ -57,12 +57,10 @@ class GeoManager:
         self.odom_k_t = float(cfg.drift_rate if cfg.drift_rate is not None else odom_k_t)
         self.noise = GnssNoiseModel(GnssModelConfig(uere=cfg.uere, sigma_v_factor=cfg.sigma_v_factor))
         self.gate = GnssGate(self.noise, GnssGateConfig(confidence=conf, window_s=cfg.window_s,
-                                                        min_fixes=cfg.min_fixes, holdoff_s=cfg.holdoff_s,
-                                                        first_holdoff_s=getattr(cfg, "session_holdoff_s", None)))
+                                                        min_fixes=cfg.min_fixes, holdoff_s=cfg.holdoff_s))
         self.err = GnssErrorModel(prior_tau=cfg.factor_interval_prior_s)
         self.compass = Compass(CompassConfig(confidence=conf, sigma_deg=cfg.compass_sigma_deg,
-                                             offset_deg=cfg.compass_offset_deg, frame=cfg.compass_frame,
-                                             hard_iron=cfg.compass_hard_iron))
+                                             offset_deg=cfg.compass_offset_deg, frame=cfg.compass_frame))
         self.anchor = Anchor(AnchorConfig(dof=cfg.anchor_dof, max_yaw_std_deg=cfg.anchor_max_yaw_std_deg))
         self.frame: Optional[LocalFrame] = None
         self.anchor_fixed = False                  # True once a loaded map supplied the anchor
@@ -85,10 +83,7 @@ class GeoManager:
         self.compass_last = None
         self.now = None
         self.robust_c = (float(cfg.robust_c) if cfg.robust_c is not None else math.sqrt(self.k2)) if cfg.robust else None
-        self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0, "focus": 0,
-                      "integrity_tested": 0, "integrity_bad": 0, "withheld_steps": 0}
-        self.integrity_run = 0                     # consecutive fixes contradicting hypothesis 0 (cfg.integrity)
-        self.withheld = False                      # the localized pose is withheld (cfg.integrity)
+        self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0, "focus": 0}
 
     # ------------------------------------------------------------------ state
     @property
@@ -111,8 +106,6 @@ class GeoManager:
         self.current = None
         self.last_factor_t = -1e18
         self.last_used_dist = None
-        self.integrity_run = 0
-        self.withheld = False
 
     # ------------------------------------------------------------------ per step
     def tick(self, t: float):
@@ -169,14 +162,12 @@ class GeoManager:
             dec = GnssDecision(sig is not None, "ungated" if sig is not None else "no_fix", enu,
                                *(sig if sig is not None else (float("nan"), float("nan"))))
         self.last_decision = dec
-        if getattr(self.cfg, "integrity", False):
-            self._integrity(dec, enu, T_map_cam, in_map_frame, belief_std_t)
         if not dec.used:
             return dec
         self.last_used_dist = self.dist
         sc = self.noise.scale
-        if not self.cfg.inflate_factors and math.isfinite(dec.inflation) and dec.inflation > 1.0:
-            # the relative test's inflation steers the gate only; factors keep prior x posterior scale
+        if math.isfinite(dec.inflation) and dec.inflation > 1.0:
+            # the relative test's inflation steers the gate only; factors keep the prior noise
             dec.sigma_h, dec.sigma_v = dec.sigma_h / math.sqrt(dec.inflation), dec.sigma_v / math.sqrt(dec.inflation)
         rec = {"t": float(fix.t), "enu": np.array([enu[0], enu[1], enu[2] if z_ok else np.nan]),
                "sh": dec.sigma_h / sc, "sv": dec.sigma_v / sc, "in_map": bool(in_map_frame), "kf": None, "delta": None,
@@ -293,7 +284,7 @@ class GeoManager:
             kf = nodes[kid]
             T = kf.pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)
             enu = f["enu"]
-            z_ok = bool(np.isfinite(enu[2])) and self.cfg.use_altitude
+            z_ok = bool(np.isfinite(enu[2]))
             target = self.anchor.to_map(np.array([enu[0], enu[1], enu[2] if z_ok else 0.0])) - T[:3, :3] @ f["delta"]
             Cenu = np.diag([(f["sh"] * sc) ** 2, (f["sh"] * sc) ** 2, ((f["sv"] * sc) if z_ok else 1e3) ** 2])
             out.append((kid, target, Rme @ Cenu @ Rme.T + 1e-6 * np.eye(3)))
@@ -371,31 +362,9 @@ class GeoManager:
             tt.append(rec["t"])
             ee.append(rec.get("epoch", 0))
         if len(e) >= 10:
-            if self.cfg.posterior_scale:
-                self.noise.update_posterior(np.array(e))
             self.err.update_from_residuals(np.array(tt), np.array(rr), np.array(ee))
         # the logged fixes' map positions follow the optimised keyframes they are attached to
         self.fit_anchor(nodes)
-
-    def _integrity(self, dec, enu, T_map_cam, in_map_frame, belief_std_t):
-        """A fix that agrees with the robot's own track (it passed the relative test) tests hypothesis 0's position in
-        the map; a run of cfg.integrity_fixes contradicting fixes withholds the pose, an agreeing fix releases it."""
-        if not (in_map_frame and self.anchored and T_map_cam is not None and dec.reason in ("ok", "absolute", "drift", "ungated")):
-            return
-        p = T_map_cam[:3, 3]
-        r = np.asarray(enu, float)[:2] - self.anchor.to_enu(p)[:2]
-        S = (dec.sigma_h ** 2 + self.cfg.pred_floor ** 2 + max(belief_std_t, 0.0) ** 2) * np.eye(2) \
-            + self.anchor.position_cov_enu(p)[:2, :2]
-        bad = float(r @ np.linalg.solve(S, r)) > self.k2
-        self.stats["integrity_tested"] += 1
-        if bad:
-            self.stats["integrity_bad"] += 1
-            self.integrity_run += 1
-            if self.integrity_run >= int(self.cfg.integrity_fixes):
-                self.withheld = True
-        else:
-            self.integrity_run = 0
-            self.withheld = False
 
     # ------------------------------------------------------------------ retrieval / relocalization
     def focus_region(self):

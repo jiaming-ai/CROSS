@@ -244,8 +244,6 @@ class Pipeline:
         """Whether the belief is a pose in the stored map (System.session_localized); a session that has not joined
         the map yet reports its pose in a frame of its own, which is no pose in the map."""
         fn = getattr(self.mapper, "session_localized", None)
-        if getattr(self.mapper, "geo_withheld", False):
-            return False                      # geo.integrity: GNSS contradicts the pose in the map
         return True if fn is None else bool(fn())
 
     def release(self):
@@ -480,6 +478,8 @@ def vgio_frontend(K, mc, mode, T_right_in_left=None, device="cuda", system=None,
                                visual_rotation=mc.imu.vgio_visual_rotation, graph=mc.imu.vgio_graph,
                                T_right_in_left=T_right_in_left if mode == "stereo" else None, **service)
     frontend.standalone = False
+    if system is not None:
+        frontend.calib_store = system            # its odometry_calib: the learned-depth offset kept with the map
     return frontend
 
 

@@ -122,6 +122,26 @@ class ImuConfig:
     vgio_rot_std: float = 0.0087                 # rad, relative rotation of a pass in the graph (0.5 deg)
     vgio_depth_bias_std: float = 0.05            # prior std of the learned-depth log bias in the graph
     vgio_depth_bias_drift: float = 0.005         # its random walk (log per sqrt(s))
+    # IMU-arbitrated calibration of the learned depth (DA3 or the scale head): a twin graph receives every factor but
+    # the learned depth, so its scale is the IMU's and the passes' alone, with its marginal std.  Where that std is
+    # below vgio_depth_calib_max_std (the IMU observes the scale: accelerations, turns), learned depth minus the twin's
+    # scale is a sample of the learned depth's bias in this place; once vgio_depth_calib_min_samples samples spanning
+    # vgio_depth_calib_min_span seconds exist, their median (at most log scale_band) is the place's offset, kept with
+    # the map.  Where the IMU does not observe the scale (slow indoor robots) no sample is taken.  Front-end suite
+    # (outputs/2026-10-08_depth_calib): within 0.05 of the true bias on KITTI 00/01/07, ROVER day / autumn and cafe,
+    # for DA3 and the scale head; overconfident at night (ROVER night: 0.6-0.7 off).
+    # vgio_depth_calib_apply: "stored" subtracts the offset stored with the map (a later session starts at the
+    # place's scale; within a session the graph's bias state learns it anyway), "session" also the session's own
+    # offset as soon as it exists (KITTI 01: the twin was confidently 0.3 off for its first 25 s, and the scale
+    # shrank by 20 % for a stretch).  System level, ROVER mono + IMU with the day map's offset: T3 within 1 m / 5 deg
+    # +36 (DA3) / +28 (head) of 1159 trials, within 5 m unchanged; T2 loses at night and dusk (learned depth's offset
+    # changes with the light, and at night the IMU + passes underestimate the scale): off by default.
+    vgio_depth_calib: bool = False
+    vgio_depth_calib_apply: str = "stored"
+    vgio_depth_calib_max_std: float = 0.1
+    vgio_depth_calib_min_samples: int = 30
+    vgio_depth_calib_min_span: float = 20.0
+    vgio_depth_calib_window: int = 300           # samples kept (the most recent)
     vgio_rot_rel: float = 0.05                   # graph: rotation noise also grows with the angle (fraction)
     # adaptive measurement times (vgio_adaptive): after the camera moved / turned this much, within these frame counts
     vgio_rot_scale: bool = True                  # graph: calibrate the rotation scale of the passes against the gyro
