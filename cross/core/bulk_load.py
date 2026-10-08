@@ -27,11 +27,40 @@ def _ltype(col):
 
 
 def _values(col, n: int) -> list:
-    """Python values of a non-tensor column (as cross.db.store._decode_column gives them)."""
-    from cross.db.store import _decode_column
-    if col.get("k") in ("tensor", "lie"):
+    """Python values of a non-tensor column, as cross.db.store._decode_column gives them (tolist already returns
+    Python bools / ints / floats for the bool / int64 / float64 arrays of a "py" column)."""
+    k = col.get("k")
+    if k in ("tensor", "lie"):
         raise ValueError("tensor column")
-    return _decode_column(dict(col, n=n) if col.get("k") == "none" else col, n)
+    if k == "none":
+        return [None] * n
+    if k == "list":
+        return col["v"]
+    if k == "py":
+        vals = col["a"].tolist()
+        conv = {"bool": bool, "int": int, "float": float}[col["t"]]
+        if vals and type(vals[0]) is not conv:
+            vals = [conv(x) for x in vals]
+    elif k == "cat":
+        vals = list(map(col["cats"].__getitem__, col["a"].tolist()))
+    else:
+        raise ValueError(f"unknown column kind {k}")
+    mask = col.get("mask")
+    if mask is None:
+        return vals
+    out = [None] * n
+    for j, i in enumerate(np.flatnonzero(mask).tolist()):
+        out[i] = vals[j]
+    return out
+
+
+def _edge_types(col, n: int) -> list:
+    """EdgeType of every row (the enum looked up once per category)."""
+    if col.get("k") == "cat" and col.get("mask") is None:
+        lut = [EdgeType[c] for c in col["cats"]]
+        return list(map(lut.__getitem__, col["a"].tolist()))
+    by_name = {}
+    return [by_name.setdefault(t, EdgeType[t]) for t in _values(col, n)]
 
 
 def _rows(arr: np.ndarray, mask, n: int) -> list:
@@ -107,17 +136,21 @@ def keyframes(enc: dict, atlas_of, normalize_mu: bool = False, images: Optional[
     append = out.append
     for i in range(n):
         kf = new(Keyframe)
-        # the attributes, in the order, that Keyframe(...) followed by `kf.id = saved id` gives
-        kf.__dict__.update({
-            "_pose_mu": mu[i], "_pose_mu_lt": mu_lt if mu[i] is not None else None,
-            "_pose_std": sd[i], "_pose_std_lt": sd_lt if sd[i] is not None else None,
-            "_pose_weights": w[i], "_pose_weights_lt": w_lt if w[i] is not None else None,
-            "_raw_rgb_image": rgb[i], "_depth_image": dep[i], "_raw_rgb_right": right[i],
-            "atlas": atlases[atlas_ids[i]], "timestamp": timestamps[i], "temporary": temporary[i],
-            "last_pgo_step": last_pgo[i],
-            "_pose_charts": ch[i], "_pose_charts_lt": ch_lt if ch[i] is not None else None,
-            "metric_source": metric[i], "conditional_poses": restore(cond[i]) if cond[i] is not None else None,
-            "id": ids[i]})
+        # the attributes, in the order, that Keyframe(...) followed by `kf.id = saved id` gives (the compact fields'
+        # storage names: cross.core.types._TensorField / _ImageField)
+        kf._pose_mu = mu[i]
+        kf._pose_mu_lt = mu_lt if mu[i] is not None else None
+        kf._pose_std = sd[i]
+        kf._pose_std_lt = sd_lt if sd[i] is not None else None
+        kf._pose_weights = w[i]
+        kf._pose_weights_lt = w_lt if w[i] is not None else None
+        kf._raw_rgb_image, kf._depth_image, kf._raw_rgb_right = rgb[i], dep[i], right[i]
+        kf.atlas, kf.timestamp, kf.temporary, kf.last_pgo_step = atlases[atlas_ids[i]], timestamps[i], temporary[i], last_pgo[i]
+        kf._pose_charts = ch[i]
+        kf._pose_charts_lt = ch_lt if ch[i] is not None else None
+        kf.metric_source = metric[i]
+        kf.conditional_poses = restore(cond[i]) if cond[i] is not None else None
+        kf.id = ids[i]
         append(kf)
     Keyframe._next_id += n                  # as n constructions would (System.load_map sets it afterwards)
     return out
@@ -149,8 +182,7 @@ def edges(enc: dict, visual: bool) -> Optional[list]:
         return None
     m, m_lt, m_dt = mean
     s, s_lt, s_dt = std
-    by_name = {}
-    types = [by_name.setdefault(t, EdgeType[t]) for t in _values(col("type"), n)]
+    types = _edge_types(col("type"), n)
     cond = _values(col("conditional_pose"), n)
     out = []
     append = out.append
@@ -192,6 +224,8 @@ def keys(enc) -> list:
     from cross.db.store import _decode_keys
     if enc["k"] == "tuple":
         return list(map(tuple, enc["a"].tolist()))
+    if enc["k"] == "int":
+        return enc["a"].tolist()
     return _decode_keys(enc)
 
 
