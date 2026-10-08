@@ -85,6 +85,8 @@ class System:
     """Pose-aware topological mapping system.
     Important: everything is in OPENCV convention.
     """
+    _apgo = None        # background optimisation (cross/core/async_pgo.py), set in __init__ when enabled
+
     def __init__(
         self,
         device: str = 'cuda',
