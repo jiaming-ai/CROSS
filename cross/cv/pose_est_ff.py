@@ -112,6 +112,7 @@ class _VGGTOmegaBackend(_Backend):
         self._decode = encoding_to_camera
         self.device = device
         ckpt = Path(checkpoint)
+        self.checkpoint = str(checkpoint)
         if not ckpt.is_file():
             raise FileNotFoundError(f"VGGT-Omega checkpoint not found: {ckpt}")
         with _no_weight_init():      # every parameter is overwritten by the checkpoint (checked below)

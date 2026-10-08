@@ -32,6 +32,7 @@ motion, as an in-frame measurement's does."""
 import collections
 import dataclasses
 import json
+from pathlib import Path
 from time import perf_counter
 
 import cv2
@@ -112,6 +113,9 @@ class VggtImuFrontend:
         self.twin = None
         self._calib_samples = collections.deque()
         self.depth_calib = 0.0
+        # an object whose odometry_calib dict holds the offset of the place (the back end: saved with the map); a
+        # session starts from the stored offset until its own samples are enough
+        self.calib_store = None
         self.g_rep = None                        # gravity in the reported frame
         self.rotation_gate_deg_graph = 2.0       # deg: a pass whose rotation disagrees with the gyro's is not used
         # adaptive measurement times: (min frames, max frames, min translation m, min rotation deg), or None
@@ -229,6 +233,10 @@ class VggtImuFrontend:
                                  c.gyro_noise_density, c.accel_noise_density)
             self.twin.td = self.twin.td_init = self.time_offset
             self._calib_samples = collections.deque(maxlen=int(ic.vgio_depth_calib_window))
+            stored = self._calib_dict().get("learned_depth")
+            if stored and stored.get("source") == self._calib_source():
+                self.depth_calib = float(stored["offset"])
+                self.stats["depth_calib_stored"] = round(self.depth_calib, 4)
         if ic.vgio_graph_time_offset:
             self.time_offset_done = True         # the graph estimates the offset
         self.scale_filter = _GraphEstimate(self.graph)
@@ -981,6 +989,23 @@ class VggtImuFrontend:
         self.m["rep"] = rep
         return True
 
+    def _calib_source(self):
+        """The learned depth the offset belongs to: DA3 (its model name) or the scale head (its checkpoint)."""
+        ic = self.config.imu
+        if ic.depth_prior_source == "head":
+            backend = getattr(self.service, "backend", None) if self.service is not None else None
+            return f"head:{Path(str(getattr(backend, 'checkpoint', ''))).name}"
+        return f"da3:{self.config.metric_model}"
+
+    def _calib_dict(self, create=False):
+        store = self.calib_store
+        if store is None:
+            return None if create else {}
+        d = getattr(store, "odometry_calib", None)
+        if d is None and create:
+            d = store.odometry_calib = {}
+        return d if d is not None else {}
+
     def _depth_calibrate(self, j, obs, timestamp):
         """IMU-arbitrated learned-depth calibration (vgio_depth_calib): solves the twin graph (every factor but the
         learned depth) and, where its scale of node j is certain to vgio_depth_calib_max_std, takes learned depth minus
@@ -1006,6 +1031,10 @@ class VggtImuFrontend:
                 lim = float(np.log(ic.scale_band))
                 self.depth_calib = float(np.clip(np.median([v for _, v in S]), -lim, lim))
                 self.stats["depth_calib"] = round(self.depth_calib, 4)
+                store = self._calib_dict(create=True)
+                if store is not None:
+                    store["learned_depth"] = {"offset": round(self.depth_calib, 5), "source": self._calib_source(),
+                                              "samples": len(S), "span_s": round(S[-1][0] - S[0][0], 1)}
         out["depth_calib"] = round(self.depth_calib, 4)
         return out
 
