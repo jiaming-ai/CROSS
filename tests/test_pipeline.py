@@ -173,3 +173,16 @@ def test_vgio_align_by_mode():
     explicit = MonoConfig()
     explicit.imu.vgio_align = False
     assert _vgio_config(explicit, "stereo", np.eye(4)).imu.vgio_align is False
+
+
+def test_mono_ff_shipped_defaults():
+    import os
+    from cross.core.config import load_config
+    from cross.pipeline import mode_config_files
+    files = mode_config_files("mono", "visual", mono_estimator="ff")
+    assert [os.path.basename(f) for f in files] == ["mono_ff.yaml"]
+    assert mode_config_files("mono", "visual", mono_estimator="da3") == []
+    assert [os.path.basename(f) for f in mode_config_files("stereo", "external")] == ["stereo.yaml"]
+    cfg = load_config(*files)
+    assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
+    assert cfg.mapping.hypothesis.strong_pass_frames == 3

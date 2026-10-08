@@ -1,0 +1,15 @@
+# Mono mode with the feed-forward estimator (--mode mono --mono-estimator ff): the shipped defaults, layered before the
+# user's --config and --set (cross.pipeline.mode_config_files). The mode's anchors and observation cadence are set in
+# code (cross.pipeline.mono_ff_config). Full benchmark 2026-10-09 (final fine-tuned VGGT-Omega, mono + odometry and
+# mono + IMU): these two options improve relocalization on OpenLORIS (T3 +9 / -1 trials with odometry) and are neutral
+# on ROVER, SimChange and KITTI; the pair filter costs ~25-50 ms per pose call.
+pose_est:
+  ff:
+    # map scale anchors only between references that overlap each other: a reference that overlaps nothing else in the
+    # pass is placed arbitrarily, and every anchor through it shares that error (a wrong scale that looks certain)
+    map_anchor_min_pair_covis: 0.15
+mapping:
+  hypothesis:
+    # a pass backed by >= 2 references with covisibility >= 0.3 counts as 3 frames of relocalization evidence: a short
+    # real overlap after rightly rejected views is enough to relocalize
+    strong_pass_frames: 3

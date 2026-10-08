@@ -323,16 +323,18 @@ def mono_ff_config(cfg):
     return cfg
 
 
-def mode_config_files(mode: str, odometry: str, fast: bool = False) -> list:
+def mode_config_files(mode: str, odometry: str, fast: bool = False, mono_estimator: str = None) -> list:
     """The configuration files shipped for a mode and odometry (layered in this order, before the user's --config):
-    the stereo mode configs/stereo.yaml (+ configs/stereo_fast.yaml with --fast).  Other modes: none (their presets
-    are in code: mono_ff_config, mono profiles).  Opt-in profiles go in --config (configs/stereo_lowband.yaml: left
+    the stereo mode configs/stereo.yaml (+ configs/stereo_fast.yaml with --fast); the mono mode with the feed-forward
+    estimator configs/mono_ff.yaml (its other presets are in code: mono_ff_config, mono profiles).  Other modes: none.  Opt-in profiles go in --config (configs/stereo_lowband.yaml: left
     image, half the rate; not a default because it blinds the odometry scale guard)."""
     files = []
     if mode == "stereo":
         files.append(os.path.join(CONFIG_DIR, "stereo.yaml"))
         if fast:
             files.append(FAST_STEREO_PRESET)
+    elif mode == "mono" and mono_estimator == "ff":
+        files.append(os.path.join(CONFIG_DIR, "mono_ff.yaml"))
     return files
 
 
@@ -574,7 +576,8 @@ def server_session(open_msg, device="cuda"):
         names = [str(n) for n in open_msg.get("config_files") or []]
         if any(os.path.basename(n) != n or not n.endswith(".yaml") for n in names):
             raise ValueError(f"config_files: names of {CONFIG_DIR} only, not {names}")
-        files = mode_config_files(mode, odometry, bool(open_msg.get("fast"))) + [os.path.join(CONFIG_DIR, n) for n in names]
+        files = mode_config_files(mode, odometry, bool(open_msg.get("fast")), open_msg.get("mono_estimator", "da3")) \
+            + [os.path.join(CONFIG_DIR, n) for n in names]
         cfg = apply_settings(load_config(*files) if files else SystemConfig(), open_msg.get("set"))
         cfg.async_update = False
     mc = None if open_msg.get("mono_config") is None else _from_dict(MonoConfig, open_msg["mono_config"])
