@@ -2055,7 +2055,42 @@ class HypothesisManager:
                 return n - i
         return n if full else min(n, 2000)
 
-    def apply_stale_pgo_result(self, ids, opt, fork, max_id: int, fresh_poses: bool) -> Dict[str, Any]:
+    def smooth_tail(self, first_free_id: int) -> Dict[str, Any]:
+        """Local optimisation of the keyframes with id >= first_free_id (added while a background optimisation ran) with
+        every older keyframe they share a factor with held fixed: the odometry chain from the last optimised keyframe and
+        the visual edges (loop edges to optimised keyframes included) pull them into agreement with the optimised map.  The
+        tracked pose follows the latest keyframe's change.  Returns {"n_free", "moved_t", "affected"}."""
+        out = {"n_free": 0, "moved_t": 0.0, "affected": set()}
+        with self.graph_lock:
+            pg = PoseGraph(self, depth=1000, k_hop=2, device=self.device, noise_fn=self.pgo_noise_fn(), skip_fn=self.pgo_skip_fn())
+            boundary = pg.construct_window(first_free_id)
+        free = {v.id for v in pg.vertices if v.id >= first_free_id}
+        if not free or not boundary or not pg.edges:
+            return out
+        last = max(self.nodes)
+        before = {k: self.nodes[k].plain_row("pose_mu", 0).detach().cpu().numpy().astype(np.float64) for k in free}
+        try:
+            pg.solve(optim_node_ids=free, fixed_node_ids=set(boundary))
+        except RuntimeError as ex:
+            logger.warning(f"tail smoothing failed ({type(ex).__name__}); the rigidly moved tail stays")
+            return out
+        if not pg.optimized_poses:
+            return out
+        self.pose_epoch += 1
+        with self.graph_lock:
+            self._write_poses(pg.optimized_poses)
+            if self.dist is not None and last in pg.optimized_poses:
+                new = pp.SE3(pg.optimized_poses[last].tensor().to(torch.float64))
+                old = pp.SE3(torch.from_numpy(before[last]))
+                D = (new @ old.Inv()).to(self.dist[0].dtype)
+                d0 = self.dist[0]
+                d0[0] = pp.SE3(D.to(d0.device)) @ d0[0]
+        out["n_free"] = len(free)
+        out["affected"] = set(pg.optimized_poses)
+        out["moved_t"] = float(max(np.linalg.norm(pg.optimized_poses[k].tensor().numpy()[:3] - before[k][:3]) for k in pg.optimized_poses if k in before))
+        return out
+
+    def apply_stale_pgo_result(self, ids, opt, fork, max_id: int, fresh_poses: bool, catch_up: bool = False) -> Dict[str, Any]:
         """Apply an optimisation of hypothesis 0 that was computed on the state at an earlier step (a background job,
         cross.core.async_pgo) to the present state.
 
@@ -2093,6 +2128,7 @@ class HypothesisManager:
                 affected.add(nid)
             C = corr[ids.index(max_id)] if max_id in ids else None
             n_tail = 0
+            catch = None
             if C is not None:
                 for nid in reversed(self.nodes):
                     if nid <= max_id:
@@ -2106,10 +2142,15 @@ class HypothesisManager:
                 if self.dist is not None:
                     d0 = self.dist[0]
                     d0[0] = pp.SE3(C.to(device=d0.device, dtype=d0.dtype)) @ d0[0]
+                if catch_up and n_tail > 0:
+                    sm = self.smooth_tail(max_id + 1)
+                    affected |= sm["affected"]
+                    catch = sm
             if affected and self.system.topo_map is not None:
                 self.system.topo_map.update_after_pgo(affected)
         return {"success": True, "n_tail": n_tail, "affected": len(affected),
-                "correction_t": float(C[:3].norm()) if C is not None else 0.0}
+                "correction_t": float(C[:3].norm()) if C is not None else 0.0,
+                "catch_up_moved_t": None if catch is None else catch["moved_t"]}
 
     def _transport_merged_charts(self, pg, optimized_poses):
         """Transport unsolved poses as well as solved nodes after commitment.
