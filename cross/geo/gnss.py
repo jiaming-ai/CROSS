@@ -145,6 +145,8 @@ class GnssGateConfig:
     window: int = 40                   # at most this many fixes in the window (decimated in time)
     min_fixes: int = 5                 # fixes an epoch must hold (passing the relative test) before any is used
     holdoff_s: float = 10.0            # and the epoch's age (receivers converge for a while after reacquisition)
+    first_holdoff_s: Optional[float] = None   # the gate's first epoch (no gap seen yet): a receiver that was running
+                                              # before the gate started is not reacquiring; None: holdoff_s
     gap_factor: float = 5.0            # a gap longer than gap_factor x the median fix interval starts a new epoch
     min_gap_s: float = 1.0
     min_spread_for_yaw: float = 0.0    # (diagnostic) spread of the window's track below which its yaw is not fitted
@@ -180,6 +182,7 @@ class GnssGate:
         self.k2 = float(chi2.ppf(self.cfg.confidence, 2))
         self.k1 = math.sqrt(float(chi2.ppf(self.cfg.confidence, 1)))
         self.n_rel_reject, self.t_rel_reject = 0, None
+        self.first_epoch = True            # no gap and no new epoch since the gate started
         self.win = deque()                 # (t, enu_xy, track_xy, sigma_h) of the current epoch
         self.epoch_t0 = None
         self.last_t = None
@@ -194,6 +197,7 @@ class GnssGate:
         return max(self.cfg.min_gap_s, self.cfg.gap_factor * float(np.median(self.dts)))
 
     def reset_epoch(self, t0=None):
+        self.first_epoch = False
         self.epoch_t0 = t0
         self.win.clear()
         self.offsets.clear()
@@ -273,7 +277,8 @@ class GnssGate:
             self.win.popleft()
         sh_i, sv_i = sh * math.sqrt(inflation), sv * math.sqrt(inflation)
         # ---- 2. reacquisition hold-off ----
-        if len(self.win) < cfg.min_fixes or (self.epoch_t0 is not None and fix.t - self.epoch_t0 < cfg.holdoff_s):
+        hold = cfg.first_holdoff_s if (self.first_epoch and cfg.first_holdoff_s is not None) else cfg.holdoff_s
+        if len(self.win) < cfg.min_fixes or (self.epoch_t0 is not None and fix.t - self.epoch_t0 < hold):
             self.stats["holdoff"] += 1
             return GnssDecision(False, "holdoff", enu, sh_i, sv_i, inflation, rel_nis)
         # while the robot moves (further than the fix noise within the window), the epoch's fixes are used only once

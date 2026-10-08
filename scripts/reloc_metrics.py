@@ -211,6 +211,12 @@ def step_diagnostics(system) -> dict:
     kf = getattr(m, "last_added_kf_id", None)
     if kf is not None:
         out["kf"] = int(kf)
+    if d.get("gnss_reason"):
+        out["gn"] = d["gnss_reason"]
+    if d.get("geo_focus"):
+        out["gf"] = [d["geo_focus"]["radius"], d["geo_focus"]["candidates"]]
+    if d.get("geo_withheld"):
+        out["gw"] = 1
     return out
 
 
