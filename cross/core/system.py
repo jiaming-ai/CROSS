@@ -409,6 +409,10 @@ class System:
         logger.info("Shutting down the system...")
         # the exit hook would otherwise keep every shut-down system (and its GPU map) alive until process exit
         atexit.unregister(self.shutdown)
+        if getattr(self, "_gc_frozen", False):
+            import gc
+            gc.unfreeze()           # the loaded map's objects (load_map) can be collected again
+            self._gc_frozen = False
         if self.visualize:
             time.sleep(1)  # grace period for the visualizer to finish
         # Stop LC engine first
@@ -856,6 +860,24 @@ class System:
         return self._session_localized
 
     def load_map(self, load_path: str):
+        """Load the map (see _load_map).  The garbage collector is paused while the graph is built: a large map creates
+        millions of objects, and the collector would rescan the growing graph again and again (~30 full passes for
+        10^6 keyframes).  With storage.gc_freeze the loaded objects then go to the collector's permanent generation, so
+        later collections do not rescan the map (a full pass over a 10^6-keyframe map takes seconds); shutdown()
+        unfreezes them."""
+        import gc
+        enabled = gc.isenabled()
+        gc.disable()
+        try:
+            self._load_map(load_path)
+        finally:
+            if enabled:
+                gc.enable()
+        if self.config.storage.gc_freeze:
+            gc.freeze()
+            self._gc_frozen = True
+
+    def _load_map(self, load_path: str):
         """Load the map.
         Loads persistent graph structure:
         - permanent kfs, embeddings, and atlases from db

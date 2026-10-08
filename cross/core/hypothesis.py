@@ -2339,7 +2339,19 @@ class HypothesisManager:
         # --- 1. Restore temporary keyframes ---
         all_keyframes_map = existing_keyframes.copy()
 
-        for kf_data in hypo_data["temp_keyframes"]:
+        # a v2 map read for System.load_map: graph objects built from the columns in bulk (cross.core.bulk_load),
+        # with the attributes the record-by-record restore below gives them
+        from cross.core import bulk_load
+        cpu = all(d is None or torch.device(d).type == "cpu" for d in (storage_device, device))
+        temps = hypo_data["temp_keyframes"]
+        bulk_temps = None
+        if cpu and getattr(temps, "enc", None) is not None:
+            bulk_temps = bulk_load.keyframes(temps.enc, lambda a: db.get_atlas(a) if a is not None else None,
+                                             normalize_mu=True)   # maps saved before the renormalization fix carry |q| < 1
+        if bulk_temps is not None:
+            all_keyframes_map.update((kf.id, kf) for kf in bulk_temps)
+
+        for kf_data in (temps if bulk_temps is None else ()):
             atlas = db.get_atlas(kf_data["atlas_id"]) if kf_data["atlas_id"] is not None else None
 
             kf = Keyframe(
@@ -2362,13 +2374,18 @@ class HypothesisManager:
 
         # --- 2. Restore nodes (both from database and temporary) ---
         self.nodes.clear()
-        for kf_id, kf in all_keyframes_map.items():
-            self.nodes[kf_id] = kf
+        self.nodes.update(all_keyframes_map)
 
         # --- 3. Restore odometry edges ---
         self.odom_edges.clear()
         self.odom_edges_version = getattr(self, "odom_edges_version", 0) + 1
-        for edge_key, edge_data in hypo_data["odom_edges"].items():
+        odom = hypo_data["odom_edges"]
+        bulk_odom = None
+        if cpu and getattr(odom, "enc", None) is not None:
+            bulk_odom = bulk_load.edges(odom.enc["recs"], visual=False) if odom.enc["recs"].get("__records__") else None
+        if bulk_odom is not None:
+            self.odom_edges.update(zip(bulk_load.keys(odom.enc["keys"]), bulk_odom))
+        for edge_key, edge_data in (odom.items() if bulk_odom is None else ()):
             edge = Edge(
                 mean=to_device(edge_data["mean"], device),
                 std=to_device(edge_data["std"], device),
@@ -2394,7 +2411,14 @@ class HypothesisManager:
             )
 
             # Restore visual edges
-            for edge_key, edge_list_data in hypo_data_item["visual_edges"].items():
+            ve = hypo_data_item["visual_edges"]
+            bulk_vis = None
+            if cpu and getattr(ve, "enc", None) is not None and ve.enc["records"] and ve.enc["items"].get("__records__"):
+                bulk_vis = bulk_load.edges(ve.enc["items"], visual=True)
+            if bulk_vis is not None:
+                hypothesis.visual_edges.update((k, l) for k, l in zip(bulk_load.keys(ve.enc["keys"]),
+                                                                      bulk_load.grouped(bulk_vis, ve.enc["counts"])) if l)
+            for edge_key, edge_list_data in (ve.items() if bulk_vis is None else ()):
                 for edge_data in edge_list_data:
                     edge = VisualEdge(
                         mean=to_device(edge_data["mean"], device),
@@ -2413,8 +2437,14 @@ class HypothesisManager:
                         edge.conditional_pose = ConditionalPose.from_record(edge_data['conditional_pose'])
 
             # Restore visual adjacency
-            for node_id, neighbors in hypo_data_item["visual_adjacency"].items():
-                hypothesis.visual_adjacency[node_id] = set(neighbors)
+            va = hypo_data_item["visual_adjacency"]
+            enc = getattr(va, "enc", None)
+            if enc is not None and not enc["records"] and enc["items"]["k"] == "int":
+                hypothesis.visual_adjacency.update(zip(bulk_load.keys(enc["keys"]), map(set, bulk_load.grouped(
+                    enc["items"]["a"].tolist(), enc["counts"]))))
+            else:
+                for node_id, neighbors in va.items():
+                    hypothesis.visual_adjacency[node_id] = set(neighbors)
 
             self.hypotheses[0] = hypothesis
 
