@@ -104,7 +104,7 @@ class KeyframeQuality:
         self.depth_ref = _RunningMedian(n)      # typical (median) scene depth
         self.info_ref = _RunningMedian(n)       # typical informative fraction
         self.n_assessed = 0
-        self.stats = {"assessed": 0, "junk": 0, "rejected_permanent": 0, "skipped_observation": 0,
+        self.stats = {"assessed": 0, "junk": 0, "rejected_permanent": 0,
                       "by_reason": {c: 0 for c in CAUSES}, "ms_total": 0.0}
         self._detector = None
         self.fx = None              # focal length (px) of the step's images and the stereo baseline (m): SGBM near field
