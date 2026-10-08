@@ -919,11 +919,13 @@ class GeoConfig:
                                               # acts with retrieval.locality.enabled)
     proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
     fix_max_age_s: float = 3.0                # a fix gates proposals / retrieval for this long (odometry carries it)
-    # relocalization in a geo-anchored map (opt-in until evaluated): with a trusted fix (used by the gate, at most
-    # fix_max_age_s old) the stored keyframes within sqrt(chi2_2(confidence)) x sigma + focus_margin_m of it
-    # (horizontal; sigma = the fix's, the anchor's and the odometry since the fix) take the map retrieval budget, ranked
-    # by appearance; focus_global_slots of it stay with the global ranking as a safety net for a wrong fix
-    retrieval_focus: bool = False
+    # relocalization in a geo-anchored map: with a trusted fix (used by the gate, at most fix_max_age_s old) the stored
+    # keyframes within sqrt(chi2_2(confidence)) x sigma + focus_margin_m of it (horizontal; sigma = the fix's, the
+    # anchor's and the odometry since the fix) take the map retrieval budget, ranked by appearance; focus_global_slots
+    # of it stay with the global ranking as a safety net for a wrong fix.  Acts only with GNSS input and a geo-anchored
+    # map.  NCLT relocalization in the GNSS-anchored 2012-01-08 map (outputs/2026-10-08_gps_retrieval): 60 vs 56 of 75
+    # trials within 5 m (2012-11-17 22 vs 20, 2013-02-23 21 vs 18, 2012-08-04 17 vs 18; null rerun spread up to 2)
+    retrieval_focus: bool = True
     focus_margin_m: float = 5.0
     focus_global_slots: int = 2
     # hold-off of a session's first fix epoch (the receiver was running before the session started, so its first fixes
