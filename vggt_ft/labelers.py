@@ -59,6 +59,26 @@ class DA3Metric:
         return F.interpolate(d[None, None], size=(H, W), mode="bilinear", align_corners=False)[0, 0]
 
 
+    @torch.no_grad()
+    def batch(self, imgs, K, chunk: int = 16):
+        """imgs (N,3,H,W) in [0, 1], K (N,3,3) at that resolution -> metric depth (N,H,W), NaN where invalid (sky).
+        Every image is predicted on its own (one view per batch item)."""
+        N, _, H, W = imgs.shape
+        r = self.res / max(H, W)
+        h, w = max(14, round(H * r / 14) * 14), max(14, round(W * r / 14) * 14)
+        out = []
+        for a in range(0, N, chunk):
+            x = F.interpolate(imgs[a:a + chunk].float(), size=(h, w), mode="bicubic", align_corners=False).clamp(0, 1)
+            o = self.model(((x - self.mean) / self.std)[:, None], export_feat_layers=[])
+            d = o["depth"][:, 0].float().reshape(-1, h, w)
+            f = 0.5 * (K[a:a + chunk, 0, 0] * w / W + K[a:a + chunk, 1, 1] * h / H)
+            d = d * (f / 300.0)[:, None, None]
+            if "sky" in o:
+                d = torch.where(o["sky"][:, 0].float().reshape(-1, h, w) > 0.3, torch.full_like(d, NAN), d)
+            out.append(F.interpolate(d[:, None], size=(H, W), mode="bilinear", align_corners=False)[:, 0])
+        return torch.cat(out)
+
+
 class UniDepth:
     def __init__(self, wdir, device):
         _stub("wandb")

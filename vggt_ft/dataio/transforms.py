@@ -84,9 +84,20 @@ def augment_frame(img_u8, rng, aug: dict | None):
     if rng.random() < aug.get("p_gray", 0.05):
         g = x @ np.array([0.299, 0.587, 0.114], np.float32)
         x = np.repeat(g[..., None], 3, -1)
+    if aug.get("p_lowres", 0.0) and rng.random() < aug["p_lowres"]:      # no RNG draw when off: old configs unchanged
+        # sensor / compression resolution loss: down by a factor in lowres (e.g. [0.3, 0.7]) and back up
+        H, W = x.shape[:2]
+        f = float(rng.uniform(*aug.get("lowres", [0.3, 0.7])))
+        y = cv2.resize(x, (max(8, round(W * f)), max(8, round(H * f))), interpolation=cv2.INTER_AREA)
+        x = cv2.resize(y, (W, H), interpolation=cv2.INTER_LINEAR)
     if rng.random() < aug.get("p_blur", 0.05):
-        k = int(rng.choice([3, 5]))
+        k = int(rng.choice(aug.get("blur_k", [3, 5])))
         x = cv2.GaussianBlur(x, (k, k), 0)
     if rng.random() < aug.get("p_noise", 0.05):
         x = np.clip(x + rng.normal(0, rng.uniform(0.005, 0.03), x.shape).astype(np.float32), 0, 1)
+    if aug.get("p_jpeg", 0.0) and rng.random() < aug["p_jpeg"]:
+        q = int(rng.integers(*aug.get("jpeg_q", [30, 90])))
+        ok, enc = cv2.imencode(".jpg", (x * 255).round().astype(np.uint8), [cv2.IMWRITE_JPEG_QUALITY, q])
+        if ok:
+            x = cv2.imdecode(enc, cv2.IMREAD_UNCHANGED).astype(np.float32) / 255.0
     return x

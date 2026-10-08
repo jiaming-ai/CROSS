@@ -383,3 +383,67 @@ def test_geo_anchor_kept_when_a_map_is_saved_again_without_gnss(tmp_path, monkey
     assert set(lla2) == set(lla1)
     assert max(abs(np.array(lla2[k]) - np.array(lla1[k])).max() for k in lla1) < 1e-9
     assert set(GeoManager.factor_records(geo["factors"])) == {k0}
+
+
+def test_gate_session_holdoff_applies_to_the_first_epoch_only():
+    n = 40
+    track = np.stack([np.arange(n) * 1.2, np.zeros(n)], 1)
+    enu = track + np.random.default_rng(4).normal(0, 1.0, (n, 2))
+    gate = GnssGate(GnssNoiseModel(), GnssGateConfig(first_holdoff_s=2.0))
+    d = _gate_stream(gate, track, enu)
+    first_used = next(i for i, x in enumerate(d) if x.used)
+    assert first_used < 10                                           # before the 10 s reacquisition hold-off
+    assert all(not x.used for x in d[:4])                            # min_fixes still applies
+    # a gap starts a new epoch: the full hold-off again
+    dd = gate.process(GnssFix(t=200.0, lat=0, lon=0, mode=FIX_3D), np.r_[enu[0] + 300, 0], track[0] + 300, None)
+    assert dd.reason == "holdoff"
+    later = [gate.process(GnssFix(t=200.0 + i, lat=0, lon=0, mode=FIX_3D), np.r_[enu[i] + 300, 0], track[i] + 300,
+                          None) for i in range(1, 8)]
+    assert all(not x.used for x in later)                            # < 10 s into the new epoch
+
+
+def _anchored_manager(**cfg_kw):
+    from cross.core.config import GeoConfig
+    from cross.geo.manager import GeoManager
+    m = GeoManager(GeoConfig(**cfg_kw))
+    m.frame = LocalFrame(42.29, -83.71, 270.0)
+    # map = camera frame of a level camera (up = -y); ENU = levelled map, no yaw, offset
+    rng = np.random.default_rng(0)
+    p_map = np.c_[rng.uniform(-200, 200, 200), np.zeros(200), rng.uniform(-200, 200, 200)]
+    p_enu = p_map @ m.anchor.R_level.T + np.array([10.0, 20.0, 0.0])
+    assert m.anchor.fit(p_map, p_enu, np.full(200, 1.0))
+    return m
+
+
+def test_manager_integrity_withholds_a_contradicted_pose_and_releases_it():
+    m = _anchored_manager(integrity=True, integrity_fixes=3, gate=False)
+    T = np.eye(4)                                                    # hypothesis 0 at the map origin
+    enu_ok = m.anchor.to_enu(T[:3, 3])
+    enu_far = enu_ok + np.array([60.0, 0.0, 0.0])
+    def fix(t, e):
+        lat, lon, alt = m.frame.to_lla(np.asarray(e, float))
+        return {"t": t, "lat": lat, "lon": lon, "alt": alt, "sigma_h": 3.0}
+    for i in range(2):
+        m.observe(float(i), fix(float(i), enu_far), None, T, True)
+    assert not m.withheld                                            # two contradicting fixes: not yet
+    m.observe(2.0, fix(2.0, enu_far), None, T, True)
+    assert m.withheld
+    m.observe(3.0, fix(3.0, enu_ok), None, T, True)
+    assert not m.withheld                                            # an agreeing fix releases the pose
+    m2 = _anchored_manager(integrity=True, integrity_fixes=3, gate=False)
+    for i in range(5):
+        m2.observe(float(i), fix(float(i), enu_far), None, T, False)  # not localized: nothing to test
+    assert not m2.withheld
+
+
+def test_manager_focus_region_follows_the_trusted_fix():
+    m = _anchored_manager(retrieval_focus=True, focus_margin_m=5.0, gate=False)
+    assert m.focus_region() is None                                  # no fix yet
+    e = m.anchor.to_enu(np.array([30.0, 0.0, 40.0]))
+    lat, lon, alt = m.frame.to_lla(np.asarray(e, float))
+    m.observe(0.0, {"t": 0.0, "lat": lat, "lon": lon, "alt": alt, "sigma_h": 2.0}, None, None, False)
+    center, r, up = m.focus_region()
+    assert np.linalg.norm((center - np.array([30.0, 0.0, 40.0]))[[0, 2]]) < 0.5
+    assert 5.0 + 2.0 * 3.0 < r < 5.0 + 2.0 * 6.0                     # sqrt(chi2_2) x sigma + margin
+    m.tick(10.0)
+    assert m.focus_region() is None                                  # older than fix_max_age_s

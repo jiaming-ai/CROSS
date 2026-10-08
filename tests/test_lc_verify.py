@@ -456,8 +456,7 @@ def test_loop_closure_skips_a_graph_that_cannot_be_built(monkeypatch):
 
 
 # ----------------------------------------------------------------------------- odometry scale guard: fault response
-GUARD_ON = LoopClosureConfig(odom_guard_inflate=True, odom_guard_map=True, odom_guard_attribute=True,
-                             odom_guard_per_observation=True)
+GUARD_ON = LoopClosureConfig()
 
 def test_guard_fault_inflates_only_the_translation():
     nm = NoiseModel(NoiseModelConfig())
@@ -496,14 +495,6 @@ def test_guard_fault_inflates_the_departing_stretch_and_fades():
         v._guard_push(1.02, 100)
     assert abs(v.odom_fault - 0.02) < 1e-9
     assert all(getattr(e, "odom_fault", 0.0) == 0.75 for (a, _), e in hm.odom_edges.items() if a >= 60)
-
-
-def test_guard_without_inflation_only_rescales():
-    hm, _ = _chain_system(n=120)
-    v = LoopClosureVerifier(FakeSystem(hm), LoopClosureConfig(odom_guard_inflate=False, odom_guard_per_observation=True))
-    _fire(v, 0.25, 60)
-    assert abs(v.odom_scale - 0.25) < 1e-12 and v.odom_fault == 0.0
-    assert not any(getattr(e, "odom_fault", 0.0) for e in hm.odom_edges.values())
 
 
 def _reloc_session(odom_factor, session_start=50, n=120):
@@ -651,14 +642,14 @@ def test_guard_holds_when_the_odometry_kept_its_pace():
 
 
 def test_guard_fires_when_the_odometry_sped_up():
-    """The ratio drops to 0.25 while the odometry's speed rose 4x (a diverging VIO): the guard fires; a second departure
-    after the rescaling is judged on the cumulative departure and the raw speed."""
+    """The ratio drops to 0.25 while the odometry's speed rose 4x (a diverging VIO): the guard fires; a further departure
+    after the rescaling is tracked, judged on the cumulative departure and the raw speed."""
     hm, v = _attrib_verifier()
     for _ in range(60):
         v._guard_push(0.25, 60, 0.2)
     assert abs(v.odom_scale - 0.25) < 1e-12
-    for _ in range(60):                                   # the VIO keeps accelerating: raw 0.6 m / frame, ratio 0.4 more
-        v._guard_push(0.4, 100, 0.6)
+    for _ in range(30):                                   # the VIO keeps accelerating: raw 0.6 m / frame, ratio 0.4 more:
+        v._guard_push(0.4, 100, 0.6)                      # tracked after one window
     assert abs(v.odom_scale - 0.1) < 1e-12
 
 
@@ -670,15 +661,31 @@ def test_guard_needs_a_healthy_reference_pace():
     assert v.odom_scale == 1.0 and v.stats.get("odom_guard_held", 0) == 1
 
 
-def test_guard_options_off_is_the_old_guard():
-    """Default config: per-measurement windows, no attribution, no inflation, no epoch, no map fixes."""
+def test_map_samples_option_off():
+    """odom_guard_map off: no map fixes, no map samples."""
     hm, gt, _ = _reloc_session(3.0)
-    v = LoopClosureVerifier(FakeSystem(hm, session_start=50), LoopClosureConfig())
+    v = LoopClosureVerifier(FakeSystem(hm, session_start=50), LoopClosureConfig(odom_guard_map=False))
     v.guard_metric = True
-    assert not (v.guard_inflate or v.guard_map or v.guard_attribute or v.guard_per_obs)
-    for _ in range(60):
-        v._guard_sample(0.25, 60, 0.05)                 # 60 measurements of one departure: the old guard fires
-    assert abs(v.odom_scale - 0.25) < 1e-12 and v.odom_fault == 0.0 and v._guard_epoch_kf is None
     for last in range(53, 120):
         _localize(v, gt, (40, 45, 48), last)
-    assert not v._fix_hist
+    assert not v._fix_hist and v.odom_scale == 1.0
+
+
+def test_guard_tracks_the_fault_after_a_firing():
+    """After the first firing (persistence 2, band) every significant window is applied at once: a VIO that keeps
+    accelerating is followed (0.25, then 0.5, then 0.8 of the corrected odometry); a steady window changes nothing and
+    the inflation fades to its departure."""
+    hm, v = _attrib_verifier()
+    rng = np.random.default_rng(0)
+    for _ in range(60):
+        v._guard_push(0.25, 60, 0.2)
+    assert abs(v.odom_scale - 0.25) < 1e-12 and v.odom_fault == 0.75
+    for k, (g, sp) in enumerate(((0.5, 0.8), (0.8, 1.0))):    # departures inside the band, raw speed still rising
+        for _ in range(30):
+            v._guard_push(g * math.exp(rng.normal(0, 0.02)), 100 + k, sp)
+    assert 0.25 * 0.5 * 0.8 * 0.9 < v.odom_scale < 0.25 * 0.5 * 0.8 * 1.1
+    assert v.stats.get("odom_guard_tracked", 0) == 2
+    s0 = v.odom_scale
+    for _ in range(30):                                   # steady (noise only): no correction, the inflation fades
+        v._guard_push(math.exp(rng.normal(0, 0.05)), 120, 1.0)
+    assert v.odom_scale == s0 and v.odom_fault < 0.05

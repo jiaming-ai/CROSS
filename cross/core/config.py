@@ -273,35 +273,28 @@ class LoopClosureConfig:
     # 07 RGB-D with OXTS odometry), in daylight log-MAD 0.02-0.05.  0 disables.
     odom_guard_factor: float = 2.0
     odom_guard_window: int = 30
-    # odom_guard_per_observation: a window sample is an observation (the median of its samples), not a measurement.  The
-    # references of one observation share its estimate, and at car speed a frame gives 5-9 samples (KITTI 04 with VIO,
-    # PnP: per-measurement windows filled within ~10 frames of failed PnP and the guard fired on a healthy VIO, 1.7 ->
-    # 40 m).  The odom_guard_* options of 2026-10-06 (per_observation, attribute, inflate, map) are off by default (the
-    # guard of a139e25); tested together on, see outputs/2026-10-06_odom_guard_response/REPORT.md.
-    odom_guard_per_observation: bool = False
+    # A window sample is an observation (the median of its samples), not a measurement: the references of one observation
+    # share its estimate, and at car speed a frame gives 5-9 samples (KITTI 04 with VIO, PnP: per-measurement windows
+    # filled within ~10 frames of failed PnP and the guard fired on a healthy VIO, 1.7 -> 40 m).
+    # A departure fires the guard only when the odometry changed: its own speed (distance per frame) moved from its last
+    # healthy window in the matching direction by at least half of the departure.  A visual estimator can fail for
+    # hundreds of frames (KITTI 01, PnP on depth / VGGT stereo at highway speed: measured translations ~0 while the VIO
+    # kept its pace); a diverging VIO changes its speed (ROVER night).
+    # After a firing the odometry's translations are as uncertain as the error the guard measured (sigma |1 - m| x the
+    # length of every odometry edge from the departing windows on; a faulty stretch shares one scale error in the chain
+    # prediction), so the visual measurements the faulty chain had been rejecting pass and the pose graph corrects the
+    # stretch; only spans after the latest correction are samples, and the guard follows the fault window by window.
+    # See outputs/2026-10-06_odom_guard_response/REPORT.md (ROVER night stereo 11.2 -> 1.9 m with VIO).
     # the departure must hold in this many consecutive windows (same direction) before the odometry is rescaled: PnP at
     # night has 2x departures lasting a few seconds that revert (ROVER night RGB-D: single windows of 30 fired 6 times before the VIO runaway, 2 windows of 20 7 times, 2 of 30 only in it)
     odom_guard_persist: int = 2
-    # once the guard has fired, the odometry's translations are as uncertain as the error the guard measured: every
-    # odometry edge from the start of the departing windows on gets a translation sigma of |1 - m| times its length
-    # (m: the measured / odometry ratio of the latest window), so the visual measurements the faulty chain had been
-    # rejecting (the session's own keyframes, revisits) pass the prior test and the pose-graph optimisation can correct
-    # the stretch.  Before the first firing nothing changes; after it the extra sigma follows the latest window and
-    # fades when the odometry is healthy again (|1 - m| ~ 0.02-0.05).  After a firing only spans from keyframes
-    # created after it are samples (a span over odometry recorded before the rescaling mixes both scales).
-    odom_guard_inflate: bool = False
-    # a departure fires the guard only when it is the odometry that changed: its own speed (distance per frame) moved
-    # from its last healthy window in the matching direction by at least half of the departure.  A visual estimator
-    # can fail for hundreds of frames (KITTI 01, PnP on depth at highway speed: measured translations ~0 while the VIO
-    # kept its pace; the guard fired and the map went from 13.8 to 393 m); a diverging VIO changes its speed (ROVER night).
-    odom_guard_attribute: bool = False
     # relocalization sessions: the references are the stored map's keyframes, so the session-span samples above never
     # occur.  The map measurements of an observation give its position in the stored map (a fix, when two references
     # agree); the distance between two fixes against the odometry chain's distance between the two frames is a guard
     # sample when it is long against the fixes' noise (sigma <= log(f) / 3 of the distance).  Metric estimators only
     # (stereo / depth): in mono the map measurements' scale follows the odometry, and on ROVER night the samples made
     # the guard rescale the wrong way.
-    odom_guard_map: bool = False
+    odom_guard_map: bool = True
     # whether a departure rescales the odometry (False: the guard only keeps the departing samples out of the long-run
     # ratio).  Off for the stereo mode's VGGT-inertial odometry (cross.pipeline.build_session): that odometry is metric
     # from the stereo pair and the IMU and tested against the IMU, while the back end's feed-forward passes are the same
@@ -814,6 +807,9 @@ class FeedForwardConfig:
     # metric scale of a pass: "anchors" (stereo / odometry anchors), "head" (scale head of a vggt_ft checkpoint) or
     # "head_fallback" (the head only when no anchor is valid, e.g. monocular passes without odometry)
     scale_source: str = "anchors"
+    # focal of a canonical-camera scale head (vggt_ft DenseScaleHead with canonical_hfov): "calibrated" (the camera's
+    # intrinsics, set by the system) or "predicted" (the model's own FoV). Heads without a canonical camera ignore it.
+    scale_focal: str = "calibrated"
     max_rel_distance: float = 40.0       # reject relative poses further than this (m)
     kf_conf_threshold_new_kf: float = 0.35  # covis below this -> current view is novel -> permanent keyframe
     scale_std_inflation: bool = True     # inflate translation std by |t| * relative scale std
@@ -927,6 +923,23 @@ class GeoConfig:
                                               # acts with retrieval.locality.enabled)
     proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
     fix_max_age_s: float = 3.0                # a fix gates proposals / retrieval for this long (odometry carries it)
+    # relocalization in a geo-anchored map: with a trusted fix (used by the gate, at most fix_max_age_s old) the stored
+    # keyframes within sqrt(chi2_2(confidence)) x sigma + focus_margin_m of it (horizontal; sigma = the fix's, the
+    # anchor's and the odometry since the fix) take the map retrieval budget, ranked by appearance; focus_global_slots
+    # of it stay with the global ranking as a safety net for a wrong fix.  Acts only with GNSS input and a geo-anchored
+    # map.  NCLT relocalization in the GNSS-anchored 2012-01-08 map (outputs/2026-10-08_gps_retrieval): 60 vs 56 of 75
+    # trials within 5 m (2012-11-17 22 vs 20, 2013-02-23 21 vs 18, 2012-08-04 17 vs 18; null rerun spread up to 2)
+    retrieval_focus: bool = True
+    focus_margin_m: float = 5.0
+    focus_global_slots: int = 2
+    # hold-off of a session's first fix epoch (the receiver was running before the session started, so its first fixes
+    # are not a reacquisition; later epochs, after a gap, keep holdoff_s); None: holdoff_s
+    session_holdoff_s: Optional[float] = None
+    # integrity of a localized session: a run of integrity_fixes fixes that agree with the robot's own track (relative
+    # test) but contradict hypothesis 0's position in the map (chi-square at `confidence`) withholds the pose (the
+    # session reports no pose in the map) until fixes agree with it again
+    integrity: bool = False
+    integrity_fixes: int = 3
     compass_gate: bool = True                 # references whose heading contradicts the compass are dropped (needs the
                                               # compass offset, calibrated against the GNSS-anchored map)
     compass_sigma_deg: float = 5.0
