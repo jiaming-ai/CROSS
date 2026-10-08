@@ -63,17 +63,17 @@ class GraphedPersonDetector:
             self.static_out = det.head(feats)
         self.anchors = det.anchor_generator(image_list, list(det.backbone(self.static_in).values()))
         self.graph = graph
-        # person-only graph: the class-1 scores' top-k and their boxes, as high_confidence_postprocess computes them
+        # person-only graph: the class-1 scores' top-k, as high_confidence_postprocess computes them (the box decoding
+        # makes a CPU scalar, which cannot be captured: it runs after the replay on the top-k rows only, row-wise as in
+        # the full decoding)
         k = min(det.topk_candidates, self.anchors[0].shape[0])
-        size = image_list.image_sizes[0]
         pgraph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(pgraph):
             feats = list(det.backbone(self.static_in).values())
             out = det.head(feats)
             prob = out["cls_logits"][0].softmax(dim=-1)
-            boxes = box_ops.clip_boxes_to_image(det.box_coder.decode_single(out["bbox_regression"][0], self.anchors[0]), size)
             p_scores, p_idx = prob[:, 1].topk(k)
-            self.person_out = (p_scores, boxes[p_idx])
+            self.person_out = (p_scores, p_idx, out["bbox_regression"][0])
         self.person_graph = pgraph
 
     def persons(self, image: torch.Tensor, score: float = 0.5) -> torch.Tensor:
@@ -96,9 +96,11 @@ class GraphedPersonDetector:
             return res["boxes"][(res["labels"] == 1) & (res["scores"] >= score)]
         self.static_in.copy_(image_list.tensors)
         self.person_graph.replay()
-        p_scores, p_boxes = self.person_out
+        p_scores, p_idx, regression = self.person_out
         keep = p_scores >= max(score, 0.5)
-        scores, boxes = p_scores[keep], p_boxes[keep]
+        scores, idx = p_scores[keep], p_idx[keep]
+        boxes = box_ops.clip_boxes_to_image(det.box_coder.decode_single(regression[idx], self.anchors[0][idx]),
+                                            image_list.image_sizes[0])
         selected = box_ops.batched_nms(boxes, scores, torch.ones_like(scores, dtype=torch.int64), det.nms_thresh)
         selected = selected[:det.detections_per_img]
         out = det.transform.postprocess([{"boxes": boxes[selected]}], image_list.image_sizes, [tuple(image.shape[-2:])])

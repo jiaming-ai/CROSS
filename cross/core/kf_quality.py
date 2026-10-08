@@ -52,6 +52,7 @@ class FrameQuality:
     snr: float = float("inf")         # 90th-percentile cell gradient / the image's noise level (structure above noise)
     ms: float = 0.0
     cells: dict = field(default_factory=dict, repr=False)   # per-cell masks (numpy bool), for refinement / figures
+    pending: Optional[tuple] = field(default=None, repr=False)   # deferred stereo near field (y_left, rgb_right, W)
 
     def summary(self) -> dict:
         return {"info": round(self.info, 3), "thr": round(self.threshold, 3), "junk": bool(self.junk), "snr": round(self.snr, 2),
@@ -221,7 +222,12 @@ class KeyframeQuality:
         gw = int(getattr(cfg, "grid", 16))
         gh = max(int(round(gw * H / W)), 1)
         y_right = None
-        if depth is None and rgb_right is not None and getattr(cfg, "stereo_near", True) and self.fx and self.baseline:
+        run_person = bool(getattr(cfg, "person", True)) if person is None else (person and bool(getattr(cfg, "person", True)))
+        stereo = depth is None and rgb_right is not None and getattr(cfg, "stereo_near", True) and bool(self.fx and self.baseline)
+        # the stereo near field (SGBM, the costly cue of a frame) is needed only for the frames whose decision is used:
+        # the candidates for a permanent keyframe (complete()), or every frame when junk frames are not observed
+        lazy = stereo and bool(getattr(cfg, "lazy_stereo_near", True)) and not run_person
+        if stereo and not lazy:
             yl = self._luminance_dev(x, min(W, 256))
             yr = self._luminance_dev(rgb_right, yl.shape[1])
             y, y_right = torch.stack([yl, yr]).cpu().numpy() if yr.shape == yl.shape else (yl.cpu().numpy(), yr.cpu().numpy())
@@ -248,12 +254,11 @@ class KeyframeQuality:
         snr = float(np.quantile(g_ok, 0.9)) / max(noise, 1e-6) if g_ok.size >= 4 else 0.0
 
         cells = {"clipped": clipped, "flat": flat & ~clipped}
-        if depth is None and rgb_right is not None and getattr(cfg, "stereo_near", True):
+        if stereo and not lazy:
             depth = self._stereo_depth(y, rgb_right, W, y_right=y_right)
         near = self._near_cells(depth, gh, gw, update=True) if depth is not None else None
         if near is not None:
             cells["near"] = near
-        run_person = bool(getattr(cfg, "person", True)) if person is None else (person and bool(getattr(cfg, "person", True)))
         n_person = 0
         if run_person:
             pc, n_person = self._person_cells(x, gh, gw)
@@ -261,6 +266,8 @@ class KeyframeQuality:
                 cells["person"] = pc
         q = self._decide(cells, stage="image", has_depth=near is not None, n_person=n_person, update=True, snr=snr)
         q.person_checked = run_person
+        if lazy:
+            q.pending = (y, rgb_right, W)
         q.ms = (time.perf_counter() - t0) * 1e3
         self.stats["assessed"] += 1
         self.stats["ms_total"] += q.ms
@@ -268,7 +275,10 @@ class KeyframeQuality:
 
     @torch.inference_mode()
     def add_person(self, q: FrameQuality, rgb: torch.Tensor) -> FrameQuality:
-        """Add the person cells to a frame assessed without them (same threshold as its first assessment)."""
+        """Complete the assessment of a candidate for a permanent keyframe (same threshold as its first assessment):
+        the deferred stereo near field, then the person cells."""
+        if q is not None and q.pending is not None:
+            q = self._complete_stereo(q)
         if q is None or q.person_checked or q.junk or not getattr(self.cfg, "person", True):
             return q
         t0 = time.perf_counter()
@@ -288,6 +298,30 @@ class KeyframeQuality:
         r.ms = q.ms + (time.perf_counter() - t0) * 1e3
         self.stats["ms_total"] += r.ms - q.ms
         if r.junk:
+            self.stats["junk"] += 1
+            self.stats["by_reason"][r.reason] += 1
+        return r
+
+    def _complete_stereo(self, q: FrameQuality) -> FrameQuality:
+        """The deferred stereo near field of `assess` (SGBM on the rectified pair), with the running depth median."""
+        y, rgb_right, W = q.pending
+        q.pending = None
+        t0 = time.perf_counter()
+        gh, gw = next(iter(q.cells.values())).shape
+        depth = self._stereo_depth(y, rgb_right, W)
+        near = self._near_cells(depth, gh, gw, update=True) if depth is not None else None
+        dt = (time.perf_counter() - t0) * 1e3
+        self.stats["ms_total"] += dt
+        if near is None:
+            q.ms += dt
+            return q
+        cells = dict(q.cells)
+        cells["near"] = near
+        r = self._decide(cells, stage=q.stage, has_depth=True, n_person=q.n_person, update=False, threshold=q.threshold,
+                         snr=q.snr)
+        r.person_checked = q.person_checked
+        r.ms = q.ms + dt
+        if r.junk and not q.junk:
             self.stats["junk"] += 1
             self.stats["by_reason"][r.reason] += 1
         return r
