@@ -61,14 +61,31 @@ class FrameQuality:
 
 
 class _RunningMedian:
+    """Median of the last `n` samples that fall within the last `n` ticks (assessed frames).  When every tick pushes a
+    sample, both bounds coincide; samples pushed only on some ticks (a cue computed for keyframe candidates only) still
+    describe the same recent stretch of the session, so the median adapts as fast after a change of environment."""
+
     def __init__(self, n: int):
-        self.v = deque(maxlen=max(int(n), 1))
+        self.n = max(int(n), 1)
+        self.v = deque(maxlen=self.n)
+        self.t = deque(maxlen=self.n)
+        self.now = 0
+
+    def tick(self):
+        self.now += 1
 
     def push(self, x):
         if x is not None and np.isfinite(x):
             self.v.append(float(x))
+            self.t.append(self.now)
+
+    def _expire(self):
+        while self.t and self.t[0] <= self.now - self.n:
+            self.t.popleft()
+            self.v.popleft()
 
     def get(self, default=None):
+        self._expire()
         return float(np.median(self.v)) if self.v else default
 
     def __len__(self):
@@ -230,6 +247,8 @@ class KeyframeQuality:
             q.pending = ("deferred", rgb, depth, rgb_right)
             return q
         x = rgb[0] if rgb.dim() == 4 else rgb
+        for ref in (self.grad_ref, self.depth_ref, self.info_ref):
+            ref.tick()
         H, W = x.shape[-2:]
         gw = int(getattr(cfg, "grid", 16))
         gh = max(int(round(gw * H / W)), 1)

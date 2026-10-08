@@ -146,3 +146,19 @@ def test_deferred_assessment_completes_at_the_candidate():
     done = kq.add_person(q, blank)
     full = ref.assess(blank, person=False, _full=True)
     assert done.stage == "image" and done.junk == full.junk and abs(done.info - full.info) < 1e-12
+
+
+def test_running_median_window_is_bounded_in_time():
+    """Samples pushed only on some ticks expire after the same number of ticks as samples pushed on every tick."""
+    from cross.core.kf_quality import _RunningMedian
+    every, sparse = _RunningMedian(10), _RunningMedian(10)
+    for i in range(30):
+        every.tick(); sparse.tick()
+        every.push(1.0 if i < 20 else 5.0)
+        if i % 4 == 0:
+            sparse.push(1.0 if i < 20 else 5.0)
+    assert every.get() == 5.0 and sparse.get() == 5.0          # both forget the old environment within 10 ticks
+    full = _RunningMedian(3)
+    for x in (1.0, 2.0, 3.0, 4.0):
+        full.tick(); full.push(x)
+    assert full.get() == 3.0                                    # one sample per tick: the last-n-samples median
