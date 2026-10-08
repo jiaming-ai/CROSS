@@ -323,6 +323,11 @@ class System:
                 logger.info(f"Tracking odometry std from the noise model: {nz.odom_k_t:.4f} per m, {nz.odom_k_r:.4f} per rad, "
                             f"floors {nz.odom_floor_t:.4f} m / {nz.odom_floor_r:.4f} rad per step")
         self._last_pgo_step = -10**9
+        # verified loop closure optimised in a forked process while the front end goes on (cross/core/async_pgo.py)
+        self._apgo = None
+        if lc_cfg.async_pgo and self._lc_verifier is not None:
+            from cross.core.async_pgo import AsyncPgo
+            self._apgo = AsyncPgo(self, lag_steps=lc_cfg.async_pgo_lag_steps, min_job_s=lc_cfg.async_pgo_min_s)
         # Initialize async loop-closure engine (latest-wins), if enabled
         self._pgo_apply_queue: 'queue.Queue' = queue.Queue(maxsize=lc_cfg.queue_size)
         self._lc_engine = None
@@ -423,6 +428,8 @@ class System:
             self._gc_frozen = False
         if self.visualize:
             time.sleep(1)  # grace period for the visualizer to finish
+        if getattr(self, "_apgo", None) is not None:
+            self._cancel_async_pgo()
         # Stop LC engine first
         if hasattr(self, "_lc_engine") and self._lc_engine is not None:
             try:
@@ -659,6 +666,7 @@ class System:
         Tracking state (GMM dist, metadata) is NOT saved.
         A new session will re-initialize tracking state on the first step.
         """
+        self._drain_async_pgo()
         # never persist a map whose belief lives in a non-zero component (only hypothesis 0 is saved)
         self.hypothesis_manager.maybe_adopt_dominant_hypothesis(force=True)
 
@@ -880,6 +888,7 @@ class System:
         later collections do not rescan the map (a full pass over a 10^6-keyframe map takes seconds); shutdown()
         unfreezes them."""
         import gc
+        self._cancel_async_pgo()
         enabled = gc.isenabled()
         gc.disable()
         try:
@@ -1277,6 +1286,9 @@ class System:
         if getattr(self, "_lc_verifier", None) is not None:
             self.last_step_diagnostics["verifier_stats"] = {k: (float(v) if isinstance(v, float) else v)
                                                             for k, v in self._lc_verifier.stats.items()}
+        if self._apgo is not None:
+            self.last_step_diagnostics["async_pgo"] = {k: (round(v, 4) if isinstance(v, float) else v)
+                                                       for k, v in self._apgo.stats.items()} | {"in_flight": self._apgo.busy}
         # if no proposal, continue with motion-only update
         if len(ret["valid_keyframes"]) == 0:
             self.hypothesis_manager.reference_support.observe(self._processed_frame_num, {})
@@ -1383,6 +1395,7 @@ class System:
                 ret["loop_closure_submitted"] = True
             else:
                 # Fallback to synchronous handling
+                self._drain_async_pgo()
                 pgo_info = self.hypothesis_manager.handle_loop_closure(
                     lc_result["loop_closure_hypo_id"]
                 )
@@ -1395,6 +1408,7 @@ class System:
 
         # Apply any pending PGO results from the async engine and optionally force smoothing
         applied = self._apply_pending_pgo_results(ret)
+        applied = self._poll_async_pgo(ret) or applied
         # Periodic local smoothing
         self._maybe_local_smoothing(force=applied)
         # a realized hypothesis that has taken over the belief for long without a loop closure becomes hypothesis 0
@@ -1599,12 +1613,24 @@ class System:
         If any of them is inconsistent with the poses the graph currently holds (residual beyond the calibrated
         noise), the graph is optimised with the calibrated noise model; new edges that remain outliers afterwards are
         quarantined and the graph is re-optimised.  Returns True when an optimisation was run."""
+        trig = self._verified_lc_trigger(ret, new_kf, edge_mapping)
+        if trig is None:
+            return False
+        new_keys, window_ref = trig
+        if self._apgo is not None and self._apgo.usable():
+            return self._submit_async_pgo(ret, new_keys, window_ref)
+        self._drain_async_pgo()
+        return self._verified_lc_optimise(ret, new_keys, window_ref)
+
+    def _verified_lc_trigger(self, ret: dict, new_kf, edge_mapping: dict):
+        """Does a hypothesis-0 edge added in this step call for an optimisation?  Returns (new keys, oldest keyframe
+        of the loop edges) or None.  (Marks the corroborated loop candidates informative.)"""
         v = self._lc_verifier
         if v is None or new_kf is None or ret is None or not self.use_odometry:
-            return False
+            return None
         hm = self.hypothesis_manager
         if getattr(hm, "no_pgo_for_lc", False):
-            return False
+            return None
         new_keys, significant = [], False
         loop_flags = ret.get("h0_loop")
         lc_cfg = self.config.mapping.loop_closure
@@ -1638,7 +1664,14 @@ class System:
             if c2 is not None and c2 > v.thr:
                 significant = True
         if not significant:
-            return False
+            return None
+        return new_keys, min(a for (a, b) in new_keys)      # oldest keyframe of this step's loop edges (windowed PGO option)
+
+    def _verified_lc_optimise(self, ret: dict, new_keys: list, window_ref: int) -> bool:
+        """Optimise hypothesis 0 for the new loop edges: solve, posterior test of the new edges, quarantine the outliers
+        and re-solve.  Returns True when an optimisation was run."""
+        v = self._lc_verifier
+        hm = self.hypothesis_manager
         step = self._processed_frame_num
         t_pgo = time.perf_counter()
         # test-before-apply: the candidate solution is only written back when its new edges pass the posterior test;
@@ -1646,7 +1679,6 @@ class System:
         # a solution already distorted by a wrong loop edge left the map in a bad minimum: jumps of 5-11 m on long surveys)
         defer = bool(self.config.mapping.loop_closure.test_before_apply) and self.config.mapping.loop_closure.use_posterior \
             and getattr(self.config.mapping.loop_closure, "posterior_action", "remove") == "remove"
-        window_ref = min(a for (a, b) in new_keys)      # oldest keyframe of this step's loop edges (windowed PGO option)
         pgo_info = hm.handle_loop_closure(0, apply=not defer, window_ref=window_ref)
         if not pgo_info.get("success"):
             logger.warning(pgo_info.get("message", "verified loop-closure PGO failed without message"))
@@ -1683,6 +1715,175 @@ class System:
         ret["loop_closure_pgo"] = pgo_info
         ret["verified_loop_closure"] = True
         return True
+
+    # ---------------------------------------------------------------- background optimisation (cross/core/async_pgo.py)
+    def _submit_async_pgo(self, ret: dict, new_keys: list, window_ref: int) -> bool:
+        """A loop edge calls for an optimisation: fork it into the background (one at a time; a trigger that arrives
+        while a job is in flight is remembered and re-checked once the job has been applied).  With
+        async_pgo_lag_steps = 0 the result is applied before this call returns (the synchronous behaviour)."""
+        ap = self._apgo
+        step = self._processed_frame_num
+        if ap.busy:
+            ap.note_pending(new_keys)
+            return True
+        if not ap.worth_it():                 # a short optimisation: cheaper in the front end than a fork
+            t0 = time.perf_counter()
+            done = self._verified_lc_optimise(ret, new_keys, window_ref)
+            ap.observe(time.perf_counter() - t0)
+            return done
+        ap.submit(new_keys, window_ref, step)
+        self._last_pgo_step = step
+        if ap.lag == 0:
+            self._poll_async_pgo(ret)
+        return True
+
+    def _poll_async_pgo(self, ret: dict = None) -> bool:
+        """Apply the background optimisation when it is due (finished, or by async_pgo_lag_steps); then re-check the
+        triggers that arrived meanwhile.  Returns True when poses were applied."""
+        ap = self._apgo
+        if ap is None or not ap.busy or not ap.due(self._processed_frame_num):
+            return False
+        res, meta = ap.collect(self._processed_frame_num)
+        applied = self._apply_async_pgo(res, meta, ret)
+        self._resubmit_pending_pgo()
+        return applied
+
+    def _drain_async_pgo(self, apply: bool = True) -> None:
+        """Before anything that reads or rewrites the whole graph (a merge, the final optimisation, a save): wait for the
+        background optimisation and apply it; remembered triggers are dropped (the caller optimises everything)."""
+        ap = self._apgo
+        if ap is None:
+            return
+        if ap.busy:
+            res, meta = ap.collect(self._processed_frame_num)
+            if apply:
+                self._apply_async_pgo(res, meta, None)
+        ap.pending.clear()
+
+    def _cancel_async_pgo(self) -> None:
+        if self._apgo is not None:
+            self._apgo.cancel(requeue=False)
+            self._apgo.pending.clear()
+
+    def _apply_async_pgo(self, res: dict, meta: dict, ret: dict = None) -> bool:
+        ap, hm, v = self._apgo, self.hypothesis_manager, self._lc_verifier
+        step = self._processed_frame_num
+        if res is None:
+            return False
+        if hm.graph_epoch != meta["graph_epoch"]:
+            ap.stats["discarded"] += 1
+            ap.note_pending(meta["keys"])
+            logger.info(f"Background loop closure of step {meta['step']} discarded at step {step}: the graph was restructured meanwhile")
+            return False
+        if not res.get("success"):
+            logger.warning(res.get("message") or "background pose-graph optimisation failed without message")
+            if meta["kind"] == "geo":                       # as the synchronous path: forget this round's factors
+                self._geo.pending = []
+                self._geo.last_opt_kf = meta["n_kf"]
+            return False
+        t0 = time.perf_counter()
+        if meta["kind"] == "geo":
+            return self._apply_async_geo(res, meta, ret, t0)
+        h0 = hm.hypotheses[0]
+        for k, val in res["stats"].items():
+            v.stats[k] = v.stats.get(k, 0) + val
+        # pgo_time is the time the front end spent on optimisations (blocking); the worker's compute time is apart
+        v.stats["pgo_worker_time"] = v.stats.get("pgo_worker_time", 0.0) + res["t_compute"]
+        # edges the posterior test quarantined (factor objects of this process, found by position and checked by value)
+        found = []
+        for (a, b, idx, mean, c2) in res["outliers"]:
+            bucket = h0.visual_edges.get((a, b)) or []
+            f = bucket[idx] if idx is not None and idx < len(bucket) and np.array_equal(bucket[idx].mean_np, mean) else \
+                next((g for g in bucket if np.array_equal(g.mean_np, mean)), None)
+            if f is not None:
+                found.append((a, b, f, c2))
+        for (a, b, f, c2) in found:
+            v.remove_edge(a, b, f)
+        info, n_tail = self._apply_async_poses(res, meta)
+        ap.stats["applied"] += 1
+        ap.stats["apply_s"] += time.perf_counter() - t0
+        ap.stats["compute_s"] += res["t_compute"]
+        ap.observe(res["t_compute"], meta["fork_s"] + meta.get("wait_s", 0.0) + time.perf_counter() - t0)
+        v.stats["pgo_time"] = v.stats.get("pgo_time", 0.0) + meta["fork_s"] + meta.get("wait_s", 0.0) + (time.perf_counter() - t0)
+        f1 = dict(res["first"])
+        f1.update(res.get("second", {}))               # the solution that was applied
+        logger.info(f"Verified loop closure at step {meta['step']} (background, applied at step {step}): {len(meta['keys'])} new "
+                    f"hypothesis-0 edges (oldest kf {meta['window_ref']}, window from {f1['window']}), {len(found)} rejected after the "
+                    f"optimisation, PGO cost {f1['cost']} (initial {f1['initial']}, {f1['lm']} LM iterations; {res['t_compute']:.2f} s in the "
+                    f"worker, fork {meta['fork_s']:.3f} s, apply {time.perf_counter() - t0:.3f} s, {f1['vertices']} vertices, "
+                    f"factors {f1['factors']}); {n_tail} keyframes added meanwhile moved with it")
+        if ret is not None:
+            ret["loop_closure_pgo"] = info
+            ret["verified_loop_closure"] = True
+        return bool(res["applied"])
+
+    def _apply_async_poses(self, res: dict, meta: dict):
+        """Write a background result's poses into the graph.  Applied in the step it was submitted in and with nothing
+        else having moved keyframes: exactly the synchronous write-back; otherwise transported to the present state
+        (HypothesisManager.apply_stale_pgo_result).  Returns (info, number of keyframes added meanwhile that moved)."""
+        ap, hm = self._apgo, self.hypothesis_manager
+        step = self._processed_frame_num
+        info = {"success": True, "cost": res["first"]["cost"], "window": res["first"]["window"], "other_hypothesis_id": 0,
+                "pose_graph": None, "optimized_poses": {}}
+        n_tail = 0
+        if res["applied"]:
+            fresh = step == meta["step"] and hm.pose_epoch == meta["pose_epoch"]
+            if fresh:
+                poses = {int(i): pp.SE3(torch.from_numpy(res["opt"][k].copy())) for k, i in enumerate(res["ids"])}
+                info = hm.apply_pgo_result({"success": True, "pose_graph": None, "optimized_poses": poses, "other_hypothesis_id": 0})
+                info["window"] = res["first"]["window"]
+            else:
+                r = hm.apply_stale_pgo_result(res["ids"], res["opt"], res["fork"], res["max_id"],
+                                              fresh_poses=hm.pose_epoch == meta["pose_epoch"])
+                n_tail = r["n_tail"]
+                info.update(r)
+                ap.stats["stale_steps"] += step - meta["step"]
+        return info, n_tail
+
+    def _apply_async_geo(self, res: dict, meta: dict, ret: dict, t0: float) -> bool:
+        """The GNSS-triggered optimisation (see _geo_maybe_optimize) applied: poses, then the posterior statistics of the
+        GNSS factors it used (those that arrived while it ran stay pending for the next one)."""
+        ap, hm, geo = self._apgo, self.hypothesis_manager, self._geo
+        step = self._processed_frame_num
+        info, n_tail = self._apply_async_poses(res, meta)
+        taken = set(meta["pending"])
+        later = [k for k in geo.pending if k not in taken]
+        geo.after_optimize(hm.nodes, meta["n_kf"])
+        geo.pending = later
+        self.note_anchor("gnss")
+        ap.stats["applied"] += 1
+        ap.stats["apply_s"] += time.perf_counter() - t0
+        ap.stats["compute_s"] += res["t_compute"]
+        ap.observe(res["t_compute"], meta["fork_s"] + meta.get("wait_s", 0.0) + time.perf_counter() - t0)
+        if self._lc_verifier is not None:
+            self._lc_verifier.stats["pgo_time"] = self._lc_verifier.stats.get("pgo_time", 0.0) + meta["fork_s"] \
+                + meta.get("wait_s", 0.0) + (time.perf_counter() - t0)
+        f1 = res["first"]
+        logger.info(f"geo: GNSS-triggered optimisation (background, started at step {meta['step']}, applied at step {step}; "
+                    f"{f1.get('unary', 0)} GNSS factors, {f1['vertices']} vertices, window {f1['window']}, {res['t_compute']:.2f} s in the "
+                    f"worker, fork {meta['fork_s']:.3f} s, apply {time.perf_counter() - t0:.3f} s; {n_tail} keyframes added meanwhile moved with it; "
+                    f"noise scale {geo.noise.scale:.2f}, factor interval {geo.err.tau:.0f} s)")
+        if ret is not None:
+            ret["geo_pgo"] = True
+        return bool(res["applied"])
+
+    def _resubmit_pending_pgo(self) -> None:
+        """Triggers that arrived while the job was in flight: optimise again when one of their edges is still
+        inconsistent with the corrected poses."""
+        ap, hm, v = self._apgo, self.hypothesis_manager, self._lc_verifier
+        if not ap.pending or ap.busy or not ap.usable():
+            return
+        h0 = hm.hypotheses[0]
+        keys = [k for k in ap.pending if h0.visual_edges.get(k) and k[0] in hm.nodes and k[1] in hm.nodes]
+        ap.pending.clear()
+        if not keys:
+            return
+        for (a, b) in keys:
+            c2 = v.graph_residual_chi2(a, b, h0.visual_edges[(a, b)][-1])
+            if c2 is not None and c2 > v.thr:
+                ap.stats["resubmitted"] += 1
+                ap.submit(keys, min(a for (a, b) in keys), self._processed_frame_num)
+                return
 
     def _corroborate_loop(self, ref_id: int, new_kf, factor) -> bool:
         """True when the loop edge ref_id -> new_kf is corroborated by a pending loop edge from another reference whose
@@ -1789,6 +1990,7 @@ class System:
                     f"{min(e[4] for e in self._intra_lc_events)}) in the last {cfg.intra_window_steps} steps, "
                     f"max residual {max_t:.2f} m / {max_r:.1f} deg ({max_sig:.1f} sigma) -> PGO of hypothesis 0")
         self._last_intra_pgo_step = step
+        self._drain_async_pgo()
         self._intra_lc_events.clear()
         pgo_info = hm.handle_loop_closure(0)
         if pgo_info.get("success"):
@@ -2141,7 +2343,17 @@ class System:
             return
         if getattr(hm, "no_pgo_for_lc", False) or 0 not in hm.hypotheses:
             return
+        ap = self._apgo
+        use_ap = ap is not None and ap.usable()
+        if use_ap and (ap.busy or ap.worth_it()):
+            if not ap.busy:         # one background job at a time; the trigger stays true and fires again when it is free
+                ap.submit([], geo.window_ref_kf, self._processed_frame_num, kind="geo", n_kf=n_kf, pending=list(geo.pending))
+                if ap.lag == 0:
+                    self._poll_async_pgo(ret)
+            return
         t0 = time.perf_counter()
+        if not use_ap:
+            self._drain_async_pgo()
         # windowed when the map is large (mapping.loop_closure.pgo_window_min_nodes): free from the last keyframe the
         # previous GNSS optimisation constrained on (the first one optimises the whole session)
         info = hm.handle_loop_closure(0, window_ref=geo.window_ref_kf)
@@ -2153,6 +2365,8 @@ class System:
                         f"{len(getattr(pg, 'vertices', []))} vertices, window {info.get('window')}, {time.perf_counter() - t0:.2f} s, "
                         f"noise scale {geo.noise.scale:.2f}, factor interval {geo.err.tau:.0f} s)")
             ret["geo_pgo"] = True
+            if use_ap:
+                ap.observe(time.perf_counter() - t0)
         else:
             geo.pending = []
             geo.last_opt_kf = n_kf

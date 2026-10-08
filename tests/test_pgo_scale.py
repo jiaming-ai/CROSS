@@ -29,7 +29,7 @@ def make_manager(n=240, loops=((10, 200), (40, 230), (120, 160)), window_min_nod
     cfg.mapping.loop_closure.pgo_window_min_nodes = window_min_nodes
     verifier = types.SimpleNamespace(noise=NoiseModel(NoiseModelConfig()))
     sys_ = types.SimpleNamespace(_lc_verifier=verifier, topo_map=None, _session_start_kf_id=0, last_added_kf_id=None,
-                                 config=cfg)
+                                 config=cfg, state_device="cpu")
     hm = HypothesisManager(sys_, n_components=3, config=HypothesisConfig())
     sys_.hypothesis_manager = hm
     gt = [gtsam.Pose3()]

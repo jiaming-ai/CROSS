@@ -231,6 +231,17 @@ class NoiseModelConfig:
 class LoopClosureConfig:
     async_: bool = False
     queue_size: int = 1
+    # the optimisation of a verified loop closure runs in a forked process while the front end keeps processing frames
+    # (cross/core/async_pgo.py); its result is applied when it arrives, to the state of that moment.  Needs the state on
+    # the CPU (state_device); otherwise, and for chart-aware graphs, the optimisation stays synchronous.
+    async_pgo: bool = False
+    # -1: apply as soon as the worker has finished (depends on the machine's speed); k >= 0: apply exactly k steps after
+    # the submission, waiting when the worker is not done: reproducible runs (0 = at once: the synchronous behaviour)
+    async_pgo_lag_steps: int = -1
+    # free-running mode: optimisations expected to take less than this (and than twice the front end's cost of a background
+    # job: fork, collecting, applying) run in the front end as before; a map that small stays bit-identical to the
+    # synchronous path.  The expectation is the running mean of the optimisation times so far.  Not used with a lag >= 0.
+    async_pgo_min_s: float = 0.1
     # "verified": consistency-tested loop closure of hypothesis 0 (cross/core/lc_verify.py) with calibrated noise in
     #             the pose-graph optimisation; one decision parameter (`confidence`, chi-square level, 6 dof).
     # "heuristic": the intra-hypothesis PGO of 2026-09-08 (intra_* parameters below) with the system's own stds.

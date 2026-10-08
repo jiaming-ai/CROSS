@@ -17,6 +17,7 @@ from cross.utils.lie_tensor import project_SE3, normalize_se3
 from cross.utils.lie_tensor import project_SE3, normalize_SE3
 from cross.core.pgo import (
     PoseGraph,
+    as_se3,
 )
 from cross.core.config import HypothesisConfig
 @dataclass
@@ -174,6 +175,9 @@ class HypothesisManager:
         self.graph_lock = threading.RLock()
         # incremented whenever keyframe poses of hypothesis 0 move (PGO, merges): position indexes rebuild on change
         self.pose_epoch = 0
+        # incremented whenever the structure of hypothesis 0 is replaced (a merge, a promoted hypothesis): a background
+        # optimisation (cross.core.async_pgo) computed on an earlier structure is discarded
+        self.graph_epoch = 0
 
         # ========== Component Lifecycle Metadata ==========
         self.n_components = n_components
@@ -1991,20 +1995,7 @@ class HypothesisManager:
                 optimized_poses = {i: p for i, p in optimized_poses.items() if i in pg.source_node_poses}
                 affected_ids = set(optimized_poses)
                 affected_ids |= self._transport_merged_charts(pg, optimized_poses)
-            step = int(self.step_counter)
-            # plain tensor assignment (same values; pypose's dispatch costs ~90 us per keyframe)
-            with torch._C.DisableTorchFunctionSubclass():
-                for node_id, optimized_pose in optimized_poses.items():
-                    if node_id in self.nodes:
-                        kf = self.nodes[node_id]
-                        kf.pose_mu[0] = optimized_pose
-                        if self.chart_aware:
-                            kf.pose_charts[0] = pg.output_chart
-                        # The keyframe's std is left as it is: the optimisation does not compute marginals, and halving
-                        # it at every optimisation (the previous behaviour) underflowed to exactly zero after ~100
-                        # optimisations (HSSD house: 1037 of 1045 keyframes at std 0), after which the belief fusion
-                        # produced garbage poses that no later optimisation could repair
-                        kf.last_pgo_step = step
+            self._write_poses(optimized_poses, pg.output_chart if self.chart_aware else None)
 
             if other_hypo != 0 and other_hypo in self.hypotheses:
                 self.merge_hypotheses(other_hypo)
@@ -2033,6 +2024,77 @@ class HypothesisManager:
         if pg is not None:
             ret["cost"] = pg.optimization_cost
         return ret
+
+    def _write_poses(self, optimized_poses: Dict[int, pp.LieTensor], output_chart=None) -> None:
+        """Write optimised hypothesis-0 poses into the keyframes (those still in the graph)."""
+        step = int(self.step_counter)
+        # plain tensor assignment (same values; pypose's dispatch costs ~90 us per keyframe)
+        with torch._C.DisableTorchFunctionSubclass():
+            for node_id, optimized_pose in optimized_poses.items():
+                if node_id in self.nodes:
+                    kf = self.nodes[node_id]
+                    kf.pose_mu[0] = optimized_pose
+                    if self.chart_aware:
+                        kf.pose_charts[0] = output_chart
+                    # The keyframe's std is left as it is: the optimisation does not compute marginals, and halving
+                    # it at every optimisation (the previous behaviour) underflowed to exactly zero after ~100
+                    # optimisations (HSSD house: 1037 of 1045 keyframes at std 0), after which the belief fusion
+                    # produced garbage poses that no later optimisation could repair
+                    kf.last_pgo_step = step
+
+    def apply_stale_pgo_result(self, ids, opt, fork, max_id: int, fresh_poses: bool) -> Dict[str, Any]:
+        """Apply an optimisation of hypothesis 0 that was computed on the state at an earlier step (a background job,
+        cross.core.async_pgo) to the present state.
+
+        ids / opt / fork: the optimised keyframes, their optimised poses and their poses at the fork ((n, 7) float32).
+        max_id: the latest keyframe at the fork.  fresh_poses: no other optimisation moved any keyframe since the fork.
+        - A keyframe still at its fork pose takes the optimised pose; one that moved meanwhile gets the correction
+          `opt fork^-1` left-multiplied to its present pose.
+        - Keyframes added after the fork (id > max_id) and the tracked pose take the correction of keyframe max_id
+          (they hang off it through the odometry chain): the tail moves rigidly with it.
+        Returns {"success", "n_tail", "affected", "correction_t"}."""
+        self.pose_epoch += 1
+        step = int(self.step_counter)
+        ids = [int(i) for i in ids]
+        opt = np.asarray(opt, dtype=np.float32)
+        fork = np.asarray(fork, dtype=np.float32)
+        corr = pp.SE3(torch.from_numpy(opt.astype(np.float64))) @ pp.SE3(torch.from_numpy(fork.astype(np.float64))).Inv()
+
+        def row64(kf):
+            return torch.from_numpy(kf.plain_row("pose_mu", 0).detach().cpu().numpy().astype(np.float64))
+
+        with self.graph_lock:
+            affected = set()
+            with torch._C.DisableTorchFunctionSubclass():
+                for i, nid in enumerate(ids):
+                    kf = self.nodes.get(nid)
+                    if kf is None:
+                        continue
+                    if not fresh_poses and not np.array_equal(kf.plain_row("pose_mu", 0).detach().cpu().numpy(), fork[i]):
+                        new = as_se3((corr[i] @ pp.SE3(row64(kf))).tensor().to(torch.float32).clone())
+                    else:
+                        new = as_se3(torch.from_numpy(opt[i]).clone())
+                    kf.pose_mu[0] = new
+                    kf.last_pgo_step = int(self.step_counter)
+                    affected.add(nid)
+            C = corr[ids.index(max_id)] if max_id in ids else None
+            n_tail = 0
+            if C is not None:
+                with torch._C.DisableTorchFunctionSubclass():
+                    for nid in reversed(self.nodes):
+                        if nid <= max_id:
+                            break
+                        kf = self.nodes[nid]
+                        kf.pose_mu[0] = as_se3((C @ pp.SE3(row64(kf))).tensor().to(torch.float32).clone())
+                        affected.add(nid)
+                        n_tail += 1
+                if self.dist is not None:
+                    d0 = self.dist[0]
+                    d0[0] = (C.to(d0.device).to(d0.dtype) @ d0[0])
+            if affected and self.system.topo_map is not None:
+                self.system.topo_map.update_after_pgo(affected)
+        return {"success": True, "n_tail": n_tail, "affected": len(affected),
+                "correction_t": float(C.tensor()[:3].norm()) if C is not None else 0.0}
 
     def _transport_merged_charts(self, pg, optimized_poses):
         """Transport unsolved poses as well as solved nodes after commitment.
@@ -2095,6 +2157,7 @@ class HypothesisManager:
         Merges the hypothesis after loop closure
         """
         self.pose_epoch += 1
+        self.graph_epoch += 1
         self._reset_session_anchor()
         if self.source_states is not None and not conditional_transport_done:
             raise NotImplementedError("Conditional pose/source graph transport is required before merging hypotheses")
@@ -2146,6 +2209,7 @@ class HypothesisManager:
         visual edges and its mixture component replace those of hypothesis 0, and the slot is freed.
         """
         self.pose_epoch += 1
+        self.graph_epoch += 1
         if self.source_states is not None:
             raise NotImplementedError("Conditional pose/source graph transport is required before promoting a hypothesis")
         logger.debug(f"Changing hypothesis {comp_idx} to first component")
