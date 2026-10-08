@@ -678,7 +678,6 @@ class KeyframeQualityConfig:
     # SGBM only for the candidates of a permanent keyframe (the only frames whose decision is used, unless
     # skip_observation); the running scene-depth median is then taken over those frames
     lazy_stereo_near: bool = True
-    stereo_near_width: int = 256    # SGBM image width (px) for the stereo near field
     # 1: the full cues on every observed frame.  k > 1: on every k-th observed frame (the session's running medians)
     # and on the candidates for a permanent keyframe; the decisions then use medians over that subsample
     assess_every: int = 1
