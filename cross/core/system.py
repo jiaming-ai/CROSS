@@ -1235,25 +1235,12 @@ class System:
             return
 
         # keyframe quality (mapping.keyframe_quality): a junk view (close occluder, clipped, textureless) is never
-        # stored as a permanent keyframe; with skip_observation it is not observed either (as a skipped observation)
+        # stored as a permanent keyframe.  The cheap image cues run here; the person detector and the stereo near field
+        # only for the frames that are about to become permanent keyframes (_add_new_kf)
         self._frame_quality = None
         if self._kf_quality is not None:
-            # the person detector (the costly cue) runs here only when a junk frame must not be observed; otherwise
-            # only for the frames that are about to become permanent keyframes (_add_new_kf)
-            self._frame_quality = self._kf_quality.assess(rgb_image, depth_image, rgb_right=rgb_right,
-                                                          person=self.config.mapping.keyframe_quality.skip_observation)
+            self._frame_quality = self._kf_quality.assess(rgb_image, depth_image, rgb_right=rgb_right, person=False)
             self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
-            if self._frame_quality.junk and self.config.mapping.keyframe_quality.skip_observation:
-                self._kf_quality.stats["skipped_observation"] += 1
-                current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
-                ret.update(current_mu=current_mu, current_sigma=current_sigma, current_weights=current_weights,
-                           hypotheses=self.hypothesis_manager.hypotheses, observation_skipped=True, valid_keyframes=[])
-                self.last_step_diagnostics["observation_skipped_junk"] = True
-                if self.visualize:
-                    self.visualizer.visualize_tracking_step(
-                        kf=None, state_info=ret, gt_info=kwargs.get("data"), step_idx=self._processed_frame_num,
-                    )
-                return
 
         # temporal anchor for the feed-forward estimator: previous observed frame + odometry
         odom_anchor = None
@@ -1275,11 +1262,6 @@ class System:
         # update the observation likelihood
         ################################
         ret.update(self._construct_observation_dist(rgb_image, depth_image, rgb_right=rgb_right, odom_anchor=odom_anchor))
-        if (self._frame_quality is not None and self.config.mapping.keyframe_quality.pass_depth
-                and getattr(self.pose_est, "last_curr_depth", None) is not None):
-            d_model, metric = self.pose_est.last_curr_depth
-            self._frame_quality = self._kf_quality.refine(self._frame_quality, d_model.float() * metric)
-            self.last_step_diagnostics["frame_quality"] = self._frame_quality.summary()
         self.last_step_diagnostics["verified_keyframes"] = len(ret["valid_keyframes"])
         self.last_step_diagnostics["retrieval_audit"] = ret["retrieval_audit"]
         self.last_step_diagnostics["loaded_node_count"] = len(self.loaded_node_ids)
@@ -2135,6 +2117,8 @@ class System:
         t = float(gnss.get("t", timestamp)) if gnss is not None else float(timestamp)
         dec = geo.observe(t, gnss, compass, T, in_map, belief_std_t=std_t, last_kf_id=self.last_added_kf_id,
                           nodes=self.hypothesis_manager.nodes)
+        if dec is not None:
+            self.last_step_diagnostics["gnss_reason"] = dec.reason
         if self.config.geo.retrieval_gate:
             # the fix in the map frame (through the anchor) as a location prior of this step's retrieval
             # (retrieval.locality: the keyframes near it get the locality slots)
@@ -2170,6 +2154,40 @@ class System:
         else:
             geo.pending = []
             geo.last_opt_kf = n_kf
+
+    def _geo_focus(self, rgb_image, ranked, n_map):
+        """geo.retrieval_focus: with a trusted fix in a geo-anchored map, the stored keyframes near the fix (horizontal
+        distance, GeoManager.focus_region) take the map budget except geo.focus_global_slots, which keep the best of the
+        global appearance ranking `ranked` [(score, kf)]."""
+        geo = getattr(self, "_geo", None)
+        gc = self.config.geo
+        if geo is None or not getattr(gc, "retrieval_focus", False) or self._session_start_kf_id <= 0:
+            return ranked
+        reg = geo.focus_region()
+        if reg is None:
+            return ranked
+        center, r_h, up = reg
+        r3 = math.sqrt(r_h ** 2 + max(r_h, 10.0) ** 2)          # the fix's height is poor: search a tall cylinder
+        rows = self.db.rows_near(center[None], np.array([r3]), epoch=self.hypothesis_manager.pose_epoch)
+        if not len(rows):
+            self.last_step_diagnostics["geo_focus"] = {"radius": round(float(r_h), 1), "candidates": 0}
+            return ranked
+        near = self.db.query(rgb_image, rows=rows, max_kf_id=self._session_start_kf_id, top_k=len(rows),
+                             score_threshold=self.config.retrieval.map_score_threshold)
+        take = []
+        for sc, kf in zip(near["scores"], near["keyframes"]):
+            d = kf.pose_mu[0].tensor().detach().cpu().double().numpy()[:3] - center
+            if float(np.linalg.norm(d - (d @ up) * up)) <= r_h:
+                take.append((sc, kf))
+        self.last_step_diagnostics["geo_focus"] = {"radius": round(float(r_h), 1), "candidates": len(take)}
+        if not take:
+            return ranked
+        geo.stats["focus"] += 1
+        n_focus = max(int(n_map) - max(int(gc.focus_global_slots), 0), 0)
+        ids = {kf.id for _, kf in take[:n_focus]}
+        rest = [(sc, kf) for sc, kf in ranked if kf.id not in ids]
+        g = max(int(n_map) - len(take[:n_focus]), 0)
+        return take[:n_focus] + rest[:g] + rest[g:]
 
     def _geo_reference_mask(self, valid_keyframes, valid_poses, loop_flags=None):
         """Relocalization references (stored-map keyframes) and loop-closure candidates of a mapping session whose
@@ -2597,6 +2615,7 @@ class System:
                     n_map = max(self.db.top_k - len(own), 0)
                     map_list = self._locality_merge(rgb_image, list(zip(map_res["scores"], map_res["keyframes"])),
                                                     max_kf_id=self._session_start_kf_id)
+                    map_list = self._geo_focus(rgb_image, map_list, n_map)
                     guided = self._pose_guided_map_keyframes(rgb_image)
                     if guided:
                         ids = {kf.id for _, kf in guided}

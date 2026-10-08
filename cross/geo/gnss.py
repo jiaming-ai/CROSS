@@ -19,8 +19,9 @@ A fix is used only when three tests agree, each at the chi-square level of the v
    attributed to the robot's drift (multipath offsets change with the geometry as the robot moves), and accepted.
 
 No receiver-specific constants: prior noise per fix class (receiver accuracy, HDOP, or mode / satellites for receivers
-that report nothing better) is only a starting point; the relative test inflates it online and the posterior residuals
-of the pose-graph optimisation rescale it (`GnssNoiseModel.update_posterior`)."""
+that report nothing better) is only a starting point; the relative test inflates it online for the gate.  The pose-graph
+factors keep the prior noise: rescaling it from the posterior residuals (`GnssNoiseModel.update_posterior`, kept for the
+study baselines of scripts/geo/gnss_pgo_study.py) overweighted GNSS on NCLT."""
 from __future__ import annotations
 
 import math

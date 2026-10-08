@@ -56,16 +56,6 @@ def test_half_occluded_is_not_junk_but_mostly_occluded_is():
     assert q.junk and q.reason == "near"
 
 
-def test_refine_with_pass_depth():
-    f = _filter()
-    _seed(f)
-    q = f.assess(_textured(21))
-    assert not q.junk
-    d = torch.full((120, 160), 0.3)      # the pass sees an occluder over the whole view (another resolution)
-    r = f.refine(q, d)
-    assert r.junk and r.reason == "near" and r.stage == "pass"
-
-
 def test_warmup_never_junk():
     f = _filter()
     q = f.assess(torch.full((3, 240, 320), 0.5))
@@ -93,6 +83,9 @@ def test_stereo_near_field():
     assert not q.junk and q.fractions["near"] < 0.1
     left, right = pair(300)
     q = f.assess(left, rgb_right=right)
+    # the stereo near field (SGBM) is deferred to the keyframe candidates (lazy_stereo_near): completed in add_person
+    assert q.pending is not None and q.fractions["near"] == 0.0
+    q = f.add_person(q, left)
     assert q.fractions["near"] > 0.6 and q.junk and q.reason == "near"
 
 
@@ -118,3 +111,19 @@ def test_mostly_flat_view_is_kept_unless_almost_empty():
     g = torch.Generator().manual_seed(5)        # an empty view: a uniform surface with sensor noise only
     q = f.assess((0.5 + 0.01 * torch.randn(3, 240, 320, generator=g)).clamp(0, 1))
     assert q.junk and q.reason == "flat" and q.snr < 1.5
+
+
+def test_running_median_window_is_bounded_in_time():
+    """Samples pushed only on some ticks expire after the same number of ticks as samples pushed on every tick."""
+    from cross.core.kf_quality import _RunningMedian
+    every, sparse = _RunningMedian(10), _RunningMedian(10)
+    for i in range(30):
+        every.tick(); sparse.tick()
+        every.push(1.0 if i < 20 else 5.0)
+        if i % 4 == 0:
+            sparse.push(1.0 if i < 20 else 5.0)
+    assert every.get() == 5.0 and sparse.get() == 5.0          # both forget the old environment within 10 ticks
+    full = _RunningMedian(3)
+    for x in (1.0, 2.0, 3.0, 4.0):
+        full.tick(); full.push(x)
+    assert full.get() == 3.0                                    # one sample per tick: the last-n-samples median

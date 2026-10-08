@@ -129,8 +129,7 @@ with no image and no descriptor. The test is the share of the view that shows te
 at a normal distance. The near field comes from sensor depth, or from stereo matching in the stereo mode; people are
 found by a small detector. Thresholds are relative to the session's running medians.
 A view that is only textureless (a white wall) is kept unless it shows no structure above the sensor noise. On by
-default; `--set mapping.keyframe_quality.enabled=false` turns it off, and `skip_observation=true` also skips observing
-with such a frame (not recommended: it lost relocalization in tests). The test set with injected junk views is
+default; `--set mapping.keyframe_quality.enabled=false` turns it off. The test set with injected junk views is
 `benchmark/datasets/inject_junk.py` (`benchmark/dev.py ... --tier occ`).
 
 **Camera mounting and the vertical.** Relocalization proposals are clustered, and matched to hypotheses, in place
@@ -191,15 +190,16 @@ must agree with the map's prediction at the verified loop closure's chi-square l
 factors with a robust kernel, spaced one correlation time of the receiver error apart (estimated online; consumer
 receivers repeat the same error for tens of seconds), and the graph is optimised when they say the map drifted. In a
 relocalization session on a geo-anchored map, the current fix drops references that contradict it (a calibrated compass
-also drops references with a contradicting heading) and is a location prior of retrieval (`System.add_location_prior`:
-with `retrieval.locality.enabled` the stored keyframes near the fix get the locality slots).
+also drops references with a contradicting heading), and the stored keyframes within ~3.7 sigma + 5 m of a trusted fix
+take the map retrieval budget except two global slots (`geo.retrieval_focus`, on; NCLT cross-season relocalization 60 vs
+56 of 75 trials within 5 m, degraded GPS no worse than none).
 Input: a prepared folder (or its parent) with `gnss.txt` (`t lat lon alt [mode num_sats [hdop [sigma_h]]]`, times on
 the clock of `times.txt`), optionally `mag.txt` / `ms25.txt` (magnetometer + accelerometer, forward-right-down) or
 `heading.txt` (see `cross/dataloader/geo.py`); in code, `obs["gnss"] = {"t", "lat", "lon", "alt", ...}` and
 `obs["compass"]` per step. `--gnss-degrade sigma=8,bias=15,drop=0.3,outage=60:120` degrades the query's fixes
 (testing). Main options (`geo.*`): `gate`, `decimate`, `robust` (the method; switch off for ablations),
-`use_altitude` (on: horizontal-only factors let the optimisation tilt the map), `sigma_v_factor` (4: consumer altitude
-is poor), `retrieval_gate` (the fix as a location prior), `proposal_gate`, `compass_gate`. On by default (`--no-gnss` /
+`sigma_v_factor` (4: consumer altitude is poor, but horizontal-only factors let the optimisation tilt the map),
+`retrieval_gate` (the fix as a location prior), `proposal_gate`, `compass_gate`. On by default (`--no-gnss` /
 `geo.enabled=false` turns it off): `--gnss` only feeds the folder's GNSS data; without GNSS input the system's results
 are unchanged, and a geo-anchored map keeps its anchor and keyframe latitude / longitude when it is saved again.
 

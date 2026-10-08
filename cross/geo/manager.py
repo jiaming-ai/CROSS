@@ -60,8 +60,7 @@ class GeoManager:
                                                         min_fixes=cfg.min_fixes, holdoff_s=cfg.holdoff_s))
         self.err = GnssErrorModel(prior_tau=cfg.factor_interval_prior_s)
         self.compass = Compass(CompassConfig(confidence=conf, sigma_deg=cfg.compass_sigma_deg,
-                                             offset_deg=cfg.compass_offset_deg, frame=cfg.compass_frame,
-                                             hard_iron=cfg.compass_hard_iron))
+                                             offset_deg=cfg.compass_offset_deg, frame=cfg.compass_frame))
         self.anchor = Anchor(AnchorConfig(dof=cfg.anchor_dof, max_yaw_std_deg=cfg.anchor_max_yaw_std_deg))
         self.frame: Optional[LocalFrame] = None
         self.anchor_fixed = False                  # True once a loaded map supplied the anchor
@@ -84,7 +83,7 @@ class GeoManager:
         self.compass_last = None
         self.now = None
         self.robust_c = (float(cfg.robust_c) if cfg.robust_c is not None else math.sqrt(self.k2)) if cfg.robust else None
-        self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0}
+        self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0, "focus": 0}
 
     # ------------------------------------------------------------------ state
     @property
@@ -167,8 +166,8 @@ class GeoManager:
             return dec
         self.last_used_dist = self.dist
         sc = self.noise.scale
-        if not self.cfg.inflate_factors and math.isfinite(dec.inflation) and dec.inflation > 1.0:
-            # the relative test's inflation steers the gate only; factors keep prior x posterior scale
+        if math.isfinite(dec.inflation) and dec.inflation > 1.0:
+            # the relative test's inflation steers the gate only; factors keep the prior noise
             dec.sigma_h, dec.sigma_v = dec.sigma_h / math.sqrt(dec.inflation), dec.sigma_v / math.sqrt(dec.inflation)
         rec = {"t": float(fix.t), "enu": np.array([enu[0], enu[1], enu[2] if z_ok else np.nan]),
                "sh": dec.sigma_h / sc, "sv": dec.sigma_v / sc, "in_map": bool(in_map_frame), "kf": None, "delta": None,
@@ -285,7 +284,7 @@ class GeoManager:
             kf = nodes[kid]
             T = kf.pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)
             enu = f["enu"]
-            z_ok = bool(np.isfinite(enu[2])) and self.cfg.use_altitude
+            z_ok = bool(np.isfinite(enu[2]))
             target = self.anchor.to_map(np.array([enu[0], enu[1], enu[2] if z_ok else 0.0])) - T[:3, :3] @ f["delta"]
             Cenu = np.diag([(f["sh"] * sc) ** 2, (f["sh"] * sc) ** 2, ((f["sv"] * sc) if z_ok else 1e3) ** 2])
             out.append((kid, target, Rme @ Cenu @ Rme.T + 1e-6 * np.eye(3)))
@@ -363,13 +362,21 @@ class GeoManager:
             tt.append(rec["t"])
             ee.append(rec.get("epoch", 0))
         if len(e) >= 10:
-            if self.cfg.posterior_scale:
-                self.noise.update_posterior(np.array(e))
             self.err.update_from_residuals(np.array(tt), np.array(rr), np.array(ee))
         # the logged fixes' map positions follow the optimised keyframes they are attached to
         self.fit_anchor(nodes)
 
     # ------------------------------------------------------------------ retrieval / relocalization
+    def focus_region(self):
+        """(center in the map frame (3,), horizontal radius (m), up vector of the map) of the stored keyframes a trusted
+        fix allows (cfg.retrieval_focus), or None without a usable fix / anchor."""
+        pri = self.location_priors()
+        if not pri:
+            return None
+        center, sigma, _ = pri[0]
+        r = math.sqrt(self.k2) * sigma + float(self.cfg.focus_margin_m)
+        return center, r, np.asarray(self.anchor.up_map, float)
+
     def location_priors(self) -> list:
         """[(center_map (3,), sigma (m), source)] for retrieval: the current fix through the anchor."""
         c, disp = self._current_fix()

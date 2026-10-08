@@ -1,6 +1,6 @@
 from loguru import logger
 from .boq import BoQ
-from .index import DescriptorIndex, PCAProjection, ScoreCalibration, SpatialIndex, projection_from_config
+from .index import DescriptorIndex, PCAProjection, ScoreCalibration, SpatialIndex
 import numpy as np
 import torch
 from cross.core.types import Atlas, Keyframe
@@ -79,7 +79,9 @@ class KeyframeDatabase:
         self._initial_buffer_size = cfg.initial_buffer_size
         icfg = getattr(cfg, "index", None)
         spec = getattr(icfg, "projection", None)
-        self.index = self._new_index(None if spec == "map" else projection_from_config(spec, self.vpr_model.get_embed_dim()))
+        if spec not in (None, "", "none", "map", False):
+            raise ValueError(f"retrieval.index.projection: map | none, not {spec!r}")
+        self.index = self._new_index(None)
         self._row_kf: List[Keyframe] = []          # keyframe of each descriptor row
         self._id_to_row: Dict[int, int] = {}
         self.spatial = SpatialIndex()              # keyframe positions, for locality-aware retrieval
@@ -111,7 +113,7 @@ class KeyframeDatabase:
             fit_at=g("fit_at", 0) if g("projection", None) == "map" else 0, fit_dim=g("fit_dim", 0),
             fit_energy=g("fit_energy", 0.9), extend=g("extend", True), extend_margin=g("extend_margin", 0.05),
             extend_dims=g("extend_dims", 64), max_dim=g("max_dim", 2048), recent=g("recent", 1024),
-            shortlist=g("shortlist", 64), calibration=g("calibration", "raw"), max_rescore=g("max_rescore", 256),
+            shortlist=g("shortlist", 64), max_rescore=g("max_rescore", 256),
             keep_full_max=g("keep_full_max", 131072))
 
     def _extend_buffer(self, min_size: int):
@@ -436,8 +438,6 @@ class KeyframeDatabase:
                 logger.info(f"descriptor index: the map's projection ({proj.dim_in} -> {proj.dim}) replaces the configured one")
             self.index = self._new_index(proj)
             self.index.calibration = ScoreCalibration.from_state((index_state or {}).get("calibration"))
-            if self.index.calibration is not None:
-                self.index.calibration.model = self.index.calibration_model
         elif self.index.projection is not None and codes.shape[0] and codes.shape[1] == self.index.dim_in:
             codes = torch.cat([self.index.encode(c.to(self.device).float()) for c in codes.split(4096)])
         else:
