@@ -584,11 +584,6 @@ class HypothesisConfig:
     strong_pass_frames: int = 0
     strong_pass_min_refs: int = 2
     strong_pass_min_covis: float = 0.3
-    # close correction (0 = off): a candidate within the 3 m separation radius of hypothesis 0 passes the separation
-    # gate when its net evidence against hypothesis 0 over detect_min_frames frames is at least this many nats; the
-    # measurements then say hypothesis 0 is wrong, not that the candidate duplicates it (office1-4, mono: hypothesis 0
-    # 1.6 m off after a wrong-scale fix, the correct candidate 1.7 m away with 15-20 nats never merged)
-    close_correction_min_llr: float = 0.0
     # geometric verification of a merge: fraction of the candidate's visual edges that remain outliers
     # (Mahalanobis norm > verify_outlier_sigma) after the loop-closure optimisation
     verify_outlier_sigma: float = 4.0
@@ -781,11 +776,6 @@ class FeedForwardConfig:
     # places a reference that overlaps nothing else in the pass arbitrarily; every anchor through it shares that error,
     # so the anchors agree and a wrong scale looks certain (mono passes whose only anchors are map pairs)
     map_anchor_min_pair_covis: float = 0.0
-    # view-level scale uncertainty (0 = off): the spread of the scale is also measured by leaving out each reference view
-    # in turn (jackknife), since anchors through one view share its placement error; when one reference view carries
-    # every anchor, the relative scale std is at least this. Three anchors through one disconnected view gave a
-    # 7x scale error with logstd 0.003
-    anchor_view_logstd_floor: float = 0.0
     anchor_weight_by_baseline: bool = True   # weight anchors by predicted baseline length (precision of the ratio)
     anchor_max_rot_err_deg: float = 20.0
     anchor_min_dir_cos: float = 0.5
@@ -796,15 +786,6 @@ class FeedForwardConfig:
     # covisibility of the current view with each reference: "geometric" (reprojection consistency of the predicted
     # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint) or "min" of the two
     covis_source: str = "geometric"
-    # references farther than this (predicted metric distance, m) count only where the covisibility head agrees: their
-    # confidence is min(geometric, head) (needs a vggt_ft checkpoint; 0 = off).  Between the two ends of a long,
-    # repetitive corridor the geometric score finds overlap the views do not have; the head rarely does
-    covis_head_min_dist: float = 0.0
-    # confidence (and so the visual edge's weight) of references farther than this (m) scaled by this / distance (0 = off)
-    long_ref_conf_dist: float = 0.0
-    # which references long_ref_conf_dist applies to: "session" (the current session's own keyframes: its loop closures,
-    # not the relocalization against a loaded map, which needs its long references) or "all"
-    long_ref_conf_scope: str = "session"
     # metric scale of a pass: "anchors" (stereo / odometry anchors), "head" (scale head of a vggt_ft checkpoint) or
     # "head_fallback" (the head only when no anchor is valid, e.g. monocular passes without odometry)
     scale_source: str = "anchors"

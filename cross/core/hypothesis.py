@@ -263,7 +263,6 @@ class HypothesisManager:
         self.strong_pass_frames = int(getattr(cfg, "strong_pass_frames", 0))
         self.strong_pass_min_refs = int(getattr(cfg, "strong_pass_min_refs", 2))
         self.strong_pass_min_covis = float(getattr(cfg, "strong_pass_min_covis", 0.3))
-        self.close_correction_min_llr = float(getattr(cfg, "close_correction_min_llr", 0.0))
         self.verify_outlier_sigma = cfg.verify_outlier_sigma
         self.verify_max_outlier_frac = cfg.verify_max_outlier_frac
 
@@ -1648,9 +1647,6 @@ class HypothesisManager:
                 [a["unanchored_reference_candidate"] for a in reference_audits], device=distances.device, dtype=torch.bool)
             reference_supported = torch.tensor([a["eligible"] for a in reference_audits],
                                                device=distances.device, dtype=torch.bool)
-            if self.close_correction_min_llr > 0:
-                # a close candidate that the measurements strongly prefer to hypothesis 0 corrects it (not a duplicate)
-                close_mask = close_mask & ~((log_c_pos_sum >= self.close_correction_min_llr) & (n_valid >= min_frames))
             separation_gate = torch.where(cross_chart, reference_supported, ~close_mask)
 
             detected_mask = (log_c_pos_sum >= self.detect_overlap_sum_thresh) \
