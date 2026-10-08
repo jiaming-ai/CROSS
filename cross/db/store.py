@@ -774,7 +774,13 @@ class LazyRecords:
     def __init__(self, enc: dict):
         self.enc = enc
         self.n, self.keys = enc["n"], list(enc["keys"])
-        self._get = [_column_getter(enc["cols"][k], self.n) for k in self.keys]
+        self._getters = None                 # built on first record access (the bulk restore reads the columns)
+
+    @property
+    def _get(self):
+        if self._getters is None:
+            self._getters = [_column_getter(self.enc["cols"][k], self.n) for k in self.keys]
+        return self._getters
 
     def __len__(self):
         return self.n
@@ -789,8 +795,9 @@ class LazyRecords:
         return {k: g(i) for k, g in zip(self.keys, self._get)}
 
     def __iter__(self):
+        get = self._get
         for i in range(self.n):
-            yield {k: g(i) for k, g in zip(self.keys, self._get)}
+            yield {k: g(i) for k, g in zip(self.keys, get)}
 
 
 class KeyframeRecords(LazyRecords):
@@ -884,16 +891,20 @@ def _lazy_dict_of_records(enc: dict):
 
 def _lazy_dict_of_lists(enc: dict):
     n, key = _key_getter(enc["keys"])
+    if not enc["records"] and enc["items"]["k"] != "int":
+        return decode_dict_of_lists(enc)
+    starts = []                                          # offsets, computed on first access
+
+    def span(i):
+        if not starts:
+            starts.extend(np.concatenate([[0], np.cumsum(enc["counts"])]).tolist())
+        return starts[i], starts[i + 1]
     if not enc["records"]:
-        if enc["items"]["k"] != "int":
-            return decode_dict_of_lists(enc)
         flat = enc["items"]["a"]
-        starts = np.concatenate([[0], np.cumsum(enc["counts"])]).tolist()
-        m = _LazyMap(n, key, lambda i: flat[starts[i]:starts[i + 1]].tolist())
+        m = _LazyMap(n, key, lambda i: flat[slice(*span(i))].tolist())
     else:
         recs = _lazy_records(enc["items"])
-        starts = np.concatenate([[0], np.cumsum(enc["counts"])]).tolist()
-        m = _LazyMap(n, key, lambda i: recs[starts[i]:starts[i + 1]])
+        m = _LazyMap(n, key, lambda i: recs[slice(*span(i))])
     m.enc = enc                                          # bulk restore (cross.core.bulk_load)
     return m
 
