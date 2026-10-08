@@ -30,6 +30,7 @@ IMU carries the state from there to the last tracked frame again (_replay); the 
 motion, as an in-frame measurement's does."""
 
 import collections
+import dataclasses
 import json
 from time import perf_counter
 
@@ -106,6 +107,11 @@ class VggtImuFrontend:
         # links through shared frames, learned depth (with its bias), the IMU and its biases are optimized together
         self.use_graph = True
         self.graph = None
+        # IMU-arbitrated learned-depth calibration (vgio_depth_calib): the twin graph without learned depth, the bias
+        # samples (time, learned depth - twin scale) and the calibrated offset subtracted from learned depth
+        self.twin = None
+        self._calib_samples = collections.deque()
+        self.depth_calib = 0.0
         self.g_rep = None                        # gravity in the reported frame
         self.rotation_gate_deg_graph = 2.0       # deg: a pass whose rotation disagrees with the gyro's is not used
         # adaptive measurement times: (min frames, max frames, min translation m, min rotation deg), or None
@@ -218,6 +224,11 @@ class VggtImuFrontend:
                            gyro_bias_walk=c.gyro_random_walk if ic.vgio_calib_gyro_walk else ic.vgio_gyro_bias_walk)
         self.graph = VgiGraph(gcfg, c.T_cam_imu, c.gyro_noise_density, c.accel_noise_density)
         self.graph.td = self.graph.td_init = self.time_offset
+        if ic.vgio_depth_calib:
+            self.twin = VgiGraph(dataclasses.replace(gcfg, depth_bias=False, debug_costs=False), c.T_cam_imu,
+                                 c.gyro_noise_density, c.accel_noise_density)
+            self.twin.td = self.twin.td_init = self.time_offset
+            self._calib_samples = collections.deque(maxlen=int(ic.vgio_depth_calib_window))
         if ic.vgio_graph_time_offset:
             self.time_offset_done = True         # the graph estimates the offset
         self.scale_filter = _GraphEstimate(self.graph)
@@ -759,6 +770,10 @@ class VggtImuFrontend:
             self.last_info = {"measured": False, "reason": "chain"}
             return False
         da3, stereo, stereo_info = s.get("da3"), s.get("stereo"), s.get("stereo_info")
+        da3_raw = da3
+        if da3 is not None and self.depth_calib != 0.0:
+            da3 = (da3[0] - self.depth_calib, da3[1])
+        T = self.twin
         if self.m is None or not G.ids:
             if not snap["accel"]:
                 return False
@@ -768,6 +783,10 @@ class VggtImuFrontend:
                 G.add_depth(node, *da3)
             if stereo is not None:
                 G.add_stereo(node, *stereo)
+            if T is not None:
+                assert T.start(snap["R_wc"], np.mean(snap["accel"], axis=0), lam0, timestamp, bg0=self.gyro_bias) == node
+                if stereo is not None:
+                    T.add_stereo(node, *stereo)
             # the state at the measured frame (the frames since are propagated from it again, _replay)
             self.R_wc, self.p_cam, self.v_imu = snap["R_wc"].copy(), snap["p_cam"].copy(), snap["v_imu"].copy()
             self._set_m(index, timestamp, node=node, corner_z=s.get("corner_z"))
@@ -807,6 +826,13 @@ class VggtImuFrontend:
         lam_init = stereo[0] if stereo is not None else G.lam[m_node] + (np.log(ratio) if link_ok else 0.0)
         kfc = self._keyframe_consistency(s, c2w_c, c2w_m, index, ratio if link_ok else None)
         j = G.add_node(pre, jac, lam_init, timestamp)
+        if T is not None:
+            # the twin integrates the interval at its own gyro bias (its linearization point) with the main graph's
+            # current noise model
+            T.gyro_noise, T.cfg.rot_std = G.gyro_noise, G.cfg.rot_std
+            pre_t, jac_t = T.preintegrate(samples, a0, a1, self.time_offset)
+            lam_t = stereo[0] if stereo is not None else T.lam[m_node] + (np.log(ratio) if link_ok else 0.0)
+            assert T.add_node(pre_t, jac_t, lam_t, timestamp) == j
         # the corners tracked from m to this frame (snapshot of its capture), if they were detected on m
         tracks = snap["tracks"] if snap["tracks"][4] == self.m["index"] else _NO_TRACKS
         pnp, pnp_info = (None, None)
@@ -837,19 +863,29 @@ class VggtImuFrontend:
                 cov_p[:, 0:3] = 0.0
                 cov_p[0:3, 0:3] = np.eye(3) * 1e4
             G.add_metric_relative(m_node, j, R_p, t_p, cov_p)
+            if T is not None:
+                T.add_metric_relative(m_node, j, R_p, t_p, cov_p)
         klt = self._klt_rotation(gyro_mb, tracks) if self.klt and (pnp is None or not pnp_rot) else None
         if klt is not None and self.config.imu.vgio_noise_hat:
             klt = self._noise_hat(gyro_mb, T_mb[:3, :3] if pass_ok else None, klt, a1 - a0) or klt
         if klt is not None:
             G.add_rotation(m_node, j, *klt)
+            if T is not None:
+                T.add_rotation(m_node, j, *klt)
         rest = self._rest_rate(samples, pre, a0, a1, tracks) if self.klt and self.config.imu.vgio_zero_rate else None
         if isinstance(rest, tuple):
             G.add_zero_rate(j, rest[0], rest[1])
+            if T is not None:
+                T.add_zero_rate(j, rest[0], rest[1])
             rest = rest[2]
         if pass_ok:
             G.add_relative(m_node, j, j, T_mb[:3, :3], T_mb[:3, 3])
             if link_ok:
                 G.add_link(j, m_node, np.log(ratio))
+            if T is not None:
+                T.add_relative(m_node, j, j, T_mb[:3, :3], T_mb[:3, 3])
+                if link_ok:
+                    T.add_link(j, m_node, np.log(ratio))
         else:
             self.stats["slips"] += 1
         kf_used = kf_log = False
@@ -872,14 +908,21 @@ class VggtImuFrontend:
             if pairs_ok and _angle_deg(pred_km.T @ T_km[:3, :3]) <= 2 * self.rotation_gate_deg_graph:
                 G.add_relative(k_node, j, j, T_kb[:3, :3], T_kb[:3, 3])
                 G.add_relative(k_node, m_node, j, T_km[:3, :3], T_km[:3, 3])
+                if T is not None:
+                    T.add_relative(k_node, j, j, T_kb[:3, :3], T_kb[:3, 3])
+                    T.add_relative(k_node, m_node, j, T_km[:3, :3], T_km[:3, 3])
             r_k, s_k = s["link_kf"] if s.get("link_kf") is not None else (float("nan"), float("inf"))
             if np.isfinite(r_k) and s_k < 0.25:
                 G.add_link(j, k_node, np.log(r_k))
+                if T is not None:
+                    T.add_link(j, k_node, np.log(r_k))
             kf_used = True
         if da3 is not None:
             G.add_depth(j, *da3)
         if stereo is not None:
             G.add_stereo(j, *stereo)
+            if T is not None:
+                T.add_stereo(j, *stereo)
         est = self.scale_filter
         t0 = perf_counter()
         # the scale's std is taken until initialization only (as before: the translation gate and the reported
@@ -888,10 +931,13 @@ class VggtImuFrontend:
         v_prop = float(np.linalg.norm(G.v[j]))
         info = G.solve(need_std=lam_std_wanted or self.config.imu.vgio_trans_sigma_bound or self.T_rl is not None)
         G.marginalize()
+        calib = self._depth_calibrate(j, da3_raw, timestamp) if T is not None else None
         if G.cfg.time_offset and abs(G.td - self.time_offset) > 0.004:
             # the samples of the window again at the graph's offset (its first-order correction is good to a few ms)
             self.time_offset = float(G.td)
             G.repreintegrate(self._samples, self.time_offset)
+            if T is not None:
+                T.repreintegrate(self._samples, self.time_offset)
             self.stats["offset_updates"] = self.stats.get("offset_updates", 0) + 1
         self.stats["t_graph"] = self.stats.get("t_graph", 0.0) + perf_counter() - t0
         if lam_std_wanted and np.isfinite(info.get("lam_std", float("nan"))):
@@ -930,10 +976,38 @@ class VggtImuFrontend:
                           "pass_gyro_deg": round(vdiff, 3), "pass_t": float(np.linalg.norm(T_mb[:3, 3])),
                           "trans_gate": gate, "rest": rest, "kfc": kfc, "v_std": round(float(G.v_std), 4) if np.isfinite(G.v_std) else None,
                           "stereo": stereo_info, "pnp": pnp_info, "v_prop": round(v_prop, 3),
-                          "costs": info.get("costs"), "source": s.get("source"), **(kf_log or {})}
+                          "costs": info.get("costs"), "source": s.get("source"), **(kf_log or {}), **(calib or {})}
         self._set_m(index, timestamp, node=j, corner_z=s.get("corner_z"))
         self.m["rep"] = rep
         return True
+
+    def _depth_calibrate(self, j, obs, timestamp):
+        """IMU-arbitrated learned-depth calibration (vgio_depth_calib): solves the twin graph (every factor but the
+        learned depth) and, where its scale of node j is certain to vgio_depth_calib_max_std, takes learned depth minus
+        that scale as a sample of the learned depth's bias; the calibrated offset is the median of the samples once
+        there are enough over a long enough time (at most log scale_band).  Returns the diagnostics of this node."""
+        ic = self.config.imu
+        T = self.twin
+        info = T.solve(need_std=True)
+        T.marginalize()
+        std = float(info.get("lam_std", float("inf")))
+        out = {"twin_lam": round(float(T.lam[j]), 4) if j in T.lam else None,
+               "twin_lam_std": round(std, 4) if np.isfinite(std) else None, "calib_sample": None,
+               "calib_used": False}
+        if obs is not None and j in T.lam:
+            sample = float(obs[0]) - float(T.lam[j])
+            out["calib_sample"] = round(sample, 4)
+        if out["calib_sample"] is not None and np.isfinite(std) and std < ic.vgio_depth_calib_max_std:
+            self._calib_samples.append((float(timestamp), sample))
+            out["calib_used"] = True
+            self.stats["calib_samples"] = self.stats.get("calib_samples", 0) + 1
+            S = self._calib_samples
+            if len(S) >= ic.vgio_depth_calib_min_samples and S[-1][0] - S[0][0] >= ic.vgio_depth_calib_min_span:
+                lim = float(np.log(ic.scale_band))
+                self.depth_calib = float(np.clip(np.median([v for _, v in S]), -lim, lim))
+                self.stats["depth_calib"] = round(self.depth_calib, 4)
+        out["depth_calib"] = round(self.depth_calib, 4)
+        return out
 
     def _keyframe_consistency(self, obs, c2w_c, c2w_m, index, ratio):
         """Vision-only consistency of consecutive passes: the previous pass measured keyframe -> its current frame (=
@@ -1132,6 +1206,8 @@ class VggtImuFrontend:
         self.time_offset_done = self._offset_rounds >= 2
         if self.graph is not None and self.time_offset != old:
             self.graph.repreintegrate(self._samples, self.time_offset)
+            if self.twin is not None:
+                self.twin.repreintegrate(self._samples, self.time_offset)
         if not self.time_offset_done:
             return                                   # the rate log keeps growing for the final round
         self.rate_log = []
