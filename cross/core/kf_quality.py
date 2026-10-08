@@ -9,8 +9,7 @@ exactly the one the keyframe policy stores as a new permanent keyframe (a "novel
 
 One quantity decides: the *informative fraction* of the view, the share of image cells that show textured,
 well-exposed, static scene content at a normal distance.  A cell is removed when it is
-  - near:    most of its depth (sensor, stereo matching of the rectified pair, or the feed-forward pass's own depth of
-             the current view) is closer than
+  - near:    most of its depth (sensor, or stereo matching of the rectified pair) is closer than
              d_near = max(near_abs, near_rel * the session's typical depth);
   - person:  mostly inside a person detection (transient content, and the usual close occluder);
   - clipped: mostly under- or over-exposed pixels;
@@ -47,11 +46,11 @@ class FrameQuality:
     fractions: dict                   # fraction of cells removed by each cause (cells can have several causes)
     has_depth: bool = False
     n_person: int = 0
-    stage: str = "image"              # "image" (pre-observation cues) or "pass" (refined with the pass depth)
+    stage: str = "image"
     person_checked: bool = False      # the person detector has run on this frame
     snr: float = float("inf")         # 90th-percentile cell gradient / the image's noise level (structure above noise)
     ms: float = 0.0
-    cells: dict = field(default_factory=dict, repr=False)   # per-cell masks (numpy bool), for refinement / figures
+    cells: dict = field(default_factory=dict, repr=False)   # per-cell masks (numpy bool), for completion / figures
     pending: Optional[tuple] = field(default=None, repr=False)   # deferred stereo near field (y_left, rgb_right, W)
 
     def summary(self) -> dict:
@@ -93,8 +92,9 @@ class _RunningMedian:
 
 
 class KeyframeQuality:
-    """Per-frame informative-fraction test (see the module docstring).  `assess` uses the image (and sensor depth);
-    `refine` adds the near-field cells from a depth map available only after the observation (feed-forward pass)."""
+    """Per-frame informative-fraction test (see the module docstring).  `assess` runs the cheap image cues (and the
+    sensor-depth near field) on every observed frame; `add_person` completes the assessment of a candidate for a
+    permanent keyframe with the costly cues (stereo near field, person detector on the GPU)."""
 
     def __init__(self, cfg, device="cuda"):
         self.cfg = cfg
@@ -104,7 +104,6 @@ class KeyframeQuality:
         self.depth_ref = _RunningMedian(n)      # typical (median) scene depth
         self.info_ref = _RunningMedian(n)       # typical informative fraction
         self.n_assessed = 0
-        self._seen = 0
         self.stats = {"assessed": 0, "junk": 0, "rejected_permanent": 0, "skipped_observation": 0,
                       "by_reason": {c: 0 for c in CAUSES}, "ms_total": 0.0}
         self._detector = None
@@ -137,7 +136,7 @@ class KeyframeQuality:
                 from cross.mono.person_detector import GraphedPersonDetector, make_person_detector
                 det = make_person_detector(self._detector_device(rgb))
                 # CUDA-graph replay of the backbone and heads: the same detections, ~10x less time in a busy process
-                self._detector = GraphedPersonDetector(det) if getattr(self.cfg, "person_cuda_graph", True) else det
+                self._detector = GraphedPersonDetector(det)
             except Exception as err:          # noqa: BLE001  e.g. no weights offline: the other cues still work
                 logger.warning(f"keyframe quality: person detector unavailable ({type(err).__name__}: {err}); "
                                "continuing without the person cue")
@@ -226,8 +225,7 @@ class KeyframeQuality:
     # ------------------------------------------------------------------ test
     @torch.inference_mode()
     def assess(self, rgb: torch.Tensor, depth: Optional[torch.Tensor] = None,
-               rgb_right: Optional[torch.Tensor] = None, person: Optional[bool] = None,
-               _full: bool = False) -> FrameQuality:
+               rgb_right: Optional[torch.Tensor] = None, person: Optional[bool] = None) -> FrameQuality:
         """rgb (3, H, W) float in [0, 1] (the transformed image of the step); depth (1, H, W) metric or None; without
         depth, the rectified right image gives the near field by stereo matching (stereo_near).  The cues run on the
         CPU on a <= 256 px luminance image (one transfer).  The person detector (the costly cue, on the image's
@@ -236,19 +234,8 @@ class KeyframeQuality:
         import cv2
         t0 = time.perf_counter()
         cfg = self.cfg
-        # assess_every > 1: the full cues run on every k-th observed frame (the running medians) and on the candidates
-        # for a permanent keyframe (completed in add_person); the other frames return a deferred assessment
-        every = int(getattr(cfg, "assess_every", 1))
-        now = bool(getattr(cfg, "person", True)) if person is None else bool(person)
-        if not _full:                       # the medians' clock: observed frames (a deferred frame ticks once)
-            self._seen += 1
-            for ref in (self.grad_ref, self.depth_ref, self.info_ref):
-                ref.tick()
-        if not _full and every > 1 and not now and self.n_assessed >= int(getattr(cfg, "warmup", 5)) and self._seen % every:
-            q = FrameQuality(info=1.0, threshold=0.0, junk=False, reason=None, fractions={c: 0.0 for c in CAUSES},
-                             stage="deferred")
-            q.pending = ("deferred", rgb, depth, rgb_right)
-            return q
+        for ref in (self.grad_ref, self.depth_ref, self.info_ref):     # the medians' clock: observed frames
+            ref.tick()
         x = rgb[0] if rgb.dim() == 4 else rgb
         H, W = x.shape[-2:]
         gw = int(getattr(cfg, "grid", 16))
@@ -258,7 +245,7 @@ class KeyframeQuality:
         stereo = depth is None and rgb_right is not None and getattr(cfg, "stereo_near", True) and bool(self.fx and self.baseline)
         # the stereo near field (SGBM, the costly cue of a frame) is needed only for the frames whose decision is used:
         # the candidates for a permanent keyframe (complete()), or every frame when junk frames are not observed
-        lazy = stereo and bool(getattr(cfg, "lazy_stereo_near", True)) and not run_person
+        lazy = stereo and not run_person
         if stereo and not lazy:
             yl = self._luminance_dev(x, min(W, 256))
             yr = self._luminance_dev(rgb_right, yl.shape[1])
@@ -309,9 +296,6 @@ class KeyframeQuality:
     def add_person(self, q: FrameQuality, rgb: torch.Tensor) -> FrameQuality:
         """Complete the assessment of a candidate for a permanent keyframe (same threshold as its first assessment):
         the deferred stereo near field, then the person cells."""
-        if q is not None and q.pending is not None and isinstance(q.pending[0], str):      # deferred assessment
-            _, rgb_d, depth_d, right_d = q.pending
-            q = self.assess(rgb_d, depth_d, rgb_right=right_d, person=False, _full=True)
         if q is not None and q.pending is not None:
             q = self._complete_stereo(q)
         if q is None or q.person_checked or q.junk or not getattr(self.cfg, "person", True):
@@ -357,29 +341,6 @@ class KeyframeQuality:
         r.person_checked = q.person_checked
         r.ms = q.ms + dt
         if r.junk and not q.junk:
-            self.stats["junk"] += 1
-            self.stats["by_reason"][r.reason] += 1
-        return r
-
-    @torch.inference_mode()
-    def refine(self, q: FrameQuality, depth) -> FrameQuality:
-        """Add the near-field cells of a metric depth map of the current view (the feed-forward pass's depth)."""
-        if q is None or depth is None:
-            return q
-        t0 = time.perf_counter()
-        gh, gw = next(iter(q.cells.values())).shape
-        near = self._near_cells(depth, gh, gw, update=not q.has_depth)
-        if near is None:
-            return q
-        cells = dict(q.cells)
-        cells["near"] = near if "near" not in cells else (cells["near"] | near)
-        was_junk = q.junk
-        r = self._decide(cells, stage="pass", has_depth=True, n_person=q.n_person, update=False, threshold=q.threshold,
-                         snr=q.snr)
-        r.person_checked = q.person_checked
-        r.ms = q.ms + (time.perf_counter() - t0) * 1e3
-        self.stats["ms_total"] += r.ms - q.ms
-        if r.junk and not was_junk:
             self.stats["junk"] += 1
             self.stats["by_reason"][r.reason] += 1
         return r

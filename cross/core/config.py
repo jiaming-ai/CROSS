@@ -657,9 +657,6 @@ class KeyframeQualityConfig:
     (T1 within 4 mm), and with injected junk views (benchmark/datasets/inject_junk.py) 52-68 % fewer junk keyframes
     were stored."""
     enabled: bool = True
-    # also do not observe (retrieve + estimate) with a junk frame: the odometry carries the belief, as on a frame the
-    # observation cadence skips
-    skip_observation: bool = False
     info_min: float = 0.35          # junk when the informative fraction < min(info_min, info_rel * session median)
     info_rel: float = 0.5
     texture_rel: float = 0.25       # flat cell: gradient < texture_rel * the session's typical textured-cell gradient
@@ -673,19 +670,11 @@ class KeyframeQualityConfig:
     near_rel: float = 0.25
     person: bool = True             # person detections (SSDLite) remove their cells
     person_score: float = 0.5
-    person_cuda_graph: bool = True  # detector backbone + heads replayed as a CUDA graph (same detections, ~10x faster)
-    stereo_near: bool = True        # stereo input without depth: the near field from SGBM on the rectified pair
-    # SGBM only for the candidates of a permanent keyframe (the only frames whose decision is used, unless
-    # skip_observation); the running scene-depth median is then taken over those frames
-    lazy_stereo_near: bool = True
-    # 1: the full cues on every observed frame.  k > 1: on every k-th observed frame (the session's running medians)
-    # and on the candidates for a permanent keyframe; the decisions then use medians over that subsample
-    assess_every: int = 1
-    # feed-forward modes: add the near cells of the pass's depth of the current view.  Off: VGGT-Omega's depth of a
-    # close occluder follows its apparent size (a pasted person at 0.4-0.75 m came out at 1.6-2.8 m)
-    pass_depth: bool = False
+    # stereo input without depth: the near field from SGBM on the rectified pair (computed for the candidates of a
+    # permanent keyframe, the only frames whose decision is used)
+    stereo_near: bool = True
     grid: int = 16                  # cells across the image width
-    window: int = 200               # frames of the running medians
+    window: int = 200               # observed frames of the running medians
     warmup: int = 5                 # the first frames of a session are never junk (the medians are seeded)
 
 

@@ -56,16 +56,6 @@ def test_half_occluded_is_not_junk_but_mostly_occluded_is():
     assert q.junk and q.reason == "near"
 
 
-def test_refine_with_pass_depth():
-    f = _filter()
-    _seed(f)
-    q = f.assess(_textured(21))
-    assert not q.junk
-    d = torch.full((120, 160), 0.3)      # the pass sees an occluder over the whole view (another resolution)
-    r = f.refine(q, d)
-    assert r.junk and r.reason == "near" and r.stage == "pass"
-
-
 def test_warmup_never_junk():
     f = _filter()
     q = f.assess(torch.full((3, 240, 320), 0.5))
@@ -97,9 +87,8 @@ def test_stereo_near_field():
     assert q.pending is not None and q.fractions["near"] == 0.0
     q = f.add_person(q, left)
     assert q.fractions["near"] > 0.6 and q.junk and q.reason == "near"
-    # immediate when not lazy: the same decision
-    f.cfg.lazy_stereo_near = False
-    q2 = f.assess(left, rgb_right=right)
+    # immediate when the decision is needed at once (person cue requested): the same decision
+    q2 = f.assess(left, rgb_right=right, person=True)
     assert q2.fractions["near"] > 0.6 and q2.junk and q2.reason == "near"
 
 
@@ -125,27 +114,6 @@ def test_mostly_flat_view_is_kept_unless_almost_empty():
     g = torch.Generator().manual_seed(5)        # an empty view: a uniform surface with sensor noise only
     q = f.assess((0.5 + 0.01 * torch.randn(3, 240, 320, generator=g)).clamp(0, 1))
     assert q.junk and q.reason == "flat" and q.snr < 1.5
-
-
-def test_deferred_assessment_completes_at_the_candidate():
-    """assess_every > 1: frames between the statistics frames return a deferred assessment; completing it for a
-    keyframe candidate gives the same decision as a full assessment with the same running statistics."""
-    import copy
-    import torch
-    from cross.core.config import KeyframeQualityConfig
-    from cross.core.kf_quality import KeyframeQuality
-    g = torch.Generator().manual_seed(0)
-    frames = [torch.rand(3, 96, 128, generator=g) for _ in range(12)]
-    cfg = KeyframeQualityConfig(person=False, assess_every=3, warmup=2)
-    kq = KeyframeQuality(cfg, device="cpu")
-    qs = [kq.assess(f, person=False) for f in frames[:8]]
-    assert any(q.stage == "deferred" for q in qs) and any(q.stage == "image" for q in qs)
-    ref = copy.deepcopy(kq)
-    blank = torch.zeros(3, 96, 128)
-    q = kq.assess(blank, person=False)
-    done = kq.add_person(q, blank)
-    full = ref.assess(blank, person=False, _full=True)
-    assert done.stage == "image" and done.junk == full.junk and abs(done.info - full.info) < 1e-12
 
 
 def test_running_median_window_is_bounded_in_time():
