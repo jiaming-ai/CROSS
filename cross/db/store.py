@@ -719,7 +719,31 @@ def _attach_images(records: list, idx: dict, pack: ImagePack) -> None:
         records[int(idx["row"][j])][IMAGE_FIELDS[int(idx["field"][j])]] = ref
 
 
+class ColumnKeyframes:
+    """KeyframeDatabase.save_state(columns=True): the keyframe records already encoded as columns (image fields None,
+    as write_map leaves them) plus each row's image fields (encoded into the pack by write_map) and ids."""
+
+    def __init__(self, enc: dict, images: list, ids: list):
+        self.enc, self.images, self.ids = enc, images, ids
+
+    def __len__(self):
+        return self.enc["n"]
+
+
+def count_records(v) -> int:
+    """Number of records of a save_state part, plain or encoded (log lines)."""
+    if isinstance(v, dict) and "__records__" in v:
+        return v["n"] if v["__records__"] else len(v["v"])
+    if isinstance(v, dict) and v.get("__dor__"):
+        return count_records(v["recs"])
+    if isinstance(v, dict) and v.get("__dol__"):
+        return len(v["counts"])
+    return len(v)
+
+
 def _encode_hypo(hypo: dict) -> dict:
+    if hypo.get("__columns__"):                       # HypothesisManager.save_state(columns=True): already encoded
+        return {k: v for k, v in hypo.items() if k != "__columns__"}
     out = dict(hypo)
     out["temp_keyframes"] = encode_records(hypo["temp_keyframes"])
     out["odom_edges"] = encode_dict_of_records(hypo["odom_edges"])
@@ -768,11 +792,19 @@ def _column_getter(col, n: int):
 
 
 class LazyRecords:
-    """A list of records (dicts) decoded from columns on access."""
+    """A list of records (dicts) decoded from columns on access.  `enc` (the columns) is kept for the bulk restore
+    of System.load_map (cross.core.bulk_load)."""
 
     def __init__(self, enc: dict):
+        self.enc = enc
         self.n, self.keys = enc["n"], list(enc["keys"])
-        self._get = [_column_getter(enc["cols"][k], self.n) for k in self.keys]
+        self._getters = None                 # built on first record access (the bulk restore reads the columns)
+
+    @property
+    def _get(self):
+        if self._getters is None:
+            self._getters = [_column_getter(self.enc["cols"][k], self.n) for k in self.keys]
+        return self._getters
 
     def __len__(self):
         return self.n
@@ -787,8 +819,38 @@ class LazyRecords:
         return {k: g(i) for k, g in zip(self.keys, self._get)}
 
     def __iter__(self):
+        get = self._get
         for i in range(self.n):
-            yield {k: g(i) for k, g in zip(self.keys, self._get)}
+            yield {k: g(i) for k, g in zip(self.keys, get)}
+
+
+class KeyframeRecords(LazyRecords):
+    """The database keyframe records of a v2 map: LazyRecords plus the stored images (ImageRefs) of each row."""
+
+    def __init__(self, enc: dict, images: dict, pack: "ImagePack"):
+        super().__init__(enc)
+        self.images = (images, pack)
+        self._refs = None
+
+    def _row_refs(self):
+        if self._refs is None:
+            refs = [{} for _ in range(self.n)]
+            _attach_images(refs, self.images[0], self.images[1])
+            self._refs = refs
+        return self._refs
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return [self[j] for j in range(*i.indices(self.n))]
+        rec = super().__getitem__(i)
+        rec.update(self._row_refs()[i if i >= 0 else i + self.n])
+        return rec
+
+    def __iter__(self):
+        refs = self._row_refs()
+        for i, rec in enumerate(super().__iter__()):
+            rec.update(refs[i])
+            yield rec
 
 
 def _lazy_records(enc: dict):
@@ -846,16 +908,29 @@ class _LazyMap:
 def _lazy_dict_of_records(enc: dict):
     n, key = _key_getter(enc["keys"])
     recs = _lazy_records(enc["recs"])
-    return _LazyMap(n, key, recs.__getitem__)
+    m = _LazyMap(n, key, recs.__getitem__)
+    m.enc = enc                                          # bulk restore (cross.core.bulk_load)
+    return m
 
 
 def _lazy_dict_of_lists(enc: dict):
-    if not enc["records"]:
-        return decode_dict_of_lists(enc)
     n, key = _key_getter(enc["keys"])
-    recs = _lazy_records(enc["items"])
-    starts = np.concatenate([[0], np.cumsum(enc["counts"])]).tolist()
-    return _LazyMap(n, key, lambda i: recs[starts[i]:starts[i + 1]])
+    if not enc["records"] and enc["items"]["k"] != "int":
+        return decode_dict_of_lists(enc)
+    starts = []                                          # offsets, computed on first access
+
+    def span(i):
+        if not starts:
+            starts.extend(np.concatenate([[0], np.cumsum(enc["counts"])]).tolist())
+        return starts[i], starts[i + 1]
+    if not enc["records"]:
+        flat = enc["items"]["a"]
+        m = _LazyMap(n, key, lambda i: flat[slice(*span(i))].tolist())
+    else:
+        recs = _lazy_records(enc["items"])
+        m = _LazyMap(n, key, lambda i: recs[slice(*span(i))])
+    m.enc = enc                                          # bulk restore (cross.core.bulk_load)
+    return m
 
 
 def _decode_hypo(enc: dict) -> dict:
@@ -867,7 +942,7 @@ def _decode_hypo(enc: dict) -> dict:
         for k, h in enc["hypotheses_data"].items():
             h = dict(h)
             h["visual_edges"] = _lazy_dict_of_lists(h["visual_edges"])
-            h["visual_adjacency"] = decode_dict_of_lists(h["visual_adjacency"])
+            h["visual_adjacency"] = _lazy_dict_of_lists(h["visual_adjacency"])
             hd[k] = h
         out["hypotheses_data"] = hd
         return out
@@ -921,13 +996,18 @@ def write_map(save_path, save_data: dict, cfg, on_written=None) -> dict:
 
     data = dict(save_data)
     db = dict(save_data["db_data"])
-    records = [dict(r) for r in db["keyframes"]]
-    pack, img_idx = _encode_images(records, side, cfg, stats, on_written)
-    for r in records:
-        for f in IMAGE_FIELDS:
-            if f in r:
-                r[f] = None
-    db["keyframes"] = encode_records(records)
+    if isinstance(db["keyframes"], ColumnKeyframes):     # KeyframeDatabase.save_state(columns=True)
+        ck = db["keyframes"]
+        pack, img_idx = _encode_images([dict(r) for r in ck.images], side, cfg, stats, on_written)
+        db["keyframes"] = ck.enc
+    else:
+        records = [dict(r) for r in db["keyframes"]]
+        pack, img_idx = _encode_images(records, side, cfg, stats, on_written)
+        for r in records:
+            for f in IMAGE_FIELDS:
+                if f in r:
+                    r[f] = None
+        db["keyframes"] = encode_records(records)
 
     emb = db.get("embeddings")
     desc_file = None
@@ -1005,9 +1085,12 @@ def _read_v2(load_path, data: dict, descriptor_mmap: bool) -> dict:
                                 f"map.pkl{SIDECAR_SUFFIX}/)")
     pack = ImagePack.get(side / st["pack"], st["uid"])
     db = dict(data["db_data"])
-    records = decode_records(db["keyframes"])
-    _attach_images(records, st["images"], pack)
-    db["keyframes"] = records
+    if getattr(_decode_opts, "packed", False) and db["keyframes"].get("__records__"):
+        db["keyframes"] = KeyframeRecords(db["keyframes"], st["images"], pack)     # columns: bulk restore
+    else:
+        records = decode_records(db["keyframes"])
+        _attach_images(records, st["images"], pack)
+        db["keyframes"] = records
     emb = db.get("embeddings")
     if isinstance(emb, dict) and "__file__" in emb:
         arr = np.load(side / emb["__file__"], mmap_mode="r" if descriptor_mmap else None)
