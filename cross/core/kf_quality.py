@@ -240,15 +240,16 @@ class KeyframeQuality:
         # for a permanent keyframe (completed in add_person); the other frames return a deferred assessment
         every = int(getattr(cfg, "assess_every", 1))
         now = bool(getattr(cfg, "person", True)) if person is None else bool(person)
-        self._seen += 1
+        if not _full:                       # the medians' clock: observed frames (a deferred frame ticks once)
+            self._seen += 1
+            for ref in (self.grad_ref, self.depth_ref, self.info_ref):
+                ref.tick()
         if not _full and every > 1 and not now and self.n_assessed >= int(getattr(cfg, "warmup", 5)) and self._seen % every:
             q = FrameQuality(info=1.0, threshold=0.0, junk=False, reason=None, fractions={c: 0.0 for c in CAUSES},
                              stage="deferred")
             q.pending = ("deferred", rgb, depth, rgb_right)
             return q
         x = rgb[0] if rgb.dim() == 4 else rgb
-        for ref in (self.grad_ref, self.depth_ref, self.info_ref):
-            ref.tick()
         H, W = x.shape[-2:]
         gw = int(getattr(cfg, "grid", 16))
         gh = max(int(round(gw * H / W)), 1)
