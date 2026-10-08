@@ -1618,22 +1618,23 @@ class System:
         trig = self._verified_lc_trigger(ret, new_kf, edge_mapping)
         if trig is None:
             return False
-        new_keys, window_ref = trig
+        new_keys, window_ref, loop_keys = trig
         if self._apgo is not None and self._apgo.usable():
-            return self._submit_async_pgo(ret, new_keys, window_ref)
+            return self._submit_async_pgo(ret, new_keys, window_ref, loop_keys)
         self._drain_async_pgo()
         return self._verified_lc_optimise(ret, new_keys, window_ref)
 
     def _verified_lc_trigger(self, ret: dict, new_kf, edge_mapping: dict):
         """Does a hypothesis-0 edge added in this step call for an optimisation?  Returns (new keys, oldest keyframe
-        of the loop edges) or None.  (Marks the corroborated loop candidates informative.)"""
+        of the new edges, the loop edges that are inconsistent with the graph) or None.  (Marks the corroborated loop
+        candidates informative.)"""
         v = self._lc_verifier
         if v is None or new_kf is None or ret is None or not self.use_odometry:
             return None
         hm = self.hypothesis_manager
         if getattr(hm, "no_pgo_for_lc", False):
             return None
-        new_keys, significant = [], False
+        new_keys, loop_keys = [], []
         loop_flags = ret.get("h0_loop")
         lc_cfg = self.config.mapping.loop_closure
         for i, kf in enumerate(ret.get("valid_keyframes", [])):
@@ -1664,10 +1665,10 @@ class System:
                 continue
             c2 = v.graph_residual_chi2(kf.id, new_kf.id, bucket[-1])
             if c2 is not None and c2 > v.thr:
-                significant = True
-        if not significant:
+                loop_keys.append((kf.id, new_kf.id))
+        if not loop_keys:
             return None
-        return new_keys, min(a for (a, b) in new_keys)      # oldest keyframe of this step's loop edges (windowed PGO option)
+        return new_keys, min(a for (a, b) in new_keys), loop_keys      # oldest keyframe of this step's new edges (windowed PGO option)
 
     def _verified_lc_optimise(self, ret: dict, new_keys: list, window_ref: int) -> bool:
         """Optimise hypothesis 0 for the new loop edges: solve, posterior test of the new edges, quarantine the outliers
@@ -1719,21 +1720,21 @@ class System:
         return True
 
     # ---------------------------------------------------------------- background optimisation (cross/core/async_pgo.py)
-    def _submit_async_pgo(self, ret: dict, new_keys: list, window_ref: int) -> bool:
+    def _submit_async_pgo(self, ret: dict, new_keys: list, window_ref: int, loop_keys: list) -> bool:
         """A loop edge calls for an optimisation: fork it into the background (one at a time; a trigger that arrives
         while a job is in flight is remembered and re-checked once the job has been applied).  With
         async_pgo_lag_steps = 0 the result is applied before this call returns (the synchronous behaviour)."""
         ap = self._apgo
         step = self._processed_frame_num
         if ap.busy:
-            ap.note_pending(new_keys)
+            ap.note_pending(loop_keys)        # only the inconsistent loop edges: the other new edges would not have triggered
             return True
         if not ap.worth_it():                 # a short optimisation: cheaper in the front end than a fork
             t0 = time.perf_counter()
             done = self._verified_lc_optimise(ret, new_keys, window_ref)
             ap.observe(time.perf_counter() - t0)
             return done
-        ap.submit(new_keys, window_ref, step)
+        ap.submit(new_keys, window_ref, step, loop_keys=loop_keys)
         self._last_pgo_step = step
         if ap.lag == 0:
             self._poll_async_pgo(ret)
@@ -1774,7 +1775,7 @@ class System:
             return False
         if hm.graph_epoch != meta["graph_epoch"]:
             ap.stats["discarded"] += 1
-            ap.note_pending(meta["keys"])
+            ap.note_pending(meta["loop_keys"])
             logger.info(f"Background loop closure of step {meta['step']} discarded at step {step}: the graph was restructured meanwhile")
             return False
         if not res.get("success"):
@@ -1884,7 +1885,7 @@ class System:
             c2 = v.graph_residual_chi2(a, b, h0.visual_edges[(a, b)][-1])
             if c2 is not None and c2 > v.thr:
                 ap.stats["resubmitted"] += 1
-                ap.submit(keys, min(a for (a, b) in keys), self._processed_frame_num)
+                ap.submit(keys, min(a for (a, b) in keys), self._processed_frame_num, loop_keys=keys)
                 return
 
     def _corroborate_loop(self, ref_id: int, new_kf, factor) -> bool:

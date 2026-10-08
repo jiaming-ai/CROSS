@@ -132,6 +132,24 @@ A view that is only textureless (a white wall) is kept unless it shows no struct
 default; `--set mapping.keyframe_quality.enabled=false` turns it off. The test set with injected junk views is
 `benchmark/datasets/inject_junk.py` (`benchmark/dev.py ... --tier occ`).
 
+**Background pose-graph optimisation** (`mapping.loop_closure.async_pgo`, off by default; `cross/core/async_pgo.py`).
+On a large map one loop-closure optimisation takes seconds, and the front end processes no frame meanwhile. With
+`--set mapping.loop_closure.async_pgo=true` the optimisation of a verified loop closure (and the GNSS-triggered one)
+runs in a forked worker process: it works on a copy-on-write snapshot of the system, and the front end keeps processing
+frames. The result is applied when it arrives, to the state of that moment: keyframes added meanwhile and the tracked
+pose move with the correction of the latest keyframe at the fork. A thread would not help: GTSAM holds the GIL for the
+whole optimisation. Linux only; the state must be on the CPU (the default `state_device`); coordinate-chart (mono
+profile) graphs stay synchronous. Details:
+- In free-running mode (`async_pgo_lag_steps=-1`, the default) the result is applied as soon as the worker is done, so
+  *when* it lands depends on the machine's speed and a run is not bit-reproducible. An optimisation expected to take less
+  than `async_pgo_min_s` (0.1 s; and twice the cost of a fork, ~60 ms in a CUDA process) runs in the front end as before, so
+  small maps are unchanged.
+- `async_pgo_lag_steps=k` (k >= 0) applies the result exactly k steps after the trigger (the front end waits when the
+  worker is not done), so the run is reproducible; `0` is the synchronous behaviour, bit-identical to `async_pgo=false`.
+  Use it to test, or for benchmarks.
+- One job at a time; loop closures detected meanwhile are re-checked against the corrected poses when it has been applied.
+  A merge of hypotheses, the final optimisation of a save and every other whole-graph operation wait for the job first.
+
 **Camera mounting and the vertical.** Relocalization proposals are clustered, and matched to hypotheses, in place
 coordinates: position on the horizontal plane plus heading (`mapping.projection`). The default assumes a
 forward-looking camera on a ground robot, so the vertical is the camera's y axis in the first frame and height is

@@ -330,7 +330,7 @@ class AsyncPgo:
                 and not hm.chart_aware and hm.source_states is None)
 
     # ---- submit
-    def submit(self, new_keys, window_ref, step: int, kind: str = "verified", **extra) -> None:
+    def submit(self, new_keys, window_ref, step: int, kind: str = "verified", loop_keys=None, **extra) -> None:
         reap_finished()
         """Fork the optimisation: kind "verified" (a verified loop closure for the edges `new_keys`) or "geo" (the
         GNSS-triggered one; `extra` is kept in the job's meta for the application)."""
@@ -339,7 +339,7 @@ class AsyncPgo:
         v = sys_._lc_verifier
         lc_cfg = sys_.config.mapping.loop_closure
         keys = list(new_keys)
-        self.job_meta = {"step": step, "keys": keys, "window_ref": window_ref, "pose_epoch": hm.pose_epoch, "kind": kind,
+        self.job_meta = {"step": step, "keys": keys, "loop_keys": list(loop_keys) if loop_keys is not None else keys, "window_ref": window_ref, "pose_epoch": hm.pose_epoch, "kind": kind,
                          "graph_epoch": hm.graph_epoch, "n_nodes": len(hm.nodes), "t_submit": time.perf_counter(), **extra}
         if kind == "geo":
             self.job = ForkedJob(lambda: geo_pgo(hm, window_ref)).start()
@@ -375,7 +375,7 @@ class AsyncPgo:
             if self.failures >= 3:
                 self.disabled = True
                 logger.warning("background pose-graph optimisation switched off after 3 failures (synchronous from here)")
-            self.note_pending(meta["keys"])
+            self.note_pending(meta["loop_keys"])
             return None, meta
         meta["wait_s"] = time.perf_counter() - t0               # the front end waiting for the worker (lag mode)
         self.stats["wait_s"] += meta["wait_s"]
@@ -389,4 +389,4 @@ class AsyncPgo:
             self.job = None
             self.stats["discarded"] += 1
             if requeue:
-                self.note_pending(self.job_meta.get("keys", []))
+                self.note_pending(self.job_meta.get("loop_keys", []))

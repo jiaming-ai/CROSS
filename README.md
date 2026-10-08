@@ -40,7 +40,7 @@ it is still being extended.
 ## Key Features
 
 - **Multi-hypothesis tracking** — Gaussian mixture model (GMM) over SE(3) with evidence-driven lifecycle (birth, realization, removal).
-- **Loop closure** — Overlap-based detection with asynchronous pose graph optimization (GTSAM) and hypothesis merging.
+- **Loop closure** — Overlap-based detection with pose graph optimization (GTSAM, optionally in a background process so large maps do not stall the front end) and hypothesis merging.
 - **Topological planning** — Lightweight graph over keyframes with odometry and proximity edges; supports A\* and Dijkstra path planning.
 - **Visual place recognition** — Keyframe database with embedding-based retrieval for relocalization.
 - **Semantic memory** — Text-conditioned object search across the map using open-vocabulary detectors.

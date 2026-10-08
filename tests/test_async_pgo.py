@@ -121,7 +121,7 @@ def test_zero_lag_is_bit_identical_to_the_synchronous_optimisation(test_before_a
     keys, ref = s1.new_keys, min(a for a, b in s1.new_keys)
     ret1, ret2 = {}, {}
     assert s1._verified_lc_optimise(ret1, list(keys), ref)
-    assert s2._submit_async_pgo(ret2, list(keys), ref) is True
+    assert s2._submit_async_pgo(ret2, list(keys), ref, list(keys)) is True
     assert not s2._apgo.busy and s2._apgo.stats["applied"] == 1
     p1, p2 = poses(s1.hypothesis_manager), poses(s2.hypothesis_manager)
     assert any(not np.array_equal(p1[k], poses(make_system(test_before_apply, outlier).hypothesis_manager)[k]) for k in p1)  # it moved
@@ -169,7 +169,7 @@ def test_late_result_moves_the_keyframes_added_meanwhile_with_the_latest_one(lag
     sync._verified_lc_optimise({}, list(keys), ref)
     hm.dist = (pp.SE3(hm.nodes[239].pose_mu.tensor().clone()), pp.se3(torch.zeros(3, 6)), torch.tensor([1.0, 0.0, 0.0]))
     d_before = hm.dist[0][0].tensor().clone()
-    late._submit_async_pgo({}, list(keys), ref)
+    late._submit_async_pgo({}, list(keys), ref, list(keys))
     assert late._apgo.busy
     add_tail(hm, 5)                                          # the front end goes on
     tail_before = {i: poses(hm)[i] for i in range(240, 245)}
@@ -196,9 +196,9 @@ def test_late_result_moves_the_keyframes_added_meanwhile_with_the_latest_one(lag
 def test_triggers_during_a_job_are_rechecked_after_it():
     s = make_system(False, False, async_lag=3)
     keys, ref = s.new_keys, 60
-    s._submit_async_pgo({}, list(keys), ref)
+    s._submit_async_pgo({}, list(keys), ref, list(keys))
     assert s._apgo.busy
-    s._submit_async_pgo({}, [(70, 222)], 70)                  # another trigger while the job runs
+    s._submit_async_pgo({}, [(70, 222)], 70, [(70, 222)])                  # another trigger while the job runs
     assert (70, 222) in s._apgo.pending and s._apgo.stats["submitted"] == 1
     s._processed_frame_num += 3
     s._poll_async_pgo({})
@@ -208,7 +208,7 @@ def test_triggers_during_a_job_are_rechecked_after_it():
 
 def test_a_restructured_graph_discards_the_result():
     s = make_system(False, True, async_lag=1)
-    s._submit_async_pgo({}, list(s.new_keys), 60)
+    s._submit_async_pgo({}, list(s.new_keys), 60, list(s.new_keys))
     before = poses(s.hypothesis_manager)
     s.hypothesis_manager.graph_epoch += 1                     # a merge / promoted hypothesis meanwhile
     s._processed_frame_num += 1
@@ -224,14 +224,14 @@ def test_failed_jobs_are_requeued_and_switch_the_background_mode_off(monkeypatch
     monkeypatch.setattr(ap_mod, "verified_pgo", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
     for _ in range(3):
         s._apgo.pending.clear()
-        s._submit_async_pgo({}, list(s.new_keys), 60)
+        s._submit_async_pgo({}, list(s.new_keys), 60, list(s.new_keys))
     assert s._apgo.disabled and not s._apgo.usable() and not s._apgo.busy
 
 
 def test_drain_applies_the_job_and_forgets_the_triggers():
     s = make_system(False, False, async_lag=50)
     before = poses(s.hypothesis_manager)
-    s._submit_async_pgo({}, list(s.new_keys), 60)
+    s._submit_async_pgo({}, list(s.new_keys), 60, list(s.new_keys))
     s._apgo.note_pending([(1, 2)])
     s._drain_async_pgo()
     assert not s._apgo.busy and not s._apgo.pending
@@ -262,11 +262,11 @@ def test_gnss_triggered_optimisation_in_the_background_keeps_later_factors_pendi
 def test_short_jobs_stay_in_the_front_end_in_free_running_mode():
     s = make_system(False, False, async_lag=-1)
     before = poses(s.hypothesis_manager)
-    s._submit_async_pgo({}, list(s.new_keys), 60)
+    s._submit_async_pgo({}, list(s.new_keys), 60, list(s.new_keys))
     assert not s._apgo.busy and s._apgo.stats["submitted"] == 0 and s._apgo.est_job_s > 0     # ran in the front end
     assert any(not np.array_equal(before[k], v) for k, v in poses(s.hypothesis_manager).items())
     s._apgo.est_job_s = 1.0                                                                   # a long one: background
-    s._submit_async_pgo({}, list(s.new_keys), 60)
+    s._submit_async_pgo({}, list(s.new_keys), 60, list(s.new_keys))
     assert s._apgo.busy
     s._apgo.cancel(requeue=False)
 
@@ -284,7 +284,7 @@ def test_keyframes_moved_by_something_else_meanwhile_get_the_correction_added_to
     hm = late.hypothesis_manager
     keys, ref = late.new_keys, min(a for a, b in late.new_keys)
     sync._verified_lc_optimise({}, list(keys), ref)
-    late._submit_async_pgo({}, list(keys), ref)
+    late._submit_async_pgo({}, list(keys), ref, list(keys))
     # something else (a local smoothing, another optimisation) shifts keyframes 100..110 by 10 cm in the meantime
     shift = pp.SE3(torch.tensor([0.1, 0.0, 0.0, 0, 0, 0, 1.0]))
     for i in range(100, 111):
