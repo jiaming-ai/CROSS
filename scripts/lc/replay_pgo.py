@@ -37,7 +37,8 @@ def pose3(p7):
 
 
 def load_run(run: Path, noise_file: str | None, session: int = 0, device: str = "cpu"):
-    d = pickle.load(open(run / "map.pkl", "rb"))
+    from cross.db.store import read_map
+    d = read_map(run / "map.pkl")          # format v2 or the old single pickle
     g = json.load(open(run / f"graph_s{session}.json"))
     gt = {n["id"]: gtsam.Pose3(np.asarray(n["gt"], dtype=np.float64).reshape(4, 4)) for n in g["nodes"] if n.get("gt")}
     online = {n["id"]: pose3(n["pose"]) for n in g["nodes"]}

@@ -105,6 +105,58 @@ class TrackingConfig:
 
 
 @dataclass
+class DescriptorIndexConfig:
+    """Storage and search of the keyframe descriptors (cross/db/index.py).  Default: the full 16384-d BoQ descriptor in
+    float32 with an exact search, i.e. the original database (64 KB per keyframe)."""
+    # None: full descriptors.  "map": fit an uncentred projection on the map's own descriptors once the database
+    # holds `fit_at` keyframes (smaller maps are unchanged), then store float16 codes (0.5-4 KB instead of 64 KB per
+    # keyframe), extending the subspace when the scene changes (cross.db.index.DescriptorIndex).  A path: a fixed
+    # projection (.npz, PCAProjection.save).  A map saved with a projection always uses its own.
+    # On by default: below fit_at nothing changes (full descriptors, original scores); above it the stored scores keep
+    # the full cosine's meaning (exact re-scoring in session) and maps were identical on KITTI 07 (projection forced at
+    # 128 keyframes) and NCLT (5.5 km, fitted at 1024): see outputs/2026-10-07_retrieval_index
+    projection: Optional[str] = "map"
+    fit_at: int = 4096
+    fit_dim: int = 0               # 0: the fewest dimensions with held-out explained energy >= fit_energy (<= max_dim)
+    fit_energy: float = 0.9        # (OpenLORIS / ROVER / SimChange: 256-600 dims; NCLT 5 cameras: the cap)
+    extend: bool = True            # extend the map projection's subspace when the explained energy drops
+    extend_margin: float = 0.05
+    extend_dims: int = 64
+    max_dim: int = 2048            # NCLT cross-season: 2048 dims lossless in recall, 1024 -1.7 pts R@1, 512 -4
+    recent: int = 1024             # full descriptors of the latest keyframes kept for an extension
+    # projected scores: the best `shortlist` codes of a query are re-scored exactly from the full descriptors while
+    # these are in RAM (keyframes added in this session); loaded maps use the code scores with this calibration
+    # (raw | iso | resid; raw is best across sessions, see cross.db.index.ScoreCalibration)
+    shortlist: int = 64
+    max_rescore: int = 256         # + rows whose code score + fitted residual margin reaches the k-th exact score
+    keep_full_max: int = 131072    # full descriptors kept in CPU RAM (fp16, 32 KB each) up to this many keyframes
+    calibration: str = "raw"
+    store_dtype: str = "auto"      # auto: float32 without a projection, float16 with one
+    backend: str = "exact"         # exact | ivf: inverted file (k-means cells), trained once ivf_min_rows rows exist
+    ivf_nlist: int = 0             # cells (0: 4 sqrt(n))
+    ivf_nprobe: int = 16           # cells searched per query
+    ivf_min_rows: int = 200000
+
+
+@dataclass
+class LocalityConfig:
+    """Locality-aware retrieval: the keyframes near where the belief (or an external prior such as GPS,
+    System.add_location_prior) places the robot are scored apart from the global appearance ranking and get
+    `slots` of the top_k, so that at a revisit the right place is not crowded out by look-alike places far away
+    (a problem that grows with the map).  The rest of the slots stay global (relocalization, large drift)."""
+    enabled: bool = False
+    min_keyframes: int = 0         # only when the database holds at least this many keyframes
+    slots: int = 5                 # of top_k, for the best-scoring keyframes inside the search regions
+    k_sigma: float = 3.0           # search radius = r_min + k_sigma * position sigma (+ drift for hypothesis 0)
+    r_min: float = 5.0             # metres
+    drift_rate: float = 0.05       # metres of radius per metre travelled since the last anchoring (loop closure,
+                                   # map edge, external fix); hypothesis 0 only
+    r_max: float = 2000.0
+    min_weight: float = 0.05       # hypotheses with a smaller weight do not open a search region
+    score_threshold: Optional[float] = None   # VPR score floor inside the regions (None: the database's)
+
+
+@dataclass
 class RetrievalConfig:
     vpr_model_type: VPRModelType = VPRModelType.BOQ
     top_k: int = 10
@@ -143,6 +195,8 @@ class RetrievalConfig:
     initial_buffer_size: int = 1000
     historical_slots: int = 0  # reserve within top_k after loading a map; same score thresholds
     historical_min_score: float | None = None  # opt-in exploration floor, saved-map candidates only
+    index: DescriptorIndexConfig = field(default_factory=DescriptorIndexConfig)
+    locality: LocalityConfig = field(default_factory=LocalityConfig)
 
 
 @dataclass
@@ -312,6 +366,15 @@ class LoopClosureConfig:
     # long drive (KITTI 00 at step 2403: 1108 of 2340 keyframes in the graph) otherwise bends only the latest part and
     # leaves a jump where the optimised window meets the frozen one.
     full_session_pgo: bool = True
+    # large maps: a verified loop-closure optimisation of a session without a loaded map covers only the keyframes from
+    # the oldest keyframe of the triggering loop edges (minus pgo_window_margin keyframes) to the latest one; older
+    # keyframes that share a factor with that window enter as fixed vertices.  A loop back to the start still optimises
+    # the whole session; local revisits optimise only what they can move.  The map is optimised as a whole when it is
+    # saved.  Applies once the session graph has pgo_window_min_nodes keyframes; 0 = off (every keyframe, as before).
+    # On from 1000 keyframes (outputs/2026-10-07_pgo_scale): smaller maps bit-identical; ROVER day T1 equal, KITTI 00
+    # +0.0002 m, NCLT 6.5 km 5.80 / 5.88 m vs 9.00 / 7.25 m whole-session (two runs each); PGO time per session -30..-45 %.
+    pgo_window_min_nodes: int = 1000
+    pgo_window_margin: int = 50
     # relocalization sessions: a map edge of hypothesis 0 anchors the session to the map (prior test of the following
     # map references) when it passes the prior test through an earlier, still unanchored map edge of hypothesis 0 from
     # another observation (within anchor_corroborate_window steps) to another map keyframe.  Without it a session
@@ -592,6 +655,41 @@ class ProjectionConfig:
 
 
 @dataclass
+class KeyframeQualityConfig:
+    """Keyframe quality filter (cross/core/kf_quality.py): a frame whose view is mostly blocked by something close to
+    the camera (a person, an object, a wall at arm's length), clipped, or without texture (blank surface, blur, covered
+    lens) is not stored as a permanent keyframe (it becomes a temporary node: odometry chain kept, no image, no
+    descriptor).  Decided by the informative fraction of the view against the session's running medians.
+    On by default: on the dev OpenLORIS scenes T2 / T3 were identical per query in the stereo, RGB-D and mono modes
+    (T1 within 4 mm), and with injected junk views (benchmark/datasets/inject_junk.py) 52-68 % fewer junk keyframes
+    were stored."""
+    enabled: bool = True
+    # also do not observe (retrieve + estimate) with a junk frame: the odometry carries the belief, as on a frame the
+    # observation cadence skips
+    skip_observation: bool = False
+    info_min: float = 0.35          # junk when the informative fraction < min(info_min, info_rel * session median)
+    info_rel: float = 0.5
+    texture_rel: float = 0.25       # flat cell: gradient < texture_rel * the session's typical textured-cell gradient
+    # a view removed mostly for flat cells (white wall, floor) is junk only when it is empty: its 90th-percentile cell
+    # gradient is below empty_snr x the image's noise level (pure noise ~0.6; blank surfaces 0.6-0.7, low-contrast real
+    # walls 3-5 in OpenLORIS home, whose rejection cost relocalization there)
+    empty_snr: float = 1.5
+    clip_dark: float = 0.04         # clipped pixel: luminance below / above these
+    clip_bright: float = 0.96
+    near_abs: float = 0.8           # near pixel: depth < max(near_abs, near_rel * the session's typical depth) metres
+    near_rel: float = 0.25
+    person: bool = True             # person detections (SSDLite) remove their cells
+    person_score: float = 0.5
+    stereo_near: bool = True        # stereo input without depth: the near field from SGBM on the rectified pair
+    # feed-forward modes: add the near cells of the pass's depth of the current view.  Off: VGGT-Omega's depth of a
+    # close occluder follows its apparent size (a pasted person at 0.4-0.75 m came out at 1.6-2.8 m)
+    pass_depth: bool = False
+    grid: int = 16                  # cells across the image width
+    window: int = 200               # frames of the running medians
+    warmup: int = 5                 # the first frames of a session are never junk (the medians are seeded)
+
+
+@dataclass
 class MappingConfig:
     kf_gmm_n_components: int = 5
     kf_retrieval_threshold_new_kf: float = 0.75
@@ -604,6 +702,7 @@ class MappingConfig:
     cluster_std: ClusterStdConfig = field(default_factory=ClusterStdConfig)
     hypothesis: HypothesisConfig = field(default_factory=HypothesisConfig)
     topo: TopoConfig = field(default_factory=TopoConfig)
+    keyframe_quality: KeyframeQualityConfig = field(default_factory=KeyframeQualityConfig)
 
 
 @dataclass
@@ -772,6 +871,100 @@ class VisualizationConfig:
 
 
 @dataclass
+class GeoConfig:
+    """GNSS / compass anchoring of the map to physical locations (cross/geo).  Off by default: with no GNSS input the
+    system is unchanged; with `enabled` the fixes of obs["gnss"] are quality-controlled (relative consistency against
+    the robot's own track, stale receivers, reacquisition hold-off, absolute chi-square gate), the map is anchored to a
+    local ENU frame, decimated GNSS factors (one per correlation time of the receiver error, estimated online) enter
+    the pose graph with a Cauchy kernel, and fixes gate retrieval / relocalization proposals.  Thresholds are
+    chi-square levels (`confidence`, default: the verified loop closure's); noise and correlation time adapt online.
+    On by default: GNSS input is used whenever a frame carries it, and a geo-anchored map keeps its anchor (and every
+    keyframe's latitude / longitude) when it is loaded and saved again in a session without GNSS; without GNSS input
+    and without an anchored map the system's results are unchanged (the idle manager only integrates the odometry)."""
+    enabled: bool = True
+    confidence: Optional[float] = None        # None: mapping.loop_closure.confidence
+    drift_rate: Optional[float] = None        # growth of the prediction's std per metre since the last used fix (None: odom_k_t)
+    pred_floor: float = 0.5                   # metres added to the prediction's std (lever arm, time stamps)
+    uere: float = 3.0                         # receivers that report HDOP only: sigma_h = uere * HDOP
+    # vertical / horizontal noise of a fix without its own vertical accuracy: consumer altitude wanders +-10 m over
+    # minutes (NCLT); 27-session study: vertical error 5.09 (2x) / 4.71 (4x) / 7.34 m (8x, one 26 m outlier), horizontal
+    # unchanged; without altitude the horizontal factors pitch the map (30.7 m)
+    sigma_v_factor: float = 4.0
+    window_s: float = 20.0                    # relative-consistency window (s)
+    min_fixes: int = 5                        # fixes of an epoch before any is used
+    holdoff_s: float = 10.0                   # age of an epoch before its fixes are used (reacquisition)
+    factor_interval_prior_s: float = 20.0     # spacing of GNSS factors until the error model has estimated it
+    anchor_dof: int = 4                       # 4: heading + translation with the map's vertical; 6: free rotation
+    anchor_max_yaw_std_deg: float = 3.0       # the anchor is used once its heading is known this well
+    anchor_refit_every: int = 100             # used fixes between anchor refits
+    max_fix_log: int = 20000
+    gauge_tilt_deg: float = 0.5               # soft prior of the first keyframe's tilt when GNSS fixes the gauge
+    opt_min_factors: int = 3                  # GNSS factors since the last optimisation before a drift test
+    opt_min_keyframes: int = 20               # keyframes between two GNSS-triggered optimisations
+    robust_c: Optional[float] = None          # Cauchy kernel scale (None: sqrt of the 2-dof chi-square at `confidence`)
+    # ablations (all True = the method): `gate` False uses every fix (no consistency tests, no hold-off), `decimate`
+    # False makes every used fix a factor (no correlation-time spacing), `robust` False drops the Cauchy kernel
+    gate: bool = True
+    decimate: bool = True
+    robust: bool = True
+    # factors with the relative test's noise inflation (the gate always uses it); NCLT study: no gain (6 of 21
+    # sessions better), so factors keep the prior noise times the posterior scale
+    inflate_factors: bool = False
+    # rescale the prior noise from the posterior residuals after each optimisation; the residuals are shrunk by the fit
+    # (the trajectory absorbs part of the error), so the rescaled noise overweights GNSS (NCLT 27 sessions: geo RMSE
+    # 3.53 vs 3.40 m, online 6.67 vs 5.49 m, 2.4x the optimisations)
+    posterior_scale: bool = False
+    # GNSS altitude in the factors (vertical noise sigma_v_factor x horizontal); False: horizontal factors only (the
+    # map's vertical from odometry / vision).  Consumer altitude is poor: NCLT 2012-08-04 end to end the vertical error
+    # rose 3.5 -> 8.1 m with it (2012-01-08: 3.0 -> 2.3 m); see the 27-session study
+    use_altitude: bool = True
+    retrieval_gate: bool = True               # the current fix is a location prior of retrieval (System.add_location_prior;
+                                              # acts with retrieval.locality.enabled)
+    proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
+    fix_max_age_s: float = 3.0                # a fix gates proposals / retrieval for this long (odometry carries it)
+    compass_gate: bool = True                 # references whose heading contradicts the compass are dropped (needs the
+                                              # compass offset, calibrated against the GNSS-anchored map)
+    compass_sigma_deg: float = 5.0
+    compass_offset_deg: Optional[float] = None   # compass -> camera heading offset; None: calibrated online
+    compass_frame: str = "frd"                # body frame of raw magnetometer / accelerometer samples
+    compass_hard_iron: bool = False           # online hard-iron calibration of the magnetometer (no gain on NCLT)
+
+
+@dataclass
+class StorageConfig:
+    """How a saved map stores its keyframes (cross/db/store.py).  Format v2: `map.pkl` holds the graph as numpy
+    columns, the images and descriptors go to `map.pkl.store/` and are read on demand."""
+    format: str = "v2"                   # v2 | pickle (the old single file: every image and descriptor inside)
+    # colour keyframe images: png / webp_lossless (exact) or jpeg / webp (lossy, image_quality); raw = uncompressed
+    image_codec: str = "webp_lossless"
+    image_quality: int = 95              # jpeg / webp quality
+    png_level: int = 3                   # png / png16 compression level (0-9)
+    depth_codec: str = "png16"           # png16 (fp16 bit pattern in a 16-bit PNG, exact) | zstd | raw
+    depth_drop_bits: int = 0             # png16: drop this many fp16 mantissa bits (3: <= 0.4 % error, 35 % smaller)
+    # retrieval descriptors on disk: float16 (half the bytes; dev split full tier: every metric unchanged, scores differ
+    # ~1e-7) | float32 (exact)
+    descriptor_dtype: str = "float16"
+    decode_cache: int = 1024             # decoded keyframe images kept in memory (LRU, process-wide)
+    # where keyframe images are held: "cpu" (host RAM; the references of an observation are copied to the GPU for its
+    # pass) or "" (the compute device, the old behaviour: GPU memory grows with the map, ~0.6 MB per image)
+    image_device: str = "cpu"
+    # live run: keep the images of the newest N keyframes as tensors, encode older ones into a spool file and drop
+    # them from memory (decoded again on access, exact with the lossless codecs); 0: every keyframe image stays in
+    # memory (~0.6 MB each).  NCLT 2012-01-08 (4300 keyframes) with 500: identical map, same run time, host RAM
+    # 4.3 vs 6.3 GB
+    max_ram_images: int = 2000
+    # encode every new keyframe's images in the background as it is added (format v2), so saving a large map copies
+    # bytes instead of encoding; the images in memory are unchanged
+    encode_ahead: bool = True
+    spill_dir: Optional[str] = None      # spool directory of max_ram_images (default: a temporary directory)
+    encode_workers: int = 4              # threads that encode images when a map is saved
+    # after load_map, move every object the collector tracks to its permanent generation (gc.freeze), so later
+    # collections do not rescan the loaded map (one full pass over a 10^6-keyframe map takes seconds); shutdown()
+    # unfreezes.  Process-wide: a process that drops a session without shutdown() keeps its objects until exit
+    gc_freeze: bool = True
+
+
+@dataclass
 class SystemConfig:
     """Root configuration for the CROSS system."""
     async_update: bool = False
@@ -786,6 +979,8 @@ class SystemConfig:
     pose_est: PoseEstConfig = field(default_factory=PoseEstConfig)
     depth_pred: DepthPredConfig = field(default_factory=DepthPredConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
+    geo: GeoConfig = field(default_factory=GeoConfig)
 
 
 # ---------------------------------------------------------------------------

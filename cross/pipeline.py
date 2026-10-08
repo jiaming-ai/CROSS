@@ -204,6 +204,8 @@ class Pipeline:
             "timestamp": frame["timestamp"],
             "initial_chart_pose": estimate.pose.copy() if map_now and not self.initialized else None,
             "frontend_anchor": anchor,
+            "gnss": frame.get("gnss"),
+            "compass": frame.get("compass"),
         })
         if hasattr(frontend, "after_backend"):
             pose_est = getattr(self.mapper, "pose_est", None)

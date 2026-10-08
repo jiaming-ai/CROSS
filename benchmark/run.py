@@ -613,6 +613,7 @@ class Job:
                     if (md / f).exists():
                         (md / f).unlink()
                 shutil.rmtree(md / "views_map", ignore_errors=True)
+                shutil.rmtree(md / "map.pkl.store", ignore_errors=True)       # CROSS map data (format v2)
         elif a.task in ("map", "t1") and a.reeval:
             self.reeval_t1(self.scene["map"] if a.task == "map" else a.seq)
         elif a.task == "t1":
@@ -638,6 +639,7 @@ class Job:
                     if (nat / f).exists():
                         (nat / f).unlink()
                 shutil.rmtree(nat / "views_map", ignore_errors=True)
+                shutil.rmtree(nat / "map.pkl.store", ignore_errors=True)
         elif a.task == "query":
             m = self.scene["map"]
             if a.reeval:

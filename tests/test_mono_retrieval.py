@@ -92,20 +92,34 @@ def test_historical_recovery_keeps_temporal_gates_independent_of_chart_distance(
     assert manager.detect_loop_closure({})["loop_closure"] == (distance >= 3.)
 
 
+def _database(embeddings, ids, atlas=None, atlas_rows=None, embedding=None):
+    """KeyframeDatabase over given descriptors and keyframe ids, without a VPR model."""
+    from cross.db.db import KeyframeDatabase
+    from cross.db.index import DescriptorIndex
+    database = KeyframeDatabase.__new__(KeyframeDatabase)
+    database.device, database.top_k = "cpu", 3
+    database.score_threshold_high = database.score_threshold_low = .3
+    E = torch.tensor(embeddings)
+    database.index = DescriptorIndex(E.shape[1], device="cpu", initial_capacity=len(ids))
+    database.index.set_rows(E, ids)
+    keyframes = [SimpleNamespace(id=i) for i in ids]
+    database._row_kf = keyframes
+    database._id_to_row = {k.id: r for r, k in enumerate(keyframes)}
+    database._keyframe_by_atlas = {atlas: keyframes}
+    database._index_to_atlas_idx = {r: (atlas, r) for r in range(len(ids))}
+    database._atlas_to_indices = {atlas: list(atlas_rows if atlas_rows is not None else range(len(ids)))}
+    database.vpr_model = SimpleNamespace(get_embedding=embedding or (lambda _: torch.ones(1)))
+    return database
+
+
 def test_historical_slot_preserves_budget_thresholds_scores_and_embedding_cost():
     from cross.db.db import KeyframeDatabase
 
-    database = KeyframeDatabase.__new__(KeyframeDatabase)
-    database._current_size, database.top_k = 5, 3
-    database._embedding_buffer = torch.tensor([[.95], [.9], [.8], [.6], [.1]])
-    database.score_threshold_high = database.score_threshold_low = .3
-    database._keyframe_by_atlas = {None: [SimpleNamespace(id=i) for i in range(5)]}
-    database._index_to_atlas_idx = {i: (None, i) for i in range(5)}
     calls = []
     def embedding(image):
         calls.append(image)
         return torch.ones(1)
-    database.vpr_model = SimpleNamespace(get_embedding=embedding)
+    database = _database([[.95], [.9], [.8], [.6], [.1]], range(5), embedding=embedding)
     original = database.query(None)
     balanced = database.query(None, reserved_keyframe_ids={3, 4}, reserved_count=1)
     low_score_only = database.query(None, reserved_keyframe_ids={4}, reserved_count=1)
@@ -119,15 +133,9 @@ def test_historical_slot_preserves_budget_thresholds_scores_and_embedding_cost()
 def test_historical_exploration_does_not_admit_weak_query_nodes_or_exceed_budget():
     from cross.db.db import KeyframeDatabase
 
-    database = KeyframeDatabase.__new__(KeyframeDatabase)
-    database._current_size, database.top_k = 5, 3
-    database._embedding_buffer = torch.tensor([[.29], [.25], [.2], [.15], [-.1]])
-    database.score_threshold_high = database.score_threshold_low = .3
     atlas = object()
-    database._keyframe_by_atlas = {atlas: [SimpleNamespace(id=i+10) for i in range(5)]}
-    database._index_to_atlas_idx = {i: (atlas, i) for i in range(5)}
-    database._atlas_to_indices = {atlas: [2, 4, 0, 3, 1]}  # exercise subset-index remapping
-    database.vpr_model = SimpleNamespace(get_embedding=lambda _: torch.ones(1))
+    database = _database([[.29], [.25], [.2], [.15], [-.1]], [i + 10 for i in range(5)], atlas=atlas,
+                         atlas_rows=[2, 4, 0, 3, 1])  # exercise subset-index remapping
     assert database.query(None)["scores"] == []
     for selected in (None, [atlas]):
         results = database.query(None, target_atlases=selected, reserved_keyframe_ids={11,12,13,14},

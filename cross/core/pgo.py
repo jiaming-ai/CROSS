@@ -1,4 +1,6 @@
+import bisect
 import collections
+import weakref
 import numpy as np
 import torch
 import pypose as pp
@@ -24,25 +26,84 @@ def pypose_to_gtsam_pose3(pose) -> 'gtsam.Pose3':
     return gtsam.Pose3(rot, trans)
 
 
-def gtsam_to_pypose_pose3(pose: 'gtsam.Pose3', device: str) -> pp.LieTensor:
-    """Converts a gtsam.Pose3 object to a pypose SE3 LieTensor."""
+def _pypose_row(pose: 'gtsam.Pose3') -> np.ndarray:
+    """gtsam.Pose3 -> (7,) float64 [x y z qx qy qz qw] (unit quaternion)."""
     rot_quat = np.asarray(pose.rotation().toQuaternion().coeffs(), dtype=np.float64)  # [x, y, z, w]
     rot_quat = rot_quat / max(float(np.linalg.norm(rot_quat)), 1e-12)
     trans = pose.translation()  # [x, y, z]
     # pypose quat: [qx, qy, qz, qw]
-    pypose_tensor = np.concatenate([trans, rot_quat])
-    return pp.SE3(torch.from_numpy(pypose_tensor).to(dtype=torch.float32, device=device))
+    return np.concatenate([trans, rot_quat])
 
 
-@dataclass
+def gtsam_to_pypose_pose3(pose: 'gtsam.Pose3', device: str) -> pp.LieTensor:
+    """Converts a gtsam.Pose3 object to a pypose SE3 LieTensor."""
+    return pp.SE3(torch.from_numpy(_pypose_row(pose)).to(dtype=torch.float32, device=device))
+
+
+# torch-function dispatch of LieTensor subclasses (pypose) costs ~90 us per indexing / assignment; the pose graph
+# reads and writes thousands of keyframe rows per optimisation, so those go through plain tensor ops (same values)
+_plain_tensor_ops = torch._C.DisableTorchFunctionSubclass
+
+
+def as_se3(t: torch.Tensor) -> pp.LieTensor:
+    """An SE3 LieTensor over the tensor `t` (no copy), as pp.SE3(t) and pypose's own result wrapping build it."""
+    lt = torch.Tensor.as_subclass(t, pp.LieTensor)
+    lt.ltype = pp.SE3_type
+    return lt
+
+
+# Per-factor caches of the GTSAM measurement and noise model.  Keys are the factor objects (weak: a removed factor
+# drops its entries); each entry stores the exact inputs it was computed from and is used only when they match.
+_measurement_cache: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+_noise_cache: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
 class Vertex:
-    """Represents a vertex (node) in the pose graph."""
-    id: int  # Original keyframe ID (or temp vertex ID for multi-hypothesis)
-    pose: pp.LieTensor
-    std: pp.LieTensor
-    original_kf_id: int = 0  # Original keyframe ID
-    original_comp_id: int = 0  # Component/hypothesis ID
-    temporary: bool = False  # Whether the vertex is a temp kf 
+    """Represents a vertex (node) in the pose graph.
+
+    `pose` / `std` are the rows of the keyframe's belief (`pose_mu[comp]`, `pose_std[comp]`, views as before); they
+    are materialised on first access from the keyframe (`src`), since most vertices of a large graph are only read
+    numerically by PoseGraph.solve (`pose_row`, a plain view of the stored row)."""
+
+    def __init__(self, id: int, pose: Optional[pp.LieTensor] = None, std: Optional[pp.LieTensor] = None,
+                 original_kf_id: int = 0, original_comp_id: int = 0, temporary: bool = False, src=None):
+        self.id = id  # Original keyframe ID (or temp vertex ID for multi-hypothesis)
+        self.original_kf_id = original_kf_id  # Original keyframe ID
+        self.original_comp_id = original_comp_id  # Component/hypothesis ID
+        self.temporary = temporary  # Whether the vertex is a temp kf
+        self._pose = pose
+        self._std = std
+        self._src = src  # (keyframe, component): the keyframe's belief row, read when needed
+
+    @property
+    def pose(self) -> pp.LieTensor:
+        if self._pose is None and self._src is not None:
+            self._pose = self._src[0].pose_mu[self._src[1]]
+        return self._pose
+
+    @pose.setter
+    def pose(self, value):
+        self._pose = value
+
+    @property
+    def std(self) -> pp.LieTensor:
+        if self._std is None and self._src is not None:
+            self._std = self._src[0].pose_std[self._src[1]]
+        return self._std
+
+    @std.setter
+    def std(self, value):
+        self._std = value
+
+    def pose_row(self) -> torch.Tensor:
+        """The pose as a plain (7,) tensor (the values of `pose`, without creating a LieTensor)."""
+        if self._pose is not None or self._src is None:
+            return self._pose.tensor()
+        return self._src[0].plain_row("pose_mu", self._src[1])
+
+    def __repr__(self):
+        return (f"Vertex(id={self.id}, original_kf_id={self.original_kf_id}, original_comp_id={self.original_comp_id}, "
+                f"temporary={self.temporary})")
 
 
 class PoseGraph:
@@ -111,6 +172,12 @@ class PoseGraph:
         # Optimization results
         self.optimized_poses: Dict[int, pp.LieTensor] = {}
         self.optimization_cost: float = 0.0
+        # GNSS position factors (cross.geo): [(vertex id, target position in the map frame (3,), covariance (3, 3))],
+        # with a Cauchy kernel of scale robust_c; soft_priors {vertex id: 6x6 covariance (gtsam order r, t)} replace the
+        # hard prior of a gauge vertex whose position and heading the GNSS factors determine
+        self.unary_position_factors: List = []
+        self.unary_robust_c: Optional[float] = None
+        self.soft_priors: Dict[int, np.ndarray] = {}
     
     def _make_between_noise_model(self, factor, gtsam_sigmas: np.ndarray, gtsam_cov: Optional[np.ndarray] = None) -> 'gtsam.noiseModel.Base':
         """
@@ -151,11 +218,99 @@ class PoseGraph:
             )
             return base_noise
     
+    # ------------------------------------------------------------------ factor inputs (cached per factor)
+    def _measurement(self, factor) -> 'gtsam.Pose3':
+        """GTSAM measurement of a factor (from its cached numpy copy of the mean), reused while that copy is the same."""
+        m = factor.mean_np if hasattr(factor, "mean_np") else factor.mean
+        entry = _measurement_cache.get(factor)
+        if entry is not None and entry[0] is m:
+            return entry[1]
+        measurement = pypose_to_gtsam_pose3(m)
+        _measurement_cache[factor] = (m, measurement)
+        return measurement
+
+    def _noise_cache_key(self):
+        """Everything a between factor's noise model depends on besides the factor itself, or None (no caching: a
+        noise function without a `cache_key` may depend on state the cache cannot see)."""
+        if self.noise_fn is not None and not hasattr(self.noise_fn, "cache_key"):
+            return None
+        robust = (getattr(self, "visual_robust_enabled", None), getattr(self, "visual_robust_type", None),
+                  getattr(self, "visual_robust_delta", None))
+        return (self.noise_fn.cache_key() if self.noise_fn is not None else None,
+                tuple(sorted((k.name, float(v)) for k, v in self.uncertainty_scales.items())),
+                bool(getattr(self, "scale_by_multiplicity", True)), robust)
+
+    def _between_noise(self, factor, num_visual_edges: int, key) -> 'gtsam.noiseModel.Base':
+        """Noise model of a between factor; cached per factor while its inputs (measurement copy, noise metadata,
+        multiplicity and `key`) are unchanged.  Same model as _compute_between_noise."""
+        if key is None:
+            return self._compute_between_noise(factor, num_visual_edges)
+        modelled = self.noise_fn is not None and factor.type in getattr(self.noise_fn, "cache_types", ())
+        m = factor.mean_np if hasattr(factor, "mean_np") else factor.mean
+        sd = None if modelled else (factor.std_np if hasattr(factor, "std_np") else factor.std)
+        fields = (factor.type, getattr(factor, "noise_scale", None), getattr(factor, "noise_scale_along", None),
+                  getattr(factor, "noise_scale_rot", None), getattr(factor, "n_frames", None),
+                  getattr(factor, "odom_fault", None), num_visual_edges)
+        entry = _noise_cache.get(factor)
+        if entry is not None and entry[0] is m and entry[1] is sd and entry[2] == fields and entry[3] == key:
+            return entry[4]
+        model = self._compute_between_noise(factor, num_visual_edges)
+        _noise_cache[factor] = (m, sd, fields, key, model)
+        return model
+
+    def _compute_between_noise(self, factor, num_visual_edges: int) -> 'gtsam.noiseModel.Base':
+        """Noise model of a between factor: the calibrated model (noise_fn) or the factor's own std, scaled by the
+        uncertainty scale of its type and, for visual factors, by the number of visual factors of its edge."""
+        # Convert diagonal std from pypose to gtsam noise model (calibrated model if available)
+        pypose_stds = None
+        gtsam_cov = None
+        if self.noise_fn is not None:
+            s = self.noise_fn(factor)
+            if s is not None:
+                s = np.asarray(s, dtype=np.float64)
+                if s.ndim == 2:
+                    gtsam_cov = s.copy()
+                else:
+                    pypose_stds = s.copy()
+        if gtsam_cov is not None:
+            k = float(self.uncertainty_scales.get(factor.type, 1.0))
+            if factor.type == EdgeType.VISUAL and num_visual_edges > 0 and getattr(self, "scale_by_multiplicity", True):
+                k *= num_visual_edges
+            gtsam_cov = gtsam_cov * k ** 2 + np.eye(6) * 1e-18
+            return self._make_between_noise_model(factor, None, gtsam_cov)
+        if pypose_stds is None:
+            pypose_stds = (factor.std_np if hasattr(factor, "std_np") else factor.std.tensor().cpu().numpy().flatten()).astype(np.float64).copy()
+
+        # Apply uncertainty scaling factor
+        if factor.type in self.uncertainty_scales:
+            pypose_stds *= self.uncertainty_scales[factor.type]
+
+        # Scale std by number of visual edges
+        if factor.type == EdgeType.VISUAL and num_visual_edges > 0 and getattr(self, "scale_by_multiplicity", True):
+            pypose_stds *= num_visual_edges
+
+        # Ensure non-negative stds
+        pypose_stds[pypose_stds < 0] = 0.0
+
+        # Reorder from pypose [vx, vy, vz, wx, wy, wz] to gtsam [wx, wy, wz, vx, vy, vz]
+        gtsam_sigmas = np.array([
+            pypose_stds[3],  # wx
+            pypose_stds[4],  # wy
+            pypose_stds[5],  # wz
+            pypose_stds[0],  # vx
+            pypose_stds[1],  # vy
+            pypose_stds[2],  # vz
+        ])
+        gtsam_sigmas += 1e-9  # Add epsilon for stability
+
+        return self._make_between_noise_model(factor, gtsam_sigmas)
+
     def _expand_odom_nodes(
         self,
         target_node_id: int,
         hypothesis_id: int = 0,
         depth: int = 100,
+        with_vertices: bool = True,
     ) -> Tuple[Set[int], List[Vertex]]:
         """
         Expand the odom edges by depth and create vertices for the specified hypothesis.
@@ -177,19 +332,16 @@ class PoseGraph:
         max_idx = min(len(all_node_ids), target_idx + depth)
         odom_node_ids.update(all_node_ids[min_idx:max_idx])
         
-        odom_nodes = []
-        for node_id in odom_node_ids:
-            v = Vertex(
-                id=node_id,
-                pose=self.nodes[node_id].pose_mu[hypothesis_id],
-                std=self.nodes[node_id].pose_std[hypothesis_id],
-                original_kf_id=node_id,
-                original_comp_id=hypothesis_id,
-                temporary=self.nodes[node_id].temporary,
-            )
-            odom_nodes.append(v)
+        odom_nodes = [self._vertex(node_id, hypothesis_id) for node_id in odom_node_ids] if with_vertices else []
 
         return odom_node_ids, odom_nodes
+
+    def _vertex(self, node_id: int, hypothesis_id: int, vertex_id: Optional[int] = None) -> Vertex:
+        """Vertex of keyframe `node_id` in hypothesis `hypothesis_id` (its belief row, read lazily)."""
+        kf = self.nodes[node_id]
+        return Vertex(id=node_id if vertex_id is None else vertex_id, original_kf_id=node_id,
+                      original_comp_id=hypothesis_id, temporary=kf.temporary,
+                      src=(kf, hypothesis_id))
     
     def _expand_visual_edges(
         self,
@@ -281,17 +433,7 @@ class PoseGraph:
                 if relevant_factors:
                     edges.append((u, v, relevant_factors))
         
-        nodes = []
-        for node_id in visual_node_ids:
-            v = Vertex(
-                id=node_id,
-                pose=self.nodes[node_id].pose_mu[hypothesis_id],
-                std=self.nodes[node_id].pose_std[hypothesis_id],
-                original_kf_id=node_id,
-                original_comp_id=hypothesis_id,
-                temporary=self.nodes[node_id].temporary,
-            )
-            nodes.append(v)
+        nodes = [self._vertex(node_id, hypothesis_id) for node_id in visual_node_ids]
         return visual_node_ids, edges, nodes
 
     def _expand_odom_edges(
@@ -345,7 +487,7 @@ class PoseGraph:
         hypotheses = self.hypothesis_manager.hypotheses
         # --- Step 1: Expand odometry nodes by depth for hypothesis 0 ---
         odom_node_ids, odom_nodes = self._expand_odom_nodes(
-            target_node_id, hypothesis_id=0, depth=depth
+            target_node_id, hypothesis_id=0, depth=depth, with_vertices=False
         )
         
         # --- Step 2: Expand visual edges by k-hop for hypothesis 0 ---
@@ -405,14 +547,7 @@ class PoseGraph:
                 # Create a temp vertex for this keyframe in the other hypothesis
                 kf_to_temp_vertex[kf_id] = temp_vertex_id
                 
-                v = Vertex(
-                    id=temp_vertex_id,
-                    pose=kf.pose_mu[other_hypothesis_id],
-                    std=kf.pose_std[other_hypothesis_id],
-                    original_kf_id=kf_id,
-                    original_comp_id=other_hypothesis_id,
-                    temporary=kf.temporary,
-                )
+                v = self._vertex(kf_id, other_hypothesis_id, vertex_id=temp_vertex_id)
                 vertices.append(v)
                 
                 # --- Step 4.2: Add odometry edge between consecutive temp vertices ---
@@ -482,6 +617,7 @@ class PoseGraph:
             sess_start = getattr(getattr(self.hypothesis_manager, "system", None), "_session_start_kf_id", 0) or start_idx
             start_idx = min(start_idx, sess_start) if sess_start > 0 else start_idx
             twin_of = {v.original_kf_id: v for v in vertices if v.id not in self.nodes}
+            successor = None
             # session keyframes without a twin (created before the hypothesis) are re-initialised by
             # composing the nearest twinned keyframe with the odometry chain
             for v in vertices:
@@ -492,12 +628,16 @@ class PoseGraph:
                 if v.original_comp_id == 0 and v.id in self.nodes and v.id >= start_idx and v.id not in twin_of:
                     # walk forward along odometry edges to the first twinned keyframe
                     chain, cur, ok = [], v.id, False
+                    if successor is None:      # first odometry edge out of each keyframe (edge insertion order)
+                        successor = {}
+                        for (a, b) in self.odom_edges:
+                            successor.setdefault(a, b)
                     for _ in range(10000):
-                        nxt = [b for (a, b) in self.odom_edges if a == cur]
-                        if not nxt:
+                        nxt = successor.get(cur)
+                        if nxt is None:
                             break
-                        chain.append((cur, nxt[0]))
-                        cur = nxt[0]
+                        chain.append((cur, nxt))
+                        cur = nxt
                         if cur in twin_of:
                             ok = True
                             break
@@ -514,6 +654,42 @@ class PoseGraph:
         if self.hypothesis_manager.source_states is not None:
             from cross.core.conditional_pgo import prepare
             prepare(self,other_hypothesis_id)
+
+    def construct_window(self, first_free_id: int) -> Set[int]:
+        """Hypothesis-0 graph for a windowed loop-closure optimisation: the keyframes with id >= first_free_id (free)
+        and the older keyframes that share a hypothesis-0 factor with them (returned: the fixed boundary).  Built from
+        the adjacency of the window only, so its cost does not grow with the size of the map."""
+        h0 = self.hypothesis_manager.hypotheses[0]
+        ids = sorted(self.nodes.keys())
+        start = bisect.bisect_left(ids, first_free_id)
+        free = ids[start:]
+        free_set = set(free)
+        boundary: Set[int] = set()
+        edges = []
+        seen = set()
+        for u in free:
+            for v in h0.visual_adjacency.get(u, ()):
+                if v not in self.nodes:
+                    continue
+                for key in ((u, v), (v, u)):
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    factors = [f for f in h0.visual_edges.get(key, ()) if f.from_comp_id == 0 and f.to_comp_id == 0]
+                    if factors:
+                        edges.append((key[0], key[1], factors))
+                        if v not in free_set:
+                            boundary.add(v)
+        chain = ([ids[start - 1]] if start > 0 else []) + free     # the odometry chain into and through the window
+        for a, b in zip(chain[:-1], chain[1:]):
+            if (a, b) in self.odom_edges:
+                edges.append((a, b, [self.odom_edges[(a, b)]]))
+                if a not in free_set:
+                    boundary.add(a)
+        self.vertices = [self._vertex(i, 0) for i in free] + [self._vertex(i, 0) for i in sorted(boundary)]
+        self.edges = edges
+        self.vertex_map = {v.id: v for v in self.vertices}
+        return boundary
 
     def _retain_connected_chart_graph(self, target_node_id, other_hypothesis_id=0):
         """Do not optimize unrelated saved sessions merely due to adjacent IDs."""
@@ -552,7 +728,7 @@ class PoseGraph:
         """
         # Step 1: Expand odometry nodes around target
         odom_node_ids, _odom_nodes = self._expand_odom_nodes(
-            target_node_id, hypothesis_id=0, depth=window_kfs
+            target_node_id, hypothesis_id=0, depth=window_kfs, with_vertices=False
         )
 
         # Step 2: Expand visual edges based on these nodes
@@ -733,93 +909,68 @@ class PoseGraph:
         ids_list = [i for i in all_node_ids]
         for node_id in ids_list:
             assert node_id in self.vertex_map, f"Node {node_id} not found in vertex map"
-        poses_np = torch.stack([self.vertex_map[i].pose.tensor().reshape(-1) for i in ids_list]).detach().cpu().numpy().astype(np.float64) if ids_list else np.zeros((0, 7))
+        poses_np = torch.stack([self.vertex_map[i].pose_row().reshape(-1) for i in ids_list]).detach().cpu().numpy().astype(np.float64) if ids_list else np.zeros((0, 7))
         for node_id, p in zip(ids_list, poses_np):
             initial.insert(node_id, pypose_to_gtsam_pose3(p))
         
         # 2. Add prior factors for fixed nodes
+        used = set()                       # keys of the factors added (variables without any factor are dropped below)
         prior_noise = gtsam.noiseModel.Diagonal.Sigmas(np.full(6, 1e-9))
         for node_id in fixed_node_ids:
             assert node_id in self.vertex_map, f"Node {node_id} not found in vertex map"
             fixed_pose_gtsam = initial.atPose3(node_id)
             graph.add(gtsam.PriorFactorPose3(node_id, fixed_pose_gtsam, prior_noise))
+            used.add(node_id)
         
+        for node_id, cov in self.soft_priors.items():
+            if node_id in all_node_ids:
+                graph.add(gtsam.PriorFactorPose3(node_id, initial.atPose3(node_id),
+                                                 gtsam.noiseModel.Gaussian.Covariance(np.asarray(cov, dtype=np.float64))))
+        self.n_unary = 0
+        for (node_id, target, cov) in self.unary_position_factors:
+            if node_id not in all_node_ids:
+                continue
+            base = gtsam.noiseModel.Gaussian.Covariance(np.asarray(cov, dtype=np.float64))
+            nm = base if self.unary_robust_c is None else gtsam.noiseModel.Robust.Create(
+                gtsam.noiseModel.mEstimator.Cauchy.Create(float(self.unary_robust_c)), base)
+            graph.add(gtsam.GPSFactor(node_id, np.asarray(target, dtype=np.float64), nm))
+            self.n_unary += 1
+
         # 3. Add between factors for all edges
         has_edges = False
         conditional_factors = []
+        record_conditional = hasattr(self, 'conditional_belief')
+        noise_key = self._noise_cache_key()
         self.n_factors = {"used_visual": 0, "skipped_visual": 0, "odometry": 0, "loop_closure": 0}
+        skip_fn, counts = self.skip_fn, self.n_factors
+        visual_type, odometry_type = EdgeType.VISUAL, EdgeType.ODOMETRY
         for (id1, id2, factors) in self.edges:
             if id1 in all_node_ids and id2 in all_node_ids:
-                if self.skip_fn is not None:
-                    kept = [f for f in factors if not self.skip_fn(f)]
-                    self.n_factors["skipped_visual"] += sum(1 for f in factors if f.type == EdgeType.VISUAL) - sum(1 for f in kept if f.type == EdgeType.VISUAL)
-                    factors = kept
-                    if not factors:
-                        continue
+                # one pass: the factors the information criterion keeps, and the counts by type
+                kept, num_visual_edges = [], 0
                 for f in factors:
-                    if f.type == EdgeType.VISUAL:
-                        self.n_factors["used_visual"] += 1
-                    elif f.type == EdgeType.ODOMETRY:
-                        self.n_factors["odometry"] += 1
-                    else:
-                        self.n_factors["loop_closure"] += 1
-                num_visual_edges = sum(1 for f in factors if f.type == EdgeType.VISUAL)
-                for factor in factors:
-                    has_edges = True
-                    # Convert measurement from pypose to gtsam (cached numpy copy of the measurement)
-                    measurement_gtsam = pypose_to_gtsam_pose3(factor.mean_np if hasattr(factor, "mean_np") else factor.mean)
-                    
-                    # Convert diagonal std from pypose to gtsam noise model (calibrated model if available)
-                    pypose_stds = None
-                    gtsam_cov = None
-                    if self.noise_fn is not None:
-                        s = self.noise_fn(factor)
-                        if s is not None:
-                            s = np.asarray(s, dtype=np.float64)
-                            if s.ndim == 2:
-                                gtsam_cov = s.copy()
-                            else:
-                                pypose_stds = s.copy()
-                    if gtsam_cov is not None:
-                        k = float(self.uncertainty_scales.get(factor.type, 1.0))
-                        if factor.type == EdgeType.VISUAL and num_visual_edges > 0 and getattr(self, "scale_by_multiplicity", True):
-                            k *= num_visual_edges
-                        gtsam_cov = gtsam_cov * k ** 2 + np.eye(6) * 1e-18
-                        noise_model = self._make_between_noise_model(factor, None, gtsam_cov)
-                        nonlinear = gtsam.BetweenFactorPose3(id1, id2, measurement_gtsam, noise_model)
-                        graph.add(nonlinear)
-                        if hasattr(self,'conditional_belief'):
-                            conditional_factors.append((nonlinear,factor))
+                    if skip_fn is not None and skip_fn(f):
+                        if f.type == visual_type:
+                            counts["skipped_visual"] += 1
                         continue
-                    if pypose_stds is None:
-                        pypose_stds = (factor.std_np if hasattr(factor, "std_np") else factor.std.tensor().cpu().numpy().flatten()).astype(np.float64).copy()
-
-                    # Apply uncertainty scaling factor
-                    if factor.type in self.uncertainty_scales:
-                        pypose_stds *= self.uncertainty_scales[factor.type]
-
-                    # Scale std by number of visual edges
-                    if factor.type == EdgeType.VISUAL and num_visual_edges > 0 and getattr(self, "scale_by_multiplicity", True):
-                        pypose_stds *= num_visual_edges
-
-                    # Ensure non-negative stds
-                    pypose_stds[pypose_stds < 0] = 0.0
-                    
-                    # Reorder from pypose [vx, vy, vz, wx, wy, wz] to gtsam [wx, wy, wz, vx, vy, vz]
-                    gtsam_sigmas = np.array([
-                        pypose_stds[3],  # wx
-                        pypose_stds[4],  # wy
-                        pypose_stds[5],  # wz
-                        pypose_stds[0],  # vx
-                        pypose_stds[1],  # vy
-                        pypose_stds[2],  # vz
-                    ])
-                    gtsam_sigmas += 1e-9  # Add epsilon for stability
-
-                    noise_model = self._make_between_noise_model(factor, gtsam_sigmas)
-                    nonlinear = gtsam.BetweenFactorPose3(id1, id2, measurement_gtsam, noise_model)
+                    kept.append(f)
+                    if f.type == visual_type:
+                        num_visual_edges += 1
+                        counts["used_visual"] += 1
+                    elif f.type == odometry_type:
+                        counts["odometry"] += 1
+                    else:
+                        counts["loop_closure"] += 1
+                if not kept:
+                    continue
+                for factor in kept:
+                    has_edges = True
+                    nonlinear = gtsam.BetweenFactorPose3(id1, id2, self._measurement(factor),
+                                                         self._between_noise(factor, num_visual_edges, noise_key))
                     graph.add(nonlinear)
-                    if hasattr(self,'conditional_belief'):
+                    used.add(id1)
+                    used.add(id2)
+                    if record_conditional:
                         conditional_factors.append((nonlinear,factor))
 
         # Log edge statistics for debugging
@@ -851,11 +1002,6 @@ class PoseGraph:
         # 4. Setup and run optimizer
         # a vertex without any factor (all its edges skipped or quarantined) is not part of the elimination ordering
         # and makes GTSAM abort ("inconsistent arguments"): drop such variables, they keep their current pose
-        used = set()
-        for i in range(graph.size()):
-            f = graph.at(i)
-            if f is not None:
-                used.update(int(k) for k in f.keys())
         unused = [int(k) for k in initial.keys() if int(k) not in used]
         for k in unused:
             initial.erase(k)
@@ -882,12 +1028,17 @@ class PoseGraph:
         self.optimization_cost = graph.error(result)
         
         self.optimized_poses = {}
+        rows, kept_ids = [], []
         for node_id in optim_node_ids:
             if not result.exists(node_id):
                 continue
-            optimized_pose_gtsam = result.atPose3(node_id)
-            optimized_pose_pypose = gtsam_to_pypose_pose3(optimized_pose_gtsam, self.device)
-            self.optimized_poses[node_id] = optimized_pose_pypose
+            rows.append(_pypose_row(result.atPose3(node_id)))
+            kept_ids.append(node_id)
+        if kept_ids:          # one conversion and device transfer for all poses (as gtsam_to_pypose_pose3 per pose)
+            poses = torch.from_numpy(np.stack(rows)).to(dtype=torch.float32, device=self.device)
+            with _plain_tensor_ops():
+                for i, node_id in enumerate(kept_ids):
+                    self.optimized_poses[node_id] = as_se3(poses[i].clone())
         if hasattr(self,'conditional_belief'):
             from cross.core.conditional_pgo import solve_responses
             solve_responses(self,result,conditional_factors,optim_node_ids,fixed_node_ids)

@@ -38,6 +38,7 @@ if "--out" in sys.argv and "CROSS_LOG_FILE" not in os.environ:
 from cross.core.config import FFBackend, PoseEstType, SystemConfig, load_config
 from cross.core.system import System
 from cross.core.types import Camera
+from cross.db import store as map_store
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
 from cross.pipeline import add_session_args, apply_settings, mode_config_files, session_factory
@@ -98,6 +99,10 @@ def make_config(args) -> SystemConfig:
     else:
         cfg.pose_est.type = PoseEstType.PNP
     cfg.retrieval.top_k = args.top_k
+    if getattr(args, "gnss", False):
+        cfg.geo.enabled = True
+    if getattr(args, "no_gnss", False):
+        cfg.geo.enabled = False
     return apply_settings(cfg, getattr(args, "set", None))    # generic overrides: section.sub.key=value
 
 
@@ -124,6 +129,19 @@ def depth_source(args) -> str:
     return args.depth_source
 
 
+def _memory_sample(frame: int, system) -> list:
+    """[frame, graph nodes, permanent keyframes, GPU memory allocated (MB), host RSS (MB)] (--mem-trace)."""
+    nodes = system.hypothesis_manager.nodes
+    n_perm = sum(1 for k in nodes.values() if not k.temporary)
+    gpu = torch.cuda.memory_allocated() / 2**20 if torch.cuda.is_available() else 0.0
+    rss = 0.0
+    with open("/proc/self/status") as f:
+        for line in f:
+            if line.startswith("VmRSS:"):
+                rss = int(line.split()[1]) / 1024
+    return [int(frame), len(nodes), n_perm, round(gpu, 1), round(rss, 1)]
+
+
 def new_session(args, ds, seed):
     """A CROSS session (cross/pipeline.py) for --mode / --odometry; with external odometry in the stereo / RGB-D*
     modes it passes every frame to System.step unchanged."""
@@ -145,6 +163,8 @@ def step_time_stats(dts) -> dict:
 def run_mapping(args, out: Path):
     ds = StereoSequenceLoader(args.map, depth_source=depth_source(args),
                               snr=args.snr, baseline=args.baseline, seed=args.seed, **odom_kwargs(args))
+    from cross.dataloader.geo import attach
+    attach(ds, args.map, args, query=False)
     system = new_session(args, ds, args.seed)
     recorder = None
     if getattr(args, "dump_obs", False):          # every observation of the mapping run (offline back-end studies)
@@ -157,6 +177,12 @@ def run_mapping(args, out: Path):
     step_times = []
     kf_frame = {}            # frame index of every keyframe created (temporary ones too: T1 completeness)
     online = [] if getattr(args, "online_poses", False) else None
+    step_log = open(out / "steps.csv", "w") if getattr(args, "step_log", False) else None
+    if step_log is not None:
+        step_log.write("frame,dt_s,nodes,db_keyframes,loop_closure,rss_mb,gpu_mb\n")
+    from reloc_metrics import step_diagnostics, quality_summary
+    steps = [] if getattr(args, "dump_steps", False) else None
+    mem_trace = [] if getattr(args, "mem_trace", 0) else None   # (frame, nodes, permanent, GPU allocated, host RSS)
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
         if idx == 0:
             d["delta_pose"] = None
@@ -164,15 +190,28 @@ def run_mapping(args, out: Path):
         system.process(d)
         step_times.append(time.perf_counter() - ts)
         n += 1
+        if step_log is not None:            # per-step cost vs map size (large-map studies)
+            mp = getattr(system, "mapper", system)
+            rss = int(open("/proc/self/statm").read().split()[1]) * 4096 / 1e6 if os.path.exists("/proc/self/statm") else -1
+            gpu = torch.cuda.memory_allocated() / 1e6 if torch.cuda.is_available() else -1
+            step_log.write(f"{idx},{step_times[-1]:.5f},{len(mp.hypothesis_manager.nodes)},{mp.db.get_size()},"
+                           f"{int(bool((getattr(mp, 'last_step_diagnostics', None) or {}).get('loop_closure_applied')))},"
+                           f"{rss:.0f},{gpu:.0f}\n")
+        if steps is not None:
+            steps.append({"frame": args.map_start + idx * args.stride, **step_diagnostics(system)})
         if online is not None:               # the pose the session published at this frame (and its odometry's)
             fp = getattr(system, "frontend_pose", None)
             online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
         gts.append(d["world_pose"])
+        if mem_trace is not None and idx % args.mem_trace == 0:
+            mem_trace.append(_memory_sample(idx, system))
         if system.last_added_kf_id != last_kf and system.last_added_kf_id is not None:
             last_kf = system.last_added_kf_id
             kf_gt[int(last_kf)] = d["world_pose"].tolist()
             kf_frame[int(last_kf)] = args.map_start + idx * args.stride
     elapsed = time.time() - t0
+    if step_log is not None:
+        step_log.close()
     frames = system.keyframe_frames() if hasattr(system, "keyframe_frames") else None
     if frames is not None:                  # behind a real link the keyframe ids come back late: by their frames
         kf_gt = {k: gts[f].tolist() for k, f in frames.items() if f < len(gts)}
@@ -181,7 +220,9 @@ def run_mapping(args, out: Path):
     logger.info(f"Mapping done: {n} frames in {elapsed:.1f}s ({n / elapsed:.2f} FPS), "
                 f"{len(system.hypothesis_manager.nodes)} keyframes ({n_perm} permanent)")
     map_file = out / "map.pkl"
+    t_save = time.perf_counter()
     system.save_map(map_file)
+    t_save = time.perf_counter() - t_save
     if recorder is not None:
         recorder.close()
     # map -> GT alignment from permanent keyframes (component 0 mean)
@@ -199,14 +240,22 @@ def run_mapping(args, out: Path):
     T_gt_from_map = umeyama_se3(src, dst)
     map_ate = float(np.sqrt(np.mean(np.sum(((T_gt_from_map[:3, :3] @ src.T).T + T_gt_from_map[:3, 3] - dst) ** 2, 1))))
     meta = {
+        "save_s": round(t_save, 3),
         "kf_gt": kf_gt, "kf_est": kf_est, "kf_frame": kf_frame, "T_gt_from_map": T_gt_from_map.tolist(), "map_ate_rmse": map_ate,
         "n_frames": n, "elapsed": elapsed, **step_time_stats(step_times), "n_keyframes": len(system.hypothesis_manager.nodes), "n_permanent": n_perm,
         "timing": _timing_summary(),
-        "map_file_bytes": map_file.stat().st_size if map_file.exists() else None,
+        "map_file_bytes": map_store.map_bytes(map_file) if map_file.exists() else None,   # map.pkl + map.pkl.store/
     }
+    if quality_summary(system) is not None:
+        meta["kf_quality"] = quality_summary(system)
+    if steps is not None:
+        (out / "steps_map.json").write_text(json.dumps(steps))
     if online is not None:
         from reloc_metrics import online_pose_metrics
         meta["online"] = online_pose_metrics(online, T_gt_from_map)
+    if mem_trace is not None:
+        mem_trace.append(_memory_sample(n, system))
+        meta["mem_trace"] = mem_trace
     if hasattr(system, "remote_stats"):
         meta["remote"] = system.remote_stats()
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
@@ -233,6 +282,8 @@ def run_reloc(args, out: Path, meta: dict):
     ds = StereoSequenceLoader(args.query, depth_source=depth_source(args),
                               snr=args.snr, baseline=args.baseline, seed=None if args.seed is None else args.seed + 1,
                               **odom_kwargs(args))
+    from cross.dataloader.geo import attach
+    attach(ds, args.query, args, query=True)
     system = new_session(args, ds, args.seed)
     system.load_map(out / "map.pkl")
     n_map_kfs = len(system.hypothesis_manager.nodes)
@@ -244,7 +295,8 @@ def run_reloc(args, out: Path, meta: dict):
     rows = []
     t0 = time.time()
     n_obs = 0
-    from reloc_metrics import build_trials, drop_unlocalized, is_localized
+    from reloc_metrics import build_trials, drop_unlocalized, is_localized, step_diagnostics, quality_summary
+    quality_trials = []
     q_start = args.query_start
     q_end = args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
@@ -258,6 +310,7 @@ def run_reloc(args, out: Path, meta: dict):
             # re-initialized it; with a frontend (VGGT + IMU, DPVO) the trial started from the last trial's belief
             if hasattr(system, "remote_stats"):
                 remote_trials.append(system.remote_stats())
+            quality_trials.append(quality_summary(system))
             system.release()
             system = new_session(args, ds, args.seed)
             system.load_map(out / "map.pkl")
@@ -286,6 +339,8 @@ def run_reloc(args, out: Path, meta: dict):
             row["localized"] = is_localized(system)
             if not row["localized"]:
                 drop_unlocalized(row, ("c0", "best") if row["best_k"] == 0 else ("c0",))
+            if getattr(args, "dump_steps", False):
+                row["diag"] = step_diagnostics(system)
             rows.append(row)
             if idx % 50 == 0:
                 logger.info(f"trial {ti} step {idx}: c0 err {row['c0_t_err']:.2f} m / {row['c0_r_err']:.1f} deg, "
@@ -294,6 +349,7 @@ def run_reloc(args, out: Path, meta: dict):
     n_new += len(system.hypothesis_manager.nodes) - n_map_kfs
     if hasattr(system, "remote_stats"):
         remote_trials.append(system.remote_stats())
+    quality_trials.append(quality_summary(system))
     system.release()
     remote = remote_trials[0] if len(remote_trials) == 1 else ({"trials": remote_trials} if remote_trials else None)
 
@@ -343,6 +399,8 @@ def run_reloc(args, out: Path, meta: dict):
     }
     if remote is not None:
         summary["remote"] = remote
+    if any(q is not None for q in quality_trials):
+        summary["kf_quality_trials"] = quality_trials
     (out / "reloc_rows.json").write_text(json.dumps(rows))
     (out / "reloc_summary.json").write_text(json.dumps(summary, indent=1))
     logger.info(json.dumps({k: v for k, v in summary.items() if k != "timing"}, indent=1))
@@ -381,6 +439,10 @@ def main():
     ap.add_argument("--obs-min-rotation", type=float, default=None)
     ap.add_argument("--obs-max-interval", type=int, default=None)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
+    ap.add_argument("--step-log", action="store_true",
+                    help="mapping: write steps.csv (per-frame step time, graph nodes, database keyframes, loop closures)")
+    ap.add_argument("--mem-trace", type=int, default=0, metavar="N",
+                    help="map run: every N frames record graph size, GPU and host memory (map_meta.json mem_trace)")
     ap.add_argument("--online-poses", action="store_true",
                     help="map run: score the pose published at every frame (map_meta.json 'online')")
     ap.add_argument("--skip-reloc", action="store_true")
@@ -393,8 +455,12 @@ def main():
     ap.add_argument("--set", nargs="*", action="extend", default=[],
                     help="config overrides section.sub.key=value (YAML-parsed values; repeatable)")
     ap.add_argument("--dump-obs", action="store_true", help="write every observation of the mapping run to obs.jsonl (scripts/lc/obs_recorder.py)")
+    ap.add_argument("--dump-steps", action="store_true", help="per-step diagnostics (keyframe quality, retrieved keyframes): "
+                    "steps_map.json of the map run, 'diag' in every query row")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (e.g. 0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift of the odometry (deg per metre)")
+    from cross.dataloader.geo import add_args as add_geo_args
+    add_geo_args(ap)
     ap.add_argument("--odom-file", default=None, help="odometry file of the prepared folders to use instead of "
                     "odom_left.txt when present (e.g. odom_vio.txt from benchmark/datasets/prepare_vio.py)")
     ap.add_argument("--ff-meas-std", type=float, nargs=6, default=None, help="base measurement std [tx ty tz rx ry rz] of the FF estimator")
