@@ -144,9 +144,13 @@ profile) graphs stay synchronous. Details:
   *when* it lands depends on the machine's speed and a run is not bit-reproducible. An optimisation expected to take less
   than `async_pgo_min_s` (0.1 s; and twice the cost of a fork, ~60 ms in a CUDA process) runs in the front end as before, so
   small maps are unchanged (the expectation is the number of keyframes it covers times the cost per keyframe measured so far).
-- `async_pgo_lag_steps=k` (k >= 0) applies the result exactly k steps after the trigger (the front end waits when the
-  worker is not done), so the run is reproducible; `0` is the synchronous behaviour, bit-identical to `async_pgo=false`.
-  Use it to test, or for benchmarks.
+- `async_pgo_lag_steps=k` (k >= 0) applies the result at the start of step s+k (the front end waits when the worker is
+  not done), so the run is reproducible. `0` is the synchronous behaviour and `1` (the start of the next step, nothing
+  processed in between) gives the same map; both are bit-identical to `async_pgo=false` (only the pose reported for the
+  frame that closes the loop is one correction behind with `1`). Larger lags and the free-running mode process frames on
+  the uncorrected map meanwhile and change the results: equal within noise on the dev split and ROVER, about +0.6 m map ATE
+  on the 6.4 km NCLT drive (`outputs/2026-10-08_async_pgo/REPORT.md`), against a longest step of 1.9 s instead of 3-4 s.
+  Use `1` to test, keep the mode off for benchmarks.
 - One job at a time; loop closures detected meanwhile are re-checked against the corrected poses when it has been applied.
   A merge of hypotheses, the final optimisation of a save and every other whole-graph operation wait for the job first.
 
