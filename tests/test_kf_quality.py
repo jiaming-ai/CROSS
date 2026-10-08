@@ -93,7 +93,14 @@ def test_stereo_near_field():
     assert not q.junk and q.fractions["near"] < 0.1
     left, right = pair(300)
     q = f.assess(left, rgb_right=right)
+    # the stereo near field (SGBM) is deferred to the keyframe candidates (lazy_stereo_near): completed in add_person
+    assert q.pending is not None and q.fractions["near"] == 0.0
+    q = f.add_person(q, left)
     assert q.fractions["near"] > 0.6 and q.junk and q.reason == "near"
+    # immediate when not lazy: the same decision
+    f.cfg.lazy_stereo_near = False
+    q2 = f.assess(left, rgb_right=right)
+    assert q2.fractions["near"] > 0.6 and q2.junk and q2.reason == "near"
 
 
 def test_add_person_keeps_threshold_and_skips_checked():
