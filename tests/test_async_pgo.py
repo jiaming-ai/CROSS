@@ -54,6 +54,11 @@ def test_forked_job_failures_do_not_hang_or_leak():
         ForkedJob(lambda: os._exit(3)).start().result()
     job = ForkedJob(lambda: __import__("time").sleep(30)).start()
     job.cancel()
+    import time
+    deadline = time.time() + 5
+    while ap_mod._live_children and time.time() < deadline:      # children that finished are reaped lazily
+        ap_mod.reap_finished()
+        time.sleep(0.01)
     assert not ap_mod._live_children
 
 
@@ -264,3 +269,10 @@ def test_short_jobs_stay_in_the_front_end_in_free_running_mode():
     s._submit_async_pgo({}, list(s.new_keys), 60)
     assert s._apgo.busy
     s._apgo.cancel(requeue=False)
+
+
+def test_a_hung_worker_is_killed_after_the_timeout():
+    job = ForkedJob(lambda: __import__("time").sleep(60)).start()
+    with pytest.raises(JobError, match="killed"):
+        job.result(timeout=0.3)
+    assert not ap_mod._live_children

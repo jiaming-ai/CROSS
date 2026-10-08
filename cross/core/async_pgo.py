@@ -60,6 +60,35 @@ class JobError(RuntimeError):
     pass
 
 
+_zombies: list = []
+
+
+def _reap(pid: int, wait: bool = False) -> int:
+    """Collect a finished child's exit status without waiting for it (unless `wait`); children still exiting are
+    reaped by a later call (`reap_finished`)."""
+    try:
+        got, status = os.waitpid(pid, 0 if wait else os.WNOHANG)
+    except ChildProcessError:
+        _live_children.discard(pid)
+        return -1
+    if got == 0:
+        _zombies.append(pid)
+        return -1
+    _live_children.discard(pid)
+    return status
+
+
+def reap_finished() -> None:
+    for pid in list(_zombies):
+        try:
+            got, _ = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            got = pid
+        if got:
+            _zombies.remove(pid)
+            _live_children.discard(pid)
+
+
 class ForkedJob:
     """`fn()` run in a forked child; its (picklable) return value comes back through a pipe.
 
@@ -83,7 +112,7 @@ class ForkedJob:
             code = 1
             try:
                 os.close(r)
-                _live_children.clear()
+                _live_children.clear(); _zombies.clear()
                 torch.set_num_threads(1)                 # a forked OpenMP pool does not survive
                 logger.disable("cross")                  # no log lines of the child (shared sinks, buffered copies)
                 try:
@@ -110,13 +139,20 @@ class ForkedJob:
         r, _, _ = select.select([self._fd], [], [], 0)
         return bool(r)
 
-    def result(self):
-        """The child's return value (blocks until it has finished).  Raises JobError when the child failed."""
+    def result(self, timeout: Optional[float] = None):
+        """The child's return value (blocks until it has finished, at most `timeout` seconds after the fork).  Raises
+        JobError when the child failed or timed out (a child that deadlocked after the fork is killed)."""
         if self._fd is None:
             raise JobError("job already collected")
         fd = self._fd
         try:
             while True:
+                if timeout is not None:
+                    left = timeout - (time.perf_counter() - self.t_start)
+                    r, _, _ = select.select([fd], [], [], max(left, 0.0))
+                    if not r:
+                        os.kill(self.pid, signal.SIGKILL)
+                        raise JobError(f"the worker did not finish within {timeout:.0f} s and was killed")
                 chunk = os.read(fd, 1 << 22)
                 if not chunk:
                     break
@@ -124,12 +160,8 @@ class ForkedJob:
         finally:
             os.close(fd)
             self._fd = None
-            try:
-                _, status = os.waitpid(self.pid, 0)
-            except ChildProcessError:
-                status = -1
-            _live_children.discard(self.pid)
-            self._done = True
+            status = _reap(self.pid, wait=not self._buf)    # (a finished child is reaped later: tearing down its copy of a large
+            self._done = True                               # address space takes tens of ms the front end need not wait for)
         if not self._buf:
             raise JobError(f"the worker ended without a result (status {status})")
         kind, payload = pickle.loads(bytes(self._buf))
@@ -264,6 +296,7 @@ class AsyncPgo:
         # background job) is run in the front end as before (it would not stall it, and a small map stays bit-identical to the
         # synchronous path).  The expectation is the running mean of the optimisations seen so far (synchronous or not).
         self.min_job_s = float(min_job_s)
+        self.timeout_s = 900.0            # a worker that has not finished by then is killed (and the job re-queued)
         self.est_job_s = 0.0
         self.est_overhead_s = 0.03
         self.job: Optional[ForkedJob] = None
@@ -298,6 +331,7 @@ class AsyncPgo:
 
     # ---- submit
     def submit(self, new_keys, window_ref, step: int, kind: str = "verified", **extra) -> None:
+        reap_finished()
         """Fork the optimisation: kind "verified" (a verified loop closure for the edges `new_keys`) or "geo" (the
         GNSS-triggered one; `extra` is kept in the job's meta for the application)."""
         sys_ = self.system
@@ -332,7 +366,7 @@ class AsyncPgo:
         job, meta = self.job, self.job_meta
         t0 = time.perf_counter()
         try:
-            res = job.result()
+            res = job.result(timeout=self.timeout_s)
         except JobError as ex:
             self.job = None
             self.failures += 1
