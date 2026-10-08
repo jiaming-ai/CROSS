@@ -2101,6 +2101,11 @@ class System:
             # (retrieval.locality: the keyframes near it get the locality slots)
             for center, sigma, source in geo.location_priors():
                 self.add_location_prior(center, sigma, source=source, ttl_steps=1)
+        if getattr(self.config.geo, "integrity", False):
+            self.geo_withheld = bool(geo.withheld and in_map)
+            if self.geo_withheld:
+                geo.stats["withheld_steps"] += 1
+                self.last_step_diagnostics["geo_withheld"] = True
         if dec is not None and dec.used and in_map and geo.anchored:
             self.note_anchor("gnss")             # an accepted fix ties the pose to the map: locality drift restarts
             self.last_step_diagnostics["gnss"] = {"used": bool(dec.used), "reason": dec.reason,
@@ -2131,6 +2136,40 @@ class System:
         else:
             geo.pending = []
             geo.last_opt_kf = n_kf
+
+    def _geo_focus(self, rgb_image, ranked, n_map):
+        """geo.retrieval_focus: with a trusted fix in a geo-anchored map, the stored keyframes near the fix (horizontal
+        distance, GeoManager.focus_region) take the map budget except geo.focus_global_slots, which keep the best of the
+        global appearance ranking `ranked` [(score, kf)]."""
+        geo = getattr(self, "_geo", None)
+        gc = self.config.geo
+        if geo is None or not getattr(gc, "retrieval_focus", False) or self._session_start_kf_id <= 0:
+            return ranked
+        reg = geo.focus_region()
+        if reg is None:
+            return ranked
+        center, r_h, up = reg
+        r3 = math.sqrt(r_h ** 2 + max(r_h, 10.0) ** 2)          # the fix's height is poor: search a tall cylinder
+        rows = self.db.rows_near(center[None], np.array([r3]), epoch=self.hypothesis_manager.pose_epoch)
+        if not len(rows):
+            self.last_step_diagnostics["geo_focus"] = {"radius": round(float(r_h), 1), "candidates": 0}
+            return ranked
+        near = self.db.query(rgb_image, rows=rows, max_kf_id=self._session_start_kf_id, top_k=len(rows),
+                             score_threshold=self.config.retrieval.map_score_threshold)
+        take = []
+        for sc, kf in zip(near["scores"], near["keyframes"]):
+            d = kf.pose_mu[0].tensor().detach().cpu().double().numpy()[:3] - center
+            if float(np.linalg.norm(d - (d @ up) * up)) <= r_h:
+                take.append((sc, kf))
+        self.last_step_diagnostics["geo_focus"] = {"radius": round(float(r_h), 1), "candidates": len(take)}
+        if not take:
+            return ranked
+        geo.stats["focus"] += 1
+        n_focus = max(int(n_map) - max(int(gc.focus_global_slots), 0), 0)
+        ids = {kf.id for _, kf in take[:n_focus]}
+        rest = [(sc, kf) for sc, kf in ranked if kf.id not in ids]
+        g = max(int(n_map) - len(take[:n_focus]), 0)
+        return take[:n_focus] + rest[:g] + rest[g:]
 
     def _geo_reference_mask(self, valid_keyframes, valid_poses, loop_flags=None):
         """Relocalization references (stored-map keyframes) and loop-closure candidates of a mapping session whose
@@ -2558,6 +2597,7 @@ class System:
                     n_map = max(self.db.top_k - len(own), 0)
                     map_list = self._locality_merge(rgb_image, list(zip(map_res["scores"], map_res["keyframes"])),
                                                     max_kf_id=self._session_start_kf_id)
+                    map_list = self._geo_focus(rgb_image, map_list, n_map)
                     guided = self._pose_guided_map_keyframes(rgb_image)
                     if guided:
                         ids = {kf.id for _, kf in guided}

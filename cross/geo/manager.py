@@ -57,7 +57,8 @@ class GeoManager:
         self.odom_k_t = float(cfg.drift_rate if cfg.drift_rate is not None else odom_k_t)
         self.noise = GnssNoiseModel(GnssModelConfig(uere=cfg.uere, sigma_v_factor=cfg.sigma_v_factor))
         self.gate = GnssGate(self.noise, GnssGateConfig(confidence=conf, window_s=cfg.window_s,
-                                                        min_fixes=cfg.min_fixes, holdoff_s=cfg.holdoff_s))
+                                                        min_fixes=cfg.min_fixes, holdoff_s=cfg.holdoff_s,
+                                                        first_holdoff_s=getattr(cfg, "session_holdoff_s", None)))
         self.err = GnssErrorModel(prior_tau=cfg.factor_interval_prior_s)
         self.compass = Compass(CompassConfig(confidence=conf, sigma_deg=cfg.compass_sigma_deg,
                                              offset_deg=cfg.compass_offset_deg, frame=cfg.compass_frame,
@@ -84,7 +85,10 @@ class GeoManager:
         self.compass_last = None
         self.now = None
         self.robust_c = (float(cfg.robust_c) if cfg.robust_c is not None else math.sqrt(self.k2)) if cfg.robust else None
-        self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0}
+        self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0, "focus": 0,
+                      "integrity_tested": 0, "integrity_bad": 0, "withheld_steps": 0}
+        self.integrity_run = 0                     # consecutive fixes contradicting hypothesis 0 (cfg.integrity)
+        self.withheld = False                      # the localized pose is withheld (cfg.integrity)
 
     # ------------------------------------------------------------------ state
     @property
@@ -107,6 +111,8 @@ class GeoManager:
         self.current = None
         self.last_factor_t = -1e18
         self.last_used_dist = None
+        self.integrity_run = 0
+        self.withheld = False
 
     # ------------------------------------------------------------------ per step
     def tick(self, t: float):
@@ -163,6 +169,8 @@ class GeoManager:
             dec = GnssDecision(sig is not None, "ungated" if sig is not None else "no_fix", enu,
                                *(sig if sig is not None else (float("nan"), float("nan"))))
         self.last_decision = dec
+        if getattr(self.cfg, "integrity", False):
+            self._integrity(dec, enu, T_map_cam, in_map_frame, belief_std_t)
         if not dec.used:
             return dec
         self.last_used_dist = self.dist
@@ -369,7 +377,37 @@ class GeoManager:
         # the logged fixes' map positions follow the optimised keyframes they are attached to
         self.fit_anchor(nodes)
 
+    def _integrity(self, dec, enu, T_map_cam, in_map_frame, belief_std_t):
+        """A fix that agrees with the robot's own track (it passed the relative test) tests hypothesis 0's position in
+        the map; a run of cfg.integrity_fixes contradicting fixes withholds the pose, an agreeing fix releases it."""
+        if not (in_map_frame and self.anchored and T_map_cam is not None and dec.reason in ("ok", "absolute", "drift", "ungated")):
+            return
+        p = T_map_cam[:3, 3]
+        r = np.asarray(enu, float)[:2] - self.anchor.to_enu(p)[:2]
+        S = (dec.sigma_h ** 2 + self.cfg.pred_floor ** 2 + max(belief_std_t, 0.0) ** 2) * np.eye(2) \
+            + self.anchor.position_cov_enu(p)[:2, :2]
+        bad = float(r @ np.linalg.solve(S, r)) > self.k2
+        self.stats["integrity_tested"] += 1
+        if bad:
+            self.stats["integrity_bad"] += 1
+            self.integrity_run += 1
+            if self.integrity_run >= int(self.cfg.integrity_fixes):
+                self.withheld = True
+        else:
+            self.integrity_run = 0
+            self.withheld = False
+
     # ------------------------------------------------------------------ retrieval / relocalization
+    def focus_region(self):
+        """(center in the map frame (3,), horizontal radius (m), up vector of the map) of the stored keyframes a trusted
+        fix allows (cfg.retrieval_focus), or None without a usable fix / anchor."""
+        pri = self.location_priors()
+        if not pri:
+            return None
+        center, sigma, _ = pri[0]
+        r = math.sqrt(self.k2) * sigma + float(self.cfg.focus_margin_m)
+        return center, r, np.asarray(self.anchor.up_map, float)
+
     def location_priors(self) -> list:
         """[(center_map (3,), sigma (m), source)] for retrieval: the current fix through the anchor."""
         c, disp = self._current_fix()
