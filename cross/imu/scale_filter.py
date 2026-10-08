@@ -133,7 +133,9 @@ class ImuConfig:
     # vgio_depth_calib_apply: "stored" subtracts the offset stored with the map (a later session starts at the
     # place's scale; within a session the graph's bias state learns it anyway), "session" also the session's own
     # offset as soon as it exists (KITTI 01: the twin was confidently 0.3 off for its first 25 s, and the scale
-    # shrank by 20 % for a stretch).
+    # shrank by 20 % for a stretch).  System level, ROVER mono + IMU with the day map's offset: T3 within 1 m / 5 deg
+    # +36 (DA3) / +28 (head) of 1159 trials, within 5 m unchanged; T2 loses at night and dusk (learned depth's offset
+    # changes with the light, and at night the IMU + passes underestimate the scale): off by default.
     vgio_depth_calib: bool = False
     vgio_depth_calib_apply: str = "stored"
     vgio_depth_calib_max_std: float = 0.1
