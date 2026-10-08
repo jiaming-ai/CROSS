@@ -282,9 +282,12 @@ class KeyframeDatabase:
         """Get all atlases."""
         return list(self._atlases.values())
     
-    def save_state(self):
+    def save_state(self, columns: bool = False):
         """Save the database state for map persistence.
-        
+
+        `columns`: the keyframes as map columns plus their image fields (cross.db.store.ColumnKeyframes; format v2,
+        System.save_map), built in bulk where the keyframes allow it.
+
         Returns:
             dict: Database state including keyframes, embeddings, and atlases
         """
@@ -292,8 +295,19 @@ class KeyframeDatabase:
         self.index.finalize()            # map projection: refit on the whole map before its codes are stored
         if self._spool is not None:
             self._spool.flush()
-        db_keyframes = []
-        for atlas in self._keyframe_by_atlas:
+        db_keyframes = None
+        if columns:
+            from cross.core.bulk_load import encode_keyframes
+            from cross.db.store import ColumnKeyframes
+            kfs = [kf for atlas in self._keyframe_by_atlas for kf in self._keyframe_by_atlas[atlas]]
+            enc = encode_keyframes(kfs, image_fields=True)
+            if enc is not None:
+                db_keyframes = ColumnKeyframes(
+                    enc, [{f: _stored_or_encoded(kf, f) for f in ("raw_rgb_image", "depth_image", "raw_rgb_right")}
+                          for kf in kfs], [kf.id for kf in kfs])
+        if db_keyframes is None:
+            db_keyframes = []
+        for atlas in (self._keyframe_by_atlas if isinstance(db_keyframes, list) else ()):
             for kf in self._keyframe_by_atlas[atlas]:
                 db_keyframes.append({
                     "id": kf.id,

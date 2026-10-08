@@ -743,10 +743,12 @@ class System:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
         # --- 1. Save Database State (includes atlases) ---
-        db_data = self.db.save_state()
+        # format v2: the records already as map columns, built from the graph objects in bulk (cross.core.bulk_load)
+        columns = self.config.storage.format == "v2"
+        db_data = self.db.save_state(columns=columns)
 
         # --- 2. Save Hypothesis Manager State (graph structure only, hypothesis 0 only) ---
-        hypo_data = self.hypothesis_manager.save_state()
+        hypo_data = self.hypothesis_manager.save_state(columns=columns)
 
         # --- 3. Save Class Variables ---
         class_vars = {
@@ -798,7 +800,8 @@ class System:
             on_written = None
             if spool is not None:
                 by_id = {kf.id: kf for kf in self.db.get_all_keyframes()}
-                rows = [r["id"] for r in save_data["db_data"]["keyframes"]]
+                kf_recs = save_data["db_data"]["keyframes"]
+                rows = kf_recs.ids if isinstance(kf_recs, map_store.ColumnKeyframes) else [r["id"] for r in kf_recs]
 
                 def on_written(row, field, ref):
                     kf = by_id.get(rows[row])
@@ -821,11 +824,12 @@ class System:
             raise ValueError(f"storage.format: v2 | pickle, not {scfg.format}")
 
         logger.info(f"Map saved successfully to {save_path}")
+        n_rec = map_store.count_records
         logger.info(f"  - Saved {len(db_data['keyframes'])} permanent keyframes")
         logger.info(f"  - Saved {len(db_data['atlases'])} atlases")
-        logger.info(f"  - Saved {len(hypo_data['temp_keyframes'])} temporary keyframes")
-        logger.info(f"  - Saved {len(hypo_data['odom_edges'])} odometry edges")
-        logger.info(f"  - Saved {sum(len(h['visual_edges']) for h in hypo_data['hypotheses_data'].values())} visual edges (hypothesis 0)")
+        logger.info(f"  - Saved {n_rec(hypo_data['temp_keyframes'])} temporary keyframes")
+        logger.info(f"  - Saved {n_rec(hypo_data['odom_edges'])} odometry edges")
+        logger.info(f"  - Saved {sum(n_rec(h['visual_edges']) for h in hypo_data['hypotheses_data'].values())} visual edges (hypothesis 0)")
         logger.info(f"  - Tracking state (GMM dist, metadata) NOT saved - will re-initialize on first step")
 
         # Note: planning system (sparse graph) will be rebuilt on load if enabled

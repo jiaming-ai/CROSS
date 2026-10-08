@@ -2235,14 +2235,20 @@ class HypothesisManager:
             return True
         return False
 
-    def save_state(self):
+    def save_state(self, columns: bool = False):
         """Save the hypothesis manager state for map persistence.
         Only saves hypothesis 0 (ground truth) and temporary keyframes.
         Warns if multiple realized hypotheses exist at save time.
 
+        `columns`: the records already encoded as map columns (cross.db.store format v2; System.save_map), built from
+        the graph objects in bulk (cross.core.bulk_load) where they allow it: the same columns, without a tensor per
+        field.
+
         Returns:
             dict: Hypothesis manager state including temp keyframes, edges, and hypothesis 0
         """
+        if columns:
+            return self._save_state_columns()
         from cross.core.conditional_pose import records
         # --- Check for unresolved ambiguity ---
         realized_hypos = [comp_id for comp_id in self.hypotheses.keys() if self.realized[comp_id]]
@@ -2320,6 +2326,52 @@ class HypothesisManager:
             "temp_keyframes": temp_keyframes,
             "odom_edges": odom_edges,
             "hypotheses_data": hypotheses_data,
+        }
+
+    def _save_state_columns(self):
+        """save_state() encoded as cross.db.store._encode_hypo encodes it, built in bulk; a part the bulk encoders
+        cannot reproduce exactly is encoded from its records (save_state's)."""
+        from cross.core import bulk_load
+        from cross.db import store
+        ref = None
+
+        def records():                               # the record path, built once if a part needs it
+            nonlocal ref
+            if ref is None:
+                ref = self.save_state()
+            return ref
+        temps = [kf for kf in self.nodes.values() if kf.temporary]
+        enc_t = bulk_load.encode_keyframes(temps, image_fields=False)
+        if enc_t is None:
+            enc_t = store.encode_records(records()["temp_keyframes"])
+        enc_o = bulk_load.encode_edges(list(self.odom_edges.values()), visual=False)
+        enc_o = ({"__dor__": True, "keys": store._encode_keys(list(self.odom_edges.keys())), "recs": enc_o}
+                 if enc_o is not None else store.encode_dict_of_records(records()["odom_edges"]))
+        hypotheses_data = {}
+        if 0 in self.hypotheses:
+            h = self.hypotheses[0]
+            flat = [e for l in h.visual_edges.values() for e in l]
+            enc_v = bulk_load.encode_edges(flat, visual=True)
+            if enc_v is not None:
+                enc_v = {"__dol__": True, "keys": store._encode_keys(list(h.visual_edges.keys())),
+                         "counts": np.array([len(l) for l in h.visual_edges.values()], dtype=np.int64),
+                         "records": True, "items": enc_v}
+            else:
+                enc_v = store.encode_dict_of_lists(records()["hypotheses_data"][0]["visual_edges"], records=True)
+            hypotheses_data[0] = {
+                "component_id": h.component_id,
+                "start_idx": h.start_idx,
+                "visual_edges": enc_v,
+                "visual_adjacency": store.encode_dict_of_lists({k: list(v) for k, v in h.visual_adjacency.items()},
+                                                               records=False),
+            }
+        return {
+            "source_belief": (self.source_states[0].record() if self.source_states is not None else
+                              self.saved_source_belief.record() if self.saved_source_belief is not None else None),
+            "temp_keyframes": enc_t,
+            "odom_edges": enc_o,
+            "hypotheses_data": hypotheses_data,
+            "__columns__": True,
         }
     
     def load_state(self, hypo_data: dict, db, storage_device: str, device: str, existing_keyframes: dict):

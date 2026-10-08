@@ -719,7 +719,31 @@ def _attach_images(records: list, idx: dict, pack: ImagePack) -> None:
         records[int(idx["row"][j])][IMAGE_FIELDS[int(idx["field"][j])]] = ref
 
 
+class ColumnKeyframes:
+    """KeyframeDatabase.save_state(columns=True): the keyframe records already encoded as columns (image fields None,
+    as write_map leaves them) plus each row's image fields (encoded into the pack by write_map) and ids."""
+
+    def __init__(self, enc: dict, images: list, ids: list):
+        self.enc, self.images, self.ids = enc, images, ids
+
+    def __len__(self):
+        return self.enc["n"]
+
+
+def count_records(v) -> int:
+    """Number of records of a save_state part, plain or encoded (log lines)."""
+    if isinstance(v, dict) and "__records__" in v:
+        return v["n"] if v["__records__"] else len(v["v"])
+    if isinstance(v, dict) and v.get("__dor__"):
+        return count_records(v["recs"])
+    if isinstance(v, dict) and v.get("__dol__"):
+        return len(v["counts"])
+    return len(v)
+
+
 def _encode_hypo(hypo: dict) -> dict:
+    if hypo.get("__columns__"):                       # HypothesisManager.save_state(columns=True): already encoded
+        return {k: v for k, v in hypo.items() if k != "__columns__"}
     out = dict(hypo)
     out["temp_keyframes"] = encode_records(hypo["temp_keyframes"])
     out["odom_edges"] = encode_dict_of_records(hypo["odom_edges"])
@@ -972,13 +996,18 @@ def write_map(save_path, save_data: dict, cfg, on_written=None) -> dict:
 
     data = dict(save_data)
     db = dict(save_data["db_data"])
-    records = [dict(r) for r in db["keyframes"]]
-    pack, img_idx = _encode_images(records, side, cfg, stats, on_written)
-    for r in records:
-        for f in IMAGE_FIELDS:
-            if f in r:
-                r[f] = None
-    db["keyframes"] = encode_records(records)
+    if isinstance(db["keyframes"], ColumnKeyframes):     # KeyframeDatabase.save_state(columns=True)
+        ck = db["keyframes"]
+        pack, img_idx = _encode_images([dict(r) for r in ck.images], side, cfg, stats, on_written)
+        db["keyframes"] = ck.enc
+    else:
+        records = [dict(r) for r in db["keyframes"]]
+        pack, img_idx = _encode_images(records, side, cfg, stats, on_written)
+        for r in records:
+            for f in IMAGE_FIELDS:
+                if f in r:
+                    r[f] = None
+        db["keyframes"] = encode_records(records)
 
     emb = db.get("embeddings")
     desc_file = None

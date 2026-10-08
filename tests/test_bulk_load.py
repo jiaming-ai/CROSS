@@ -116,3 +116,71 @@ def test_bulk_keyframes_write_through(tmp_path, monkeypatch):
     hm.nodes[ks[0]].pose_mu[0] = pp.identity_SE3()
     assert torch.equal(hm.nodes[ks[0]].pose_mu.tensor()[0], pp.identity_SE3().tensor())
     assert torch.equal(hm.nodes[ks[1]].pose_mu.tensor(), before)
+
+
+def _deep_same(x, y, where="."):
+    """Identical encoded structure: dict key order, numpy dtype / shape / bits, other values equal."""
+    if isinstance(x, dict):
+        assert isinstance(y, dict) and list(x) == list(y), (where, list(x), list(y) if isinstance(y, dict) else y)
+        for k in x:
+            _deep_same(x[k], y[k], f"{where}/{k}")
+    elif isinstance(x, np.ndarray):
+        assert isinstance(y, np.ndarray) and x.dtype == y.dtype and x.shape == y.shape, where
+        assert np.array_equal(x.view(np.uint8), y.view(np.uint8)), where
+    elif isinstance(x, (list, tuple)):
+        assert type(x) is type(y) and len(x) == len(y), where
+        for i, (a, b) in enumerate(zip(x, y)):
+            _deep_same(a, b, f"{where}[{i}]")
+    elif torch.is_tensor(x):
+        assert type(x) is type(y) and torch.equal(x, y), where
+    else:
+        assert x is y or x == y, (where, x, y)
+
+
+def _check_save_columns(db, hm):
+    _deep_same(store._encode_hypo(hm.save_state()), store._encode_hypo(hm.save_state(columns=True)))
+    plain, cols = db.save_state(), db.save_state(columns=True)
+    assert isinstance(cols["keyframes"], store.ColumnKeyframes)
+    recs = [dict(r) for r in plain["keyframes"]]
+    images = [{f: r[f] for f in store.IMAGE_FIELDS} for r in recs]
+    for r in recs:
+        for f in store.IMAGE_FIELDS:
+            r[f] = None
+    _deep_same(store.encode_records(recs), cols["keyframes"].enc)
+    assert [r["id"] for r in plain["keyframes"]] == cols["keyframes"].ids
+    for a, b in zip(images, cols["keyframes"].images):
+        assert list(a) == list(b) and all((x is y) or (torch.is_tensor(x) and torch.equal(x, y)) for x, y in
+                                          zip(a.values(), b.values()))
+
+
+def test_save_columns_equal_record_encoding(tmp_path, monkeypatch):
+    """save_state(columns=True) encodes exactly what the record path encodes: for a graph built live and for one
+    restored in bulk from a map file; and the written map files hold the same graph."""
+    import pickle
+    data = _rich_state(monkeypatch)
+    store.write_map(tmp_path / "map.pkl", data, StorageConfig(image_codec="png", descriptor_dtype="float32"))
+    db, hm, _ = _restore(store.read_map(tmp_path / "map.pkl", packed=True), monkeypatch, bulk=True)
+    _check_save_columns(db, hm)
+    # the files: records path vs columns path
+    for name, columns in (("rec", False), ("col", True)):
+        sd = {"config": {}, "db_data": db.save_state(columns=columns), "hypo_data": hm.save_state(columns=columns),
+              "class_vars": {"keyframe_next_id": 0}, "current_atlas_id": 0}
+        store.write_map(tmp_path / name / "map.pkl", sd, StorageConfig(image_codec="png", descriptor_dtype="float32"))
+    a = pickle.load(open(tmp_path / "rec" / "map.pkl", "rb"))
+    b = pickle.load(open(tmp_path / "col" / "map.pkl", "rb"))
+    for d in (a, b):
+        d["__store__"].pop("pack"), d["__store__"].pop("uid")
+    _deep_same(a, b)
+
+
+def test_save_columns_live_graph(monkeypatch):
+    """The same for a graph built in a session (tensors set through the compact fields, no map file involved)."""
+    from test_map_store import _state as state
+    import cross.db.db as db_module   # noqa: F401
+    data, db = state(monkeypatch, n=5)
+    # the hypothesis manager of _state is not returned: rebuild one from its records through the record path
+    system = SimpleNamespace(device="cpu", topo_map=None, loaded_node_ids=frozenset(), config=SystemConfig())
+    hm = HypothesisManager(system, 3, HypothesisConfig())
+    existing = {kf.id: kf for kf in db.get_all_keyframes()}
+    hm.load_state(data["hypo_data"], db, "cpu", "cpu", existing)
+    _check_save_columns(db, hm)
