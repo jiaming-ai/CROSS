@@ -924,9 +924,6 @@ class StorageConfig:
     # ~1e-7) | float32 (exact)
     descriptor_dtype: str = "float16"
     decode_cache: int = 1024             # decoded keyframe images kept in memory (LRU, process-wide)
-    # where keyframe images are held: "cpu" (host RAM; the references of an observation are copied to the GPU for its
-    # pass) or "" (the compute device, the old behaviour: GPU memory grows with the map, ~0.6 MB per image)
-    image_device: str = "cpu"
     # live run: keep the images of the newest N keyframes as tensors, encode older ones into a spool file and drop
     # them from memory (decoded again on access, exact with the lossless codecs); 0: every keyframe image stays in
     # memory (~0.6 MB each).  NCLT 2012-01-08 (4300 keyframes) with 500: identical map, same run time, host RAM

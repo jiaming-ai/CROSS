@@ -131,8 +131,10 @@ class System:
         self._cur_obs_lock = threading.Lock()
 
         self.device = device
-        # keyframe images: host RAM by default (storage.image_device); an observation copies its references to `device`
-        self.storage_device = torch.device(self.config.storage.image_device or device)
+        # keyframe images live in host RAM; an observation copies its references to `device` (on the GPU they cost ~0.6 MB
+        # per keyframe; the option to keep them there was removed: no speed gain once the keyframe filter's detector ran on
+        # the GPU, outputs/2026-10-08_option_pruning; code in tag storage-image-device-2026-10-08)
+        self.storage_device = torch.device("cpu")
         self.state_device = torch.device(self.config.state_device or device)
         self.visualize = visualize
         self.debug = debug
@@ -501,7 +503,7 @@ class System:
         kf = self.db.insert(
             self._processed_frame_num,
             # on the compute device, as before: the descriptor is computed there (the database then moves the stored
-            # copy to storage.image_device); a CPU image changes the descriptor at the 1e-5 level
+            # copy to host RAM); a CPU image changes the descriptor at the 1e-5 level
             rgb_image.to(self.device),
             depth_image.to(self.device) if depth_image is not None else None,
             mu=mu,
