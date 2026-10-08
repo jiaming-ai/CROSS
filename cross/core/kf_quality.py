@@ -159,9 +159,11 @@ class KeyframeQuality:
             return None
         sw = int(getattr(self.cfg, "stereo_near_width", 256))
         if 0 < sw < y_left.shape[1]:        # match at the resolution the near cells use (they subsample to <= 128 px)
-            y_left = cv2.resize(y_left, (sw, max(int(round(y_left.shape[0] * sw / y_left.shape[1])), 1)),
-                                interpolation=cv2.INTER_AREA)
-            y_right = None
+            if y_right is None:
+                y_right = self._luminance(rgb_right, y_left.shape[1])
+            size = (sw, max(int(round(y_left.shape[0] * sw / y_left.shape[1])), 1))
+            y_left = cv2.resize(y_left, size, interpolation=cv2.INTER_AREA)       # both images the same way
+            y_right = cv2.resize(y_right, size, interpolation=cv2.INTER_AREA)
         L = (np.clip(y_left, 0, 1) * 255).astype(np.uint8)
         R = (np.clip(y_right if y_right is not None else self._luminance(rgb_right, L.shape[1]), 0, 1) * 255).astype(np.uint8)
         fx = self.fx * L.shape[1] / W
