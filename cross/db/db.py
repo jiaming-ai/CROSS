@@ -34,6 +34,10 @@ def _stored_or_encoded(kf, field: str):
     return pre if (pre is not None and torch.is_tensor(v)) else v
 
 
+def _is_cpu(device) -> bool:
+    return device is None or torch.device(device).type == "cpu"
+
+
 class KeyframeDatabase:
     def __init__(
         self,
@@ -278,9 +282,12 @@ class KeyframeDatabase:
         """Get all atlases."""
         return list(self._atlases.values())
     
-    def save_state(self):
+    def save_state(self, columns: bool = False):
         """Save the database state for map persistence.
-        
+
+        `columns`: the keyframes as map columns plus their image fields (cross.db.store.ColumnKeyframes; format v2,
+        System.save_map), built in bulk where the keyframes allow it.
+
         Returns:
             dict: Database state including keyframes, embeddings, and atlases
         """
@@ -288,8 +295,19 @@ class KeyframeDatabase:
         self.index.finalize()            # map projection: refit on the whole map before its codes are stored
         if self._spool is not None:
             self._spool.flush()
-        db_keyframes = []
-        for atlas in self._keyframe_by_atlas:
+        db_keyframes = None
+        if columns:
+            from cross.core.bulk_load import encode_keyframes
+            from cross.db.store import ColumnKeyframes
+            kfs = [kf for atlas in self._keyframe_by_atlas for kf in self._keyframe_by_atlas[atlas]]
+            enc = encode_keyframes(kfs, image_fields=True)
+            if enc is not None:
+                db_keyframes = ColumnKeyframes(
+                    enc, [{f: _stored_or_encoded(kf, f) for f in ("raw_rgb_image", "depth_image", "raw_rgb_right")}
+                          for kf in kfs], [kf.id for kf in kfs])
+        if db_keyframes is None:
+            db_keyframes = []
+        for atlas in (self._keyframe_by_atlas if isinstance(db_keyframes, list) else ()):
             for kf in self._keyframe_by_atlas[atlas]:
                 db_keyframes.append({
                     "id": kf.id,
@@ -346,9 +364,20 @@ class KeyframeDatabase:
         
         # Create a map to track all keyframes by ID
         all_keyframes_map = {}
-        
+
+        # a v2 map read for System.load_map: keyframes built from the columns in bulk (cross.core.bulk_load)
+        bulk = None
+        recs = db_data["keyframes"]
+        if getattr(recs, "enc", None) is not None and _is_cpu(storage_device) and _is_cpu(pose_device or storage_device):
+            from cross.core.bulk_load import keyframes as bulk_keyframes
+            bulk = bulk_keyframes(recs.enc, lambda a: self._atlases[a] if a is not None else None,
+                                  images=getattr(recs, "images", None), image_device=storage_device)
+        for kf in (bulk or ()):
+            self._keyframe_by_atlas[kf.atlas].append(kf)
+            all_keyframes_map[kf.id] = kf
+
         # Restore permanent keyframes from database
-        for kf_data in db_data["keyframes"]:
+        for kf_data in (db_data["keyframes"] if bulk is None else ()):
             atlas = self._atlases[kf_data["atlas_id"]] if kf_data["atlas_id"] is not None else None
             
             # Create Keyframe object
@@ -382,9 +411,9 @@ class KeyframeDatabase:
             atlas = self._atlases[int(atlas_id)]
             self._atlas_to_indices[atlas] = indices
         
-        for buffer_idx, (atlas_id, list_idx) in db_data["index_to_atlas_idx"].items():
-            atlas = self._atlases[atlas_id]
-            self._index_to_atlas_idx[buffer_idx] = (atlas, list_idx)
+        atlas_by_id = self._atlases
+        self._index_to_atlas_idx.update((buffer_idx, (atlas_by_id[atlas_id], list_idx))
+                                        for buffer_idx, (atlas_id, list_idx) in db_data["index_to_atlas_idx"].items())
 
         # Restore the descriptors (rows in buffer order) and the row -> keyframe maps
         n = int(db_data["current_size"])

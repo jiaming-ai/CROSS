@@ -955,6 +955,10 @@ class StorageConfig:
     encode_ahead: bool = True
     spill_dir: Optional[str] = None      # spool directory of max_ram_images (default: a temporary directory)
     encode_workers: int = 4              # threads that encode images when a map is saved
+    # after load_map, move every object the collector tracks to its permanent generation (gc.freeze), so later
+    # collections do not rescan the loaded map (one full pass over a 10^6-keyframe map takes seconds); shutdown()
+    # unfreezes.  Process-wide: a process that drops a session without shutdown() keeps its objects until exit
+    gc_freeze: bool = True
 
 
 @dataclass

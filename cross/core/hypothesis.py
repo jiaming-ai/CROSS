@@ -2235,14 +2235,20 @@ class HypothesisManager:
             return True
         return False
 
-    def save_state(self):
+    def save_state(self, columns: bool = False):
         """Save the hypothesis manager state for map persistence.
         Only saves hypothesis 0 (ground truth) and temporary keyframes.
         Warns if multiple realized hypotheses exist at save time.
 
+        `columns`: the records already encoded as map columns (cross.db.store format v2; System.save_map), built from
+        the graph objects in bulk (cross.core.bulk_load) where they allow it: the same columns, without a tensor per
+        field.
+
         Returns:
             dict: Hypothesis manager state including temp keyframes, edges, and hypothesis 0
         """
+        if columns:
+            return self._save_state_columns()
         from cross.core.conditional_pose import records
         # --- Check for unresolved ambiguity ---
         realized_hypos = [comp_id for comp_id in self.hypotheses.keys() if self.realized[comp_id]]
@@ -2321,6 +2327,52 @@ class HypothesisManager:
             "odom_edges": odom_edges,
             "hypotheses_data": hypotheses_data,
         }
+
+    def _save_state_columns(self):
+        """save_state() encoded as cross.db.store._encode_hypo encodes it, built in bulk; a part the bulk encoders
+        cannot reproduce exactly is encoded from its records (save_state's)."""
+        from cross.core import bulk_load
+        from cross.db import store
+        ref = None
+
+        def records():                               # the record path, built once if a part needs it
+            nonlocal ref
+            if ref is None:
+                ref = self.save_state()
+            return ref
+        temps = [kf for kf in self.nodes.values() if kf.temporary]
+        enc_t = bulk_load.encode_keyframes(temps, image_fields=False)
+        if enc_t is None:
+            enc_t = store.encode_records(records()["temp_keyframes"])
+        enc_o = bulk_load.encode_edges(list(self.odom_edges.values()), visual=False)
+        enc_o = ({"__dor__": True, "keys": store._encode_keys(list(self.odom_edges.keys())), "recs": enc_o}
+                 if enc_o is not None else store.encode_dict_of_records(records()["odom_edges"]))
+        hypotheses_data = {}
+        if 0 in self.hypotheses:
+            h = self.hypotheses[0]
+            flat = [e for l in h.visual_edges.values() for e in l]
+            enc_v = bulk_load.encode_edges(flat, visual=True)
+            if enc_v is not None:
+                enc_v = {"__dol__": True, "keys": store._encode_keys(list(h.visual_edges.keys())),
+                         "counts": np.array([len(l) for l in h.visual_edges.values()], dtype=np.int64),
+                         "records": True, "items": enc_v}
+            else:
+                enc_v = store.encode_dict_of_lists(records()["hypotheses_data"][0]["visual_edges"], records=True)
+            hypotheses_data[0] = {
+                "component_id": h.component_id,
+                "start_idx": h.start_idx,
+                "visual_edges": enc_v,
+                "visual_adjacency": store.encode_dict_of_lists({k: list(v) for k, v in h.visual_adjacency.items()},
+                                                               records=False),
+            }
+        return {
+            "source_belief": (self.source_states[0].record() if self.source_states is not None else
+                              self.saved_source_belief.record() if self.saved_source_belief is not None else None),
+            "temp_keyframes": enc_t,
+            "odom_edges": enc_o,
+            "hypotheses_data": hypotheses_data,
+            "__columns__": True,
+        }
     
     def load_state(self, hypo_data: dict, db, storage_device: str, device: str, existing_keyframes: dict):
         """Load the hypothesis manager state from saved data.
@@ -2339,7 +2391,19 @@ class HypothesisManager:
         # --- 1. Restore temporary keyframes ---
         all_keyframes_map = existing_keyframes.copy()
 
-        for kf_data in hypo_data["temp_keyframes"]:
+        # a v2 map read for System.load_map: graph objects built from the columns in bulk (cross.core.bulk_load),
+        # with the attributes the record-by-record restore below gives them
+        from cross.core import bulk_load
+        cpu = all(d is None or torch.device(d).type == "cpu" for d in (storage_device, device))
+        temps = hypo_data["temp_keyframes"]
+        bulk_temps = None
+        if cpu and getattr(temps, "enc", None) is not None:
+            bulk_temps = bulk_load.keyframes(temps.enc, lambda a: db.get_atlas(a) if a is not None else None,
+                                             normalize_mu=True)   # maps saved before the renormalization fix carry |q| < 1
+        if bulk_temps is not None:
+            all_keyframes_map.update((kf.id, kf) for kf in bulk_temps)
+
+        for kf_data in (temps if bulk_temps is None else ()):
             atlas = db.get_atlas(kf_data["atlas_id"]) if kf_data["atlas_id"] is not None else None
 
             kf = Keyframe(
@@ -2362,13 +2426,18 @@ class HypothesisManager:
 
         # --- 2. Restore nodes (both from database and temporary) ---
         self.nodes.clear()
-        for kf_id, kf in all_keyframes_map.items():
-            self.nodes[kf_id] = kf
+        self.nodes.update(all_keyframes_map)
 
         # --- 3. Restore odometry edges ---
         self.odom_edges.clear()
         self.odom_edges_version = getattr(self, "odom_edges_version", 0) + 1
-        for edge_key, edge_data in hypo_data["odom_edges"].items():
+        odom = hypo_data["odom_edges"]
+        bulk_odom = None
+        if cpu and getattr(odom, "enc", None) is not None:
+            bulk_odom = bulk_load.edges(odom.enc["recs"], visual=False) if odom.enc["recs"].get("__records__") else None
+        if bulk_odom is not None:
+            self.odom_edges.update(zip(bulk_load.keys(odom.enc["keys"]), bulk_odom))
+        for edge_key, edge_data in (odom.items() if bulk_odom is None else ()):
             edge = Edge(
                 mean=to_device(edge_data["mean"], device),
                 std=to_device(edge_data["std"], device),
@@ -2394,7 +2463,14 @@ class HypothesisManager:
             )
 
             # Restore visual edges
-            for edge_key, edge_list_data in hypo_data_item["visual_edges"].items():
+            ve = hypo_data_item["visual_edges"]
+            bulk_vis = None
+            if cpu and getattr(ve, "enc", None) is not None and ve.enc["records"] and ve.enc["items"].get("__records__"):
+                bulk_vis = bulk_load.edges(ve.enc["items"], visual=True)
+            if bulk_vis is not None:
+                hypothesis.visual_edges.update((k, l) for k, l in zip(bulk_load.keys(ve.enc["keys"]),
+                                                                      bulk_load.grouped(bulk_vis, ve.enc["counts"])) if l)
+            for edge_key, edge_list_data in (ve.items() if bulk_vis is None else ()):
                 for edge_data in edge_list_data:
                     edge = VisualEdge(
                         mean=to_device(edge_data["mean"], device),
@@ -2413,8 +2489,14 @@ class HypothesisManager:
                         edge.conditional_pose = ConditionalPose.from_record(edge_data['conditional_pose'])
 
             # Restore visual adjacency
-            for node_id, neighbors in hypo_data_item["visual_adjacency"].items():
-                hypothesis.visual_adjacency[node_id] = set(neighbors)
+            va = hypo_data_item["visual_adjacency"]
+            enc = getattr(va, "enc", None)
+            if enc is not None and not enc["records"] and enc["items"]["k"] == "int":
+                hypothesis.visual_adjacency.update(zip(bulk_load.keys(enc["keys"]), map(set, bulk_load.grouped(
+                    enc["items"]["a"].tolist(), enc["counts"]))))
+            else:
+                for node_id, neighbors in va.items():
+                    hypothesis.visual_adjacency[node_id] = set(neighbors)
 
             self.hypotheses[0] = hypothesis
 
