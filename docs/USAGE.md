@@ -186,17 +186,14 @@ receivers repeat the same error for tens of seconds), and the graph is optimised
 relocalization session on a geo-anchored map, the current fix drops references that contradict it (a calibrated compass
 also drops references with a contradicting heading), and the stored keyframes within ~3.7 sigma + 5 m of a trusted fix
 take the map retrieval budget except two global slots (`geo.retrieval_focus`, on; NCLT cross-season relocalization 60 vs
-56 of 75 trials within 5 m, degraded GPS no worse than none). Opt-in: `geo.session_holdoff_s` (a session's first fixes
-are used after this many seconds instead of 10: GPS from ~4 s instead of ~13 s, no outcome changed on NCLT) and
-`geo.integrity` (fixes that agree with the track but contradict the localized pose withhold it: on NCLT it withheld
-mostly correct poses).
+56 of 75 trials within 5 m, degraded GPS no worse than none).
 Input: a prepared folder (or its parent) with `gnss.txt` (`t lat lon alt [mode num_sats [hdop [sigma_h]]]`, times on
 the clock of `times.txt`), optionally `mag.txt` / `ms25.txt` (magnetometer + accelerometer, forward-right-down) or
 `heading.txt` (see `cross/dataloader/geo.py`); in code, `obs["gnss"] = {"t", "lat", "lon", "alt", ...}` and
 `obs["compass"]` per step. `--gnss-degrade sigma=8,bias=15,drop=0.3,outage=60:120` degrades the query's fixes
 (testing). Main options (`geo.*`): `gate`, `decimate`, `robust` (the method; switch off for ablations),
-`use_altitude` (on: horizontal-only factors let the optimisation tilt the map), `sigma_v_factor` (4: consumer altitude
-is poor), `retrieval_gate` (the fix as a location prior), `proposal_gate`, `compass_gate`. On by default (`--no-gnss` /
+`sigma_v_factor` (4: consumer altitude is poor, but horizontal-only factors let the optimisation tilt the map),
+`retrieval_gate` (the fix as a location prior), `proposal_gate`, `compass_gate`. On by default (`--no-gnss` /
 `geo.enabled=false` turns it off): `--gnss` only feeds the folder's GNSS data; without GNSS input the system's results
 are unchanged, and a geo-anchored map keeps its anchor and keyframe latitude / longitude when it is saved again.
 

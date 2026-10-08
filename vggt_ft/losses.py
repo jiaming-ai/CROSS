@@ -120,20 +120,16 @@ def dense_scale_target(pred_depth, gt_depth_metric, mask, patch_hw):
     return num / den.clamp(min=1e-6), den
 
 
-def covis_loss(logits, target, window_w=None, pos_weight: float = 1.0):
-    """window_w (B,): weight of each window (0 = no covisibility labels, e.g. windows without poses).  pos_weight: weight
-    of the pairs with real overlap (target > 0.15) relative to the others (1 = plain BCE)."""
+def covis_loss(logits, target, window_w=None):
+    """window_w (B,): weight of each window (0 = no covisibility labels, e.g. windows without poses)."""
     S = logits.shape[1]
     iu = torch.triu_indices(S, S, 1, device=logits.device)
     lg, tg = logits[:, iu[0], iu[1]], target[:, iu[0], iu[1]]
-    if window_w is None and pos_weight == 1.0:
+    if window_w is None:
         out = {"loss_covis": F.binary_cross_entropy_with_logits(lg, tg)}
     else:
-        bce = F.binary_cross_entropy_with_logits(lg, tg, reduction="none")
-        pw = torch.where(tg > 0.15, pos_weight, 1.0)
-        bce = (bce * pw).sum(1) / pw.sum(1)
-        ww = torch.ones_like(bce) if window_w is None else window_w
-        out = {"loss_covis": (bce * ww).sum() / ww.sum().clamp(min=1)}
+        bce = F.binary_cross_entropy_with_logits(lg, tg, reduction="none").mean(1)
+        out = {"loss_covis": (bce * window_w).sum() / window_w.sum().clamp(min=1)}
     with torch.no_grad():
         p = torch.sigmoid(lg)
         neg, pos = tg < 0.02, tg > 0.3

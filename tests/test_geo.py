@@ -147,7 +147,7 @@ def test_compass_tilt_and_offset_and_disturbance():
             yaw = tilt_compensated_yaw(m, a)
             expect = math.pi / 2 - (b - decl)
             assert abs(((yaw - expect + math.pi) % (2 * math.pi)) - math.pi) < 1e-6
-    c = Compass(CompassConfig(min_offset_samples=10, hard_iron=True))
+    c = Compass(CompassConfig(min_offset_samples=10))
     for i in range(40):
         c.add_offset_sample(0.3 + 0.01 * np.sin(i), 0.1)
     assert abs(c.offset - 0.2) < 0.02
@@ -385,23 +385,6 @@ def test_geo_anchor_kept_when_a_map_is_saved_again_without_gnss(tmp_path, monkey
     assert set(GeoManager.factor_records(geo["factors"])) == {k0}
 
 
-def test_gate_session_holdoff_applies_to_the_first_epoch_only():
-    n = 40
-    track = np.stack([np.arange(n) * 1.2, np.zeros(n)], 1)
-    enu = track + np.random.default_rng(4).normal(0, 1.0, (n, 2))
-    gate = GnssGate(GnssNoiseModel(), GnssGateConfig(first_holdoff_s=2.0))
-    d = _gate_stream(gate, track, enu)
-    first_used = next(i for i, x in enumerate(d) if x.used)
-    assert first_used < 10                                           # before the 10 s reacquisition hold-off
-    assert all(not x.used for x in d[:4])                            # min_fixes still applies
-    # a gap starts a new epoch: the full hold-off again
-    dd = gate.process(GnssFix(t=200.0, lat=0, lon=0, mode=FIX_3D), np.r_[enu[0] + 300, 0], track[0] + 300, None)
-    assert dd.reason == "holdoff"
-    later = [gate.process(GnssFix(t=200.0 + i, lat=0, lon=0, mode=FIX_3D), np.r_[enu[i] + 300, 0], track[i] + 300,
-                          None) for i in range(1, 8)]
-    assert all(not x.used for x in later)                            # < 10 s into the new epoch
-
-
 def _anchored_manager(**cfg_kw):
     from cross.core.config import GeoConfig
     from cross.geo.manager import GeoManager
@@ -413,27 +396,6 @@ def _anchored_manager(**cfg_kw):
     p_enu = p_map @ m.anchor.R_level.T + np.array([10.0, 20.0, 0.0])
     assert m.anchor.fit(p_map, p_enu, np.full(200, 1.0))
     return m
-
-
-def test_manager_integrity_withholds_a_contradicted_pose_and_releases_it():
-    m = _anchored_manager(integrity=True, integrity_fixes=3, gate=False)
-    T = np.eye(4)                                                    # hypothesis 0 at the map origin
-    enu_ok = m.anchor.to_enu(T[:3, 3])
-    enu_far = enu_ok + np.array([60.0, 0.0, 0.0])
-    def fix(t, e):
-        lat, lon, alt = m.frame.to_lla(np.asarray(e, float))
-        return {"t": t, "lat": lat, "lon": lon, "alt": alt, "sigma_h": 3.0}
-    for i in range(2):
-        m.observe(float(i), fix(float(i), enu_far), None, T, True)
-    assert not m.withheld                                            # two contradicting fixes: not yet
-    m.observe(2.0, fix(2.0, enu_far), None, T, True)
-    assert m.withheld
-    m.observe(3.0, fix(3.0, enu_ok), None, T, True)
-    assert not m.withheld                                            # an agreeing fix releases the pose
-    m2 = _anchored_manager(integrity=True, integrity_fixes=3, gate=False)
-    for i in range(5):
-        m2.observe(float(i), fix(float(i), enu_far), None, T, False)  # not localized: nothing to test
-    assert not m2.withheld
 
 
 def test_manager_focus_region_follows_the_trusted_fix():

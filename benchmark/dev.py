@@ -292,7 +292,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("run", "compare"):
         p = sub.add_parser(name)
-        p.add_argument("--tier", choices=["quick", "full", "val", "occ"], default="quick")
+        p.add_argument("--tier", choices=["quick", "full", "val", "occ", "corridor"], default="quick")
         p.add_argument("--datasets", nargs="*", default=None, help="only these dev entries of datasets.yaml")
         p.add_argument("--data", default=os.environ.get("BENCH_DATA"))
         p.add_argument("--out", default=os.environ.get("BENCH_DEV_RESULTS"))

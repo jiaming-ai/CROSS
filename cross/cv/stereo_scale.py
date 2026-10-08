@@ -112,7 +112,6 @@ def estimate_scale(
     min_pred_norm: float = 1e-4,
     rot_sigma_deg: float = 10.0,
     weight_by_baseline: bool = False,
-    view_logstd_floor: float = 0.0,
 ) -> ScaleEstimate:
     """Estimate the metric scale of a set of predicted camera-to-world poses.
 
@@ -125,10 +124,6 @@ def estimate_scale(
                 relative rotation / baseline direction disagrees with the known
                 rig transform (a wrongly registered stereo view carries no scale
                 information).  Direction is only checked for stereo anchors.
-        view_logstd_floor: > 0 turns on the view-level spread: map anchors through one view share that view's
-                placement error, so the log std is at least the jackknife spread of the estimates that leave out one
-                reference view of the map anchors, and at least view_logstd_floor when one such view carries every
-                accepted anchor.
     Returns:
         ScaleEstimate (valid=False if no anchor survives).
     """
@@ -211,30 +206,7 @@ def estimate_scale(
         est.log_std = float(np.sqrt(np.sum(w * (log_r - log_s) ** 2) / max(np.sum(w), 1e-12)))
     else:
         est.log_std = 0.0
-    if view_logstd_floor > 0:
-        est.log_std = max(est.log_std, _view_jackknife_logstd(
-            [a for a, ok in zip(anchors, accept) if ok], log_r, w, view_logstd_floor))
     return est
-
-
-def _view_jackknife_logstd(anchors: list, log_r: np.ndarray, w: np.ndarray, floor: float) -> float:
-    """Spread of the weighted mean log ratio when each reference view of a map anchor (not view 0) is left out in turn;
-    `floor` when leaving out one such view removes every anchor.  Odometry and stereo anchors stay in every subset (an
-    odometry-only pass is not penalised)."""
-    views = sorted({v for a in anchors if a.kind == "map" for v in (a.idx_a, a.idx_b) if v != 0})
-    if not views:
-        return 0.0
-    loo = []
-    for v in views:
-        keep = np.array([v not in (a.idx_a, a.idx_b) for a in anchors], dtype=bool)
-        if not keep.any():
-            return float(floor)
-        loo.append(float(np.sum(w[keep] * log_r[keep]) / max(np.sum(w[keep]), 1e-12)))
-    if len(loo) < 2:
-        return 0.0
-    loo = np.asarray(loo)
-    n = len(loo)
-    return float(np.sqrt((n - 1) / n * np.sum((loo - loo.mean()) ** 2)))
 
 
 def scale_camera_centers(c2w: np.ndarray, scale: float, origin_index: int = 0) -> np.ndarray:

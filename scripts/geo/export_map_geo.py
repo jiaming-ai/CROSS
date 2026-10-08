@@ -44,7 +44,7 @@ def main():
     info = {"origin": geo.get("frame"), "anchor_yaw_deg": None if anchor.get("yaw") is None else float(np.degrees(anchor["yaw"])),
             "anchor_cov": anchor.get("cov"), "n_keyframes": len(ids), "n_permanent": len(perm & set(ids)),
             "noise": geo.get("noise"), "correlation_time_s": (geo.get("err") or {}).get("tau"), "gate": geo.get("gate"),
-            "compass": {k: (geo.get("compass") or {}).get(k) for k in ("offset", "offset_std", "hard_iron")}}
+            "compass": {k: (geo.get("compass") or {}).get(k) for k in ("offset", "offset_std")}}
     Path(str(a.out) + ".json").write_text(json.dumps(info, indent=1, default=float))
     print(json.dumps(info, indent=1, default=float))
 

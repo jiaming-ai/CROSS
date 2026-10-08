@@ -110,8 +110,8 @@ class DescriptorIndexConfig:
     float32 with an exact search, i.e. the original database (64 KB per keyframe)."""
     # None: full descriptors.  "map": fit an uncentred projection on the map's own descriptors once the database
     # holds `fit_at` keyframes (smaller maps are unchanged), then store float16 codes (0.5-4 KB instead of 64 KB per
-    # keyframe), extending the subspace when the scene changes (cross.db.index.DescriptorIndex).  A path: a fixed
-    # projection (.npz, PCAProjection.save).  A map saved with a projection always uses its own.
+    # keyframe), extending the subspace when the scene changes (cross.db.index.DescriptorIndex).  A map saved with a
+    # projection always uses its own.
     # On by default: below fit_at nothing changes (full descriptors, original scores); above it the stored scores keep
     # the full cosine's meaning (exact re-scoring in session) and maps were identical on KITTI 07 (projection forced at
     # 128 keyframes) and NCLT (5.5 km, fitted at 1024): see outputs/2026-10-07_retrieval_index
@@ -125,12 +125,11 @@ class DescriptorIndexConfig:
     max_dim: int = 2048            # NCLT cross-season: 2048 dims lossless in recall, 1024 -1.7 pts R@1, 512 -4
     recent: int = 1024             # full descriptors of the latest keyframes kept for an extension
     # projected scores: the best `shortlist` codes of a query are re-scored exactly from the full descriptors while
-    # these are in RAM (keyframes added in this session); loaded maps use the code scores with this calibration
-    # (raw | iso | resid; raw is best across sessions, see cross.db.index.ScoreCalibration)
+    # these are in RAM (keyframes added in this session); loaded maps use the code scores as they are (within
+    # 0.002-0.004 of the full cosine at 2048 dims on NCLT)
     shortlist: int = 64
     max_rescore: int = 256         # + rows whose code score + fitted residual margin reaches the k-th exact score
     keep_full_max: int = 131072    # full descriptors kept in CPU RAM (fp16, 32 KB each) up to this many keyframes
-    calibration: str = "raw"
     store_dtype: str = "auto"      # auto: float32 without a projection, float16 with one
     backend: str = "exact"         # exact | ivf: inverted file (k-means cells), trained once ivf_min_rows rows exist
     ivf_nlist: int = 0             # cells (0: 4 sqrt(n))
@@ -584,11 +583,6 @@ class HypothesisConfig:
     strong_pass_frames: int = 0
     strong_pass_min_refs: int = 2
     strong_pass_min_covis: float = 0.3
-    # close correction (0 = off): a candidate within the 3 m separation radius of hypothesis 0 passes the separation
-    # gate when its net evidence against hypothesis 0 over detect_min_frames frames is at least this many nats; the
-    # measurements then say hypothesis 0 is wrong, not that the candidate duplicates it (office1-4, mono: hypothesis 0
-    # 1.6 m off after a wrong-scale fix, the correct candidate 1.7 m away with 15-20 nats never merged)
-    close_correction_min_llr: float = 0.0
     # geometric verification of a merge: fraction of the candidate's visual edges that remain outliers
     # (Mahalanobis norm > verify_outlier_sigma) after the loop-closure optimisation
     verify_outlier_sigma: float = 4.0
@@ -777,11 +771,6 @@ class FeedForwardConfig:
     # places a reference that overlaps nothing else in the pass arbitrarily; every anchor through it shares that error,
     # so the anchors agree and a wrong scale looks certain (mono passes whose only anchors are map pairs)
     map_anchor_min_pair_covis: float = 0.0
-    # view-level scale uncertainty (0 = off): the spread of the scale is also measured by leaving out each reference view
-    # in turn (jackknife), since anchors through one view share its placement error; when one reference view carries
-    # every anchor, the relative scale std is at least this. Three anchors through one disconnected view gave a
-    # 7x scale error with logstd 0.003
-    anchor_view_logstd_floor: float = 0.0
     anchor_weight_by_baseline: bool = True   # weight anchors by predicted baseline length (precision of the ratio)
     anchor_max_rot_err_deg: float = 20.0
     anchor_min_dir_cos: float = 0.5
@@ -896,17 +885,10 @@ class GeoConfig:
     gate: bool = True
     decimate: bool = True
     robust: bool = True
-    # factors with the relative test's noise inflation (the gate always uses it); NCLT study: no gain (6 of 21
-    # sessions better), so factors keep the prior noise times the posterior scale
-    inflate_factors: bool = False
-    # rescale the prior noise from the posterior residuals after each optimisation; the residuals are shrunk by the fit
-    # (the trajectory absorbs part of the error), so the rescaled noise overweights GNSS (NCLT 27 sessions: geo RMSE
-    # 3.53 vs 3.40 m, online 6.67 vs 5.49 m, 2.4x the optimisations)
-    posterior_scale: bool = False
-    # GNSS altitude in the factors (vertical noise sigma_v_factor x horizontal); False: horizontal factors only (the
-    # map's vertical from odometry / vision).  Consumer altitude is poor: NCLT 2012-08-04 end to end the vertical error
-    # rose 3.5 -> 8.1 m with it (2012-01-08: 3.0 -> 2.3 m); see the 27-session study
-    use_altitude: bool = True
+    # factors keep the prior noise: the relative test's inflation steers the gate only, and the prior noise is not
+    # rescaled from the posterior residuals (both tested and removed: outputs/2026-10-08_option_pruning).  GNSS
+    # altitude always enters the factors (vertical noise sigma_v_factor x horizontal): horizontal-only factors let the
+    # optimisation tilt the map (NCLT 27 sessions: vertical 30.7 vs 4.7 m)
     retrieval_gate: bool = True               # the current fix is a location prior of retrieval (System.add_location_prior;
                                               # acts with retrieval.locality.enabled)
     proposal_gate: bool = True                # references implying a pose inconsistent with the fix are dropped
@@ -920,20 +902,11 @@ class GeoConfig:
     retrieval_focus: bool = True
     focus_margin_m: float = 5.0
     focus_global_slots: int = 2
-    # hold-off of a session's first fix epoch (the receiver was running before the session started, so its first fixes
-    # are not a reacquisition; later epochs, after a gap, keep holdoff_s); None: holdoff_s
-    session_holdoff_s: Optional[float] = None
-    # integrity of a localized session: a run of integrity_fixes fixes that agree with the robot's own track (relative
-    # test) but contradict hypothesis 0's position in the map (chi-square at `confidence`) withholds the pose (the
-    # session reports no pose in the map) until fixes agree with it again
-    integrity: bool = False
-    integrity_fixes: int = 3
     compass_gate: bool = True                 # references whose heading contradicts the compass are dropped (needs the
                                               # compass offset, calibrated against the GNSS-anchored map)
     compass_sigma_deg: float = 5.0
     compass_offset_deg: Optional[float] = None   # compass -> camera heading offset; None: calibrated online
     compass_frame: str = "frd"                # body frame of raw magnetometer / accelerometer samples
-    compass_hard_iron: bool = False           # online hard-iron calibration of the magnetometer (no gain on NCLT)
 
 
 @dataclass

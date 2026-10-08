@@ -287,8 +287,7 @@ def test_projected_scores_keep_the_full_cosine():
     re.calibration = ScoreCalibration.from_state(st["calibration"])
     s2 = re.query_scores(q)                                                   # codes only: raw code scores
     assert torch.allclose(s2, raw, atol=1e-4)
-    iso = re.calibration.apply(raw, 0.9, re._energy[:re.n], model="iso")      # opt-in models stay available
-    assert iso.shape == raw.shape and torch.isfinite(iso).all()
+    assert "resid_ratio_q999" in re.calibration.meta                          # the re-scoring margin survives a save
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")

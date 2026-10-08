@@ -795,7 +795,6 @@ class PoseEstFeedForward:
             pred.c2w, anchors, method=cfg.scale_method,
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
             weight_by_baseline=cfg.anchor_weight_by_baseline,
-            view_logstd_floor=float(getattr(cfg, "anchor_view_logstd_floor", 0.0) or 0.0),
         )
         src = getattr(cfg, "scale_source", "anchors")
         if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
