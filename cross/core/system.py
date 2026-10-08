@@ -1410,7 +1410,7 @@ class System:
 
         # Apply any pending PGO results from the async engine and optionally force smoothing
         applied = self._apply_pending_pgo_results(ret)
-        applied = self._poll_async_pgo(ret) or applied
+        self._poll_async_pgo(ret)         # (not `applied`: that forces a local smoothing, which the synchronous path never ran)
         # Periodic local smoothing
         self._maybe_local_smoothing(force=applied)
         # a realized hypothesis that has taken over the belief for long without a loop closure becomes hypothesis 0

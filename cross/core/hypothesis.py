@@ -2054,47 +2054,49 @@ class HypothesisManager:
           (they hang off it through the odometry chain): the tail moves rigidly with it.
         Returns {"success", "n_tail", "affected", "correction_t"}."""
         self.pose_epoch += 1
-        step = int(self.step_counter)
         ids = [int(i) for i in ids]
         opt = np.asarray(opt, dtype=np.float32)
         fork = np.asarray(fork, dtype=np.float32)
-        corr = pp.SE3(torch.from_numpy(opt.astype(np.float64))) @ pp.SE3(torch.from_numpy(fork.astype(np.float64))).Inv()
+        corr = (pp.SE3(torch.from_numpy(opt.astype(np.float64))) @ pp.SE3(torch.from_numpy(fork.astype(np.float64))).Inv()).tensor()
 
-        def row64(kf):
-            return torch.from_numpy(kf.plain_row("pose_mu", 0).detach().cpu().numpy().astype(np.float64))
+        def moved_to(C: torch.Tensor, kf) -> torch.Tensor:
+            """The keyframe's present pose with the world-frame correction C applied (float32 row)."""
+            cur = torch.from_numpy(kf.plain_row("pose_mu", 0).detach().cpu().numpy().astype(np.float64))
+            return (pp.SE3(C) @ pp.SE3(cur)).tensor().to(torch.float32).clone()
 
         with self.graph_lock:
             affected = set()
-            with torch._C.DisableTorchFunctionSubclass():
-                for i, nid in enumerate(ids):
-                    kf = self.nodes.get(nid)
-                    if kf is None:
-                        continue
-                    if not fresh_poses and not np.array_equal(kf.plain_row("pose_mu", 0).detach().cpu().numpy(), fork[i]):
-                        new = as_se3((corr[i] @ pp.SE3(row64(kf))).tensor().to(torch.float32).clone())
-                    else:
-                        new = as_se3(torch.from_numpy(opt[i]).clone())
-                    kf.pose_mu[0] = new
+            for i, nid in enumerate(ids):
+                kf = self.nodes.get(nid)
+                if kf is None:
+                    continue
+                if not fresh_poses and not np.array_equal(kf.plain_row("pose_mu", 0).detach().cpu().numpy(), fork[i]):
+                    row = moved_to(corr[i], kf)
+                else:
+                    row = torch.from_numpy(opt[i]).clone()
+                with torch._C.DisableTorchFunctionSubclass():
+                    kf.pose_mu[0] = as_se3(row)
                     kf.last_pgo_step = int(self.step_counter)
-                    affected.add(nid)
+                affected.add(nid)
             C = corr[ids.index(max_id)] if max_id in ids else None
             n_tail = 0
             if C is not None:
-                with torch._C.DisableTorchFunctionSubclass():
-                    for nid in reversed(self.nodes):
-                        if nid <= max_id:
-                            break
-                        kf = self.nodes[nid]
-                        kf.pose_mu[0] = as_se3((C @ pp.SE3(row64(kf))).tensor().to(torch.float32).clone())
-                        affected.add(nid)
-                        n_tail += 1
+                for nid in reversed(self.nodes):
+                    if nid <= max_id:
+                        break
+                    kf = self.nodes[nid]
+                    row = moved_to(C, kf)
+                    with torch._C.DisableTorchFunctionSubclass():
+                        kf.pose_mu[0] = as_se3(row)
+                    affected.add(nid)
+                    n_tail += 1
                 if self.dist is not None:
                     d0 = self.dist[0]
-                    d0[0] = (C.to(d0.device).to(d0.dtype) @ d0[0])
+                    d0[0] = pp.SE3(C.to(device=d0.device, dtype=d0.dtype)) @ d0[0]
             if affected and self.system.topo_map is not None:
                 self.system.topo_map.update_after_pgo(affected)
         return {"success": True, "n_tail": n_tail, "affected": len(affected),
-                "correction_t": float(C.tensor()[:3].norm()) if C is not None else 0.0}
+                "correction_t": float(C[:3].norm()) if C is not None else 0.0}
 
     def _transport_merged_charts(self, pg, optimized_poses):
         """Transport unsolved poses as well as solved nodes after commitment.

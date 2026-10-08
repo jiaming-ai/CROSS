@@ -276,3 +276,29 @@ def test_a_hung_worker_is_killed_after_the_timeout():
     with pytest.raises(JobError, match="killed"):
         job.result(timeout=0.3)
     assert not ap_mod._live_children
+
+
+def test_keyframes_moved_by_something_else_meanwhile_get_the_correction_added_to_their_present_pose():
+    sync = make_system(False, False)
+    late = make_system(False, False, async_lag=2)
+    hm = late.hypothesis_manager
+    keys, ref = late.new_keys, min(a for a, b in late.new_keys)
+    sync._verified_lc_optimise({}, list(keys), ref)
+    late._submit_async_pgo({}, list(keys), ref)
+    # something else (a local smoothing, another optimisation) shifts keyframes 100..110 by 10 cm in the meantime
+    shift = pp.SE3(torch.tensor([0.1, 0.0, 0.0, 0, 0, 0, 1.0]))
+    for i in range(100, 111):
+        hm.nodes[i].pose_mu[0] = shift @ hm.nodes[i].pose_mu[0]
+    hm.pose_epoch += 1
+    base = poses(make_system(False, False).hypothesis_manager)
+    before = {i: poses(hm)[i] for i in range(100, 111)}
+    late._processed_frame_num += 2
+    assert late._poll_async_pgo({}) is True
+    ps, pl = poses(sync.hypothesis_manager), poses(hm)
+    for k in range(240):
+        if 100 <= k <= 110:                                  # (optimised correction) o (the shift)
+            corr = np.array(pp.SE3(torch.from_numpy(ps[k])).matrix() @ np.linalg.inv(np.array(pp.SE3(torch.from_numpy(base[k])).matrix())))
+            expect = corr @ np.array(pp.SE3(torch.from_numpy(before[k])).matrix())
+            assert np.allclose(np.array(pp.SE3(torch.from_numpy(pl[k])).matrix()), expect, atol=2e-5), k
+        else:
+            assert np.array_equal(ps[k], pl[k]), k
