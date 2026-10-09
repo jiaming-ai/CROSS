@@ -37,8 +37,12 @@ class BuildConfig:
     min_visible: float = 0.1        # share of a view's depth points in a cell that adds it to the chunk
     test_every: int = 8             # every n-th keyframe (by id) is held out for evaluation (0: none)
     depth: str = "auto"             # auto | sensor | sgbm | none
+    depth_workers: int = 8
     max_depth: float = 0.0          # 0: no clipping
     anchors: int = 4
+    # after training, drop Gaussians below this opacity: MCMC keeps many near-transparent ones to relocate; on KITTI 07
+    # 0.02 removed 58 % of them at -0.01 dB (16 held-out views, SSIM / LPIPS unchanged)
+    prune_opacity: float = 0.02
     train: TrainConfig = field(default_factory=TrainConfig)
 
 
@@ -255,14 +259,23 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
     # ---- depth of every training view (needed for the partition's visibility and the initialisation)
     t0 = time.time()
     depths: Dict[int, np.ndarray] = {}
-    stereo = None
     if cfg.depth != "none":
-        if mv.mode == "stereo" or cfg.depth == "sgbm":
-            stereo = StereoDepth(train_views[0].width)
-        for v in train_views:
-            d = view_depth(v, mv, cfg.depth, cfg.max_depth or None, stereo)
-            if d is not None:
-                depths[v.id] = d
+        # views in parallel threads (image decoding and SGBM release the GIL; one matcher per thread)
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        local = threading.local()
+
+        def one(v):
+            st = None
+            if mv.mode == "stereo" or cfg.depth == "sgbm":
+                st = getattr(local, "st", None)
+                if st is None:
+                    st = local.st = StereoDepth(train_views[0].width)
+            return v.id, view_depth(v, mv, cfg.depth, cfg.max_depth or None, st)
+        with ThreadPoolExecutor(max_workers=cfg.depth_workers) as ex:
+            for vid, d in ex.map(one, train_views):
+                if d is not None:
+                    depths[vid] = d
     t_depth = time.time() - t0
     if cfg.train.consistency_tol > 0 and depths and len(train_views) == len(depths):
         T_all = np.stack([v.T_wc for v in train_views])
@@ -317,6 +330,9 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
         log(f"chunk {c.index}: {len(views)} views ({len(c.core_ids)} core), {len(init['means'])} initial Gaussians")
         res = train_chunk(vb, init, cfg.train, local_scale, log=log)
         sp = {k: v.cpu() for k, v in res.splats.items()}
+        if cfg.prune_opacity > 0:
+            keep = torch.sigmoid(sp["opacities"]) >= cfg.prune_opacity
+            sp = {k: v[keep] for k, v in sp.items()}
         # keep the chunk's own Gaussians: its cell (near) and beyond the mapped region (far)
         own = torch.from_numpy(part.cell_of(sp["means"].numpy()) == c.index)
         far = torch.from_numpy(~part.in_region(sp["means"].numpy()))

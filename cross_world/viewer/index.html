@@ -242,6 +242,7 @@ function highlight(kf) {
 // ------------------------------------------------------------------------------------------------ loading
 async function loadScene(entry) {
   if (S) { for (const m of S.meshes) { world.remove(m.mesh); m.mesh.dispose?.(); } world.remove(S.ov.group); }
+  S = null;                                         // a load still running for the previous scene stops adding
   flying = null; setPressed("bFly", false);
   $("hudScene").textContent = entry.title; $("sceneDesc").textContent = entry.description || "";
   const base = entry.dir.replace(/\/?$/, "/");
@@ -250,30 +251,47 @@ async function loadScene(entry) {
   world.matrix.identity(); world.matrixAutoUpdate = false;
   world.matrix.set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1);
   world.updateMatrixWorld(true);
+  renderStats(W); renderQuality(W);                 // numbers first; the thumbnails come with their pack
   let thumbs = null;
-  try { thumbs = await (await fetch(base + "thumbs.bin")).arrayBuffer(); } catch (e) { thumbs = null; }
+  try { thumbs = (await fetchBytes(base + "thumbs.bin", W.base64)).buffer; } catch (e) { thumbs = null; }
   const urls = new Map();
   const imgUrl = (span) => { if (!thumbs || !span) return ""; const k = span[0]; if (!urls.has(k)) urls.set(k, URL.createObjectURL(new Blob([thumbs.slice(span[0], span[0] + span[1])], { type: "image/jpeg" }))); return urls.get(k); };
   S = { W, base, meshes: [], ov: buildOverlays(W), imgUrl, ownChunk: -1 };
   world.add(S.ov.group);
   applyToggles();
-  renderStats(W); renderQuality(W); renderStrip(W); renderGallery(W);
+  renderStrip(W); renderGallery(W);
   const files = [];
   for (const c of W.chunks) for (const layer of ["near", "far"]) for (const f of (c.files[layer] || [])) files.push({ chunk: c.index, layer, file: f.file, n: f.n });
+  const startChunk = (W.keyframes.find((k) => !k.test) || W.keyframes[0] || {}).chunk;
+  files.sort((a, b) => (a.chunk !== startChunk) - (b.chunk !== startChunk) || (a.layer === "far") - (b.layer === "far"));
+  W.splatCount = files.reduce((a, f) => a + f.n, 0);
   let done = 0;
   $("hudLoad").textContent = `splats 0/${files.length}`;
   const first = W.keyframes.find((k) => !k.test) || W.keyframes[0];
   if (first) select(first, true);
   controls.fpsMovement.moveSpeed = Math.max(1, (W.meta.zmed || 5) * 0.6);
-  for (const f of files) {
-    const mesh = new SplatMesh({ url: base + f.file });
-    world.add(mesh);
-    const rec = { ...f, mesh };
-    S.meshes.push(rec);
-    mesh.initialized.then(() => { done++; $("hudLoad").textContent = done === files.length ? `${fmt(W.splatCount)} splats` : `splats ${done}/${files.length}`; updateFar(true); })
-      .catch((e) => showErr(`Could not load ${f.file}: ${e.message || e}`));
+  const token = S;
+  for (const f of files) {          // nearest chunk first: the view fills in while the rest loads
+    try {
+      const bytes = await fetchBytes(base + f.file, W.base64);
+      if (S !== token) return;                     // another scene was chosen meanwhile
+      const mesh = new SplatMesh({ fileBytes: bytes, fileName: f.file });
+      world.add(mesh);
+      S.meshes.push({ ...f, mesh });
+      mesh.initialized.then(() => { done++; $("hudLoad").textContent = done === files.length ? `${fmt(W.splatCount)} splats` : `splats ${done}/${files.length}`; updateFar(true); })
+        .catch((e) => showErr(`Could not load ${f.file}: ${e.message || e}`));
+    } catch (e) { showErr(`Could not load ${f.file}: ${e.message || e}`); }
   }
-  W.splatCount = files.reduce((a, f) => a + f.n, 0);
+}
+
+// binary files: plain, or base64 text (".b64.txt") where the host serves only web types (W.base64)
+async function fetchBytes(url, b64) {
+  if (!b64) return new Uint8Array(await (await fetch(url)).arrayBuffer());
+  const txt = (await (await fetch(url + ".b64.txt")).text()).trim();
+  if (Uint8Array.fromBase64) return Uint8Array.fromBase64(txt);
+  const bin = atob(txt), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 function showErr(msg) { const e = $("err"); e.hidden = false; e.textContent = msg; }

@@ -105,7 +105,7 @@ def _split_by_size(sp, max_bytes: float, bytes_per: float):
 
 
 def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: int = 640, max_file_mb: float = 14.0,
-                 min_opacity: float = 1.0 / 255, ply: bool = False, metrics: Optional[dict] = None,
+                 min_opacity: float = 0.02, ply: bool = False, metrics: Optional[dict] = None,
                  renders_dir: Optional[Path] = None) -> dict:
     import cv2
     out = Path(out)
