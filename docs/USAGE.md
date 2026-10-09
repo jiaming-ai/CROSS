@@ -108,6 +108,7 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | file | use |
 |---|---|
 | `configs/stereo.yaml` | stereo mode preset (loaded by `--mode stereo`): VGGT-Omega, observation gating |
+| `configs/realtime.yaml` | opt-in (`--config`) for real-time operation: adaptive pose-graph optimisation, short ones synchronous (as offline), long ones in a background worker (see "Background pose-graph optimisation"); not for offline runs and benchmarks |
 | `configs/stereo_lowband.yaml` | opt-in (`--config`) for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away), not with `--fast` |
 | `configs/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius); `outdoor_noown.yaml` is its variant for the same scale |
 | `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
@@ -128,7 +129,7 @@ A view that is only textureless (a white wall) is kept unless it shows no struct
 default; `--set mapping.keyframe_quality.enabled=false` turns it off. The test set with injected junk views is
 `benchmark/datasets/inject_junk.py` (`benchmark/dev.py ... --tier occ`).
 
-**Background pose-graph optimisation** (`mapping.loop_closure.async_pgo`, off by default; `cross/core/async_pgo.py`).
+**Background pose-graph optimisation** (`mapping.loop_closure.async_pgo`, off by default; `cross/core/async_pgo.py`; the profile `--config configs/realtime.yaml` switches it on: offline runs keep the synchronous default, real-time runs adapt to the map size).
 On a large map one loop-closure optimisation takes seconds, and the front end processes no frame meanwhile. With
 `--set mapping.loop_closure.async_pgo=true` the optimisation of a verified loop closure (and the GNSS-triggered one)
 runs in a forked worker process: it works on a copy-on-write snapshot of the system, and the front end keeps processing

@@ -327,6 +327,9 @@ class System:
         if lc_cfg.async_pgo and self._lc_verifier is not None:
             from cross.core.async_pgo import AsyncPgo
             self._apgo = AsyncPgo(self, lag_steps=lc_cfg.async_pgo_lag_steps, min_job_s=lc_cfg.async_pgo_min_s)
+            logger.info("Pose-graph optimisation: " + (
+                "adaptive (short ones in the front end, long ones in a background worker)" if self._apgo.lag < 0 else
+                f"background, result applied {self._apgo.lag} steps after the trigger"))
         # Initialize async loop-closure engine (latest-wins), if enabled
         self._pgo_apply_queue: 'queue.Queue' = queue.Queue(maxsize=lc_cfg.queue_size)
         self._lc_engine = None

@@ -371,3 +371,16 @@ def test_provisional_window_optimisation_only_in_the_modes_that_process_frames_o
         if s._apgo.busy:
             s._apgo.cancel(requeue=False)
     assert stats == {0: 0, 1: 0, 2: 1}
+
+
+def test_realtime_profile_switches_the_adaptive_background_optimisation_on_and_nothing_else():
+    from cross.core.config import load_config
+    from cross.pipeline import CONFIG_DIR, mode_config_files
+    base = load_config(*mode_config_files("stereo", "external"))
+    rt = load_config(*mode_config_files("stereo", "external"), os.path.join(CONFIG_DIR, "realtime.yaml"))
+    assert not base.mapping.loop_closure.async_pgo and rt.mapping.loop_closure.async_pgo
+    assert rt.mapping.loop_closure.async_pgo_lag_steps == -1          # adaptive, free-running
+    import dataclasses
+    a, b = dataclasses.asdict(base), dataclasses.asdict(rt)
+    b["mapping"]["loop_closure"]["async_pgo"] = False
+    assert a == b
