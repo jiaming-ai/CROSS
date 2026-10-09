@@ -74,6 +74,12 @@ class TrainConfig:
     depth_loss: str = "raw"
     consistency_tol: float = 0.0        # > 0: multi-view depth consistency filter (relative tolerance)
     log_every: int = 500
+    # free-space carving: every carve_every steps, carve_views random training views vote with their depth; Gaussians
+    # in front of the observed surface (camera depth < (1 - carve_tol) x depth) in >= 2 of them and seen at a surface in
+    # none lose their opacity (MCMC relocates them).  0: off
+    carve_every: int = 0
+    carve_views: int = 16
+    carve_tol: float = 0.15
 
 
 # ---------------------------------------------------------------------------------------------------------- geometry
@@ -372,6 +378,7 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
     opt_app = Opt(list(app_emb.parameters()), lr=cfg.app_lr * lr_scale) if cfg.app_opt else None
 
     depth_ok = vb.depths is not None and bool((vb.depths > 0).any())
+    carved_total = 0
     zmed = float(vb.depths[vb.depths > 0].float().median()) if depth_ok else 1.0
     eye34 = torch.eye(3, 4, device=dev)
     t0 = time.time()
@@ -447,6 +454,10 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
         else:
             strategy.step_post_backward(params, optimizers, state, step, info, packed=False)
         sched.step()
+        if cfg.carve_every > 0 and depth_ok and step >= min(1000, steps // 5) and (step + 1) % cfg.carve_every == 0 \
+                and step < int(steps * 0.95):
+            n_carved = _carve(params, vb, pose_emb if cfg.pose_opt else None, cfg, g)
+            carved_total += n_carved
         if (step + 1) % cfg.log_every == 0 or step == steps - 1:
             with torch.no_grad():
                 p = psnr(rgb.detach(), gt)
@@ -462,7 +473,26 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
     out = {k: v.detach() for k, v in params.items()}
     return TrainResult(out, {vid: D[i] for i, vid in enumerate(vb.ids)}, {vid: A[i] for i, vid in enumerate(vb.ids)},
                        {"steps": steps, "batch": bs, "train_s": round(dt, 1), "n_init": n_init, "n_final": len(out["means"]),
+                        "carved": carved_total,
                         "cap": cap, "n_views": n_views, "history": hist, "zmed": zmed})
+
+
+@torch.no_grad()
+def _carve(params, vb: ViewBatch, pose_emb, cfg: TrainConfig, g) -> int:
+    """Free-space carving (see TrainConfig.carve_every): returns the number of Gaussians whose opacity was reset."""
+    from cross_world.floaters import free_space_votes
+    n_views = len(vb.ids)
+    idx = torch.randperm(n_views, generator=g)[:cfg.carve_views].to(vb.images.device)
+    T = vb.T_wc[idx]
+    if pose_emb is not None:
+        T = T @ delta_transform(pose_emb.weight[idx])
+    opac = torch.sigmoid(params["opacities"])
+    viol, agree = free_space_votes(params["means"].detach(), opac, list(T), list(vb.Ks[idx]),
+                                   [vb.depths[i].float() for i in idx], tol=cfg.carve_tol, min_opacity=0.05)
+    bad = (viol >= 2) & (agree == 0)
+    if bad.any():
+        params["opacities"].data[bad] = torch.logit(torch.tensor(1e-3, device=opac.device))
+    return int(bad.sum())
 
 
 def align_pose(splats, T_wc: torch.Tensor, K: torch.Tensor, width: int, height: int, gt: torch.Tensor, sh_degree: int,

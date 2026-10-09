@@ -577,13 +577,16 @@ def evaluate(world: World, views: List[View], device="cuda", align: bool = True,
                     m = dg > 0
                     if m.any():
                         row[f"depth_absrel_{tag}"] = float(((ed[0, ..., 0] - dg).abs() / dg)[m].mean())
+                        # floaters as the viewer sees them: share of the pixels with depth where the rendered surface
+                        # is more than 15 % in front of the observed one
+                        row[f"floater_px_{tag}"] = float(((ed[0, ..., 0] < 0.85 * dg) & (alpha[0, ..., 0] > 0.5))[m].float().mean())
             if save_dir is not None and n < save_max and tag == ("aligned" if align else "raw"):
                 import cv2
                 save_dir.mkdir(parents=True, exist_ok=True)
                 im = np.concatenate([(gt.cpu().numpy() * 255).astype(np.uint8), (rgb[0].cpu().numpy() * 255).astype(np.uint8)], 0)
                 cv2.imwrite(str(save_dir / f"view_{v.id}.jpg"), im[..., ::-1])
         rows.append(row)
-    keys = [k for k in rows[0] if k.startswith(("psnr", "ssim", "lpips", "depth"))] if rows else []
+    keys = [k for k in rows[0] if k.startswith(("psnr", "ssim", "lpips", "depth", "floater"))] if rows else []
     summary = {k: float(np.mean([r[k] for r in rows if r.get(k) is not None])) for k in keys
                if any(r.get(k) is not None for r in rows)}
     summary["n"] = len(rows)

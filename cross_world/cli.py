@@ -94,13 +94,29 @@ def cmd_build(args):
     (out / "metrics.json").write_text(json.dumps(res, indent=1, default=float))
 
 
+def _stereo_depth_for(views, mv):
+    """Stereo test views without depth get their SGBM depth (cached), for the depth and floater metrics."""
+    from cross_world.depth import StereoDepth, view_depth
+    st = {}
+    for v in views:
+        if v.has_depth or not v.has_right or mv.T_right_in_left is None:
+            continue
+        def load(v=v, cache={}):
+            if "d" not in cache:
+                s = st.setdefault(v.width, StereoDepth(v.width))
+                cache["d"] = view_depth(v, mv, "sgbm", None, s)
+            return cache["d"]
+        v._depth = load
+    return views
+
+
 def run_eval(world, mv, args, out, log):
     from cross_world.map_views import source_test_views
     from cross_world.world import evaluate
     res = {}
     by = mv.by_id()
     kf_times = {v.id: (v.timestamp if v.timestamp is not None else float(v.id)) for v in mv.views}
-    test = [by[i] for i in world.meta["test_ids"] if i in by]
+    test = _stereo_depth_for([by[i] for i in world.meta["test_ids"] if i in by], mv)
     if test:
         log(f"evaluating {len(test)} held-out keyframes")
         res["heldout_keyframes"] = evaluate(world, test, args.device, align=True, save_dir=out / "renders" / "heldout",
@@ -112,6 +128,11 @@ def run_eval(world, mv, args, out, log):
                                           log=log, kf_times=kf_times)
     if args.novel and mv.source is not None:
         nv = source_test_views(mv, min_gap=args.novel_gap, max_side=args.max_side, limit=args.novel)
+        for v in nv:                     # the source frame's right image (source_test_views loads the left one only)
+            if not v.has_right and mv.source is not None and mv.source.right:
+                s_ = mv.source
+                v._right = (lambda q=v.source_index, w=v.width, h=v.height: s_.read_right(q, (w, h)))
+        nv = _stereo_depth_for(nv, mv)
         if nv:
             log(f"evaluating {len(nv)} novel source frames (>= {args.novel_gap} frames from any keyframe)")
             res["novel_frames"] = evaluate(world, nv, args.device, align=True, save_dir=out / "renders" / "novel",
