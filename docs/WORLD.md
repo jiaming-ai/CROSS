@@ -97,8 +97,12 @@ A map keeps few keyframes (KITTI 07: 300 of 1101 frames, one every ~2.3 m) at <=
 `min_rotation_deg` deg (default 0.25 m / 5 deg; 0 / 0 keeps every frame), at the input resolution and uncropped (with the
 right image or depth), outside the map's database: `map.pkl.capture/` next to the map (`capture.json` + JPEG frames;
 KITTI 07, every frame: 0.38 GB). Each frame's pose is stored relative to its three nearest permanent keyframes, so it
-follows later optimisations of the graph. The map itself is unchanged (identical keyframe poses with the option on and
-off). `cross_world.cli build --capture` trains on these frames too; evaluation frames are never trained on.
+follows later optimisations of the graph; the frame of every new keyframe is always kept. The map itself is unchanged
+(identical keyframe poses with the option on and off). Without `--source`, keyframes then use their captured frames
+(uncropped, full resolution) instead of the stored images: in the stereo mode this is what matters (KITTI 07: +2.4 dB
+held-out, +3.1 dB between keyframes over the stored 512x256 centre crops). `cross_world.cli build --capture` also trains
+on the other captured frames (evaluation frames are never trained on); on home1-1 that did not improve the result
+(indoor frames between keyframes carry ~0.7 deg pose errors, aligned in a second stage but not perfectly).
 
 `python -m cross_world.cli clean --world W --map M --out W2` removes Gaussians fewer than two training views see
 (MCMC rarely leaves any after opacity pruning: < 0.2 % on home1-1).

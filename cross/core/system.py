@@ -1091,7 +1091,10 @@ class System:
             if obs.get("rgb") is None or self.hypothesis_manager.dist is None or not self.session_localized():
                 return
             T = self.get_current_pose().matrix().detach().cpu().numpy().astype(np.float64)
-            if not cap.wants(T):
+            kf = self.hypothesis_manager.nodes.get(self.last_added_kf_id)
+            new_kf = (kf is not None and not kf.temporary and kf.timestamp is not None
+                      and obs.get("timestamp") is not None and float(kf.timestamp) == float(obs["timestamp"]))
+            if not cap.wants(T, new_kf):
                 return
             from cross.core.world_capture import anchor_candidates
             cap.add(T, anchor_candidates(self, T, cap.cfg.anchors), obs, obs.get("timestamp"))

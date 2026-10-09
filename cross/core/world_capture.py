@@ -74,8 +74,10 @@ class WorldCapture:
     def reset_session(self) -> None:
         self._last_T = None
 
-    def wants(self, T: np.ndarray) -> bool:
-        if self._last_T is None:
+    def wants(self, T: np.ndarray, new_keyframe: bool = False) -> bool:
+        """A frame every min_translation / min_rotation_deg, and every frame that became a keyframe (so that each
+        keyframe has its uncropped, full-resolution image)."""
+        if self._last_T is None or new_keyframe:
             return True
         d = _inv(self._last_T) @ T
         return np.linalg.norm(d[:3, 3]) >= self.cfg.min_translation or _rot_deg(d[:3, :3]) >= self.cfg.min_rotation_deg

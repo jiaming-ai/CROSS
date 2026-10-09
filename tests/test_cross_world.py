@@ -134,3 +134,24 @@ def test_capture_frames_follow_their_anchor_keyframes(tmp_path):
     assert np.allclose(load_capture_views(mv)[0].T_wc, D @ T, atol=1e-9)
     assert load_capture_views(mv, exclude_times=np.array([3.05]))  == []
     cap.cleanup()
+
+
+def test_keyframes_take_their_captured_frames(tmp_path):
+    from cross_world.map_views import _keyframes_from_capture
+    cfg = WorldCaptureConfig(enabled=True, min_translation=0.0, min_rotation_deg=0.0)
+    cap = WorldCapture(cfg, np.array([[100.0, 0, 32], [0, 100.0, 24], [0, 0, 1]]), 64, 48)
+    kf = {7: _pose(0.0, (0, 0, 0)), 9: _pose(0.1, (1, 0, 0))}
+    big = np.full((48, 64, 3), 200, np.uint8)
+    for t, k in ((1.0, 7), (2.0, 9)):
+        cap.add(kf[k], [(k, kf[k], 0.1)], {"rgb": big}, t)
+    map_path = tmp_path / "map.pkl"
+    cap.save(map_path)
+    small = np.zeros((24, 32, 3), np.uint8)
+    views = [View(id=k, T_wc=kf[k], K=np.eye(3), width=32, height=24, timestamp=t, _image=lambda: small)
+             for t, k in ((1.0, 7), (2.0, 9))]
+    assert _keyframes_from_capture(views, map_path, None) == 2
+    assert views[0].width == 64 and views[0].image().shape == (48, 64, 3) and views[0].K[0, 0] == 100.0
+    views.append(View(id=11, T_wc=np.eye(4), K=np.eye(3), width=32, height=24, timestamp=3.0, _image=lambda: small))
+    with pytest.warns(UserWarning):
+        assert _keyframes_from_capture(views[2:], map_path, None) == 0
+    cap.cleanup()

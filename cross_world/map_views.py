@@ -219,12 +219,14 @@ def _ref_loader(ref, kind: str):
 
 
 def load_map_views(map_path, source=None, *, max_side: Optional[int] = None, K: Optional[np.ndarray] = None,
-                   size: Optional[Tuple[int, int]] = None, use_source_depth: bool = True) -> MapViews:
+                   size: Optional[Tuple[int, int]] = None, use_source_depth: bool = True,
+                   use_capture: bool = True) -> MapViews:
     """The permanent keyframes of a saved map as views.
 
     source: prepared sequence folder (or SourceSequence) of the mapping session; its full-resolution frames replace
-    the stored images (resized so that the longer side is at most `max_side`).  Without it the stored images are used,
-    with the intrinsics saved in the map (or `K` / `size`)."""
+    the stored images (resized so that the longer side is at most `max_side`).  Without it, a keyframe whose own frame
+    the map's capture directory holds (mapping.world_capture) takes that frame (full resolution, uncropped);
+    otherwise the stored image is used, with the intrinsics saved in the map (or `K` / `size`)."""
     from cross.db import store
     data = store.read_map(str(map_path))
     db = data["db_data"]
@@ -281,6 +283,8 @@ def load_map_views(map_path, source=None, *, max_side: Optional[int] = None, K: 
                 v._right = _ref_loader(right_ref, "rgb")
         views.append(v)
 
+    if src is None and use_capture:
+        _keyframes_from_capture(views, map_path, max_side)
     if src is not None:
         n_src = sum(v.source_index is not None for v in views)
         if n_src < len(views):
@@ -305,6 +309,52 @@ def load_map_views(map_path, source=None, *, max_side: Optional[int] = None, K: 
     mode = "rgbd" if any_depth else ("stereo" if any_right else "mono")
     return MapViews(views=views, edges=edges, T_right_in_left=T_rl, mode=mode, map_path=str(map_path), source=src,
                     temporary_poses=temp)
+
+
+def _keyframes_from_capture(views: List[View], map_path, max_side: Optional[int]) -> int:
+    """Keyframes whose own input frame is in the map's capture directory use it (same frame and pose; full
+    resolution, uncropped, with its right image / depth) instead of the stored image.  Returns how many."""
+    from cross.core.world_capture import capture_dir
+    d = capture_dir(map_path)
+    f = d / "capture.json"
+    if not f.exists():
+        return 0
+    idx = json.loads(f.read_text())
+    W, H = int(idx["width"]), int(idx["height"])
+    s = 1.0 if not max_side else min(1.0, max_side / max(W, H))
+    w_s, h_s = int(round(W * s)), int(round(H * s))
+    K = _resize_K(np.asarray(idx["K"], np.float64), w_s / W, h_s / H)
+    by_t = {round(float(fr["timestamp"]), 6): fr for fr in idx["frames"] if fr.get("timestamp") is not None}
+    fdir = d / "frames"
+    missing = [v.id for v in views if v.timestamp is None or round(float(v.timestamp), 6) not in by_t]
+    if missing:                 # all or none: the views of a chunk share one image size
+        import warnings
+        warnings.warn(f"{map_path}: {len(missing)} of {len(views)} keyframes have no captured frame; the stored "
+                      f"images are used")
+        return 0
+
+    def rgb(path):
+        return lambda: np.ascontiguousarray(_fit(cv2.imread(str(path), cv2.IMREAD_COLOR)[..., ::-1], (w_s, h_s)))
+
+    def dep(path):
+        def load():
+            a = cv2.imread(str(path), cv2.IMREAD_UNCHANGED).view(np.float16).astype(np.float32)
+            a[~np.isfinite(a)] = 0
+            return _fit(a, (w_s, h_s), nearest=True)
+        return load
+    n = 0
+    for v in views:
+        fr = by_t.get(round(float(v.timestamp), 6)) if v.timestamp is not None else None
+        if fr is None:
+            continue
+        files = fr["files"]
+        v.K, v.width, v.height = K, w_s, h_s
+        v._image = rgb(fdir / files["rgb"])
+        v._depth = dep(fdir / files["depth"]) if "depth" in files else (None if v._depth is None else
+                                                                        (lambda o=v._depth: _fit(o(), (w_s, h_s), nearest=True)))
+        v._right = rgb(fdir / files["right"]) if "right" in files else None
+        n += 1
+    return n
 
 
 def source_test_views(mv: MapViews, *, every: int = 1, min_gap: int = 1, max_side: Optional[int] = None,
