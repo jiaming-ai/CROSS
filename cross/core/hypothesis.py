@@ -2090,7 +2090,7 @@ class HypothesisManager:
         out["moved_t"] = float(max(np.linalg.norm(pg.optimized_poses[k].tensor().numpy()[:3] - before[k][:3]) for k in pg.optimized_poses if k in before))
         return out
 
-    def apply_stale_pgo_result(self, ids, opt, fork, max_id: int, fresh_poses: bool, catch_up: bool = False) -> Dict[str, Any]:
+    def apply_stale_pgo_result(self, ids, opt, fork, max_id: int, fresh_poses: bool) -> Dict[str, Any]:
         """Apply an optimisation of hypothesis 0 that was computed on the state at an earlier step (a background job,
         cross.core.async_pgo) to the present state.
 
@@ -2099,7 +2099,8 @@ class HypothesisManager:
         - A keyframe still at its fork pose takes the optimised pose; one that moved meanwhile gets the correction
           `opt fork^-1` left-multiplied to its present pose.
         - Keyframes added after the fork (id > max_id) and the tracked pose take the correction of keyframe max_id
-          (they hang off it through the odometry chain): the tail moves rigidly with it.
+          (they hang off it through the odometry chain): the tail moves rigidly with it, and is then optimised locally
+          against the optimised keyframes (`smooth_tail`: its loop edges to older keyframes pull it into agreement).
         Returns {"success", "n_tail", "affected", "correction_t"}."""
         self.pose_epoch += 1
         ids = [int(i) for i in ids]
@@ -2142,7 +2143,7 @@ class HypothesisManager:
                 if self.dist is not None:
                     d0 = self.dist[0]
                     d0[0] = pp.SE3(C.to(device=d0.device, dtype=d0.dtype)) @ d0[0]
-                if catch_up and n_tail > 0:
+                if n_tail > 0:
                     sm = self.smooth_tail(max_id + 1)
                     affected |= sm["affected"]
                     catch = sm

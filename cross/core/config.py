@@ -243,9 +243,6 @@ class LoopClosureConfig:
     # synchronous path.  The expectation is the number of keyframes the optimisation covers (its window) times the cost
     # per keyframe seen so far (50 us to start with).  Not used with a lag >= 0.
     async_pgo_min_s: float = 0.1
-    # a late result moves the keyframes added meanwhile rigidly with the latest optimised one; with this they are then
-    # optimised locally against the optimised keyframes (held fixed), which also uses their loop edges to older keyframes
-    async_pgo_catchup: bool = False
     # "verified": consistency-tested loop closure of hypothesis 0 (cross/core/lc_verify.py) with calibrated noise in
     #             the pose-graph optimisation; one decision parameter (`confidence`, chi-square level, 6 dof).
     # "heuristic": the intra-hypothesis PGO of 2026-09-08 (intra_* parameters below) with the system's own stds.

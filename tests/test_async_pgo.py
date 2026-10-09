@@ -336,8 +336,9 @@ def test_catch_up_pulls_the_tail_toward_its_loop_edges_to_optimised_keyframes():
     res = {}
     for catch in (False, True):
         s = make_system(False, False, async_lag=2)
-        s.config.mapping.loop_closure.async_pgo_catchup = catch
         hm = s.hypothesis_manager
+        if not catch:
+            hm.smooth_tail = lambda first_free_id: {"n_free": 0, "moved_t": 0.0, "affected": set()}      # the rigid transport alone
         hm.dist = (pp.SE3(hm.nodes[239].pose_mu.tensor().clone()), pp.se3(torch.zeros(3, 6)), torch.tensor([1.0, 0.0, 0.0]))
         keys, ref = s.new_keys, min(a for a, b in s.new_keys)
         s._submit_async_pgo({}, list(keys), ref, list(keys))

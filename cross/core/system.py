@@ -1845,8 +1845,7 @@ class System:
                 info["window"] = res["first"]["window"]
             else:
                 r = hm.apply_stale_pgo_result(res["ids"], res["opt"], res["fork"], res["max_id"],
-                                              fresh_poses=hm.pose_epoch == meta["pose_epoch"],
-                                              catch_up=self.config.mapping.loop_closure.async_pgo_catchup)
+                                              fresh_poses=hm.pose_epoch == meta["pose_epoch"])
                 n_tail = r["n_tail"]
                 info.update(r)
                 ap.stats["stale_steps"] += step - meta["step"]
