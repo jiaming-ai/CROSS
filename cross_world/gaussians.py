@@ -63,6 +63,8 @@ class TrainConfig:
     sh0_lr: float = 2.5e-3
     shN_lr: float = 2.5e-3 / 20
     strategy: str = "mcmc"              # mcmc | default (adaptive density control with absgrad)
+    view_opt: str = "lazy"              # per-view pose / colour: lazy (sparse Adam, the batch's views) | dense (Adam)
+    depth_loss: str = "masked_clamp"    # raw | masked (covered pixels) | masked_clamp (and residuals clamped at 1)
     consistency_tol: float = 0.0        # > 0: multi-view depth consistency filter (relative tolerance)
     log_every: int = 500
 
@@ -352,13 +354,15 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
     # With dense Adam every view kept moving for ~30 steps after each time it was sampled, by ~30 x lr whatever its
     # gradient, a random walk of about a degree over a run: harmless with 150 views per chunk, ruinous with 1000
     # (the runs with captured frames collapsed)
-    pose_emb = torch.nn.Embedding(n_views, 9, sparse=True).to(dev)
+    lazy = cfg.view_opt == "lazy"
+    pose_emb = torch.nn.Embedding(n_views, 9, sparse=lazy).to(dev)
     torch.nn.init.zeros_(pose_emb.weight)
-    app_emb = torch.nn.Embedding(n_views, 12, sparse=True).to(dev)
+    app_emb = torch.nn.Embedding(n_views, 12, sparse=lazy).to(dev)
     with torch.no_grad():
         app_emb.weight.copy_(torch.eye(3, 4, device=dev).reshape(1, 12).repeat(n_views, 1))
-    opt_pose = torch.optim.SparseAdam(list(pose_emb.parameters()), lr=cfg.pose_lr * lr_scale) if cfg.pose_opt else None
-    opt_app = torch.optim.SparseAdam(list(app_emb.parameters()), lr=cfg.app_lr * lr_scale) if cfg.app_opt else None
+    Opt = torch.optim.SparseAdam if lazy else torch.optim.Adam
+    opt_pose = Opt(list(pose_emb.parameters()), lr=cfg.pose_lr * lr_scale) if cfg.pose_opt else None
+    opt_app = Opt(list(app_emb.parameters()), lr=cfg.app_lr * lr_scale) if cfg.app_opt else None
 
     depth_ok = vb.depths is not None and bool((vb.depths > 0).any())
     zmed = float(vb.depths[vb.depths > 0].float().median()) if depth_ok else 1.0
@@ -393,11 +397,17 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
             # where the Gaussians cover the pixel (the expected depth of a nearly empty pixel is noise), residuals
             # in inverse depth (relative to the median depth) clamped at 1: one floater against the camera must not
             # dominate the batch
-            m = (d > 0) & (alpha.detach() > 0.5)
+            m = d > 0
+            if cfg.depth_loss != "raw":
+                m = m & (alpha.detach() > 0.5)
             if m.any():
-                inv_r = zmed / ed.clamp(min=1e-2 * zmed)
-                inv_g = zmed / d.clamp(min=1e-2 * zmed)
-                ld = ((inv_r - inv_g).abs().clamp(max=1.0) * m).sum() / m.sum()
+                lo = 1e-3 if cfg.depth_loss == "raw" else 1e-2 * zmed
+                inv_r = zmed / ed.clamp(min=lo)
+                inv_g = zmed / d.clamp(min=lo)
+                r = (inv_r - inv_g).abs()
+                if cfg.depth_loss == "masked_clamp":
+                    r = r.clamp(max=1.0)
+                ld = (r * m).sum() / m.sum()
                 lam = cfg.depth_lambda * (0.1 ** (step / steps))
                 loss = loss + lam * ld
         if cfg.strategy == "mcmc":
