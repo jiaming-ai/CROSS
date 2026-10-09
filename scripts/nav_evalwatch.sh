@@ -15,11 +15,14 @@ while true; do
         out=/mnt/datasets-livsyn/jz/nav/eval/$r/$wn/$s.json
         [ -f $out ] && continue
         mkdir -p $(dirname $out)
+        # several watchers may share the queue: an atomic lock directory per result
+        mkdir $out.lock 2>/dev/null || continue
         echo "$(date +%H:%M) eval $r $s $wn"
         # the baselines do not depend on the checkpoint: computed with the first one evaluated on a window set
         nb=""; ls $(dirname $out)/heads_*.json >/dev/null 2>&1 && nb="--no-baselines"
         python -m cross_nav.evaluate run --windows $w --heads $ck --out $out --figs $(dirname $out)/figs_$s --n-figs 4 $nb \
           > $(dirname $out)/$s.log 2>&1 || echo "failed $r $s $wn"
+        rmdir $out.lock
       done
     done
   done
