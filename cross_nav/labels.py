@@ -60,10 +60,16 @@ DATASET_CFG = {
     "grandtour": dict(max_range=15.0),        # LiDAR
     "oxford_spires": dict(max_range=15.0),
     "simchange": dict(max_range=10.0),
+    "openloris": dict(max_range=4.0),         # D435i
+    "7scenes": dict(max_range=4.0),           # Kinect v1
+    "hiroom": dict(max_range=10.0),           # synthetic
+    "nrgbd": dict(max_range=8.0),             # synthetic
 }
 DEFAULT = dict(max_range=8.0, pix_step=4, frame_step=1, max_frames=4000, res=0.05, zres=0.02,
                normal_up_deg=25.0, step=0.05, gap=8, h_lo=0.10, h_hi=1.80, occ_min=4, free_max=1,
-               seed_radius=2.5, cam_h_range=(0.08, 2.6), interp_max=2.0)
+               seed_radius=2.5, cam_h_range=(0.08, 2.6), interp_max=2.0,
+               carve_frames=1500, carve_pix=8, carve_bin=0.10, carve_ratio=0.2, carve_min_pass=5,
+               sparse_normals=0.3)
 
 
 # ---------------------------------------------------------------------------------------------------------- points
@@ -201,6 +207,49 @@ def _flood(cand, ncand, seed_iy, seed_ix, seed_h, step, gap):
     return g, seen
 
 
+@njit(cache=True)
+def _carve(pts, cam_idx, cams, g_int, ox, oy, res, h_lo, nb, binh):
+    """Height-resolved free-space carving.  For every ray (camera -> depth point), the (cell, height bin) voxels it
+    crosses at band heights (h_lo .. h_lo + nb * binh above the local ground) count a pass, its end voxel a hit.
+    Returns hit, pass (H, W, nb) uint16 (saturating)."""
+    H, W = g_int.shape
+    hit = np.zeros((H, W, nb), np.uint16)
+    ps = np.zeros((H, W, nb), np.uint16)
+    for k in range(pts.shape[0]):
+        c = cams[cam_idx[k]]
+        px, py, pz = pts[k, 0], pts[k, 1], pts[k, 2]
+        ex, ey = int(np.floor((px - ox) / res)), int(np.floor((py - oy) / res))
+        if 0 <= ex < W and 0 <= ey < H and not np.isnan(g_int[ey, ex]):
+            b = int(np.floor((pz - g_int[ey, ex] - h_lo) / binh))
+            if 0 <= b < nb and hit[ey, ex, b] < 65535:
+                hit[ey, ex, b] += 1
+        dx, dy, dz = px - c[0], py - c[1], pz - c[2]
+        L = np.sqrt(dx * dx + dy * dy)
+        n = int(L / (0.5 * res))
+        last = -1
+        for s in range(1, n):
+            t = s / n
+            if t * L > L - res:                      # stop one cell before the end point
+                break
+            ix = int(np.floor((c[0] + t * dx - ox) / res))
+            iy = int(np.floor((c[1] + t * dy - oy) / res))
+            if ix < 0 or ix >= W or iy < 0 or iy >= H:
+                continue
+            g = g_int[iy, ix]
+            if np.isnan(g):
+                continue
+            b = int(np.floor((c[2] + t * dz - g - h_lo) / binh))
+            if b < 0 or b >= nb:
+                continue
+            cid = (iy * W + ix) * nb + b
+            if cid == last:
+                continue
+            last = cid
+            if ps[iy, ix, b] < 65535:
+                ps[iy, ix, b] += 1
+    return hit, ps
+
+
 def floor_candidates(keys_up: np.ndarray, cnt_up: np.ndarray, H: int, W: int, zres: float, z0: float, K: int = 4,
                      min_count: int = 2):
     """Cluster the up-facing voxels of each cell along z (gaps of > 2 voxels split) -> (H,W,K) heights, (H,W) counts."""
@@ -308,6 +357,10 @@ def build_place(scene_dirs, cfg: dict):
     chunk_k, chunk_u = [], []
     lo = np.full(3, np.inf)
     hi = np.full(3, -np.inf)
+    carve_every = max(1, len(frames) // cfg["carve_frames"])
+    sub_ray = max(1, (cfg["carve_pix"] // cfg["pix_step"]) ** 2)
+    rays, ray_cam = [], []
+    n_pts, n_norm = 0, 0
 
     def flush():
         if chunk_k:
@@ -332,6 +385,11 @@ def build_place(scene_dirs, cfg: dict):
         q = np.floor(P / np.array([res, res, zres])).astype(np.int32)
         chunk_k.append(q)
         chunk_u.append(q[np.nan_to_num(n[:, 2], nan=0.0) > cos_up])
+        n_pts += len(n)
+        n_norm += int(np.isfinite(n[:, 0]).sum())
+        if n_done % carve_every == 0 and len(P):
+            rays.append(P[::sub_ray].astype(np.float32))
+            ray_cam.append(np.full(len(rays[-1]), n_done, np.int32))
         if len(q):
             lo = np.minimum(lo, q.min(0))
             hi = np.maximum(hi, q.max(0))
@@ -347,6 +405,18 @@ def build_place(scene_dirs, cfg: dict):
 
     vox, vcnt = merge(keys_all)
     vup, ucnt = merge(keys_up) if keys_up else (np.zeros((0, 3), np.int32), np.zeros(0, np.int64))
+    vup_n, ucnt_n = vup, ucnt                    # voxels with up-facing points (protected from carving)
+    sparse = n_norm < cfg["sparse_normals"] * max(n_pts, 1)
+    if sparse:
+        # sparse depth (projected LiDAR): no per-pixel normals; floor candidates = the lowest surface of each cell
+        cell = vox[:, 1].astype(np.int64) * (1 << 31) + vox[:, 0]
+        order = np.lexsort((vox[:, 2], cell))
+        cs, zs = cell[order], vox[order, 2]
+        first = np.ones(len(cs), bool)
+        first[1:] = cs[1:] != cs[:-1]
+        zmin = np.maximum.accumulate(np.where(first, zs, np.iinfo(np.int32).min))
+        low = zs - zmin <= 2
+        vup, ucnt = vox[order][low], vcnt[order][low]
     # grid covering the voxels (+ margin)
     m = 4
     ix0, iy0 = int(lo[0]) - m, int(lo[1]) - m
@@ -372,13 +442,38 @@ def build_place(scene_dirs, cfg: dict):
     band = np.isfinite(dz) & (dz >= cfg["h_lo"]) & (dz <= cfg["h_hi"])
     occ_pts = np.zeros((H, W), np.int64)
     np.add.at(occ_pts, (vy[band], vx[band]), vcnt[band])
+    # height-resolved carving: an obstacle voxel that rays mostly pass through is noise / a moving object
+    nb = int(math.ceil((cfg["h_hi"] - cfg["h_lo"]) / cfg["carve_bin"]))
+    occ3 = np.zeros((H, W, nb), np.int32)
+    bb = np.clip(((dz[band] - cfg["h_lo"]) / cfg["carve_bin"]).astype(int), 0, nb - 1)
+    np.add.at(occ3, (vy[band], vx[band], bb), vcnt[band])
+    if rays:
+        hit, ps = _carve(np.concatenate(rays), np.concatenate(ray_cam), cams.astype(np.float64),
+                         g_int.astype(np.float64), origin[0], origin[1], res, cfg["h_lo"], nb, cfg["carve_bin"])
+        hit, ps = hit.astype(np.float32), ps.astype(np.float32)
+        carved = (ps >= cfg["carve_min_pass"]) & (hit < cfg["carve_ratio"] * (hit + ps))
+        del hit, ps
+        # horizontal surfaces (table tops, beds, seats) are grazed by rays aimed just beyond them: never carve a voxel
+        # that holds up-facing points
+        if len(vup_n):
+            uy, ux = vup_n[:, 1] - iy0, vup_n[:, 0] - ix0
+            uz = (vup_n[:, 2] + 0.5) * zres + z0 - g_int[uy, ux]
+            ok = np.isfinite(uz) & (uz >= cfg["h_lo"]) & (uz <= cfg["h_hi"]) & (ucnt_n >= 2)
+            ub = np.clip(((uz[ok] - cfg["h_lo"]) / cfg["carve_bin"]).astype(int), 0, nb - 1)
+            carved[uy[ok], ux[ok], ub] = False
+    else:
+        carved = np.zeros_like(occ3, bool)
+    occ_vox = (occ3 >= cfg["occ_min"]) & ~carved
+    occ_kept = np.where(carved, 0, occ3).sum(2)
+    n_carved = int(((occ3 >= cfg["occ_min"]) & carved).sum())
+    del occ3, carved
     # cells whose surfaces lie clearly below the ground they are attached to (drops, holes) are not traversable
     below = np.isfinite(dz) & (dz < -cfg["h_lo"] - 0.05)
     below_pts = np.zeros((H, W), np.int64)
     np.add.at(below_pts, (vy[below], vx[below]), vcnt[below])
     bev = np.zeros((H, W), np.uint8)
-    occ = (occ_pts >= cfg["occ_min"]) | ((below_pts >= cfg["occ_min"]) & ~seen)
-    free = seen & (occ_pts <= cfg["free_max"])
+    occ = occ_vox.any(2) | ((below_pts >= cfg["occ_min"]) & ~seen)
+    free = seen & (occ_kept <= cfg["free_max"])
     bev[free] = FREE
     bev[occ] = OCC
     # camera heights above the ground at their own cell
@@ -398,7 +493,7 @@ def build_place(scene_dirs, cfg: dict):
     out.update(per)
     stats = dict(frames=len(frames), H=H, W=W, free=int(free.sum()), occ=int(occ.sum()),
                  cam_h_ok=float(np.isfinite(cam_h).mean()), cam_h_med=float(np.nanmedian(cam_h)) if np.isfinite(cam_h).any() else None,
-                 up_check=round(up_check, 2), sec=round(time.time() - t0, 1))
+                 up_check=round(up_check, 2), sparse=bool(sparse), carved_vox=n_carved, sec=round(time.time() - t0, 1))
     out["stats"] = json.dumps(stats)
     return out, stats
 
