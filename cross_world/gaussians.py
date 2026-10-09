@@ -36,8 +36,10 @@ class TrainConfig:
     batch_size: int = 1
     sh_degree: int = 3
     sh_degree_interval: int = 1000      # one SH band more every this many steps
-    cap_per_view: int = 8000            # MCMC budget: Gaussians per training view ...
-    cap_min: int = 300_000              # ... within these bounds (and at least 1.2x the initial points)
+    # MCMC budget: Gaussians per megapixel of training images (61k: 8000 per 512x256 view) within these bounds (and
+    # at least 1.2x the initial points); per pixel, so that full-resolution views get a proportional budget
+    cap_per_mpix: int = 61_000
+    cap_min: int = 300_000
     cap_max: int = 3_000_000
     init_stride: int = 2                # back-project every n-th pixel ...
     init_voxel_px: float = 2.0          # ... and keep one point per voxel of this many pixels' footprint at its depth
@@ -144,9 +146,13 @@ def backproject(depth: torch.Tensor, K: torch.Tensor, T_wc: torch.Tensor, stride
     return pw, ys[ok], xs[ok], z
 
 
-def init_budget(cfg: TrainConfig, n_views: int) -> int:
+def gaussian_budget(cfg: TrainConfig, n_views: int, width: int, height: int) -> int:
+    return int(np.clip(cfg.cap_per_mpix * n_views * width * height / 1e6, cfg.cap_min, cfg.cap_max))
+
+
+def init_budget(cfg: TrainConfig, n_views: int, width: int, height: int) -> int:
     """Initial Gaussians at most: 70 % of the MCMC budget, so that densification has room."""
-    return int(0.7 * np.clip(cfg.cap_per_view * n_views, cfg.cap_min, cfg.cap_max))
+    return int(0.7 * gaussian_budget(cfg, n_views, width, height))
 
 
 @torch.no_grad()
@@ -189,7 +195,7 @@ def init_gaussians(vb: ViewBatch, cfg: TrainConfig, masks: Optional[List[torch.T
     if len(P):
         f0 = float(Fp.median())
         L = torch.floor(torch.log2((Fp / f0).clamp(min=1e-6))).clamp(-8, 8)
-        budget = init_budget(cfg, len(vb.ids)) - (cfg.far_points if cfg.far_points > 0 else 0)
+        budget = init_budget(cfg, len(vb.ids), vb.width, vb.height) - (cfg.far_points if cfg.far_points > 0 else 0)
         vox = cfg.init_voxel_px
         while True:              # coarser voxels until the initial points fit the budget
             cell = f0 * vox * torch.pow(2.0, L)
@@ -330,8 +336,7 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
     sched = torch.optim.lr_scheduler.ExponentialLR(optimizers["means"], gamma=0.01 ** (1.0 / steps))
     n_init = len(params["means"])
     if cfg.strategy == "mcmc":
-        cap = int(np.clip(cfg.cap_per_view * n_views, cfg.cap_min, cfg.cap_max))
-        cap = max(cap, int(1.2 * n_init))
+        cap = max(gaussian_budget(cfg, n_views, vb.width, vb.height), int(1.2 * n_init))
         strategy = MCMCStrategy(cap_max=cap, refine_start_iter=min(500, steps // 10),
                                 refine_stop_iter=int(steps * 0.85), refine_every=100)
         state = strategy.initialize_state()
