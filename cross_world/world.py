@@ -334,10 +334,15 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
             depths[v.id] = depths[v.id] * m.cpu().numpy()
         log(f"depth consistency filter: kept {kept / max(tot, 1):.1%} of the depth pixels")
     skies: Dict[int, np.ndarray] = {}
+    seg = None
     if cfg.sky:
-        from cross_world.sky import SkySegmenter
+        try:
+            from cross_world.sky import SkySegmenter
+            seg = SkySegmenter(cfg.sky_model, device)
+        except Exception as ex:                    # transformers or the weights missing (docs/WORLD.md, Install)
+            log(f"WARNING: no sky model (the sky segmenter did not load: {type(ex).__name__}: {ex})")
+    if seg is not None:
         t1 = time.time()
-        seg = SkySegmenter(cfg.sky_model, device)
         for v in train_views:
             skies[v.id] = seg(v.image())
             if v.id in depths:                     # stereo / sensor depth on the sky is noise

@@ -1,0 +1,8 @@
+# Defaults of a stereo map (outdoor driving data), applied after the code defaults and before --config / --set.
+# KITTI 07 (docs/WORLD.md; outputs: world_quality): free-space carving +0.07 dB on the path, +0.31 dB 0.54 m beside it,
+# floater pixels -35 %; the sky model takes the sky off the Gaussians (opacity on sky pixels 1.00 -> 0.11-0.16: no sky
+# patches in the air off the path) at -0.03 to -0.19 dB PSNR with better SSIM / LPIPS. A chunk whose views show no sky
+# trains without the sky model.
+sky: true
+train:
+  carve_every: 200

@@ -21,15 +21,32 @@ uv pip install lpips plyfile
 
 On a new GPU generation set `TORCH_CUDA_ARCH_LIST` (e.g. `12.0` for an RTX 5090) before building.
 
+The sky model (on by default for stereo maps) needs `transformers` and OneFormer (ADE20K, Swin-T, MIT licence; fetched
+from the Hugging Face hub). Its weights are published only as a pickle, which `transformers` loads with torch >= 2.6;
+with an older torch convert them once to safetensors and point `CROSS_SKY_MODEL` at the folder:
+
+```bash
+uv pip install "transformers>=4.45,<5"
+python - <<'PY'   # torch >= 2.6 for the weights_only load; then copy the folder to the training machine
+from huggingface_hub import snapshot_download; import torch; from safetensors.torch import save_file
+d = snapshot_download("shi-labs/oneformer_ade20k_swin_tiny", local_dir="oneformer", allow_patterns=["*.json", "*.txt", "pytorch_model.bin"])
+sd = torch.load(f"{d}/pytorch_model.bin", map_location="cpu", weights_only=True)
+save_file({k: v.contiguous() for k, v in sd.items()}, f"{d}/model.safetensors", metadata={"format": "pt"})
+PY
+export CROSS_SKY_MODEL=$PWD/oneformer
+```
+
+Without it the build logs a warning and trains without the sky model.
+
 ## Run
 
 ```bash
-# 1. a map (any mode), optionally keeping extra full-resolution frames for the reconstruction (section 3)
+# 1. a map (any mode), optionally keeping the keyframes' full-resolution frames for the reconstruction (section 3)
 python scripts/map_and_reloc.py --map $SEQ --query $SEQ --out runs/k07 --config configs/outdoor.yaml --skip-reloc \
     --set mapping.world_capture.enabled=true
 
-# 2. the reconstruction: train, evaluate on held-out keyframes (+ source frames between keyframes)
-python -m cross_world.cli build --map runs/k07/map.pkl --source $SEQ --capture --out worlds/k07 --novel 150
+# 2. the reconstruction: train, evaluate on held-out keyframes (+ source frames between keyframes, + the right camera)
+python -m cross_world.cli build --map runs/k07/map.pkl --source $SEQ --out worlds/k07 --novel 150 --eval-right 60
 
 # 3. web viewer data (SPZ splats, keyframe graph, thumbnails); serve cross_world/viewer/index.html next to it
 python -m cross_world.cli export --world worlds/k07/world.pt --map runs/k07/map.pkl --source $SEQ --out web/k07
@@ -43,9 +60,15 @@ python -m cross_world.cli repose --world worlds/k07/world.pt --map runs/k07_v2/m
 images the map stores (<= 512 px; centre-cropped to an aspect ratio of at least 1:2 in the stereo mode). Without it the
 stored images and the intrinsics saved with the map are used (maps saved before the `camera` field need `--source`).
 
-Settings: `--set field=value` for `BuildConfig` / `TrainConfig` (`cross_world/world.py`, `cross_world/gaussians.py`),
-e.g. `--set max_views=150 train.steps_per_view=80 train.sh_degree=2`. `--chunks 0,3` trains a subset of the chunks
-(several GPUs / servers in parallel).
+Settings: the code defaults (`BuildConfig` / `TrainConfig` in `cross_world/world.py`, `cross_world/gaussians.py`), then
+the defaults of the map's mode (`cross_world/configs/<mode>.yaml`; `--no-mode-defaults` skips them), then `--config
+file.yaml`, then `--set field=value`, e.g. `--set max_views=150 train.steps_per_view=80 train.sh_degree=2`. `--chunks
+0,3` trains a subset of the chunks (several GPUs / servers in parallel).
+
+Evaluation: held-out keyframes (every 8th), `--novel N` source frames between keyframes, `--eval-right N` the right
+camera of N of those (stereo: a viewpoint the baseline beside the path, never trained on, where floaters show), all after
+a test-time pose alignment; PSNR / SSIM / LPIPS, depth error and `floater_px` (share of the pixels with depth where the
+render is > 15 % in front of it) where the view has depth, `--sky-metric` the Gaussians' opacity on sky pixels.
 
 ## How it works
 
@@ -78,12 +101,28 @@ e.g. `--set max_views=150 train.steps_per_view=80 train.sh_degree=2`. `--chunks 
   depth, per-view pose refinement (CROSS keyframe poses carry 0.2-0.6 degree errors, a few pixels) and affine colour
   (exposure), both as sparse embeddings with lazy Adam (only the batch's views move), a penalty on needle-shaped
   Gaussians (largest / middle scale > 10: right edge-on from the training rays, streaks from elsewhere), opacity
-  pruning after training. Known issue: indoor chunks with large Gaussian budgets (>= 3.6M; full-resolution 848x480
+  pruning after training.
+- **Free-space carving** (`train.carve_every`, default 200 for stereo maps): every 200 steps 16 random training views
+  vote with their depth; a Gaussian in front of the observed surface (> 15 %) in two of them and on it in none loses its
+  opacity, and MCMC moves it elsewhere. These are the floaters a training view explains (exposure, occlusion edges)
+  and every other viewpoint sees in the air. KITTI 07: floater pixels -35 %, +0.1 dB on the path, +0.33 dB 0.54 m
+  beside it (right camera); indoors (home1-1, sensor depth) mixed (-0.4 dB held-out, +0.12 dB between keyframes), so it
+  is off for RGB-D maps. `cross_world.cli clean --carve` applies it once after training, with every training view. Known issue: indoor chunks with large Gaussian budgets (>= 3.6M; full-resolution 848x480
   views or many captured frames) can collapse (opacities go to zero); 512 px and <= 1.3M Gaussians train reliably
   indoors (`--max-side 512`, `--set train.cap_max=1331420`), outdoor chunks were fine at 4-6M.
-- **Captured frames** (`--capture`) train each chunk in a second stage: after the keyframes alone, every captured
-  frame's pose is aligned photometrically against the chunk (frames between keyframes carry odometry errors of up to
-  a few degrees indoors), frames that still do not fit are dropped, and training continues on all views.
+- **Sky** (`sky`, default on for stereo maps). The sky has no depth and the camera sees only a narrow band of it
+  (KITTI: 29 degrees vertically); painted by Gaussians at arbitrary distances, it floats as white and dark patches once
+  the viewpoint leaves the path. As in street-scene splatting (Street Gaussians, OmniRe, PVG), OneFormer masks the sky
+  in the training views, an equirectangular sky texture is composited behind the Gaussians, and a cross-entropy on the
+  accumulated opacity keeps the Gaussians off the sky pixels (and on the others); sky pixels give no depth. Texels no
+  view saw (the zenith) are filled from the seen ones; the export bakes the texture into a shell of splats in the far
+  layer. KITTI 07: Gaussians' opacity on sky pixels 1.00 -> 0.11-0.16, PSNR -0.03 / -0.19 / -0.11 dB (held-out /
+  between keyframes / right camera) with better SSIM and LPIPS. A chunk whose views show (almost) no sky trains without
+  it.
+- **Captured frames** (`--capture`, frames between keyframes kept with `mapping.world_capture.between`) train each
+  chunk in a second stage: after the keyframes alone, every captured frame's pose is aligned photometrically against
+  the chunk (frames between keyframes carry odometry errors of up to a few degrees indoors), frames that still do not
+  fit are dropped, and training continues on all views.
 - **Anchoring.** Every Gaussian is anchored to its four nearest keyframes. `World.repose(new_poses)` moves it with the
   weighted blend of their pose corrections (embedded deformation over the map graph), so a re-optimised or extended
   map does not need a new reconstruction.
@@ -92,17 +131,21 @@ e.g. `--set max_views=150 train.steps_per_view=80 train.sh_degree=2`. `--chunks 
 
 ## 3. Capturing frames for a later reconstruction (`mapping.world_capture`)
 
-A map keeps few keyframes (KITTI 07: 300 of 1101 frames, one every ~2.3 m) at <= 512 px. With
-`--set mapping.world_capture.enabled=true` the mapping run also keeps input frames every `min_translation` m /
-`min_rotation_deg` deg (default 0.25 m / 5 deg; 0 / 0 keeps every frame), at the input resolution and uncropped (with the
-right image or depth), outside the map's database: `map.pkl.capture/` next to the map (`capture.json` + JPEG frames;
-KITTI 07, every frame: 0.38 GB). Each frame's pose is stored relative to its three nearest permanent keyframes, so it
-follows later optimisations of the graph; the frame of every new keyframe is always kept. The map itself is unchanged
-(identical keyframe poses with the option on and off). Without `--source`, keyframes then use their captured frames
-(uncropped, full resolution) instead of the stored images: in the stereo mode this is what matters (KITTI 07: +2.4 dB
-held-out, +3.1 dB between keyframes over the stored 512x256 centre crops). `cross_world.cli build --capture` also trains
-on the other captured frames (evaluation frames are never trained on); on home1-1 that did not improve the result
-(indoor frames between keyframes carry ~0.7 deg pose errors, aligned in a second stage but not perfectly).
+A map keeps few keyframes (KITTI 07: 300 of 1101 frames, one every ~2.3 m) at <= 512 px, centre-cropped in the stereo
+mode. With `--set mapping.world_capture.enabled=true` the mapping run also keeps the input frame of every new permanent
+keyframe at the input resolution and uncropped (with the right image or depth), outside the map's database:
+`map.pkl.capture/` next to the map (`capture.json` + JPEG frames). The map itself is unchanged (identical keyframe poses
+with the option on and off). Without `--source`, keyframes then use their captured frames instead of the stored images:
+in the stereo mode this is what matters (KITTI 07: +2.4 dB held-out, +3.1 dB between keyframes over the stored 512x256
+centre crops).
+
+`mapping.world_capture.between=true` also keeps frames between keyframes every `min_translation` m / `min_rotation_deg`
+deg (default 0.25 m / 5 deg; 0 / 0 keeps every frame; KITTI 07, every frame: 0.38 GB), each posed relative to its three
+nearest permanent keyframes so that it follows later optimisations of the graph, and `cross_world.cli build --capture`
+trains on them (evaluation frames never). Off by default: against keyframes only with the same Gaussian budget and
+training steps, KITTI 07 gains 1.2 dB at held-out keyframes (2.3 m from the nearest training view) but only 0.15 dB
+between keyframes, where the renders get blurrier (LPIPS 0.262 vs 0.225); home1-1 gains nothing (its frames between
+keyframes carry ~0.7 deg pose errors, aligned in a second stage but not perfectly); training takes 3.5x as long.
 
 `python -m cross_world.cli clean --world W --map M --out W2` removes Gaussians fewer than two training views see
 (MCMC rarely leaves any after opacity pruning: < 0.2 % on home1-1).

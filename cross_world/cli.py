@@ -136,7 +136,7 @@ def run_eval(world, mv, args, out, log):
     from cross_world.world import evaluate
     res = {}
     seg = None
-    if getattr(args, "sky_metric", False) or any(c.sky for c in world.chunks):
+    if getattr(args, "sky_metric", False):
         from cross_world.sky import SkySegmenter
         seg = SkySegmenter(world.meta.get("config", {}).get("sky_model", ""), args.device)
     by = mv.by_id()

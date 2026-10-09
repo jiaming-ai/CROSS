@@ -84,7 +84,9 @@ class TrainConfig:
     # the accumulated opacity against the masks (0 on sky, 1 elsewhere), and the texture's resolution / learning rate
     sky_lambda: float = 0.05
     sky_fg: bool = True                 # the cross-entropy also on the other pixels (opacity -> 1); False: sky pixels only
-    sky_app: bool = True                # the view's affine colour also on the sky (False: on the Gaussians only)
+    # the view's affine colour on the Gaussians only (True: on the sky too; KITTI 07 -0.25 dB between keyframes: the
+    # saturated sky pulls the exposure fit of the whole view)
+    sky_app: bool = False
     sky_far: bool = False               # far points also on sky pixels
     sky_res: int = 256
     sky_lr: float = 1e-2
