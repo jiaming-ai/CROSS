@@ -37,8 +37,10 @@ def score(d: np.ndarray, gt: np.ndarray, max_depth: float = 80.0) -> dict:
 def make_method(name: str, args, width: int):
     if name == "sgbm":
         return "sgbm", {"stereo": StereoDepth(width)}
-    if name == "vggt":
-        return "vggt", {"vggt": VGGTStereoDepth(args.vggt_checkpoint, args.device)}
+    if name in ("vggt", "vggt_sgbm", "fused"):
+        if not hasattr(args, "_vggt"):
+            args._vggt = VGGTStereoDepth(args.vggt_checkpoint, args.device)
+        return name, {"vggt": args._vggt, "stereo": StereoDepth(width)}
     if name == "fstereo":
         from cross_world.depth import FoundationStereoDepth
         return "fstereo", {"fstereo": FoundationStereoDepth(args.fstereo_checkpoint, args.device)}

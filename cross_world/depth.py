@@ -4,7 +4,8 @@ Sources, by availability:
   sensor   the RGB-D keyframe's depth (stored or from the source folder), clipped to the sensor's reliable range
   sgbm     semi-global matching of the rectified stereo pair, with a left-right consistency check (stereo maps)
   vggt     VGGT-Omega on the stereo pair, made metric by the known baseline (stereo maps; dense, also where SGBM finds
-           no match: road, walls, cars)
+           no match: road, walls, cars); vggt_sgbm: its scale from SGBM instead; fused: SGBM where it matched, the
+           SGBM-scaled VGGT-Omega depth elsewhere
   none     no depth (monocular maps without a learned-depth model): the Gaussians start from the other views' depth
            or from random points, and only the photometric loss trains them
 
@@ -80,7 +81,10 @@ class VGGTStereoDepth:
         return [int(round(x)) for x in np.linspace(0, w - cw, n)], cw
 
     @torch.no_grad()
-    def __call__(self, left: np.ndarray, right: np.ndarray, baseline: float) -> np.ndarray:
+    def __call__(self, left: np.ndarray, right: np.ndarray, baseline: float,
+                 anchor: Optional[np.ndarray] = None) -> np.ndarray:
+        """anchor: metric depth (e.g. SGBM, 0 = none); when it covers enough of a crop, the crop's scale is the
+        median ratio anchor / prediction there instead of the baseline over the predicted baseline."""
         import torch.nn.functional as F
         h, w = left.shape[:2]
         x0s, cw = self._tiles(w, h)
@@ -102,7 +106,14 @@ class VGGTStereoDepth:
             d = pred["depth"][0, 0].float().squeeze(-1)
             conf = pred["depth_conf"][0, 0].float()
             d = torch.where(conf >= torch.quantile(conf.flatten()[::7], self.q), d, torch.zeros_like(d))
-            d = F.interpolate(d[None, None], size=(h, cw), mode="nearest")[0, 0].cpu().numpy() * s
+            d = F.interpolate(d[None, None], size=(h, cw), mode="nearest")[0, 0].cpu().numpy()
+            if anchor is not None:
+                a_ = anchor[:, x0:x0 + cw]
+                both = (a_ > 0) & (d > 0)
+                if both.sum() > 500:
+                    s = float(np.median(a_[both] / d[both]))
+                    self.scales[-1] = s
+            d = d * s
             ramp = np.minimum(np.arange(cw) + 1, cw - np.arange(cw)).astype(np.float64)
             ramp = np.minimum(ramp / (0.15 * cw), 1.0)[None, :].repeat(h, 0)
             ramp[d <= 0] = 0
@@ -120,8 +131,14 @@ def view_depth(view: View, mv: MapViews, source: str = "auto", max_depth: Option
     d = None
     if source in ("auto", "sensor") and view.has_depth:
         d = view.depth().astype(np.float32)
-    elif source == "vggt" and view.has_right and mv.T_right_in_left is not None and vggt is not None:
-        d = vggt(view.image(), view.right(), float(np.linalg.norm(mv.T_right_in_left[:3, 3])))
+    elif source in ("vggt", "vggt_sgbm", "fused") and view.has_right and mv.T_right_in_left is not None and vggt is not None:
+        baseline = float(np.linalg.norm(mv.T_right_in_left[:3, 3]))
+        anchor = None
+        if source in ("vggt_sgbm", "fused"):          # SGBM fixes the metric scale (and, fused, the depth where it matched)
+            anchor = (stereo or StereoDepth(view.width))(view.image(), view.right(), float(view.K[0, 0]), baseline)
+        d = vggt(view.image(), view.right(), baseline, anchor=anchor)
+        if source == "fused":
+            d = np.where(anchor > 0, anchor, d).astype(np.float32)
     elif source in ("auto", "sgbm") and view.has_right and mv.T_right_in_left is not None:
         baseline = float(np.linalg.norm(mv.T_right_in_left[:3, 3]))
         st = stereo or StereoDepth(view.width)
