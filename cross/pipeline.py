@@ -326,7 +326,8 @@ def mono_ff_config(cfg):
 def mode_config_files(mode: str, odometry: str, fast: bool = False, mono_estimator: str = None) -> list:
     """The configuration files shipped for a mode and odometry (layered in this order, before the user's --config):
     the stereo mode configs/stereo.yaml (+ configs/stereo_fast.yaml with --fast); the mono mode with the feed-forward
-    estimator configs/mono_ff.yaml (its other presets are in code: mono_ff_config, mono profiles).  Other modes: none.  Opt-in profiles go in --config (configs/stereo_lowband.yaml: left
+    estimator configs/mono_ff.yaml (its other presets are in code: mono_ff_config, mono profiles); then, with the
+    VGGT-inertial odometry, configs/vgio.yaml.  Other modes: none.  Opt-in profiles go in --config (configs/stereo_lowband.yaml: left
     image, half the rate; not a default because it blinds the odometry scale guard)."""
     files = []
     if mode == "stereo":
@@ -335,6 +336,8 @@ def mode_config_files(mode: str, odometry: str, fast: bool = False, mono_estimat
             files.append(FAST_STEREO_PRESET)
     elif mode == "mono" and mono_estimator == "ff":
         files.append(os.path.join(CONFIG_DIR, "mono_ff.yaml"))
+    if odometry == "vgio":
+        files.append(os.path.join(CONFIG_DIR, "vgio.yaml"))
     return files
 
 
