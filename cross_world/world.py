@@ -389,6 +389,8 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
         local_scale = zmed
         log(f"chunk {c.index}: {len(views)} views ({len(c.core_ids)} core), {len(init['means'])} initial Gaussians")
         sky = None
+        if vb.sky is not None and float(vb.sky.float().mean()) < 0.002:
+            vb.sky = None                          # (almost) no sky in this chunk's views: no sky model
         if vb.sky is not None:
             from cross_world.sky import SkyModel, sky_frame
             px = vb.images[vb.sky][::97].float() / 255.0

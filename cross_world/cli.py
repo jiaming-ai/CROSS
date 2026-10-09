@@ -64,12 +64,15 @@ def cmd_build(args):
         print(line, flush=True)
         logf.write(line + "\n")
         logf.flush()
-    cfg = _set(BuildConfig(), args.set)
-    if args.config:
-        for k, v in (yaml.safe_load(Path(args.config).read_text()) or {}).items():
-            _set(cfg, [f"{k}={json.dumps(v)}"] if not isinstance(v, dict) else [f"{k}.{a}={json.dumps(b)}" for a, b in v.items()])
-    log(f"cross_world build {_commit()} map {args.map} source {args.source} cfg {cfg}")
     mv = _views(args)
+    # settings: the defaults of the map's mode (cross_world/configs/<mode>.yaml), then --config, then --set
+    cfg = BuildConfig()
+    mode_cfg = Path(__file__).parent / "configs" / f"{mv.mode}.yaml"
+    for f in ([mode_cfg] if mode_cfg.exists() and not args.no_mode_defaults else []) + ([Path(args.config)] if args.config else []):
+        for k, v in (yaml.safe_load(f.read_text()) or {}).items():
+            _set(cfg, [f"{k}={json.dumps(v)}"] if not isinstance(v, dict) else [f"{k}.{a}={json.dumps(b)}" for a, b in v.items()])
+    _set(cfg, args.set)
+    log(f"cross_world build {_commit()} map {args.map} source {args.source} mode {mv.mode} cfg {cfg}")
     only = [int(x) for x in args.chunks.split(",")] if args.chunks else None
     extra = None
     if args.capture:
@@ -238,6 +241,8 @@ def main(argv=None):
         p.add_argument("--eval-train", type=int, default=0, help="also evaluate ~N training keyframes")
     b = sub.add_parser("build")
     common(b)
+    b.add_argument("--no-mode-defaults", action="store_true",
+                   help="start from the code defaults, not cross_world/configs/<mode>.yaml")
     b.add_argument("--out", required=True)
     b.add_argument("--config", default=None, help="YAML of BuildConfig fields (train: {...} for TrainConfig)")
     b.add_argument("--set", nargs="*", default=[])

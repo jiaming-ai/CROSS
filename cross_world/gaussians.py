@@ -83,6 +83,7 @@ class TrainConfig:
     # sky model (cross_world/sky.py; on when the build computes sky masks, BuildConfig.sky): binary cross-entropy of
     # the accumulated opacity against the masks (0 on sky, 1 elsewhere), and the texture's resolution / learning rate
     sky_lambda: float = 0.05
+    sky_fg: bool = True                 # the cross-entropy also on the other pixels (opacity -> 1); False: sky pixels only
     sky_res: int = 256
     sky_lr: float = 1e-2
 
@@ -445,7 +446,8 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
         if sky is not None and cfg.sky_lambda > 0:
             s_ = vb.sky[idx].float()[..., None]
             a_ = alpha.clamp(1e-4, 1 - 1e-4)
-            loss = loss + cfg.sky_lambda * -(s_ * torch.log(1 - a_) + (1 - s_) * torch.log(a_)).mean()
+            ce = s_ * torch.log(1 - a_) + ((1 - s_) * torch.log(a_) if cfg.sky_fg else 0)
+            loss = loss + cfg.sky_lambda * -ce.mean()
         if cfg.strategy == "mcmc":
             loss = loss + cfg.opacity_reg * torch.sigmoid(params["opacities"]).mean() \
                 + cfg.scale_reg * torch.exp(params["scales"]).mean()
