@@ -144,8 +144,10 @@ profile) graphs stay synchronous. Details:
   not done), so the run is reproducible. `0` is the synchronous behaviour and `1` (the start of the next step, nothing
   processed in between) gives the same map; both are bit-identical to `async_pgo=false` (only the pose reported for the
   frame that closes the loop is one correction behind with `1`). Larger lags and the free-running mode process frames on
-  the uncorrected map meanwhile and change the results: equal within noise on the dev split and ROVER, about +0.6 m map ATE
-  on the 6.4 km NCLT drive (`outputs/2026-10-08_async_pgo/REPORT.md`), against a longest step of 1.9 s instead of 3-4 s.
+  the uncorrected map meanwhile and change the results: equal within noise on the dev split and ROVER and (with the
+  tail smoothing and the provisional optimisation of the latest `async_pgo_provisional_kf` = 1000 keyframes before the fork)
+  on the 6.4 km NCLT drive (3.72 m vs 3.68 m synchronous; `outputs/2026-10-08_async_pgo/REPORT.md`), with no optimisation-related
+  stall over 1 s.
   Use `1` to test, keep the mode off for benchmarks.
 - One job at a time; loop closures detected meanwhile are re-checked against the corrected poses when it has been applied.
   A merge of hypotheses, the final optimisation of a save and every other whole-graph operation wait for the job first.
