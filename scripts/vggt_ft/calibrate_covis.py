@@ -72,6 +72,45 @@ def match_geo(G, a):
         print("saved", a.out)
 
 
+def isotonic(x, y, n_bins: int = 200):
+    """Monotone (non-decreasing) fit of E[y | x]: means over quantile bins of x, pooled where they decrease
+    (pool-adjacent-violators, weighted by the bin counts). Returns knots (x, y) for np.interp."""
+    edges = np.unique(np.quantile(x, np.linspace(0, 1, n_bins + 1)))
+    idx = np.clip(np.searchsorted(edges, x, side="right") - 1, 0, len(edges) - 2)
+    xs = np.array([x[idx == k].mean() for k in range(len(edges) - 1) if (idx == k).any()])
+    ys = np.array([y[idx == k].mean() for k in range(len(edges) - 1) if (idx == k).any()])
+    ws = np.array([(idx == k).sum() for k in range(len(edges) - 1) if (idx == k).any()], float)
+    blocks = []                                   # [weighted mean, weight, x sum (weighted)]
+    for xi, yi, wi in zip(xs, ys, ws):
+        blocks.append([yi, wi, xi * wi])
+        while len(blocks) > 1 and blocks[-2][0] > blocks[-1][0]:
+            y2, w2, x2 = blocks.pop(); y1, w1, x1 = blocks.pop()
+            blocks.append([(y1 * w1 + y2 * w2) / (w1 + w2), w1 + w2, x1 + x2])
+    kx = np.array([b[2] / b[1] for b in blocks]); ky = np.array([b[0] for b in blocks])
+    return np.concatenate([[0.0], kx, [1.0]]), np.concatenate([[min(0.0, ky[0])], ky, [max(ky[-1], ky[-1])]])
+
+
+def map_geo(G, a):
+    """covis_head_map: the raw head probability -> the expected one-way geometric score (CROSS's gate scale, the
+    scale its thresholds and fix weights were tuned on), fitted by isotonic regression on the held-out windows."""
+    R = np.concatenate(G)
+    lg, geo, y = R[:, 0], R[:, 1], R[:, 2]
+    p = 1 / (1 + np.exp(-lg))
+    kx, ky = isotonic(p, geo)
+    m = np.interp(p, kx, ky)
+    neg, pos = y < 0.05, y >= 0.15
+    print(f"ordered pairs {len(y)} (neg {neg.sum()}, pos {pos.sum()}), {len(kx)} knots")
+    for name, s in (("geometric", geo), ("head raw", p), ("head mapped", m)):
+        print(f"  {name:12s} TPR@.15 {np.mean(s[pos] >= .15):.3f} FPR@.15 {np.mean(s[neg] >= .15):.3f}  "
+              f"quantiles 25/50/75/90 {np.round(np.quantile(s, [.25, .5, .75, .9]), 3).tolist()}")
+    if a.out:
+        sd = torch.load(a.ckpt, map_location="cpu", weights_only=False)
+        sd["covis_head_map"] = {"x": kx.tolist(), "y": ky.tolist(), "target": "one-way geometric score (CROSS gate)",
+                                "windows": a.windows, "config": a.config}
+        torch.save(sd, a.out)
+        print("saved", a.out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
@@ -82,6 +121,9 @@ def main():
     ap.add_argument("--match_geo", action="store_true",
                     help="instead of Platt: shift the head so that its 0.15 gate has the false-positive rate of the "
                          "model's own geometric score at 0.15 (CROSS's default gate) on the same windows (a = 1)")
+    ap.add_argument("--map_geo", action="store_true",
+                    help="store covis_head_map in the checkpoint: an isotonic map from the raw head probability to the "
+                         "expected one-way geometric score on the same windows (the head's weights are unchanged)")
     ap.add_argument("--target", choices=["symmetric", "oneway"], default="symmetric",
                     help="symmetric: the head's training target (min of both directions); oneway: the overlap of one view "
                          "in the other (CROSS's geometric gate measures reference -> current), both directions per pair")
@@ -113,12 +155,12 @@ def main():
             continue
         b = {k: v[None].cuda() for k, v in it.items() if torch.is_tensor(v)}
         with torch.no_grad():
-            o = model(b["images"], need_depth=a.match_geo)
+            o = model(b["images"], need_depth=a.match_geo or a.map_geo)
             gt = gt_covisibility(b["depths"], b["masks"], b["extrinsics"], b["intrinsics"], b["world_id"],
                                  symmetric=a.target == "symmetric")
         iu = torch.triu_indices(S, S, 1)
         lgw = o["covis_logits"][0].float().cpu()
-        if a.match_geo:
+        if a.match_geo or a.map_geo:
             G.append(geo_pairs(o, b, gt[0], lgw, hw))
         L.append(lgw[iu[0], iu[1]])
         Y.append(gt[0][iu[0], iu[1]].float().cpu())
@@ -128,6 +170,8 @@ def main():
         done += 1
         if done % 50 == 0:
             print(f"{done} windows, {sum(len(x) for x in L)} pairs", flush=True)
+    if a.map_geo:
+        return map_geo(G, a)
     if a.match_geo:
         return match_geo(G, a)
     lg, y = torch.cat(L), torch.cat(Y)

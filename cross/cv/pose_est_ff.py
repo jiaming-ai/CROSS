@@ -118,6 +118,10 @@ class _VGGTOmegaBackend(_Backend):
             self.model = VGGTOmega().eval()
         sd = torch.load(ckpt, map_location="cpu", mmap=True, weights_only=False)
         head_cfg = sd.get("scale_head_cfg") if isinstance(sd, dict) else None
+        # covis_head_map (scripts/vggt_ft/calibrate_covis.py --map_geo): the head's probability -> the expected one-way
+        # geometric score, the scale CROSS's covisibility thresholds and fix weights were tuned on
+        cmap = sd.get("covis_head_map") if isinstance(sd, dict) else None
+        self.covis_map = None if cmap is None else (np.asarray(cmap["x"], dtype=np.float64), np.asarray(cmap["y"], dtype=np.float64))
         sd = sd["model"] if "model" in sd and isinstance(sd["model"], dict) else sd
         missing, unexpected = self.model.load_state_dict(sd, strict=False)
         if missing:
@@ -182,6 +186,11 @@ class _VGGTOmegaBackend(_Backend):
     def fingerprints(self, images: torch.Tensor) -> list:
         """Content keys of the views (the same image always gets the same key, whatever the batch)."""
         return content_keys(images.float())
+
+    def _covis_probs(self, logits: torch.Tensor) -> np.ndarray:
+        """(S, S) covisibility of the head: sigmoid of its logits, on the geometric score's scale when the checkpoint
+        has a covis_head_map."""
+        return _map_covis(torch.sigmoid(logits).cpu().numpy(), getattr(self, "covis_map", None))
 
     def _heads(self, x: torch.Tensor, tokens: list, start: int, k: int, dino: Optional[torch.Tensor] = None):
         """Camera head (all views) and depth head (first k views); the camera head runs on a side stream, concurrently
@@ -359,8 +368,13 @@ class _VGGTOmegaBackend(_Backend):
         if conf.dim() == 4:
             conf = conf[..., 0]
         return FFPrediction(c2w=c2w, K=intr[0].float().cpu().numpy(), depth=depth, depth_conf=conf, hw=hw,
-                            covis=torch.sigmoid(covis[0]).cpu().numpy() if covis.numel() else None,
+                            covis=self._covis_probs(covis[0]) if covis.numel() else None,
                             log_scale=float(log_scale[0]) if log_scale.numel() else None)
+
+
+def _map_covis(p: np.ndarray, cmap) -> np.ndarray:
+    """The head's probabilities on the geometric score's scale (covis_head_map knots), or unchanged without a map."""
+    return p if cmap is None else np.interp(p, cmap[0], cmap[1]).astype(p.dtype)
 
 
 def _load_ft_heads(sd: dict, device: str, scale_head_cfg: Optional[dict] = None):
