@@ -52,6 +52,10 @@ class BuildConfig:
     capture_max_move: float = 0.1        # ... whose alignment moved them at most this x the median depth (m) ...
     capture_max_rot_deg: float = 3.0     # ... and this many degrees
     capture_means_lr_scale: float = 0.5
+    # sky model (cross_world/sky.py): sky masks of the training views from a segmentation network, a sky texture
+    # behind the Gaussians, no depth and no Gaussians on sky pixels.  Outdoor scenes; needs `transformers`
+    sky: bool = False
+    sky_model: str = ""             # folder / hub id of the OneFormer weights ("": CROSS_SKY_MODEL, else the hub default)
     train: TrainConfig = field(default_factory=TrainConfig)
 
 
@@ -62,6 +66,7 @@ class ChunkModel:
     anchor_ids: Dict[str, torch.Tensor]                 # layer -> (N, k) int64 keyframe ids
     anchor_w: Dict[str, torch.Tensor]                   # layer -> (N, k) float32
     stats: dict = field(default_factory=dict)
+    sky: Optional[dict] = None                          # {"tex": (3, H, W) colours, "R": (3, 3)} (cross_world/sky.py)
 
 
 class World:
@@ -91,6 +96,13 @@ class World:
             return int(self.partition.nearest_cell(center[None])[0])
         P = np.stack([self.kf_poses[k][:3, 3] for k in ids])
         return self._kf_chunk[ids[int(np.argmin(np.linalg.norm(P - center, axis=1)))]]
+
+    def sky_for(self, center: np.ndarray, device="cuda"):
+        """The SkyModel of the camera's chunk (None without a sky model)."""
+        from cross_world.sky import sky_from_state
+        own = self.chunk_of(center)
+        c = next((c for c in self.chunks if c.index == own), None)
+        return sky_from_state(c.sky if c is not None else None, device)
 
     def splats_for(self, center: Optional[np.ndarray] = None, device="cuda", chunks: Optional[List[int]] = None):
         """Every near layer, and the far layer of the camera's chunk (chunk_of; all far layers when None)."""
@@ -147,7 +159,8 @@ class World:
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save({"version": 1, "partition": self.partition.to_dict(),
                     "chunks": [{"index": c.index, "layers": {l: {k: v.cpu() for k, v in sp.items()} for l, sp in c.layers.items()},
-                                "anchor_ids": c.anchor_ids, "anchor_w": c.anchor_w, "stats": c.stats} for c in self.chunks],
+                                "anchor_ids": c.anchor_ids, "anchor_w": c.anchor_w, "stats": c.stats, "sky": c.sky}
+                               for c in self.chunks],
                     "kf_poses": {int(k): v for k, v in self.kf_poses.items()},
                     "pose_delta": {int(k): v for k, v in self.pose_delta.items()},
                     "appearance": {int(k): v for k, v in self.appearance.items()}, "meta": self.meta}, path)
@@ -155,7 +168,8 @@ class World:
     @staticmethod
     def load(path) -> "World":
         d = torch.load(path, map_location="cpu", weights_only=False)
-        chunks = [ChunkModel(c["index"], c["layers"], c["anchor_ids"], c["anchor_w"], c.get("stats", {})) for c in d["chunks"]]
+        chunks = [ChunkModel(c["index"], c["layers"], c["anchor_ids"], c["anchor_w"], c.get("stats", {}), c.get("sky"))
+                  for c in d["chunks"]]
         return World(Partition.from_dict(d["partition"]), chunks, d["kf_poses"], d["pose_delta"], d["appearance"], d["meta"])
 
 
@@ -199,14 +213,18 @@ def rotate_sh(shN: torch.Tensor, q_wxyz: torch.Tensor) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------------------------------- build
-def _load_batch(views: List[View], depths: Dict[int, np.ndarray], device) -> ViewBatch:
+def _load_batch(views: List[View], depths: Dict[int, np.ndarray], device,
+                skies: Optional[Dict[int, np.ndarray]] = None) -> ViewBatch:
     imgs = torch.from_numpy(np.stack([v.image() for v in views])).to(device)
+    sky = None
+    if skies and all(v.id in skies for v in views):
+        sky = torch.from_numpy(np.stack([skies[v.id] for v in views])).to(device)
     has_d = all(v.id in depths for v in views) and len(views) > 0
     dep = torch.from_numpy(np.stack([depths[v.id] for v in views])).to(device).half() if has_d else None
     T = torch.from_numpy(np.stack([v.T_wc for v in views])).float().to(device)
     K = torch.from_numpy(np.stack([v.K for v in views])).float().to(device)
     times = torch.tensor([v.timestamp if v.timestamp is not None else float(v.id) for v in views], device=device)
-    return ViewBatch([v.id for v in views], imgs, dep, T, K, times, views[0].width, views[0].height)
+    return ViewBatch([v.id for v in views], imgs, dep, T, K, times, views[0].width, views[0].height, sky)
 
 
 def _neighbours(T_wc: np.ndarray, k: int = 4) -> List[List[int]]:
@@ -315,6 +333,19 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
             kept += int(m.sum())
             depths[v.id] = depths[v.id] * m.cpu().numpy()
         log(f"depth consistency filter: kept {kept / max(tot, 1):.1%} of the depth pixels")
+    skies: Dict[int, np.ndarray] = {}
+    if cfg.sky:
+        from cross_world.sky import SkySegmenter
+        t1 = time.time()
+        seg = SkySegmenter(cfg.sky_model, device)
+        for v in train_views:
+            skies[v.id] = seg(v.image())
+            if v.id in depths:                     # stereo / sensor depth on the sky is noise
+                depths[v.id] = np.where(skies[v.id], 0, depths[v.id]).astype(depths[v.id].dtype)
+        del seg
+        torch.cuda.empty_cache()
+        log(f"sky masks of {len(skies)} views in {time.time() - t1:.0f}s: "
+            f"{np.mean([m.mean() for m in skies.values()]):.1%} of the pixels sky")
     zs = np.concatenate([d[d > 0][::97] for d in depths.values()]) if depths else np.array([5.0])
     zmed = float(np.median(zs)) if len(zs) else 5.0
     log(f"depth ({cfg.depth}, {len(depths)} views) in {t_depth:.1f}s, median {zmed:.2f} m")
@@ -345,7 +376,7 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
         ex_views = [v for v in views if v.id not in kf_set]
         # extra (captured) views join in a second stage: their poses (odometry between keyframes) can be off by
         # degrees, and trained or initialised from as they are they spread floaters that ruin the chunk
-        vb = _load_batch(kf_views if ex_views else views, depths, device)
+        vb = _load_batch(kf_views if ex_views else views, depths, device, skies)
         g_lo, g_hi = c.lo - margin, c.hi + margin
 
         def keep_fn(p, lo=g_lo, hi=g_hi):
@@ -357,9 +388,16 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
         # the depth; the camera extent of a long chunk would make the steps far too large)
         local_scale = zmed
         log(f"chunk {c.index}: {len(views)} views ({len(c.core_ids)} core), {len(init['means'])} initial Gaussians")
-        res = train_chunk(vb, init, cfg.train, local_scale, log=log)
+        sky = None
+        if vb.sky is not None:
+            from cross_world.sky import SkyModel, sky_frame
+            px = vb.images[vb.sky][::97].float() / 255.0
+            init_rgb = tuple(px.median(0).values.tolist()) if len(px) else (0.7, 0.8, 0.9)
+            sky = SkyModel(sky_frame(mv.up()), cfg.train.sky_res, init_rgb).to(device)
+            del px
+        res = train_chunk(vb, init, cfg.train, local_scale, log=log, sky=sky)
         if ex_views:
-            res = _second_stage(res, kf_views, ex_views, depths, cfg, local_scale, device, log)
+            res = _second_stage(res, kf_views, ex_views, depths, cfg, local_scale, device, log, skies)
         sp = {k: v.cpu() for k, v in res.splats.items()}
         if cfg.prune_opacity > 0:
             keep = torch.sigmoid(sp["opacities"]) >= cfg.prune_opacity
@@ -377,7 +415,11 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
                   core=len(c.core_ids))
         log(f"chunk {c.index}: trained in {res.stats['train_s']:.0f}s, kept {st['kept_near']} near + {st['kept_far']} far "
             f"of {res.stats['n_final']}")
-        cm = ChunkModel(c.index, layers, aids, aws, st)
+        sky_state = None
+        if res.sky is not None:
+            sky_state = {"tex": res.sky.colours().half().cpu(), "R": res.sky.R.cpu().clone()}
+            st["sky_seen"] = float((res.sky.seen > 0).float().mean())
+        cm = ChunkModel(c.index, layers, aids, aws, st, sky_state)
         for vid in c.core_ids:                      # a view's refinement / appearance from the chunk that owns it
             pose_delta[vid] = res.pose_delta[vid]
             appearance[vid] = res.appearance[vid]
@@ -400,7 +442,7 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
     return World(part, chunks, {v.id: v.T_wc.copy() for v in mv.views}, pose_delta, appearance, meta)
 
 
-def _second_stage(res, kf_views, ex_views, depths, cfg: "BuildConfig", scene_scale, device, log):
+def _second_stage(res, kf_views, ex_views, depths, cfg: "BuildConfig", scene_scale, device, log, skies=None):
     """Stage 2 of a chunk with extra (captured) views: align each extra view's pose photometrically against the
     keyframe-trained Gaussians (as test views are aligned), drop the views that still do not fit (motion blur, people,
     a failed alignment), then train on keyframes and kept views together, from the stage-1 Gaussians."""
@@ -418,9 +460,12 @@ def _second_stage(res, kf_views, ex_views, depths, cfg: "BuildConfig", scene_sca
         gt = torch.from_numpy(v.image()).to(device).float() / 255.0
         T0 = torch.from_numpy(v.T_wc).float().to(device)
         K = torch.from_numpy(v.K).float().to(device)
-        T = align_pose(sp, T0, K, v.width, v.height, gt, sh, A, iters=cfg.capture_align_iters)
+        T = align_pose(sp, T0, K, v.width, v.height, gt, sh, A, iters=cfg.capture_align_iters, sky=res.sky)
         with torch.no_grad():
-            rgb, _, _, _ = render(sp, T[None], K[None], v.width, v.height, sh, render_mode="RGB")
+            rgb, _, alpha, _ = render(sp, T[None], K[None], v.width, v.height, sh, render_mode="RGB")
+            if res.sky is not None:
+                from cross_world.sky import composite
+                rgb = composite(rgb, alpha, res.sky, T[None], K[None], v.width, v.height)
             rgb = apply_appearance(rgb, A[None]).clamp(0, 1)
             resid.append(float((rgb[0] - gt).abs().mean()))
         D = (torch.linalg.inv(T0) @ T).cpu().numpy()
@@ -446,17 +491,17 @@ def _second_stage(res, kf_views, ex_views, depths, cfg: "BuildConfig", scene_sca
     log(f"  stage 2: aligned {len(ex_views)} extra views in {time.time() - t0:.0f}s (pose change median "
         f"{np.median(moves[:, 0]):.3f} m / {np.median(moves[:, 1]):.2f} deg, p90 {np.percentile(moves[:, 0], 90):.3f} m / "
         f"{np.percentile(moves[:, 1], 90):.2f} deg), kept {len(kept)}")
-    vb = _load_batch(kfs + kept, depths, device)
+    vb = _load_batch(kfs + kept, depths, device, skies)
     tcfg = copy.deepcopy(cfg.train)
     tcfg.means_lr *= cfg.capture_means_lr_scale
-    res2 = train_chunk(vb, {k: v.detach() for k, v in sp.items()}, tcfg, scene_scale, log=log)
+    res2 = train_chunk(vb, {k: v.detach() for k, v in sp.items()}, tcfg, scene_scale, log=log, sky=res.sky)
     # a keyframe's correction: stage 1, then stage 2
     pd = {v.id: res.pose_delta[v.id] @ res2.pose_delta[v.id] for v in kf_views}
     pd.update({v.id: res2.pose_delta[v.id] for v in kept})
     st = dict(res2.stats, stage1=res.stats, n_extra=len(ex_views), n_extra_kept=len(kept), align_s=round(time.time() - t0, 1),
               extra_move_median=[float(np.median(moves[:, 0])), float(np.median(moves[:, 1]))])
     st["train_s"] = round(res.stats["train_s"] + res2.stats["train_s"], 1)
-    return TrainResult(res2.splats, pd, res2.appearance, st)
+    return TrainResult(res2.splats, pd, res2.appearance, st, sky=res2.sky if res2.sky is not None else res.sky)
 
 
 @torch.no_grad()
@@ -538,9 +583,11 @@ def _nearest_appearance(world: World, v: View, by_time: List) -> Optional[np.nda
 
 def evaluate(world: World, views: List[View], device="cuda", align: bool = True, align_iters: int = 100,
              save_dir: Optional[Path] = None, save_max: int = 12, log=print, kf_times: Optional[Dict[int, float]] = None,
-             common_width: int = 512) -> dict:
+             common_width: int = 512, sky_seg=None) -> dict:
     """PSNR / SSIM / LPIPS (and depth error where the view has depth) of renders at the test views: as posed, and
-    after test-time pose alignment.  Appearance: the affine colour of the training keyframe nearest in time."""
+    after test-time pose alignment.  Appearance: the affine colour of the training keyframe nearest in time.
+    `sky_seg` (a SkySegmenter): also the mean opacity of the Gaussians on the view's sky pixels (sky_alpha; the sky
+    painted by Gaussians, which float once the viewpoint moves)."""
     by_time = sorted((t, k) for k, t in (kf_times or {}).items() if k in world.appearance)
     rows = []
     cache = {}
@@ -549,8 +596,9 @@ def evaluate(world: World, views: List[View], device="cuda", align: bool = True,
         own = world.chunk_of(v.center)
         if own not in cache:
             cache.clear()
-            cache[own] = world.splats_for(v.center, device)
-        sp = cache[own]
+            cache[own] = (world.splats_for(v.center, device), world.sky_for(v.center, device))
+        sp, sky = cache[own]
+        sky_m = torch.from_numpy(sky_seg(v.image())).to(device) if sky_seg is not None else None
         gt = torch.from_numpy(v.image()).to(device).float() / 255.0
         T = torch.from_numpy(v.T_wc).float().to(device)
         K = torch.from_numpy(v.K).float().to(device)
@@ -562,9 +610,15 @@ def evaluate(world: World, views: List[View], device="cuda", align: bool = True,
             if v.id in world.appearance:
                 At = torch.from_numpy(world.appearance[v.id]).float().to(device)
         for tag in (("raw", "aligned") if align else ("raw",)):
-            Tu = T if tag == "raw" else align_pose(sp, T, K, v.width, v.height, gt, world.sh_degree, At, iters=align_iters)
+            Tu = T if tag == "raw" else align_pose(sp, T, K, v.width, v.height, gt, world.sh_degree, At, iters=align_iters,
+                                                   sky=sky)
             with torch.no_grad():
                 rgb, ed, alpha, _ = render(sp, Tu[None], K[None], v.width, v.height, world.sh_degree)
+                if sky is not None:
+                    from cross_world.sky import composite
+                    rgb = composite(rgb, alpha, sky, Tu[None], K[None], v.width, v.height)
+                if sky_m is not None and sky_m.any():
+                    row[f"sky_alpha_{tag}"] = float(alpha[0, ..., 0][sky_m].mean())
                 if At is not None:
                     rgb = apply_appearance(rgb, At[None])
                 rgb = rgb.clamp(0, 1)
@@ -595,7 +649,8 @@ def evaluate(world: World, views: List[View], device="cuda", align: bool = True,
                 im = np.concatenate([(gt.cpu().numpy() * 255).astype(np.uint8), (rgb[0].cpu().numpy() * 255).astype(np.uint8)], 0)
                 cv2.imwrite(str(save_dir / f"view_{v.id}.jpg"), im[..., ::-1])
         rows.append(row)
-    keys = [k for k in rows[0] if k.startswith(("psnr", "ssim", "lpips", "depth", "floater"))] if rows else []
+    keys = sorted({k for r in rows for k in r if k.startswith(("psnr", "ssim", "lpips", "depth", "floater", "sky"))},
+                  key=lambda k: list(rows[0]).index(k) if k in rows[0] else 999) if rows else []
     summary = {k: float(np.mean([r[k] for r in rows if r.get(k) is not None])) for k in keys
                if any(r.get(k) is not None for r in rows)}
     summary["n"] = len(rows)

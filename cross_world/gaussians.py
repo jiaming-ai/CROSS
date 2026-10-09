@@ -80,6 +80,11 @@ class TrainConfig:
     carve_every: int = 0
     carve_views: int = 16
     carve_tol: float = 0.15
+    # sky model (cross_world/sky.py; on when the build computes sky masks, BuildConfig.sky): binary cross-entropy of
+    # the accumulated opacity against the masks (0 on sky, 1 elsewhere), and the texture's resolution / learning rate
+    sky_lambda: float = 0.05
+    sky_res: int = 256
+    sky_lr: float = 1e-2
 
 
 # ---------------------------------------------------------------------------------------------------------- geometry
@@ -143,6 +148,7 @@ class ViewBatch:
     times: torch.Tensor                  # (N,) timestamps (or index)
     width: int
     height: int
+    sky: Optional[torch.Tensor] = None   # (N, H, W) bool sky masks (cross_world/sky.py)
 
 
 def backproject(depth: torch.Tensor, K: torch.Tensor, T_wc: torch.Tensor, stride: int = 1, mask=None):
@@ -195,6 +201,8 @@ def init_gaussians(vb: ViewBatch, cfg: TrainConfig, masks: Optional[List[torch.T
         foot.append(z / vb.Ks[i, 0, 0])
         if cfg.far_points > 0:
             nd = (vb.depths[i] <= 0)
+            if vb.sky is not None:               # the sky model draws the sky
+                nd &= ~vb.sky[i]
             yy, xx = torch.nonzero(nd[::4, ::4], as_tuple=True)
             if len(yy):
                 far_rays.append((i, yy * 4, xx * 4))
@@ -330,10 +338,12 @@ class TrainResult:
     pose_delta: Dict[int, np.ndarray]          # view id -> 4x4 correction (T_wc_refined = T_wc @ delta)
     appearance: Dict[int, np.ndarray]          # view id -> 3x4 affine colour
     stats: dict = field(default_factory=dict)
+    sky: Optional[torch.nn.Module] = None      # the trained SkyModel (cross_world/sky.py)
 
 
 def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig, scene_scale: float,
-                log=print, seed: int = 0) -> TrainResult:
+                log=print, seed: int = 0, sky=None) -> TrainResult:
+    """`sky`: a SkyModel (cross_world/sky.py) composited behind the Gaussians and trained with them (needs vb.sky)."""
     from gsplat.strategy import DefaultStrategy, MCMCStrategy
     torch.manual_seed(seed)
     dev = vb.images.device
@@ -376,6 +386,9 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
     Opt = torch.optim.SparseAdam if lazy else torch.optim.Adam
     opt_pose = Opt(list(pose_emb.parameters()), lr=cfg.pose_lr * lr_scale) if cfg.pose_opt else None
     opt_app = Opt(list(app_emb.parameters()), lr=cfg.app_lr * lr_scale) if cfg.app_opt else None
+    if sky is not None and vb.sky is None:
+        sky = None
+    opt_sky = torch.optim.Adam(sky.parameters(), lr=cfg.sky_lr) if sky is not None else None
 
     depth_ok = vb.depths is not None and bool((vb.depths > 0).any())
     carved_total = 0
@@ -397,6 +410,11 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
             T = T @ delta_transform(pose_emb(idx))
         sh_deg = min(cfg.sh_degree, step // max(1, cfg.sh_degree_interval))
         rgb, ed, alpha, info = render(params, T, vb.Ks[idx], vb.width, vb.height, sh_deg)
+        if sky is not None:
+            from cross_world.sky import pixel_dirs
+            dirs = pixel_dirs(T.detach(), vb.Ks[idx], vb.width, vb.height)
+            rgb = rgb + (1 - alpha) * sky(dirs)
+            sky.mark_seen(dirs, vb.sky[idx])
         if cfg.app_opt:
             A_b = app_emb(idx).view(-1, 3, 4)
             rgb = apply_appearance(rgb, A_b)
@@ -424,6 +442,10 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
                 ld = (r * m).sum() / m.sum()
                 lam = cfg.depth_lambda * (0.1 ** (step / steps))
                 loss = loss + lam * ld
+        if sky is not None and cfg.sky_lambda > 0:
+            s_ = vb.sky[idx].float()[..., None]
+            a_ = alpha.clamp(1e-4, 1 - 1e-4)
+            loss = loss + cfg.sky_lambda * -(s_ * torch.log(1 - a_) + (1 - s_) * torch.log(a_)).mean()
         if cfg.strategy == "mcmc":
             loss = loss + cfg.opacity_reg * torch.sigmoid(params["opacities"]).mean() \
                 + cfg.scale_reg * torch.exp(params["scales"]).mean()
@@ -437,7 +459,7 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
         if not torch.isfinite(loss):             # a degenerate batch: skip it rather than poison the optimiser state
             for o in optimizers.values():
                 o.zero_grad(set_to_none=True)
-            for o in (opt_pose, opt_app):
+            for o in (opt_pose, opt_app, opt_sky):
                 if o is not None:
                     o.zero_grad(set_to_none=True)
             continue
@@ -445,7 +467,7 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
         for o in optimizers.values():
             o.step()
             o.zero_grad(set_to_none=True)
-        for o in (opt_pose, opt_app):
+        for o in (opt_pose, opt_app, opt_sky):
             if o is not None:
                 o.step()
                 o.zero_grad(set_to_none=True)
@@ -474,7 +496,7 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
     return TrainResult(out, {vid: D[i] for i, vid in enumerate(vb.ids)}, {vid: A[i] for i, vid in enumerate(vb.ids)},
                        {"steps": steps, "batch": bs, "train_s": round(dt, 1), "n_init": n_init, "n_final": len(out["means"]),
                         "carved": carved_total,
-                        "cap": cap, "n_views": n_views, "history": hist, "zmed": zmed})
+                        "cap": cap, "n_views": n_views, "history": hist, "zmed": zmed}, sky=sky)
 
 
 @torch.no_grad()
@@ -496,16 +518,26 @@ def _carve(params, vb: ViewBatch, pose_emb, cfg: TrainConfig, g) -> int:
 
 
 def align_pose(splats, T_wc: torch.Tensor, K: torch.Tensor, width: int, height: int, gt: torch.Tensor, sh_degree: int,
-               A: Optional[torch.Tensor] = None, iters: int = 100, lr: float = 2e-3) -> torch.Tensor:
+               A: Optional[torch.Tensor] = None, iters: int = 100, lr: float = 2e-3, sky=None) -> torch.Tensor:
     """Test-time pose alignment of one view: the pose refined photometrically against the frozen Gaussians (the
-    usual protocol when test poses come from a different estimate than the reconstruction's own)."""
+    usual protocol when test poses come from a different estimate than the reconstruction's own).  `sky`: a SkyModel
+    behind them (its colours at the initial pose: the alignment moves the view by a fraction of a degree)."""
+    bg = None
+    if sky is not None:
+        from cross_world.sky import pixel_dirs
+        with torch.no_grad():
+            bg = sky(pixel_dirs(T_wc[None], K[None], width, height))
     d = torch.zeros(1, 9, device=T_wc.device, requires_grad=True)
     opt = torch.optim.Adam([d], lr=lr)
     frozen = {k: v.detach() for k, v in splats.items()}
     best, best_loss = T_wc[None].clone(), float("inf")
     for it in range(iters):
         T = T_wc[None] @ delta_transform(d)
-        rgb, _, _, _ = render(frozen, T, K[None], width, height, sh_degree, render_mode="RGB")
+        if bg is None:
+            rgb, _, _, _ = render(frozen, T, K[None], width, height, sh_degree, render_mode="RGB")
+        else:
+            rgb, _, alpha, _ = render(frozen, T, K[None], width, height, sh_degree, render_mode="RGB")
+            rgb = rgb + (1 - alpha) * bg
         if A is not None:
             rgb = apply_appearance(rgb, A[None])
         loss = (rgb - gt[None]).abs().mean()

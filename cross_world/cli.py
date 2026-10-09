@@ -110,17 +110,39 @@ def _stereo_depth_for(views, mv):
     return views
 
 
+def _right_views(views, mv):
+    """The right camera of stereo test views (never trained: the right image only gives depth): a viewpoint the
+    stereo baseline (KITTI: 0.54 m) to the side of the path, with a photo to compare against."""
+    import copy
+    if mv.T_right_in_left is None:
+        return []
+    T_rl = np.asarray(mv.T_right_in_left, np.float64).reshape(4, 4)
+    out = []
+    for v in views:
+        if not v.has_right:
+            continue
+        r = copy.copy(v)
+        r.T_wc = v.T_wc @ T_rl
+        r._image, r._depth, r._right = v._right, None, None
+        out.append(r)
+    return out
+
+
 def run_eval(world, mv, args, out, log):
     from cross_world.map_views import source_test_views
     from cross_world.world import evaluate
     res = {}
+    seg = None
+    if getattr(args, "sky_metric", False) or any(c.sky for c in world.chunks):
+        from cross_world.sky import SkySegmenter
+        seg = SkySegmenter(world.meta.get("config", {}).get("sky_model", ""), args.device)
     by = mv.by_id()
     kf_times = {v.id: (v.timestamp if v.timestamp is not None else float(v.id)) for v in mv.views}
     test = _stereo_depth_for([by[i] for i in world.meta["test_ids"] if i in by], mv)
     if test:
         log(f"evaluating {len(test)} held-out keyframes")
         res["heldout_keyframes"] = evaluate(world, test, args.device, align=True, save_dir=out / "renders" / "heldout",
-                                            log=log, kf_times=kf_times)
+                                            log=log, kf_times=kf_times, sky_seg=seg)
     train = [by[i] for i in world.meta["train_ids"] if i in by]
     if train and args.eval_train:
         sel = train[:: max(1, len(train) // args.eval_train)]
@@ -136,7 +158,13 @@ def run_eval(world, mv, args, out, log):
         if nv:
             log(f"evaluating {len(nv)} novel source frames (>= {args.novel_gap} frames from any keyframe)")
             res["novel_frames"] = evaluate(world, nv, args.device, align=True, save_dir=out / "renders" / "novel",
-                                           log=log, kf_times=kf_times)
+                                           log=log, kf_times=kf_times, sky_seg=seg)
+        if getattr(args, "eval_right", 0) and nv:
+            rv = _right_views(nv[:: max(1, len(nv) // args.eval_right)], mv)
+            if rv:
+                log(f"evaluating the right camera of {len(rv)} novel source frames ({np.linalg.norm(np.asarray(mv.T_right_in_left).reshape(4, 4)[:3, 3]):.2f} m to the side)")
+                res["novel_right"] = evaluate(world, rv, args.device, align=True, save_dir=out / "renders" / "right",
+                                              log=log, kf_times=kf_times, sky_seg=seg)
     return res
 
 
@@ -203,6 +231,10 @@ def main(argv=None):
         p.add_argument("--device", default="cuda")
         p.add_argument("--novel", type=int, default=0, help="evaluate on up to N source frames that are not keyframes")
         p.add_argument("--novel-gap", type=int, default=2, help="... at least this many frames from any keyframe")
+        p.add_argument("--eval-right", type=int, default=0,
+                       help="stereo: also evaluate the right camera of up to N novel frames (a viewpoint beside the path)")
+        p.add_argument("--sky-metric", action="store_true",
+                       help="also measure the Gaussians' opacity on sky pixels (needs the sky segmenter)")
         p.add_argument("--eval-train", type=int, default=0, help="also evaluate ~N training keyframes")
     b = sub.add_parser("build")
     common(b)

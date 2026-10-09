@@ -122,9 +122,19 @@ def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: i
     cam_h = np.array([(T[:3, 3] - origin) @ part.up for T in world.kf_poses.values()])
     zmed = float(world.meta.get("zmed", 1.0))
     cut = float(cam_h.max() + (max(0.3, 0.25 * zmed) if zmed < 5.0 else 0.5 * zmed)) if len(cam_h) else None
+    diag = float(np.linalg.norm(np.asarray(part.region_hi) - np.asarray(part.region_lo)))
     for c in world.chunks:
         files = {}
         layers = dict(c.layers)
+        if c.sky and "far" in layers:
+            # the sky texture as a shell of splats around the chunk (beyond the mapped region; the viewer's far plane
+            # is 5 km), in the far layer the viewer draws for a camera in this chunk
+            from cross_world.sky import sky_splats
+            core = [k for k in part.chunks[c.index].core_ids if k in world.kf_poses] if c.index < len(part.chunks) else []
+            ctr = np.mean([world.kf_poses[k][:3, 3] for k in core], 0) if core else layers["far"]["means"].float().mean(0).numpy()
+            far = layers["far"]
+            shell = sky_splats(c.sky, ctr, float(np.clip(2 * diag, 300, 3000)), sh_coeffs=far["shN"].shape[1])
+            layers["far"] = {k: torch.cat([far[k].float(), shell[k].float()]) for k in far}
         if cut is not None and "near" in layers:
             nsp = layers["near"]
             hh = (nsp["means"].float().numpy() - origin) @ part.up

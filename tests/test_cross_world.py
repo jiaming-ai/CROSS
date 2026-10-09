@@ -155,3 +155,37 @@ def test_keyframes_take_their_captured_frames(tmp_path):
     with pytest.warns(UserWarning):
         assert _keyframes_from_capture(views[2:], map_path, None) == 0
     cap.cleanup()
+
+
+def test_sky_texture_directions_fill_and_shell():
+    from cross_world.sky import SkyModel, pixel_dirs, push_pull, sky_frame, sky_splats
+    up = np.array([0.0, -1.0, 0.0])                            # OpenCV-style map: y down
+    R = sky_frame(up)
+    assert np.allclose(R @ R.T, np.eye(3), atol=1e-12) and np.allclose(R[2], up)
+    m = SkyModel(R, res=16)
+    with torch.no_grad():                                      # a texture that is red above the horizon, blue below
+        m.tex[:] = -6
+        m.tex[0, 0, :8] = 6
+        m.tex[0, 2, 8:] = 6
+    d = torch.tensor([[0.0, -1.0, 0.2], [0.0, 1.0, 0.2]])      # up-ish, down-ish
+    c = m(torch.nn.functional.normalize(d, dim=-1))
+    assert c[0, 0] > 0.9 and c[0, 2] < 0.1 and c[1, 2] > 0.9 and c[1, 0] < 0.1
+    # pixel directions: the principal point looks along the camera's z axis
+    K = torch.tensor([[[100.0, 0, 31.5], [0, 100.0, 23.5], [0, 0, 1]]])
+    dirs = pixel_dirs(torch.eye(4)[None], K, 64, 48)
+    assert dirs.shape == (1, 48, 64, 3) and torch.allclose(dirs[0, 23, 31], torch.tensor([0.0, 0, 1]), atol=0.01)
+    # seen texels keep their colour, unseen ones get a smooth fill from them
+    img = torch.zeros(3, 8, 16)
+    img[1, :4] = 1.0
+    w = torch.zeros(8, 16)
+    w[:4] = 1
+    f = push_pull(img, w)
+    assert torch.allclose(f[:, :4], img[:, :4]) and float(f[1, 4:].min()) > 0.2
+    # the splat shell: the splat of a texel sits in the direction that samples that texel
+    st = {"tex": torch.sigmoid(m.tex[0]).detach(), "R": torch.from_numpy(R).float()}
+    sp = sky_splats(st, np.zeros(3), 100.0, res=16, sh_coeffs=3)
+    assert sp["means"].shape == (512, 3) and sp["shN"].shape == (512, 3, 3)
+    assert torch.allclose(sp["means"].norm(dim=1), torch.full((512,), 100.0), atol=1e-3)
+    col = m(torch.nn.functional.normalize(sp["means"], dim=-1))
+    from cross_world.gaussians import sh_to_rgb
+    assert float((col - sh_to_rgb(sp["sh0"][:, 0])).abs().max()) < 0.05
