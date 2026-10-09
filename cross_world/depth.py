@@ -6,6 +6,7 @@ Sources, by availability:
   vggt     VGGT-Omega on the stereo pair, made metric by the known baseline (stereo maps; dense, also where SGBM finds
            no match: road, walls, cars); vggt_sgbm: its scale from SGBM instead; fused: SGBM where it matched, the
            SGBM-scaled VGGT-Omega depth elsewhere
+  fstereo  FoundationStereo on the stereo pair (learned stereo matching; not vendored, see FoundationStereoDepth)
   none     no depth (monocular maps without a learned-depth model): the Gaussians start from the other views' depth
            or from random points, and only the photometric loss trains them
 
@@ -125,12 +126,61 @@ class VGGTStereoDepth:
         return out
 
 
+class FoundationStereoDepth:
+    """Dense depth of a rectified pair from FoundationStereo (NVlabs, CVPR 2025; zero-shot KITTI-15 D1 2.8 %).
+    Not vendored: `repo` is a clone of github.com/NVlabs/FoundationStereo, `checkpoint` its model_best_bp2.pth with
+    cfg.yaml next to it (NVIDIA licence, non-commercial).  Pixels whose match falls outside the right image are
+    dropped."""
+
+    def __init__(self, checkpoint: str, device: str = "cuda", repo: Optional[str] = None, iters: int = 32):
+        import os
+        import sys
+        from pathlib import Path
+        from omegaconf import OmegaConf
+        repo = repo or os.environ.get("FOUNDATION_STEREO_REPO")
+        if not repo:
+            raise ValueError("FoundationStereo: set the repo path (FOUNDATION_STEREO_REPO)")
+        if repo not in sys.path:
+            sys.path.insert(0, repo)
+        from core.foundation_stereo import FoundationStereo
+        from core.utils.utils import InputPadder
+        self._padder = InputPadder
+        cfg = OmegaConf.load(str(Path(checkpoint).parent / "cfg.yaml"))
+        if "vit_size" not in cfg:
+            cfg["vit_size"] = "vitl"
+        cfg["valid_iters"] = iters
+        self.model = FoundationStereo(cfg)
+        sd = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        self.model.load_state_dict(sd["model"])
+        self.model.to(device).eval()
+        self.device, self.iters = device, iters
+
+    @torch.no_grad()
+    def __call__(self, left: np.ndarray, right: np.ndarray, fx: float, baseline: float) -> np.ndarray:
+        L = torch.from_numpy(np.ascontiguousarray(left)).to(self.device).float()[None].permute(0, 3, 1, 2)
+        R = torch.from_numpy(np.ascontiguousarray(right)).to(self.device).float()[None].permute(0, 3, 1, 2)
+        padder = self._padder(L.shape, divis_by=32, force_square=False)
+        L, R = padder.pad(L, R)
+        with torch.autocast("cuda", dtype=torch.float16):
+            disp = self.model.forward(L, R, iters=self.iters, test_mode=True)
+        disp = padder.unpad(disp.float())[0, 0].cpu().numpy()
+        h, w = disp.shape
+        xs = np.arange(w)[None, :]
+        ok = (disp > 0.5) & (xs - disp >= 0)
+        depth = np.zeros((h, w), np.float32)
+        depth[ok] = fx * baseline / disp[ok]
+        return depth
+
+
 def view_depth(view: View, mv: MapViews, source: str = "auto", max_depth: Optional[float] = None,
-               stereo: Optional[StereoDepth] = None, vggt: Optional["VGGTStereoDepth"] = None) -> Optional[np.ndarray]:
+               stereo: Optional[StereoDepth] = None, vggt: Optional["VGGTStereoDepth"] = None,
+               fstereo: Optional["FoundationStereoDepth"] = None) -> Optional[np.ndarray]:
     """Depth (H, W) float32 in metres of one view (0 = unknown), or None when the view has no depth source."""
     d = None
     if source in ("auto", "sensor") and view.has_depth:
         d = view.depth().astype(np.float32)
+    elif source == "fstereo" and view.has_right and mv.T_right_in_left is not None and fstereo is not None:
+        d = fstereo(view.image(), view.right(), float(view.K[0, 0]), float(np.linalg.norm(mv.T_right_in_left[:3, 3])))
     elif source in ("vggt", "vggt_sgbm", "fused") and view.has_right and mv.T_right_in_left is not None and vggt is not None:
         baseline = float(np.linalg.norm(mv.T_right_in_left[:3, 3]))
         anchor = None

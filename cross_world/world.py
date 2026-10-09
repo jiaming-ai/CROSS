@@ -36,8 +36,11 @@ class BuildConfig:
     margin: float = 0.0             # cell margin (m); 0: 15 % of the median keyframe depth x 10, at least 2 m
     min_visible: float = 0.1        # share of a view's depth points in a cell that adds it to the chunk
     test_every: int = 8             # every n-th keyframe (by id) is held out for evaluation (0: none)
-    depth: str = "auto"             # auto | sensor | sgbm | none
+    depth: str = "auto"             # auto | sensor | sgbm | vggt | vggt_sgbm | fused | fstereo | none (cross_world/depth.py)
     depth_workers: int = 8
+    vggt_checkpoint: str = "models/VGGT-Omega/vggt_omega_1b_512.pt"
+    fstereo_checkpoint: str = ""    # FoundationStereo model_best_bp2.pth (cfg.yaml next to it); FOUNDATION_STEREO_REPO
+    fstereo_iters: int = 32
     max_depth: float = 0.0          # 0: no clipping
     anchors: int = 4
     # after training, drop Gaussians below this opacity: MCMC keeps many near-transparent ones to relocate; on KITTI 07
@@ -259,7 +262,23 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
     # ---- depth of every training view (needed for the partition's visibility and the initialisation)
     t0 = time.time()
     depths: Dict[int, np.ndarray] = {}
-    if cfg.depth != "none":
+    learned = cfg.depth in ("vggt", "vggt_sgbm", "fused", "fstereo")
+    if learned:
+        # one network on the GPU, views in turn; freed before training
+        from cross_world.depth import FoundationStereoDepth, VGGTStereoDepth
+        kw = {}
+        if cfg.depth == "fstereo":
+            kw["fstereo"] = FoundationStereoDepth(cfg.fstereo_checkpoint, device, iters=cfg.fstereo_iters)
+        else:
+            kw["vggt"] = VGGTStereoDepth(cfg.vggt_checkpoint, device)
+            kw["stereo"] = StereoDepth(train_views[0].width)
+        for v in train_views:
+            d = view_depth(v, mv, cfg.depth, cfg.max_depth or None, **kw)
+            if d is not None:
+                depths[v.id] = d
+        del kw
+        torch.cuda.empty_cache()
+    elif cfg.depth != "none":
         # views in parallel threads (image decoding and SGBM release the GIL; one matcher per thread)
         import threading
         from concurrent.futures import ThreadPoolExecutor

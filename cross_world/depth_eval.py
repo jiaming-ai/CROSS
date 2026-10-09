@@ -43,7 +43,7 @@ def make_method(name: str, args, width: int):
         return name, {"vggt": args._vggt, "stereo": StereoDepth(width)}
     if name == "fstereo":
         from cross_world.depth import FoundationStereoDepth
-        return "fstereo", {"fstereo": FoundationStereoDepth(args.fstereo_checkpoint, args.device)}
+        return "fstereo", {"fstereo": FoundationStereoDepth(args.fstereo_checkpoint, args.device, iters=args.fstereo_iters)}
     raise ValueError(name)
 
 
@@ -56,6 +56,7 @@ def main(argv=None):
     ap.add_argument("--frames", type=int, default=40, help="evaluate this many keyframes, spread over the map")
     ap.add_argument("--vggt-checkpoint", default="models/VGGT-Omega/vggt_omega_1b_512.pt")
     ap.add_argument("--fstereo-checkpoint", default=None)
+    ap.add_argument("--fstereo-iters", type=int, default=32)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--out", default=None)
     args = ap.parse_args(argv)
