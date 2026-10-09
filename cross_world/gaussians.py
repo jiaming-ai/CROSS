@@ -85,6 +85,9 @@ class TrainConfig:
     # Tested without benefit on KITTI 07 (tag world-quality-sky-options): the cross-entropy on sky pixels only, far
     # points on sky pixels, the view's affine colour on the sky too (-0.25 dB: the saturated sky pulls the exposure fit)
     sky_lambda: float = 0.05
+    # more weight on opacity -> 1 off the sky: a bright distant building (an overexposed white wall against the sky)
+    # can be drawn by translucent, over-bright Gaussians, through which the sky texture then shows
+    sky_opaque: float = 0.0
     sky_res: int = 256
     sky_lr: float = 1e-2
 
@@ -462,6 +465,8 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
             s_ = vb.sky[idx].float()[..., None]
             a_ = alpha.clamp(1e-4, 1 - 1e-4)
             loss = loss + cfg.sky_lambda * -(s_ * torch.log(1 - a_) + (1 - s_) * torch.log(a_)).mean()
+            if cfg.sky_opaque > 0:
+                loss = loss + cfg.sky_opaque * -((1 - s_) * torch.log(a_)).mean()
         if cfg.strategy == "mcmc":
             loss = loss + cfg.opacity_reg * torch.sigmoid(params["opacities"]).mean() \
                 + cfg.scale_reg * torch.exp(params["scales"]).mean()
