@@ -751,6 +751,9 @@ class System:
                 except Exception as ex:   # the map is saved as it is rather than not at all
                     logger.warning(f"Final optimisation of the map failed: {ex}")
 
+        if self._lc_verifier is not None:
+            logger.info(f"Verified loop closure statistics: {dict(self._lc_verifier.stats)}"
+                        + (f"; background optimisation: {dict(self._apgo.stats)}" if self._apgo is not None else ""))
         logger.info(f"Saving map to {save_path}...")
 
         # Create directory if it doesn't exist
