@@ -90,13 +90,23 @@ def isotonic(x, y, n_bins: int = 200):
     return np.concatenate([[0.0], kx, [1.0]]), np.concatenate([[min(0.0, ky[0])], ky, [max(ky[-1], ky[-1])]])
 
 
+def quantile_map(x, y, n: int = 200):
+    """Monotone map sending x's quantiles to y's (the head's ranking kept, the geometric score's distribution and spread
+    taken over). Knots for np.interp, duplicates in x merged."""
+    q = np.linspace(0, 1, n + 1)
+    kx, ky = np.quantile(x, q), np.quantile(y, q)
+    kx, idx = np.unique(kx, return_index=True)
+    return np.concatenate([[0.0], kx, [1.0]]), np.concatenate([[0.0], ky[idx], [ky[-1]]])
+
+
 def map_geo(G, a):
-    """covis_head_map: the raw head probability -> the expected one-way geometric score (CROSS's gate scale, the
-    scale its thresholds and fix weights were tuned on), fitted by isotonic regression on the held-out windows."""
+    """covis_head_map: the raw head probability -> the one-way geometric score's scale (the scale CROSS's thresholds and
+    fix weights were tuned on), on the held-out windows. kind "isotonic": E[geometric | head] (compresses the extremes:
+    regression to the mean); "quantile": the head's quantiles onto the geometric score's (same spread)."""
     R = np.concatenate(G)
     lg, geo, y = R[:, 0], R[:, 1], R[:, 2]
     p = 1 / (1 + np.exp(-lg))
-    kx, ky = isotonic(p, geo)
+    kx, ky = quantile_map(p, geo) if a.map_kind == "quantile" else isotonic(p, geo)
     m = np.interp(p, kx, ky)
     neg, pos = y < 0.05, y >= 0.15
     print(f"ordered pairs {len(y)} (neg {neg.sum()}, pos {pos.sum()}), {len(kx)} knots")
@@ -105,7 +115,8 @@ def map_geo(G, a):
               f"quantiles 25/50/75/90 {np.round(np.quantile(s, [.25, .5, .75, .9]), 3).tolist()}")
     if a.out:
         sd = torch.load(a.ckpt, map_location="cpu", weights_only=False)
-        sd["covis_head_map"] = {"x": kx.tolist(), "y": ky.tolist(), "target": "one-way geometric score (CROSS gate)",
+        sd["covis_head_map"] = {"x": kx.tolist(), "y": ky.tolist(), "kind": a.map_kind,
+                                "target": "one-way geometric score (CROSS gate)",
                                 "windows": a.windows, "config": a.config}
         torch.save(sd, a.out)
         print("saved", a.out)
@@ -124,6 +135,9 @@ def main():
     ap.add_argument("--map_geo", action="store_true",
                     help="store covis_head_map in the checkpoint: an isotonic map from the raw head probability to the "
                          "expected one-way geometric score on the same windows (the head's weights are unchanged)")
+    ap.add_argument("--map_kind", choices=["isotonic", "quantile"], default="isotonic",
+                    help="--map_geo: isotonic (expected geometric score given the head) or quantile (the head's "
+                         "quantiles onto the geometric score's: same spread, e.g. fix weights up to ~0.9)")
     ap.add_argument("--target", choices=["symmetric", "oneway"], default="symmetric",
                     help="symmetric: the head's training target (min of both directions); oneway: the overlap of one view "
                          "in the other (CROSS's geometric gate measures reference -> current), both directions per pair")
