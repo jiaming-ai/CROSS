@@ -51,8 +51,8 @@ class TrainConfig:
     opacity_reg: float = 0.01           # MCMC regularisers
     scale_reg: float = 0.01
     pose_opt: bool = True
-    pose_lr: float = 1e-4
-    pose_reg: float = 1e-6
+    pose_lr: float = 2e-4               # lazy Adam (only the batch's views): ~lr per time a view is sampled
+    pose_reg: float = 1e-4
     app_opt: bool = True                # per-view affine colour
     app_lr: float = 1e-3
     app_reg: float = 1e-2
@@ -348,14 +348,17 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
         state = strategy.initialize_state(scene_scale=scene_scale)
     strategy.check_sanity(params, optimizers)
 
-    pose_d = torch.nn.Parameter(torch.zeros(n_views, 9, device=dev))
-    app = torch.nn.Parameter(torch.eye(3, 4, device=dev).repeat(n_views, 1, 1))
-    extra = []
-    if cfg.pose_opt:
-        extra.append({"params": [pose_d], "lr": cfg.pose_lr * lr_scale, "weight_decay": cfg.pose_reg})
-    if cfg.app_opt:
-        extra.append({"params": [app], "lr": cfg.app_lr * lr_scale})
-    opt_extra = torch.optim.Adam(extra) if extra else None
+    # per-view pose residual and affine colour as sparse embeddings with lazy Adam: only the views of the batch move.
+    # With dense Adam every view kept moving for ~30 steps after each time it was sampled, by ~30 x lr whatever its
+    # gradient, a random walk of about a degree over a run: harmless with 150 views per chunk, ruinous with 1000
+    # (the runs with captured frames collapsed)
+    pose_emb = torch.nn.Embedding(n_views, 9, sparse=True).to(dev)
+    torch.nn.init.zeros_(pose_emb.weight)
+    app_emb = torch.nn.Embedding(n_views, 12, sparse=True).to(dev)
+    with torch.no_grad():
+        app_emb.weight.copy_(torch.eye(3, 4, device=dev).reshape(1, 12).repeat(n_views, 1))
+    opt_pose = torch.optim.SparseAdam(list(pose_emb.parameters()), lr=cfg.pose_lr * lr_scale) if cfg.pose_opt else None
+    opt_app = torch.optim.SparseAdam(list(app_emb.parameters()), lr=cfg.app_lr * lr_scale) if cfg.app_opt else None
 
     depth_ok = vb.depths is not None and bool((vb.depths > 0).any())
     zmed = float(vb.depths[vb.depths > 0].float().median()) if depth_ok else 1.0
@@ -373,11 +376,12 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
         pos += bs
         T = vb.T_wc[idx]
         if cfg.pose_opt:
-            T = T @ delta_transform(pose_d[idx])
+            T = T @ delta_transform(pose_emb(idx))
         sh_deg = min(cfg.sh_degree, step // max(1, cfg.sh_degree_interval))
         rgb, ed, alpha, info = render(params, T, vb.Ks[idx], vb.width, vb.height, sh_deg)
         if cfg.app_opt:
-            rgb = apply_appearance(rgb, app[idx])
+            A_b = app_emb(idx).view(-1, 3, 4)
+            rgb = apply_appearance(rgb, A_b)
         gt = vb.images[idx].float() / 255.0
         strategy.step_pre_backward(params, optimizers, state, step, info)
         l1 = (rgb - gt).abs().mean()
@@ -386,25 +390,38 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
         ld = torch.zeros((), device=dev)
         if depth_ok and cfg.depth_lambda > 0:
             d = vb.depths[idx].float()[..., None]
-            m = d > 0
+            # where the Gaussians cover the pixel (the expected depth of a nearly empty pixel is noise), residuals
+            # in inverse depth (relative to the median depth) clamped at 1: one floater against the camera must not
+            # dominate the batch
+            m = (d > 0) & (alpha.detach() > 0.5)
             if m.any():
-                inv_r = zmed / ed.clamp(min=1e-3)
-                inv_g = zmed / d.clamp(min=1e-3)
-                ld = ((inv_r - inv_g).abs() * m).sum() / m.sum()
+                inv_r = zmed / ed.clamp(min=1e-2 * zmed)
+                inv_g = zmed / d.clamp(min=1e-2 * zmed)
+                ld = ((inv_r - inv_g).abs().clamp(max=1.0) * m).sum() / m.sum()
                 lam = cfg.depth_lambda * (0.1 ** (step / steps))
                 loss = loss + lam * ld
         if cfg.strategy == "mcmc":
             loss = loss + cfg.opacity_reg * torch.sigmoid(params["opacities"]).mean() \
                 + cfg.scale_reg * torch.exp(params["scales"]).mean()
         if cfg.app_opt:
-            loss = loss + cfg.app_reg * ((app[idx] - eye34) ** 2).mean()
+            loss = loss + cfg.app_reg * ((A_b - eye34) ** 2).mean()
+        if cfg.pose_opt and cfg.pose_reg > 0:
+            loss = loss + cfg.pose_reg * (pose_emb(idx) ** 2).sum()
+        if not torch.isfinite(loss):             # a degenerate batch: skip it rather than poison the optimiser state
+            for o in optimizers.values():
+                o.zero_grad(set_to_none=True)
+            for o in (opt_pose, opt_app):
+                if o is not None:
+                    o.zero_grad(set_to_none=True)
+            continue
         loss.backward()
         for o in optimizers.values():
             o.step()
             o.zero_grad(set_to_none=True)
-        if opt_extra is not None:
-            opt_extra.step()
-            opt_extra.zero_grad(set_to_none=True)
+        for o in (opt_pose, opt_app):
+            if o is not None:
+                o.step()
+                o.zero_grad(set_to_none=True)
         if cfg.strategy == "mcmc":
             strategy.step_post_backward(params, optimizers, state, step, info, lr=sched.get_last_lr()[0])
         else:
@@ -420,8 +437,8 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
     torch.cuda.synchronize()
     dt = time.time() - t0
     with torch.no_grad():
-        D = delta_transform(pose_d).cpu().numpy() if cfg.pose_opt else np.tile(np.eye(4), (n_views, 1, 1))
-        A = app.detach().cpu().numpy()
+        D = delta_transform(pose_emb.weight).cpu().numpy() if cfg.pose_opt else np.tile(np.eye(4), (n_views, 1, 1))
+        A = app_emb.weight.detach().view(-1, 3, 4).cpu().numpy()
     out = {k: v.detach() for k, v in params.items()}
     return TrainResult(out, {vid: D[i] for i, vid in enumerate(vb.ids)}, {vid: A[i] for i, vid in enumerate(vb.ids)},
                        {"steps": steps, "batch": bs, "train_s": round(dt, 1), "n_init": n_init, "n_final": len(out["means"]),
