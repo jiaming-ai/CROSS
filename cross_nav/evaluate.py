@@ -107,10 +107,8 @@ def geom_baseline(pts, w, spec: BEVSpec, cam_h, band=(0.10, 1.80), floor_tol=0.1
     hz = pts[:, 2] + cam_h
     occ = ok & (hz >= band[0]) & (hz <= band[1])
     flo = ok & (np.abs(hz) <= floor_tol)
-    a = np.zeros(N * N)
-    np.add.at(a, row[occ] * N + col[occ], w[occ])
-    f = np.zeros(N * N)
-    np.add.at(f, row[flo] * N + col[flo], w[flo])
+    a = np.bincount(row[occ] * N + col[occ], weights=w[occ], minlength=N * N)
+    f = np.bincount(row[flo] * N + col[flo], weights=w[flo], minlength=N * N)
     out = np.zeros(N * N, np.uint8)
     out[(f > 0) & (a < min_occ)] = FREE
     out[a >= min_occ] = OCC

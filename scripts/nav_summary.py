@@ -34,6 +34,8 @@ def main():
             for d in dss:
                 for c in conds:
                     v = r["metrics"].get(d, {}).get(f"{c}/{a.sel}", {}).get(a.metric)
+                    if v is None and c in ("geom", "gtgeom"):        # baselines: computed with the first checkpoint
+                        v = rows[0][1]["metrics"].get(d, {}).get(f"{c}/{a.sel}", {}).get(a.metric)
                     vals.append("-" if v is None else f"{v:.3f}")
             print(" | ".join([name] + vals))
             dump.setdefault(wdir.name, {})[name] = r

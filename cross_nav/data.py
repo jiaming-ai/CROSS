@@ -52,7 +52,10 @@ class WorldBEVs:
 
 def labelled_pool(pool: DatasetPool, bevs: WorldBEVs, label_dataset: str) -> bool:
     """Keep the scenes of a pool whose place has a world BEV.  False if none is left."""
-    keep = [s for s in pool.scenes if bevs.path(label_dataset, s.world).exists()]
+    # exclude.txt (optional, one world per line): places whose labels failed a check (e.g. > 85 % occupied)
+    ex = bevs.root / label_dataset / "exclude.txt"
+    bad = set(ex.read_text().split()) if ex.exists() else set()
+    keep = [s for s in pool.scenes if s.world not in bad and bevs.path(label_dataset, s.world).exists()]
     if not keep:
         return False
     pool.scenes = keep

@@ -222,7 +222,7 @@ def main():
         for k, v in {"loss": loss, "loss_gravity": l_g, "gravity_deg": ang, "gn": gn,
                      "scale_head_err": ((bb["log_scale_head"].float() - ls_gt).abs().mean()
                                         if "log_scale_head" in bb else torch.zeros(())), **parts, **mets}.items():
-            v = float(v)
+            v = float(v.detach()) if torch.is_tensor(v) else float(v)
             if math.isfinite(v):
                 agg[k].append(v)
         for ds in set(meta["dataset"]):
