@@ -822,6 +822,11 @@ class FeedForwardConfig:
     # focal of a canonical-camera scale head (vggt_ft DenseScaleHead with canonical_hfov): "calibrated" (the camera's
     # intrinsics, set by the system) or "predicted" (the model's own FoV). Heads without a canonical camera ignore it.
     scale_focal: str = "calibrated"
+    # cross_nav BEV traversability head (heads file of cross_nav.train, trained on this checkpoint's backbone; "" = off):
+    # after the pass's metric scale is solved, P(occupied) on a gravity-aligned grid around the current view
+    # (PoseEstFeedForward.last_bev; gravity from set_gravity, e.g. the IMU, else the head's estimate); every n-th pass
+    nav_bev_head: str = ""
+    nav_bev_every: int = 1
     max_rel_distance: float = 40.0       # reject relative poses further than this (m)
     kf_conf_threshold_new_kf: float = 0.35  # covis below this -> current view is novel -> permanent keyframe
     scale_std_inflation: bool = True     # inflate translation std by |t| * relative scale std

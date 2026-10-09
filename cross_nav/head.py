@@ -170,16 +170,19 @@ class BEVHead(nn.Module):
 
     # ------------------------------------------------------------------------------------------------ forward
     def forward(self, tokens_list, patch_token_start, patch_hw, dino, depth, conf, extrinsics, intrinsics,
-                log_scale, up_cam, frame_valid=None):
+                log_scale, up_cam, frame_valid=None, lift_valid=None):
         """tokens_list: aggregator outputs (index = layer); dino (B,S,P,1024); depth / conf (B,S,H,W) predicted;
         extrinsics (B,S,3,4) / intrinsics (B,S,3,3) predicted (image resolution); log_scale (B,); up_cam (B,3) unit;
-        frame_valid (B,S) bool (padding).  Returns logits (B,N,N)."""
+        frame_valid (B,S) bool (padding); lift_valid (B,S) bool: frames whose depth is lifted (default frame_valid; a
+        CROSS pass may run the depth head on some views only, the others still give context).  Returns (B,N,N)."""
         h, w = patch_hw
         B, S = depth.shape[:2]
         dt = torch.float32
         N, Nc = self.size, self.size // 4
         if frame_valid is None:
             frame_valid = torch.ones(B, S, dtype=torch.bool, device=depth.device)
+        if lift_valid is None:
+            lift_valid = frame_valid
         # 1. patch features (B*S, h*w, feat)
         x = 0
         for l in self.layers:
@@ -209,14 +212,14 @@ class BEVHead(nn.Module):
             pf = fpatch.float().repeat_interleave(2, 2).repeat_interleave(2, 3)            # (B,S,2h,2w,feat)
             sub = self.sub.view(2, 2, -1).repeat(h, w, 1)                                  # (2h,2w,feat)
             pf = self.lift_norm(pf + sub + self.pt_mlp(emb))
-            wv = c2 * frame_valid[:, :, None, None].to(dt)
+            wv = c2 * lift_valid[:, :, None, None].to(dt)
             lifted, cnt = self.splat(P.reshape(B, -1, 3), wv.reshape(B, -1), pf.reshape(B, -1, pf.shape[-1]), Nc,
                                      self.res * 4)
             # dense height histogram from the depth (every second pixel)
             K1 = intrinsics.clone()
             K1[..., :2, :] /= 2
             Pd = self.lift(depth[..., ::2, ::2], None, extrinsics, K1, log_scale, up_cam)
-            wd = (conf_w[..., ::2, ::2] * frame_valid[:, :, None, None].to(dt)).reshape(B, -1)
+            wd = (conf_w[..., ::2, ::2] * lift_valid[:, :, None, None].to(dt)).reshape(B, -1)
             hist = self.histogram(Pd.reshape(B, -1, 3), wd)
         # 3. encoder
         s0 = self.stem0(hist)
@@ -295,7 +298,7 @@ class DirectBEVHead(nn.Module):
         return torch.cat([ax.sin(), ax.cos(), ay.sin(), ay.cos()], -1)
 
     def forward(self, tokens_list, patch_token_start, patch_hw, dino, depth, conf, extrinsics, intrinsics,
-                log_scale, up_cam, frame_valid=None):
+                log_scale, up_cam, frame_valid=None, lift_valid=None):
         h, w = patch_hw
         B, S = tokens_list[-1].shape[:2]
         dev = tokens_list[-1].device
