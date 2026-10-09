@@ -114,11 +114,14 @@ def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: i
     origin = part.origin
     sh_degree = min(sh_degree, world.sh_degree)
     chunks_meta, total = [], 0
-    # indoors, the Gaussians above the cameras (upper walls, ceiling) go to an "above" layer that the viewer's overview
-    # hides (a dollhouse cut: from above, the ceiling hides the rooms)
+    # The viewer's overview looks from far above the training views (which all look roughly horizontally from the
+    # robot): it hides what is only right from near those views.  "above": everything higher than the cameras plus a
+    # margin (ceiling and upper walls indoors, sky floaters and the tops of buildings outdoors: a dollhouse cut);
+    # "offview": needles (long along one axis only) and haze (large, faint Gaussians fitted to textureless surfaces at
+    # grazing angles), streaks and fog from above.  First-person views draw every layer.
     cam_h = np.array([(T[:3, 3] - origin) @ part.up for T in world.kf_poses.values()])
     zmed = float(world.meta.get("zmed", 1.0))
-    cut = float(cam_h.max() + max(0.3, 0.25 * zmed)) if zmed < 5.0 and len(cam_h) else None
+    cut = float(cam_h.max() + (max(0.3, 0.25 * zmed) if zmed < 5.0 else 0.5 * zmed)) if len(cam_h) else None
     for c in world.chunks:
         files = {}
         layers = dict(c.layers)
@@ -129,13 +132,12 @@ def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: i
             layers["near"] = {k: v[~hi] for k, v in nsp.items()}
             layers["above"] = {k: v[hi] for k, v in nsp.items()}
         if needle_ratio > 0 and "near" in layers:
-            # needles (long along one axis only) render right from viewpoints like the training views and as streaks
-            # from far off them: a layer of their own, which the viewer hides in its overview
             nsp = layers["near"]
             sc = torch.exp(nsp["scales"].float()).sort(1, descending=True).values
             nd = (sc[:, 0] / sc[:, 1].clamp(min=1e-9) > needle_ratio) & (sc[:, 0] > 0.02 * zmed)
+            nd |= (torch.sigmoid(nsp["opacities"].float()) < 0.2) & (sc[:, 0] > 0.05 * zmed)
             layers["near"] = {k: v[~nd] for k, v in nsp.items()}
-            layers["needle"] = {k: v[nd] for k, v in nsp.items()}
+            layers["offview"] = {k: v[nd] for k, v in nsp.items()}
         for layer, sp in layers.items():
             sp = _prune({k: v.float() for k, v in sp.items()}, min_opacity)
             if len(sp["means"]) == 0:
