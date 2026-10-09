@@ -521,23 +521,18 @@ def align_pose(splats, T_wc: torch.Tensor, K: torch.Tensor, width: int, height: 
                A: Optional[torch.Tensor] = None, iters: int = 100, lr: float = 2e-3, sky=None) -> torch.Tensor:
     """Test-time pose alignment of one view: the pose refined photometrically against the frozen Gaussians (the
     usual protocol when test poses come from a different estimate than the reconstruction's own).  `sky`: a SkyModel
-    behind them (its colours at the initial pose: the alignment moves the view by a fraction of a degree)."""
-    bg = None
-    if sky is not None:
-        from cross_world.sky import pixel_dirs
-        with torch.no_grad():
-            bg = sky(pixel_dirs(T_wc[None], K[None], width, height))
+    behind them (frozen; it turns with the pose: a background fixed at the initial pose drags the alignment, KITTI 07
+    -0.4 dB)."""
     d = torch.zeros(1, 9, device=T_wc.device, requires_grad=True)
     opt = torch.optim.Adam([d], lr=lr)
     frozen = {k: v.detach() for k, v in splats.items()}
     best, best_loss = T_wc[None].clone(), float("inf")
     for it in range(iters):
         T = T_wc[None] @ delta_transform(d)
-        if bg is None:
-            rgb, _, _, _ = render(frozen, T, K[None], width, height, sh_degree, render_mode="RGB")
-        else:
-            rgb, _, alpha, _ = render(frozen, T, K[None], width, height, sh_degree, render_mode="RGB")
-            rgb = rgb + (1 - alpha) * bg
+        rgb, _, alpha, _ = render(frozen, T, K[None], width, height, sh_degree, render_mode="RGB")
+        if sky is not None:
+            from cross_world.sky import pixel_dirs
+            rgb = rgb + (1 - alpha) * sky(pixel_dirs(T, K[None], width, height), frozen=True)
         if A is not None:
             rgb = apply_appearance(rgb, A[None])
         loss = (rgb - gt[None]).abs().mean()

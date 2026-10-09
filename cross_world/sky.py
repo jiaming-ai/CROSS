@@ -87,9 +87,11 @@ class SkyModel(torch.nn.Module):
         self.tex = torch.nn.Parameter(tex[None].contiguous())
         self.register_buffer("seen", torch.zeros(tex.shape[1:]))
 
-    def forward(self, dirs: torch.Tensor) -> torch.Tensor:
+    def forward(self, dirs: torch.Tensor, frozen: bool = False) -> torch.Tensor:
+        """Colours along `dirs` (..., 3); `frozen`: no gradient to the texture (it still flows to the directions)."""
         g = _grid(dirs, self.R)
-        c = F.grid_sample(self.tex, g.view(1, -1, 1, 2), mode="bilinear", padding_mode="border", align_corners=False)
+        tex = self.tex.detach() if frozen else self.tex
+        c = F.grid_sample(tex, g.view(1, -1, 1, 2), mode="bilinear", padding_mode="border", align_corners=False)
         return torch.sigmoid(c.view(3, -1).T).view(*dirs.shape[:-1], 3)
 
     @torch.no_grad()
