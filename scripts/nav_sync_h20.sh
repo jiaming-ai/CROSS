@@ -5,6 +5,6 @@ set -e
 cd "$(dirname "$0")/.."
 DEST=${DEST:-/mnt/datasets-livsyn/jz/code/CROSS-nav}
 ssh h20-2 "mkdir -p $DEST"
-rsync -az --exclude __pycache__ --exclude '*.pyc' -R cross cross_nav vggt_ft tests configs configs/cross_nav scripts/nav_* third_party/vggt-omega pyproject.toml \
+rsync -az --exclude __pycache__ --exclude '*.pyc' -R cross cross_world cross_nav vggt_ft tests configs configs/cross_nav scripts/nav_* third_party/vggt-omega pyproject.toml \
   h20-2:$DEST/ 2>/dev/null
 echo "synced to h20-2:$DEST"

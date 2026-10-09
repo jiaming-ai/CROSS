@@ -358,7 +358,28 @@ python -m cross_world.cli build --map runs/k07/map.pkl --source $SEQ --out world
 python -m cross_world.cli export --world worlds/k07/world.pt --map runs/k07/map.pkl --source $SEQ --out web/k07
 ```
 
-## 8. Programmatic use
+## 8. Navigation: BEV traversability maps
+
+`cross_nav/` adds a head to the VGGT-Omega pass that predicts a bird's-eye-view grid around the current view
+(400 x 400 cells of 5 cm, camera at the centre, gravity-aligned, heading = optical axis): P(occupied) per cell, where
+flat walkable ground is free and anything 0.1-1.8 m above it is occupied whatever its height. It reads the backbone's
+multi-layer tokens and lifts them with the pass's own depth and cameras, the pass's metric scale (stereo, odometry or
+the scale head) and gravity (IMU or the head's own estimate). It also predicts cells no view sees, from scene priors.
+A heads file is trained for one backbone checkpoint (`python -m cross_nav.train --config configs/cross_nav/<run>.yaml`).
+
+```bash
+# online, every pass of a session: PoseEstFeedForward.last_bev (prob, up_cam, R_bev_from_cam, log_scale)
+python run.py ... --set pose_est.ff.nav_bev_head=models/nav/heads.pt [--set pose_est.ff.nav_bev_every=2]
+# offline, a fused navigation map of a saved map (one BEV per keyframe, anchored to the keyframes)
+python -m cross_nav.navmap --map runs/office/map.pkl --heads models/nav/heads.pt --backbone $CKPT --out nav/office
+```
+
+Gravity from an IMU: `pose_est.set_gravity(up_in_camera)` before the step whose pass should use it. The head adds
+~12 ms per pass (RTX 5090, 6-10 views) and makes the depth head cover the current view and the references.
+Labels for training come from the scene cache of `vggt_ft` (`python -m cross_nav.labels`: all frames of a place
+accumulated, free-space carving) and from simulated HSSD scenes with mesh labels (`cross_nav/sim/`).
+
+## 9. Programmatic use
 
 ```python
 from cross.pipeline import build_session, mono_config_from_profile
