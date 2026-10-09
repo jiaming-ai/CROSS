@@ -13,7 +13,7 @@ from vggt_ft.heads import DenseScaleHead, MultiLayerScaleHead
 from vggt_ft.model import VGGTOmegaFT
 from vggt_omega.utils.pose_enc import encoding_to_camera
 
-from .head import BEVHead, GravityHead
+from .head import GravityHead, build_bev_head
 
 
 class NavModel(nn.Module):
@@ -29,7 +29,7 @@ class NavModel(nn.Module):
             raise RuntimeError(f"{checkpoint}: missing {missing[:5]} ({len(missing)})")
         self.backbone_model.requires_grad_(False).eval()
         self.backbone_model.aggregator.to(torch.bfloat16)
-        self.bev_head = BEVHead(**(bev_cfg or {}))
+        self.bev_head = build_bev_head(bev_cfg)
         self.gravity_head = GravityHead(**(gravity_cfg or {}))
 
     def train(self, mode: bool = True):

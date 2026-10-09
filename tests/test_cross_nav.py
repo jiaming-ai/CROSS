@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from cross_nav.bev import BEVSpec, bev_axes, bev_axes_np, camera_bev_pose, crop_world, points_to_cells
-from cross_nav.head import BEVHead, GravityHead
+from cross_nav.head import BEVHead, DirectBEVHead, GravityHead
 
 
 def _rot(axis, deg):
@@ -82,3 +82,15 @@ def test_head_shapes():
     assert out.shape == (B, 64, 64)
     g = GravityHead()(tl, 17)
     assert torch.allclose(g, torch.tensor([[0.0, -1.0, 0.0]]))
+
+
+def test_direct_head_shapes():
+    B, S, h, w = 2, 3, 4, 5
+    tl = [None] * 24
+    for layer in (4, 11, 17, 23):
+        tl[layer] = torch.randn(B, S, 17 + h * w, 2048)
+    head = DirectBEVHead(size=64, depth=1)
+    out = head(tl, 17, (h, w), torch.randn(B, S, h * w, 1024), None, None, None, None, torch.zeros(B),
+               torch.tensor([[0.0, -1.0, 0.0]] * B), torch.tensor([[True, True, False]] * B))
+    assert out.shape == (B, 64, 64)
+    out.sum().backward()

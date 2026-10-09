@@ -251,6 +251,87 @@ class BEVHead(nn.Module):
         return self.out(y)[:, 0]
 
 
+class DirectBEVHead(nn.Module):
+    """Ablation of BEVHead without geometric lifting: no depth, no cameras, no other head's output.  A grid of learned BEV
+    queries (N / 8 per side) cross-attends to the multi-layer patch tokens of all frames (same features as BEVHead, with
+    a 2D sine position of the patch in its image and a frame-0 / other-frame embedding) and to their camera / register
+    tokens, conditioned on the same metric scale and gravity inputs; a convolutional upsampler goes to N x N logits.
+    Same forward signature as BEVHead (depth / cameras are ignored)."""
+
+    def __init__(self, size: int = 400, res: float = 0.05, layers=(-1, 4, 11, 17, 23), dim_agg: int = 2048,
+                 dim_dino: int = 1024, feat: int = 256, dim: int = 384, depth: int = 10, heads: int = 8,
+                 num_special: int = 17, dropout: float = 0.0, arch: str = "direct", **_):
+        super().__init__()
+        assert size % 8 == 0
+        self.size, self.res, self.layers, self.dim = size, res, list(layers), dim
+        self.proj = nn.ModuleDict({str(l): nn.Sequential(nn.LayerNorm(dim_dino if l < 0 else dim_agg),
+                                                         nn.Linear(dim_dino if l < 0 else dim_agg, feat))
+                                   for l in self.layers})
+        self.kv = nn.Sequential(nn.LayerNorm(feat), nn.Linear(feat, dim))
+        self.special = nn.Sequential(nn.LayerNorm(dim_agg), nn.Linear(dim_agg, dim))
+        self.special_pos = nn.Parameter(torch.zeros(1, 1, num_special, dim))
+        self.frame_emb = nn.Parameter(torch.zeros(2, dim))
+        g = size // 8
+        self.query = nn.Parameter(torch.zeros(1, g * g, dim))
+        for p in (self.special_pos, self.frame_emb, self.query):
+            nn.init.normal_(p, std=0.02)
+        self.cond = nn.Sequential(nn.Linear(1 + 3, dim), nn.GELU(), nn.Linear(dim, dim))
+        self.blocks = nn.ModuleList([BEVBlock(dim, heads, dropout=dropout) for _ in range(depth)])
+        self.norm = nn.LayerNorm(dim)
+        self.up1 = ConvBlock(dim, 192)                                           # N/4
+        self.up2 = ConvBlock(192, 96)                                            # N/2
+        self.up3 = ConvBlock(96, 48)                                             # N
+        self.out = nn.Conv2d(48, 1, 1)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+
+    def _pos2d(self, h, w, device):
+        """(h*w, dim) sine position of each patch (normalised image coordinates)."""
+        ys, xs = torch.meshgrid(torch.linspace(-1, 1, h, device=device), torch.linspace(-1, 1, w, device=device),
+                                indexing="ij")
+        n = self.dim // 4
+        f = torch.arange(1, n + 1, device=device, dtype=torch.float32) * (math.pi / 2)
+        ax, ay = xs.reshape(-1, 1) * f, ys.reshape(-1, 1) * f
+        return torch.cat([ax.sin(), ax.cos(), ay.sin(), ay.cos()], -1)
+
+    def forward(self, tokens_list, patch_token_start, patch_hw, dino, depth, conf, extrinsics, intrinsics,
+                log_scale, up_cam, frame_valid=None):
+        h, w = patch_hw
+        B, S = tokens_list[-1].shape[:2]
+        dev = tokens_list[-1].device
+        if frame_valid is None:
+            frame_valid = torch.ones(B, S, dtype=torch.bool, device=dev)
+        x = 0
+        for l in self.layers:
+            t = dino if l < 0 else tokens_list[l][:, :, patch_token_start:]
+            x = x + self.proj[str(l)](t.float().reshape(B * S, h * w, -1))
+        kv = self.kv(x).view(B, S, h * w, -1) + self._pos2d(h, w, dev)
+        sp = self.special(tokens_list[-1][:, :, :patch_token_start].float()) + self.special_pos
+        f0 = torch.ones(B, S, dtype=torch.long, device=dev)
+        f0[:, 0] = 0
+        ctx = torch.cat([kv, sp], 2) + self.frame_emb[f0][:, :, None]
+        T = ctx.shape[2]
+        ctx = ctx.reshape(B, S * T, -1)
+        cmask = (~frame_valid)[:, :, None].expand(-1, -1, T).reshape(B, -1)
+        tok = self.query.expand(B, -1, -1) + self.cond(torch.cat([log_scale.float()[:, None], up_cam.float()], -1))[:, None]
+        for blk in self.blocks:
+            tok = blk(tok, ctx, cmask)
+        g = self.size // 8
+        y = self.norm(tok).transpose(1, 2).reshape(B, -1, g, g)
+        y = self.up1(F.interpolate(y, scale_factor=2, mode="bilinear", align_corners=False))
+        y = self.up2(F.interpolate(y, scale_factor=2, mode="bilinear", align_corners=False))
+        y = self.up3(F.interpolate(y, scale_factor=2, mode="bilinear", align_corners=False))
+        return self.out(y)[:, 0]
+
+
+def build_bev_head(cfg: dict | None):
+    cfg = dict(cfg or {})
+    if cfg.get("arch") == "direct":
+        return DirectBEVHead(**cfg)
+    cfg.pop("arch", None)
+    return BEVHead(**cfg)
+
+
 class GravityHead(nn.Module):
     """Up vector of frame 0's camera (camera coordinates) from its camera token and mean register token of several
     aggregator layers.  Robot / handheld cameras: the image content (floors, walls, vertical edges) fixes pitch / roll."""
