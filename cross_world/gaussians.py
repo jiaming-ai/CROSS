@@ -50,7 +50,9 @@ class TrainConfig:
     depth_lambda: float = 0.2           # L1 on inverse depth (scaled by the median depth), decays 10x over training
     opacity_reg: float = 0.01           # MCMC regularisers
     scale_reg: float = 0.01
-    aniso_reg: float = 0.0              # penalty on needles: mean(relu(largest / middle scale - aniso_max))
+    # penalty on needles, mean(relu(largest / middle scale - aniso_max)): needles are right edge-on from the training
+    # rays and streaks from elsewhere; home1-1 (512 px): needles 14.9 % -> 0 %, held-out PSNR 24.75 -> 24.76
+    aniso_reg: float = 1.0
     aniso_max: float = 10.0
     pose_opt: bool = True
     pose_lr: float = 2e-4               # lazy Adam (only the batch's views): ~lr per time a view is sampled
