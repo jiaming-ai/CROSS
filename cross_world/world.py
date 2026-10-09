@@ -22,8 +22,8 @@ import numpy as np
 import torch
 
 from cross_world.depth import StereoDepth, consistent_mask, view_depth
-from cross_world.gaussians import (TrainConfig, ViewBatch, align_pose, apply_appearance, init_gaussians, lpips,
-                                   matrix_to_quat, psnr, quat_mul, render, ssim, train_chunk)
+from cross_world.gaussians import (TrainConfig, TrainResult, ViewBatch, align_pose, apply_appearance, init_gaussians,
+                                   lpips, matrix_to_quat, psnr, quat_mul, render, ssim, train_chunk)
 from cross_world.map_views import MapViews, View
 from cross_world.partition import Partition, assign_views, make_partition
 
@@ -46,6 +46,12 @@ class BuildConfig:
     # after training, drop Gaussians below this opacity: MCMC keeps many near-transparent ones to relocate; on KITTI 07
     # 0.02 removed 58 % of them at -0.01 dB (16 held-out views, SSIM / LPIPS unchanged)
     prune_opacity: float = 0.02
+    # extra (captured) views: second training stage after alignment against the keyframe-trained chunk (_second_stage)
+    capture_align_iters: int = 60
+    capture_keep: float = 1.5            # keep views whose aligned L1 residual is at most this x the median
+    capture_max_move: float = 0.1        # ... whose alignment moved them at most this x the median depth (m) ...
+    capture_max_rot_deg: float = 3.0     # ... and this many degrees
+    capture_means_lr_scale: float = 0.5
     train: TrainConfig = field(default_factory=TrainConfig)
 
 
@@ -335,7 +341,11 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
             continue
         tc = time.time()
         views = [by_id[i] for i in c.train_ids]
-        vb = _load_batch(views, depths, device)
+        kf_views = [v for v in views if v.id in kf_set]
+        ex_views = [v for v in views if v.id not in kf_set]
+        # extra (captured) views join in a second stage: their poses (odometry between keyframes) can be off by
+        # degrees, and trained or initialised from as they are they spread floaters that ruin the chunk
+        vb = _load_batch(kf_views if ex_views else views, depths, device)
         g_lo, g_hi = c.lo - margin, c.hi + margin
 
         def keep_fn(p, lo=g_lo, hi=g_hi):
@@ -348,6 +358,8 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
         local_scale = zmed
         log(f"chunk {c.index}: {len(views)} views ({len(c.core_ids)} core), {len(init['means'])} initial Gaussians")
         res = train_chunk(vb, init, cfg.train, local_scale, log=log)
+        if ex_views:
+            res = _second_stage(res, kf_views, ex_views, depths, cfg, local_scale, device, log)
         sp = {k: v.cpu() for k, v in res.splats.items()}
         if cfg.prune_opacity > 0:
             keep = torch.sigmoid(sp["opacities"]) >= cfg.prune_opacity
@@ -384,6 +396,65 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
             "config": {**{k: v for k, v in asdict(cfg).items() if k != "train"}, "train": asdict(cfg.train)},
             "image_size": [mv.views[0].width, mv.views[0].height]}
     return World(part, chunks, {v.id: v.T_wc.copy() for v in mv.views}, pose_delta, appearance, meta)
+
+
+def _second_stage(res, kf_views, ex_views, depths, cfg: "BuildConfig", scene_scale, device, log):
+    """Stage 2 of a chunk with extra (captured) views: align each extra view's pose photometrically against the
+    keyframe-trained Gaussians (as test views are aligned), drop the views that still do not fit (motion blur, people,
+    a failed alignment), then train on keyframes and kept views together, from the stage-1 Gaussians."""
+    import copy
+    import torch.nn.functional as F
+    t0 = time.time()
+    sp = res.splats
+    sh = cfg.train.sh_degree
+    kf_t = sorted((v.timestamp if v.timestamp is not None else 0.0, v.id) for v in kf_views)
+    aligned, resid, moves = [], [], []
+    for v in ex_views:
+        t = v.timestamp if v.timestamp is not None else 0.0
+        near = min(kf_t, key=lambda r: abs(r[0] - t))[1]
+        A = torch.from_numpy(res.appearance[near]).float().to(device)
+        gt = torch.from_numpy(v.image()).to(device).float() / 255.0
+        T0 = torch.from_numpy(v.T_wc).float().to(device)
+        K = torch.from_numpy(v.K).float().to(device)
+        T = align_pose(sp, T0, K, v.width, v.height, gt, sh, A, iters=cfg.capture_align_iters)
+        with torch.no_grad():
+            rgb, _, _, _ = render(sp, T[None], K[None], v.width, v.height, sh, render_mode="RGB")
+            rgb = apply_appearance(rgb, A[None]).clamp(0, 1)
+            resid.append(float((rgb[0] - gt).abs().mean()))
+        D = (torch.linalg.inv(T0) @ T).cpu().numpy()
+        moves.append((float(np.linalg.norm(D[:3, 3])),
+                      float(np.degrees(np.arccos(np.clip((np.trace(D[:3, :3]) - 1) / 2, -1, 1))))))
+        aligned.append(T.cpu().numpy().astype(np.float64))
+    resid = np.array(resid)
+    moves = np.array(moves)
+    ok = (resid <= cfg.capture_keep * np.median(resid)) & (moves[:, 0] <= cfg.capture_max_move * scene_scale) \
+        & (moves[:, 1] <= cfg.capture_max_rot_deg)
+    kept = []
+    for v, T, k in zip(ex_views, aligned, ok):
+        if k:
+            nv = copy.copy(v)
+            nv.T_wc = T
+            kept.append(nv)
+    # keyframes at their stage-1 refined poses, kept extra views at their aligned poses
+    kfs = []
+    for v in kf_views:
+        nv = copy.copy(v)
+        nv.T_wc = v.T_wc @ res.pose_delta[v.id]
+        kfs.append(nv)
+    log(f"  stage 2: aligned {len(ex_views)} extra views in {time.time() - t0:.0f}s (pose change median "
+        f"{np.median(moves[:, 0]):.3f} m / {np.median(moves[:, 1]):.2f} deg, p90 {np.percentile(moves[:, 0], 90):.3f} m / "
+        f"{np.percentile(moves[:, 1], 90):.2f} deg), kept {len(kept)}")
+    vb = _load_batch(kfs + kept, depths, device)
+    tcfg = copy.deepcopy(cfg.train)
+    tcfg.means_lr *= cfg.capture_means_lr_scale
+    res2 = train_chunk(vb, {k: v.detach() for k, v in sp.items()}, tcfg, scene_scale, log=log)
+    # a keyframe's correction: stage 1, then stage 2
+    pd = {v.id: res.pose_delta[v.id] @ res2.pose_delta[v.id] for v in kf_views}
+    pd.update({v.id: res2.pose_delta[v.id] for v in kept})
+    st = dict(res2.stats, stage1=res.stats, n_extra=len(ex_views), n_extra_kept=len(kept), align_s=round(time.time() - t0, 1),
+              extra_move_median=[float(np.median(moves[:, 0])), float(np.median(moves[:, 1]))])
+    st["train_s"] = round(res.stats["train_s"] + res2.stats["train_s"], 1)
+    return TrainResult(res2.splats, pd, res2.appearance, st)
 
 
 def _backproject_np(depth, K, T_wc, stride=4):
