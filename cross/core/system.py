@@ -782,6 +782,12 @@ class System:
             "hypo_data": hypo_data,
             "class_vars": class_vars,
             "current_atlas_id": self.current_atlas.id if hasattr(self, 'current_atlas') else None,
+            # intrinsics of the stored keyframe images (after the mode's resize / crop) and the stereo rig: what a
+            # reader of the map needs to use its images geometrically (cross_world); load_map does not read it
+            "camera": {"K": np.asarray(self.camera.K, dtype=np.float64).tolist(),
+                       "width": int(self.camera.frame_width), "height": int(self.camera.frame_height),
+                       "T_right_in_left": (np.asarray(self.T_right_in_left, dtype=np.float64).tolist()
+                                           if self.T_right_in_left is not None else None)},
         }
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
