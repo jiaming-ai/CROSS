@@ -327,6 +327,9 @@ class System:
         if lc_cfg.async_pgo and self._lc_verifier is not None:
             from cross.core.async_pgo import AsyncPgo
             self._apgo = AsyncPgo(self, lag_steps=lc_cfg.async_pgo_lag_steps, min_job_s=lc_cfg.async_pgo_min_s)
+            logger.info("Pose-graph optimisation: " + (
+                "adaptive (short ones in the front end, long ones in a background worker)" if self._apgo.lag < 0 else
+                f"background, result applied {self._apgo.lag} steps after the trigger"))
         # Initialize async loop-closure engine (latest-wins), if enabled
         self._pgo_apply_queue: 'queue.Queue' = queue.Queue(maxsize=lc_cfg.queue_size)
         self._lc_engine = None
@@ -363,6 +366,13 @@ class System:
             self.pose_est.set_camera(camera.K, camera.frame_width, camera.frame_height)
         if self._kf_quality is not None:
             self._kf_quality.set_stereo(camera.K, T_right_in_left)
+        # input frames kept for a 3D reconstruction of the map (mapping.world_capture, off by default)
+        self._world_capture = None
+        wc = self.config.mapping.world_capture
+        if wc.enabled:
+            from cross.core.world_capture import WorldCapture
+            self._world_capture = WorldCapture(wc, original_camera.K, original_camera.frame_width,
+                                               original_camera.frame_height, T_right_in_left)
 
         ################ visualization ################
         if visualizer is not None:
@@ -751,6 +761,9 @@ class System:
                 except Exception as ex:   # the map is saved as it is rather than not at all
                     logger.warning(f"Final optimisation of the map failed: {ex}")
 
+        if self._lc_verifier is not None:
+            logger.info(f"Verified loop closure statistics: {dict(self._lc_verifier.stats)}"
+                        + (f"; background optimisation: {dict(self._apgo.stats)}" if self._apgo is not None else ""))
         logger.info(f"Saving map to {save_path}...")
 
         # Create directory if it doesn't exist
@@ -782,6 +795,9 @@ class System:
             "hypo_data": hypo_data,
             "class_vars": class_vars,
             "current_atlas_id": self.current_atlas.id if hasattr(self, 'current_atlas') else None,
+            # intrinsics of the stored keyframe images (after the mode's resize / crop) and the stereo rig: what a
+            # reader of the map needs to use its images geometrically (cross_world); load_map does not read it
+            "camera": self._camera_record(),
         }
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
@@ -838,6 +854,8 @@ class System:
         else:
             raise ValueError(f"storage.format: v2 | pickle, not {scfg.format}")
 
+        if getattr(self, "_world_capture", None) is not None:
+            self._world_capture.save(save_path)
         logger.info(f"Map saved successfully to {save_path}")
         n_rec = map_store.count_records
         logger.info(f"  - Saved {len(db_data['keyframes'])} permanent keyframes")
@@ -848,6 +866,16 @@ class System:
         logger.info(f"  - Tracking state (GMM dist, metadata) NOT saved - will re-initialize on first step")
 
         # Note: planning system (sparse graph) will be rebuilt on load if enabled
+
+    def _camera_record(self):
+        """Intrinsics of the stored keyframe images and the stereo rig, as saved with the map (None without a camera)."""
+        cam = getattr(self, "camera", None)
+        if cam is None:
+            return None
+        T = getattr(self, "T_right_in_left", None)
+        return {"K": np.asarray(cam.K, dtype=np.float64).tolist(), "width": int(cam.frame_width),
+                "height": int(cam.frame_height),
+                "T_right_in_left": np.asarray(T, dtype=np.float64).tolist() if T is not None else None}
 
     def session_localized(self) -> bool:
         """Whether hypothesis 0 is expressed in the frame of the stored map.
@@ -954,6 +982,8 @@ class System:
         self._contra_pending.clear()
         self._last_retrieved_results = None
 
+        if getattr(self, "_world_capture", None) is not None:
+            self._world_capture.load(load_path)
         if getattr(self, "_geo", None) is not None and save_data.get("geo"):
             self._geo.load_state(save_data["geo"])
             if self._geo.anchored:
@@ -1045,11 +1075,33 @@ class System:
                 self._step_async(obs, **kwargs)
             else:
                 self._step_sync(obs, **kwargs)
+            if getattr(self, "_world_capture", None) is not None:
+                self._capture_frame(obs)
 
         if kwargs.get("get_current_kf", False):
             return {
                 "current_kf": self.get_current_kf(),
             }
+
+    def _capture_frame(self, obs: dict) -> None:
+        """Keep this input frame for a 3D reconstruction (mapping.world_capture) when the pose moved enough since
+        the last kept frame and hypothesis 0 is a pose in the stored map.  Never fails the step."""
+        cap = self._world_capture
+        try:
+            if obs.get("rgb") is None or self.hypothesis_manager.dist is None or not self.session_localized():
+                return
+            T = self.get_current_pose().matrix().detach().cpu().numpy().astype(np.float64)
+            kf = self.hypothesis_manager.nodes.get(self.last_added_kf_id)
+            new_kf = (kf is not None and not kf.temporary and kf.timestamp is not None
+                      and obs.get("timestamp") is not None and float(kf.timestamp) == float(obs["timestamp"]))
+            if not cap.wants(T, new_kf):
+                return
+            from cross.core.world_capture import anchor_candidates
+            cap.add(T, anchor_candidates(self, T, cap.cfg.anchors), obs, obs.get("timestamp"))
+        except Exception as ex:
+            if not getattr(self, "_capture_warned", False):
+                logger.warning(f"world capture failed (frames are not kept): {ex}")
+                self._capture_warned = True
 
     def _step_async(
         self,
@@ -1730,6 +1782,17 @@ class System:
             done = self._verified_lc_optimise(ret, new_keys, window_ref)
             ap.observe(time.perf_counter() - t0, nv)
             return done
+        W = int(self.config.mapping.loop_closure.async_pgo_provisional_kf)
+        if W > 0 and ap.lag not in (0, 1) and nv > 2 * W:
+            # a fast optimisation of the latest keyframes first, so that the frames processed while the full one runs see a
+            # map that is already roughly corrected (the consistency tests compare poses across the loop error)
+            t0 = time.perf_counter()
+            hm = self.hypothesis_manager
+            ids = sorted(hm.nodes)
+            margin = int(self.config.mapping.loop_closure.pgo_window_margin)
+            info = hm.handle_loop_closure(0, apply=True, window_ref=ids[max(0, len(ids) - W + margin)])
+            ap.stats["provisional"] = ap.stats.get("provisional", 0) + int(bool(info.get("success")))
+            ap.stats["provisional_s"] = ap.stats.get("provisional_s", 0.0) + time.perf_counter() - t0
         ap.submit(new_keys, window_ref, step, loop_keys=loop_keys)
         self._last_pgo_step = step
         if ap.lag == 0:

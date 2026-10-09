@@ -243,6 +243,11 @@ class LoopClosureConfig:
     # synchronous path.  The expectation is the number of keyframes the optimisation covers (its window) times the cost
     # per keyframe seen so far (50 us to start with).  Not used with a lag >= 0.
     async_pgo_min_s: float = 0.1
+    # before a job is forked (lag != 0, 1; a job of more than twice this many keyframes), the latest this-many keyframes are
+    # optimised in the front end (a windowed optimisation of ~0.2 s), so that the frames processed while the job runs see a
+    # roughly corrected map: the consistency tests compare poses across the loop error and otherwise reject edges that
+    # the corrected map would accept (NCLT 6.4 km, free-running: map ATE 4.1-4.4 m -> 3.72 m, synchronous 3.68 m).  0: off.
+    async_pgo_provisional_kf: int = 1000
     # "verified": consistency-tested loop closure of hypothesis 0 (cross/core/lc_verify.py) with calibrated noise in
     #             the pose-graph optimisation; one decision parameter (`confidence`, chi-square level, 6 dof).
     # "heuristic": the intra-hypothesis PGO of 2026-09-08 (intra_* parameters below) with the system's own stds.
@@ -685,6 +690,23 @@ class KeyframeQualityConfig:
 
 
 @dataclass
+class WorldCaptureConfig:
+    """Input frames kept for a later 3D reconstruction of the map (cross/core/world_capture.py, cross_world): every
+    `min_translation` m / `min_rotation_deg` deg, at the input resolution and uncropped, posed relative to their nearest
+    permanent keyframes, saved next to the map (map.pkl.capture/), not in its database.  Off by default: it only
+    costs disk (KITTI 07 stereo, every frame: 0.38 GB of JPEG) and a synchronous image encode per captured frame."""
+    enabled: bool = False
+    min_translation: float = 0.25
+    min_rotation_deg: float = 5.0
+    max_side: int = 0                   # downscale the longer side to this (0: input resolution)
+    image_codec: str = "jpeg"           # jpeg | png | webp
+    image_quality: int = 95
+    depth: bool = True                  # keep the input depth (RGB-D)
+    right: bool = True                  # keep the right image (stereo)
+    anchors: int = 3                    # nearest permanent keyframes the pose is held relative to
+
+
+@dataclass
 class MappingConfig:
     kf_gmm_n_components: int = 5
     kf_retrieval_threshold_new_kf: float = 0.75
@@ -698,6 +720,7 @@ class MappingConfig:
     hypothesis: HypothesisConfig = field(default_factory=HypothesisConfig)
     topo: TopoConfig = field(default_factory=TopoConfig)
     keyframe_quality: KeyframeQualityConfig = field(default_factory=KeyframeQualityConfig)
+    world_capture: WorldCaptureConfig = field(default_factory=WorldCaptureConfig)
 
 
 @dataclass

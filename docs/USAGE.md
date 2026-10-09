@@ -108,6 +108,7 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | file | use |
 |---|---|
 | `configs/stereo.yaml` | stereo mode preset (loaded by `--mode stereo`): VGGT-Omega, observation gating |
+| `configs/realtime.yaml` | opt-in (`--config`) for real-time operation: adaptive pose-graph optimisation, short ones synchronous (as offline), long ones in a background worker (see "Background pose-graph optimisation"); not for offline runs and benchmarks |
 | `configs/stereo_lowband.yaml` | opt-in (`--config`) for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away), not with `--fast` |
 | `configs/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius); `outdoor_noown.yaml` is its variant for the same scale |
 | `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
@@ -128,7 +129,7 @@ A view that is only textureless (a white wall) is kept unless it shows no struct
 default; `--set mapping.keyframe_quality.enabled=false` turns it off. The test set with injected junk views is
 `benchmark/datasets/inject_junk.py` (`benchmark/dev.py ... --tier occ`).
 
-**Background pose-graph optimisation** (`mapping.loop_closure.async_pgo`, off by default; `cross/core/async_pgo.py`).
+**Background pose-graph optimisation** (`mapping.loop_closure.async_pgo`, off by default; `cross/core/async_pgo.py`; the profile `--config configs/realtime.yaml` switches it on: offline runs keep the synchronous default, real-time runs adapt to the map size).
 On a large map one loop-closure optimisation takes seconds, and the front end processes no frame meanwhile. With
 `--set mapping.loop_closure.async_pgo=true` the optimisation of a verified loop closure (and the GNSS-triggered one)
 runs in a forked worker process: it works on a copy-on-write snapshot of the system, and the front end keeps processing
@@ -144,8 +145,10 @@ profile) graphs stay synchronous. Details:
   not done), so the run is reproducible. `0` is the synchronous behaviour and `1` (the start of the next step, nothing
   processed in between) gives the same map; both are bit-identical to `async_pgo=false` (only the pose reported for the
   frame that closes the loop is one correction behind with `1`). Larger lags and the free-running mode process frames on
-  the uncorrected map meanwhile and change the results: equal within noise on the dev split and ROVER, about +0.6 m map ATE
-  on the 6.4 km NCLT drive (`outputs/2026-10-08_async_pgo/REPORT.md`), against a longest step of 1.9 s instead of 3-4 s.
+  the uncorrected map meanwhile and change the results: equal within noise on the dev split and ROVER and (with the
+  tail smoothing and the provisional optimisation of the latest `async_pgo_provisional_kf` = 1000 keyframes before the fork)
+  on the 6.4 km NCLT drive (3.72 m vs 3.68 m synchronous; `outputs/2026-10-08_async_pgo/REPORT.md`), with no optimisation-related
+  stall over 1 s.
   Use `1` to test, keep the mode off for benchmarks.
 - One job at a time; loop closures detected meanwhile are re-checked against the corrected poses when it has been applied.
   A merge of hypotheses, the final optimisation of a save and every other whole-graph operation wait for the job first.
@@ -344,7 +347,18 @@ Map files are written on the server at the paths the edge names.  `--online-pose
 session published at every frame (`map_meta.json` `online`), the number latency changes; `remote` in `map_meta.json` /
 `reloc_summary.json` holds the link's statistics (latency, uploads, server time per kind of message, timeline).
 
-## 7. Programmatic use
+## 7. 3D reconstruction of a map
+
+`cross_world/` trains a Gaussian-splatting scene from a saved map (novel views, web viewer), see
+[WORLD.md](WORLD.md). `--set mapping.world_capture.enabled=true` on a mapping run also keeps input frames at full
+resolution, uncropped, next to the map (`map.pkl.capture/`; the map itself is unchanged) for a later reconstruction.
+
+```bash
+python -m cross_world.cli build --map runs/k07/map.pkl --source $SEQ --out worlds/k07 --novel 150
+python -m cross_world.cli export --world worlds/k07/world.pt --map runs/k07/map.pkl --source $SEQ --out web/k07
+```
+
+## 8. Programmatic use
 
 ```python
 from cross.pipeline import build_session, mono_config_from_profile

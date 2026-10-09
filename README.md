@@ -44,6 +44,7 @@ it is still being extended.
 - **Topological planning** — Lightweight graph over keyframes with odometry and proximity edges; supports A\* and Dijkstra path planning.
 - **Visual place recognition** — Keyframe database with embedding-based retrieval for relocalization.
 - **Semantic memory** — Text-conditioned object search across the map using open-vocabulary detectors.
+- **3D reconstruction of a map** — `cross_world/` trains a Gaussian-splatting scene from a saved map's posed keyframes (chunked for large maps, anchored to the keyframes so it follows later map updates) and exports it to a web viewer; `mapping.world_capture` keeps extra full-resolution frames for it ([guide](docs/WORLD.md)).
 - **Verified loop closure** — prior, in-pass and posterior consistency tests at one chi-square level, with a noise model calibrated without ground truth from about a minute of the robot's own data.
 - **Stereo and mono modes** — learned multi-view relative poses with stereo scale anchors; colour-only operation with learned metric depth.
 - **Visual odometry** — optional DPVO motion source for every mode, so no odometry input is needed; with an IMU, the mono mode gets its metric scale from it (visual-inertial odometry, `cross/imu/`).
@@ -62,6 +63,7 @@ cross/
 ├── dataloader/     # Dataset loaders (R3D, ROS bag, OpenLORIS, TUM, posed RGB-D; stereo sequences)
 ├── utils/          # Math (Lie algebra, rotations), profiling, camera models
 └── visualization/  # Rerun-based 3D visualization, graph plotting
+cross_world/        # 3D Gaussian-splatting reconstruction of a saved map, export, web viewer (docs/WORLD.md)
 benchmark/          # Evaluation protocol, dataset converters, system runners, results page
 configs/            # Default, stereo, outdoor, noise and mono-profile configs
 docs/               # Usage guide

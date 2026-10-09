@@ -1,0 +1,12 @@
+# Real-time profile (opt-in: --config configs/realtime.yaml, layered after the mode's file): the pose-graph
+# optimisation adapts to the map instead of always running in the front end.  An optimisation expected to take less
+# than ~0.3 s (the keyframes it covers x the cost per keyframe measured so far; mapping.loop_closure.async_pgo_min_s and
+# twice the front end's cost of a fork) runs synchronously as in the default configuration, so small maps are identical
+# to an offline run; a longer one runs in a forked worker while the front end keeps processing frames (cross/core/async_pgo.py),
+# after a fast windowed optimisation of the latest 1000 keyframes.
+#   NCLT 6.4 km (outputs/2026-10-08_async_pgo): optimisation-related stalls over 1 s 69-76 -> 0, longest step 2.8-4.1 s
+#   -> 1.9-2.0 s, map ATE 3.72 m vs 3.68 +- 0.16 m synchronous.  Not for offline runs and benchmarks: when a late result
+#   lands depends on the machine's speed, so such a run is not reproducible (keep the default, or async_pgo_lag_steps: 1).
+mapping:
+  loop_closure:
+    async_pgo: true

@@ -63,6 +63,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "benchmark" / "datasets"))
 
 BASALT = os.environ.get("BASALT_VIO", "basalt_vio")
+# Basalt's EuRoC configuration with a 4-level image pyramid (EuRoC: 3).  With 3 levels the tracker loses the large image
+# motion of fast turns at 10 Hz (KITTI 00: 19 deg of heading lost in one turn, ATE 77 m) and the weak texture of the
+# night (ROVER night: velocity runaway, ATE 26 m); with 4 both are fixed (4.1 m, 1.9 m), SimChange improves
+# (mean ATE 0.18 -> 0.10 m) and the other sequences stay within noise (outputs/2026-10-09_basalt_fix)
+DEFAULT_BASALT_OVERRIDES = {"optical_flow_levels": 4}
 OKVIS2 = os.environ.get("OKVIS2_APP", "okvis_app_synchronous")
 
 
@@ -349,7 +354,7 @@ def run_basalt(seq: ViSequence, work: Path, args) -> tuple[dict, dict]:
     calib = work / "basalt_calib.json"
     calib.write_text(json.dumps(basalt_calib(seq), indent=1))
     tmpl = Path(args.basalt_config) if args.basalt_config else Path(BASALT).resolve().parents[2] / "data/euroc_config.json"
-    over = dict(json.loads(args.basalt_overrides)) if args.basalt_overrides else {}
+    over = {**DEFAULT_BASALT_OVERRIDES, **(json.loads(args.basalt_overrides) if args.basalt_overrides else {})}
     cfg = work / "basalt_config.json"
     cfg.write_text(json.dumps(basalt_config(tmpl, over), indent=1))
     cmd = [BASALT, "--dataset-path", str(work), "--cam-calib", str(calib), "--dataset-type", "euroc",
@@ -573,9 +578,10 @@ def main():
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--jobs", type=int, default=1, help="sequences in parallel")
     ap.add_argument("--timeout", type=float, default=4 * 3600)
-    ap.add_argument("--basalt-config", default=None, help="Basalt config template (default: data/euroc_config.json)")
-    ap.add_argument("--basalt-overrides", default=None, help='JSON of config keys without "config.", e.g. '
-                                                             '\'{"vio_max_kfs": 7}\'')
+    ap.add_argument("--basalt-config", default=None, help="Basalt config template (default: data/euroc_config.json, "
+                                                          "with DEFAULT_BASALT_OVERRIDES)")
+    ap.add_argument("--basalt-overrides", default=None, help='JSON of config keys without "config." applied over the '
+                                                             'defaults (DEFAULT_BASALT_OVERRIDES), e.g. \'{"vio_max_kfs": 7}\'')
     ap.add_argument("--okvis-config", default=None, help="OKVIS2-X config template (default: config/euroc/okvis2.yaml)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--keep-work", action="store_true")

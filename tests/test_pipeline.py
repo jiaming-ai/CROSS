@@ -191,3 +191,19 @@ def test_mono_ff_shipped_defaults():
     assert [os.path.basename(f) for f in vgio] == ["mono_ff.yaml", "vgio.yaml"]
     assert load_config(*vgio).pose_est.ff.covis_source == "geometric"
     assert [os.path.basename(f) for f in mode_config_files("stereo", "vgio")] == ["stereo.yaml", "vgio.yaml"]
+
+
+def test_map_and_reloc_mono_loads_shipped_defaults():
+    """scripts/map_and_reloc.py (the stereo-image datasets' runner, also in mono mode) loads configs/mono_ff.yaml for
+    the mono mode's feed-forward estimator (it ignored it until 2026-10-09: KITTI / SimChange mono runs had no pair filter)."""
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parent.parent / "scripts" / "map_and_reloc.py"
+    spec = importlib.util.spec_from_file_location("map_and_reloc_script", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    base = ["--map", "m", "--query", "q", "--out", "o"]
+    cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "mono", "--mono-estimator", "ff", "--odometry", "vgio"]))
+    assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15 and cfg.mapping.hypothesis.strong_pass_frames == 3
+    cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo"]))
+    assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.0

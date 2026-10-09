@@ -61,7 +61,8 @@ def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
 def make_config(args) -> SystemConfig:
     # the mode's shipped configuration files (cross.pipeline.mode_config_files: configs/stereo.yaml, + stereo_fast.yaml
     # with --fast), then the user's --config; explicit options below win
-    configs = mode_config_files(args.mode, args.odometry, getattr(args, "fast", False) and args.estimator == "ff")
+    configs = mode_config_files(args.mode, args.odometry, getattr(args, "fast", False) and args.estimator == "ff",
+                                mono_estimator=getattr(args, "mono_estimator", None))
     configs += list(args.config or [])
     cfg = load_config(*configs) if configs else SystemConfig()
     cfg.async_update = False
@@ -407,7 +408,7 @@ def run_reloc(args, out: Path, meta: dict):
     return summary
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--map", required=True)
     ap.add_argument("--query", required=True)
@@ -464,6 +465,11 @@ def main():
     ap.add_argument("--odom-file", default=None, help="odometry file of the prepared folders to use instead of "
                     "odom_left.txt when present (e.g. odom_vio.txt from benchmark/datasets/prepare_vio.py)")
     ap.add_argument("--ff-meas-std", type=float, nargs=6, default=None, help="base measurement std [tx ty tz rx ry rz] of the FF estimator")
+    return ap
+
+
+def main():
+    ap = build_parser()
     args = ap.parse_args()
     if args.snr is not None and args.snr <= 0:
         args.snr = None        # perfect odometry
