@@ -90,3 +90,19 @@ def test_pairwise_covisibility_matches_per_destination_scores():
         src = [v for v in views if v != b]
         assert np.allclose(C[src, b], covisibility_scores(pred, src, b, grid=32), atol=1e-6)
     assert np.allclose(np.diag(C), 1.0)
+
+
+def test_covis_source_auto():
+    """auto = the head only when the checkpoint has a covisibility head with a covis_head_map, else geometric."""
+    from types import SimpleNamespace
+    from cross.core.config import FeedForwardConfig
+    from cross.cv.pose_est_ff import PoseEstFeedForward, auto_covis_source
+    assert FeedForwardConfig().covis_source == "auto"
+    est = object.__new__(PoseEstFeedForward)
+    for head, cmap, want in ((None, None, "geometric"), (object(), None, "geometric"), (object(), ([0, 1], [0, 1]), "head")):
+        est._auto_covis = auto_covis_source(SimpleNamespace(covis_head=head, covis_map=cmap))
+        assert est._auto_covis == want
+        assert est._covis_source(SimpleNamespace(covis_source="auto")) == want
+        assert est._covis_source(SimpleNamespace(covis_source="geometric")) == "geometric"
+        assert est._covis_source(SimpleNamespace(covis_source="min")) == "min"
+    assert auto_covis_source(SimpleNamespace()) == "geometric"           # e.g. the DA3 backend
