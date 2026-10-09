@@ -82,6 +82,8 @@ def main(argv=None):
     ap.add_argument("--source", default=None)
     ap.add_argument("--max-side", type=int, default=None)
     ap.add_argument("--deg", type=float, default=10.0)
+    ap.add_argument("--revisit-m", type=float, default=50.0, help="a test view is in a revisited place when a keyframe "
+                    "of a part of the run 30 %% of its length away is this close")
     ap.add_argument("--out", default=None)
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args(argv)
@@ -96,19 +98,37 @@ def main(argv=None):
                       source_index=v.source_index, _image=v._image, _depth=v._depth) for v in test]
     res = {"deg": args.deg, "keyframe_shift_m": {"median": float(np.median(moved)), "max": float(moved.max())}}
     print(f"bend {args.deg} deg: keyframes move {np.median(moved):.2f} m median, {moved.max():.2f} m max")
-    res["reference"] = evaluate(world, test, args.device, align=True, kf_times=kf_times)["summary"]
-    res["stale"] = evaluate(world, bent_test, args.device, align=True, kf_times=kf_times)["summary"]
-    res["rigid"] = evaluate(rigid_chunks(world, new), bent_test, args.device, align=True, kf_times=kf_times)["summary"]
-    w = copy.deepcopy(world)
-    info = w.repose(new)
-    res["anchored"] = evaluate(w, bent_test, args.device, align=True, kf_times=kf_times)["summary"]
-    res["anchored"]["max_move_m"] = info["max_move_m"]
+    # test views where the trajectory revisits itself (a keyframe within `revisit_m` from another part of the run):
+    # a drifted map is inconsistent there (the two passes disagree), whatever the reconstruction does
+    vs = sorted(mv.views, key=lambda v: (v.timestamp if v.timestamp is not None else v.id))
+    c = np.array([v.center for v in vs])
+    sfrac = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(c, axis=0), axis=1))])
+    sfrac /= max(sfrac[-1], 1e-9)
+    pos = {v.id: i for i, v in enumerate(vs)}
+    revisit = {}
+    for v in test:
+        d = np.linalg.norm(c - v.center, axis=1)
+        revisit[v.id] = bool(np.any((d < args.revisit_m) & (np.abs(sfrac - sfrac[pos[v.id]]) > 0.3)))
+    rows = {}
+    for name, w_, views in (("reference", world, test), ("stale", world, bent_test),
+                            ("rigid", rigid_chunks(world, new), bent_test), ("anchored", None, bent_test)):
+        if w_ is None:
+            w_ = copy.deepcopy(world)
+            res["anchored_max_move_m"] = w_.repose(new)["max_move_m"]
+        r = evaluate(w_, views, args.device, align=True, kf_times=kf_times)
+        res[name] = r["summary"]
+        rows[name] = r["rows"]
+        keep = [x for x in r["rows"] if not revisit[x["id"]]]
+        res[name + "_no_revisit"] = {k: float(np.mean([x[k] for x in keep])) for k in ("psnr_aligned", "ssim_aligned", "lpips_aligned")}
+    res["n_revisit"] = int(sum(revisit.values()))
+    res["rows"] = {k: [{"id": x["id"], "psnr_aligned": x["psnr_aligned"], "revisit": revisit[x["id"]]} for x in v] for k, v in rows.items()}
     out = Path(args.out or Path(args.world).parent / f"repose_{args.deg:g}deg.json")
     out.write_text(json.dumps(res, indent=1))
     for k in ("reference", "stale", "rigid", "anchored"):
-        s = res[k]
-        print(f"{k:9s}  as posed PSNR {s['psnr_raw']:.2f} SSIM {s['ssim_raw']:.3f}   aligned PSNR {s['psnr_aligned']:.2f} "
-              f"SSIM {s['ssim_aligned']:.3f} LPIPS {s.get('lpips_aligned', float('nan')):.3f}")
+        s, n = res[k], res[k + "_no_revisit"]
+        print(f"{k:9s}  all {len(test)}: aligned PSNR {s['psnr_aligned']:.2f} SSIM {s['ssim_aligned']:.3f} "
+              f"LPIPS {s.get('lpips_aligned', float('nan')):.3f}   without the {res['n_revisit']} revisit views: "
+              f"PSNR {n['psnr_aligned']:.2f} SSIM {n['ssim_aligned']:.3f} LPIPS {n['lpips_aligned']:.3f}")
 
 
 if __name__ == "__main__":
