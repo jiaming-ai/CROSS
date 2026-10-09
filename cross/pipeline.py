@@ -480,8 +480,6 @@ def vgio_frontend(K, mc, mode, T_right_in_left=None, device="cuda", system=None,
                                visual_rotation=mc.imu.vgio_visual_rotation, graph=mc.imu.vgio_graph,
                                T_right_in_left=T_right_in_left if mode == "stereo" else None, **service)
     frontend.standalone = False
-    if system is not None:
-        frontend.calib_store = system            # its odometry_calib: the learned-depth offset kept with the map
     return frontend
 
 

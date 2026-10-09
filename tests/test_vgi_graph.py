@@ -52,14 +52,12 @@ def _window(samples, td, a0, a1):
 
 
 def _drive(graphs, cfg_kw, seed=0, seconds=24.0, every=3, K=6, outliers=True, check=None, need_std=True,
-           link_bias=0.01, offset=0.0, rot_noise=0.003, turn_period=23.0, stereo_std=None, truth=None, depth=None,
-           learned=None):
+           link_bias=0.01, offset=0.0, rot_noise=0.003, turn_period=23.0, stereo_std=None, truth=None):
     """Feed the same synthetic measurements to every graph; check(graphs, stage) after each solve / marginalize.
     offset: the IMU's stamps are this early (camera = IMU clock + offset); a graph estimating the offset gets the
     samples at its current estimate, preintegrated again when it moves (as the frontend does).  stereo_std: each pass's
     scale observed by a stereo pair with this log noise instead of learned depth (every 7th one off by log 2 when
-    outliers).  truth: filled with the true log scale of each node's pass.  depth: per graph, whether it gets the
-    learned depth (default all).  learned: filled with each node's learned-depth observation."""
+    outliers).  truth: filled with the true log scale of each node's pass."""
     fps = 10.0
     poses = robot_path(seconds, fps, seed, 0.6, turn_period)
     rng = np.random.default_rng(seed + 11)
@@ -106,17 +104,14 @@ def _drive(graphs, cfg_kw, seed=0, seconds=24.0, every=3, K=6, outliers=True, ch
                 Tr = np.linalg.inv(poses[fp]) @ poses[f]
                 g.add_rotation(node[fp], i, Tr[:3, :3] @ noise[0][0], rot_noise)
                 g.add_link(i, node[fp], np.log(s_true / scale[fp]) + link_bias)
-        for k, (g, i) in enumerate(zip(graphs, ids)):
+        for g, i in zip(graphs, ids):
             if stereo_std is None:
-                if depth is None or depth[k]:
-                    g.add_depth(i, da3, 0.15)
+                g.add_depth(i, da3, 0.15)
             else:
                 e = rng.normal(0, stereo_std) + (np.log(2.0) if outliers and n % 7 == 3 else 0.0)
                 g.add_stereo(i, np.log(s_true) + e, stereo_std)
         if truth is not None:
             truth[ids[0]] = np.log(s_true)
-        if learned is not None:
-            learned[ids[0]] = da3
         node[f], scale[f] = ids[0], s_true
         if n > 0:
             for g in graphs:
@@ -220,28 +215,6 @@ def test_scale_of_a_simulated_drive():
     f = frames[-1]
     path = float(np.linalg.norm(np.diff(poses[:f + 1, :3, 3], axis=0), axis=1).sum())
     assert np.linalg.norm(g.p[node[f]] - (poses[f, :3, 3] - poses[0, :3, 3])) < 0.1 * path
-
-
-def test_twin_without_learned_depth_measures_its_bias():
-    """IMU-arbitrated learned-depth calibration (vgio_depth_calib): a twin graph given every factor but the learned
-    depth (1.5x off) has the true scale from the IMU and the passes, so learned depth minus the twin's scale, where the
-    twin is certain, is the learned depth's bias (log 1.5)."""
-    main = VgiGraph(replace(GraphConfig(), window=20, depth_bias=True, depth_bias_std=0.05), np.eye(4), 1.1e-3, 1.2e-2)
-    twin = VgiGraph(replace(GraphConfig(), window=20, depth_bias=False), np.eye(4), 1.1e-3, 1.2e-2)
-    truth, learned, samples = {}, {}, []
-
-    def check(graphs, stage):
-        if stage.startswith("solve"):
-            j = twin.ids[-1]
-            std = twin.last_info.get("lam_std", np.inf)
-            if np.isfinite(std) and std < 0.1:
-                samples.append((learned[j] - twin.lam[j], twin.lam[j] - truth[j]))
-    _drive([main, twin], {}, seconds=40.0, outliers=False, link_bias=0.0, truth=truth, learned=learned,
-           depth=[True, False], check=check)
-    s = np.array(samples)
-    assert len(s) >= 20                                          # the IMU observes the scale on this path
-    assert abs(np.median(s[:, 0]) - np.log(1.5)) < 0.05          # the learned-depth bias
-    assert np.median(np.abs(s[:, 1])) < 0.1                      # the twin's scale where it is certain
 
 
 @pytest.mark.parametrize("offset", [0.0, 0.03, -0.02])

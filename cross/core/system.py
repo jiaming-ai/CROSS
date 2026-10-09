@@ -272,9 +272,6 @@ class System:
 
         # GNSS / compass anchoring of the map (cross/geo); None without `geo.enabled`: the system is unchanged
         self._geo = None
-        # calibration of the odometry source that belongs to the place, kept with the map (the VGGT-inertial
-        # odometry's learned-depth offset, vgio_depth_calib): the source writes it, a later session starts from it
-        self.odometry_calib = {}
         if self.config.geo.enabled:
             from cross.geo.manager import GeoManager
             self._geo = GeoManager(self.config.geo, lc_confidence=self.config.mapping.loop_closure.confidence,
@@ -790,8 +787,6 @@ class System:
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
             save_data["geo"] = self._geo.state()
             save_data["geo"]["keyframe_lla"] = self._geo.lla_columns(self._geo.keyframe_lla(self.hypothesis_manager.nodes))
-        if getattr(self, "odometry_calib", None):
-            save_data["odometry_calib"] = dict(self.odometry_calib)
         # local consistency of the map from its own posterior residuals (no ground truth): the map-consistency
         # model of the verified loop closure in later sessions
         if self._lc_verifier is not None:
@@ -963,11 +958,6 @@ class System:
             self._geo.load_state(save_data["geo"])
             if self._geo.anchored:
                 logger.info(f"geo: map anchor loaded (origin {self._geo.frame.lat0:.6f}, {self._geo.frame.lon0:.6f})")
-
-        # --- 4a. calibration of the odometry source stored with the map ---
-        if save_data.get("odometry_calib"):
-            self.odometry_calib = dict(save_data["odometry_calib"])
-            logger.info(f"Odometry calibration from the map: {self.odometry_calib}")
 
         # --- 4b. map-consistency model stored with the map (verified loop closure) ---
         if self._lc_verifier is not None and save_data.get("map_consistency"):
