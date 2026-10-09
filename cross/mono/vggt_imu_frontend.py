@@ -108,8 +108,6 @@ class VggtImuFrontend:
         self.graph = None
         self.g_rep = None                        # gravity in the reported frame
         self.rotation_gate_deg_graph = 2.0       # deg: a pass whose rotation disagrees with the gyro's is not used
-        # adaptive measurement times: (min frames, max frames, min translation m, min rotation deg), or None
-        self.adaptive = None
         # measurements aligned with the back end's observations (pipeline): (min frames, frames before an own pass)
         self.align = None
         # optional tracked features (vgio_klt): corners detected on each measured frame and tracked frame to frame
@@ -215,7 +213,7 @@ class VggtImuFrontend:
                            trans_sigma_predicted=ic.vgio_trans_sigma_predicted, robust_links=ic.vgio_robust_links,
                            trans_sigma_bound=ic.vgio_trans_sigma_bound, debug_costs=ic.vgio_debug_costs,
                            depth_bias_drift=ic.vgio_depth_bias_drift,
-                           gyro_bias_walk=c.gyro_random_walk if ic.vgio_calib_gyro_walk else ic.vgio_gyro_bias_walk)
+                           gyro_bias_walk=ic.vgio_gyro_bias_walk)
         self.graph = VgiGraph(gcfg, c.T_cam_imu, c.gyro_noise_density, c.accel_noise_density)
         self.graph.td = self.graph.td_init = self.time_offset
         if ic.vgio_graph_time_offset:
@@ -269,8 +267,6 @@ class VggtImuFrontend:
             t0 = perf_counter()
             self._klt_track(rgb)
             self.stats["t_klt"] = self.stats.get("t_klt", 0.0) + perf_counter() - t0
-        if ic.vgio_adaptive and self.adaptive is None:
-            self.adaptive = (ic.vgio_min_interval, ic.vgio_max_interval, ic.vgio_min_translation, ic.vgio_min_rotation_deg)
         self._add_imu(frame)
         f = self.scale_filter
         # the internal pose reported for the last frame: a visual measurement since then moved the internal state, and
@@ -344,23 +340,11 @@ class VggtImuFrontend:
 
     # ------------------------------------------------------------------ requests
     def _due(self, index):
-        """A visual measurement is due after `interval` frames, or (adaptive) once the camera moved min_translation m
-        or turned min_rotation deg since the last one, between min_interval and max_interval frames."""
+        """A visual measurement is due after `interval` frames."""
         pm = self._pred["m"]
         if pm is None:
             return True
-        k = index - pm[0]
-        ad = self.adaptive
-        if ad is None or not self.scale_filter.initialized:
-            return k >= self.interval
-        if k < ad[0]:
-            return False
-        if k >= ad[1]:
-            return True
-        T_m, _ = self._hist_pose(pm[0])
-        moved = float(np.linalg.norm(self.p_cam - T_m[:3, 3]))
-        turned = _angle_deg(T_m[:3, :3].T @ self.R_wc)
-        return moved >= ad[2] or turned >= ad[3]
+        return index - pm[0] >= self.interval
 
     def _new_request(self, rgb, right, timestamp, conditional=False):
         """A visual measurement of the current frame b from the frame the chain will have measured last (m): the request
@@ -630,37 +614,6 @@ class VggtImuFrontend:
         w_img = disp / (float(self.K[0, 0]) * (a1 - a0))            # rad/s: the rotation the images allow
         return mean, np.sqrt(k2 * std ** 2 + w_img ** 2), info | {"ok": True, "k": round(float(np.sqrt(k2)), 2)}
 
-    def _noise_hat(self, gyro_mb, vggt_mb, klt, dt):
-        """The rotation noise of the gyro, the tracked corners and the passes from their disagreements over the same
-        intervals ("three-cornered hat"): with independent errors the variance of each pair's difference is the sum of
-        their variances, so var_a = (s_ab^2 + s_ac^2 - s_bc^2) / 2 (s: robust per-axis std, the median of the angle
-        norm / 1.538).  Sets the gyro's noise density for the next IMU factors; returns the corners' factor (R, std), or
-        None before 20 triplets."""
-        if vggt_mb is None or self.klt_last is None:
-            return None
-        G = self.graph
-        R_k, inliers = self.klt_last
-        R_v = vggt_mb
-        if G.cfg.rot_scale:
-            R_v = _exp_rot(_so3_log(vggt_mb) * np.exp(-G.kappa))
-        hat = self.hat = (getattr(self, "hat", []) + [(_angle_deg(gyro_mb.T @ R_k), _angle_deg(gyro_mb.T @ R_v),
-                                                         _angle_deg(R_k.T @ R_v), inliers, dt)])[-100:]
-        if len(hat) < 20:
-            return None
-        h = np.array(hat)
-        s2 = (np.median(h[:, :3], axis=0) / 1.538) ** 2                     # gk, gv, kv
-        floor = 0.02 ** 2
-        var_g = max((s2[0] + s2[1] - s2[2]) / 2, floor)
-        var_k = max((s2[0] + s2[2] - s2[1]) / 2, floor)
-        var_v = max((s2[1] + s2[2] - s2[0]) / 2, floor)
-        nominal = float(self.imu_calib.gyro_noise_density)
-        G.gyro_noise = float(np.clip(np.radians(np.sqrt(var_g)) / np.sqrt(np.mean(h[:, 4])), nominal / 10, nominal * 3))
-        # the passes keep their std: the hat measures them over one interval (0.3 s), and the same std would weight
-        # their keyframe pairs (2 s), which are several times worse (setting it: worse on 5 of 8 sequences)
-        n_med = float(np.median(h[:, 3]))
-        self.stats["hat_deg"] = [round(float(np.sqrt(v)), 3) for v in (var_g, var_k, var_v)]
-        return klt[0], float(np.radians(np.sqrt(var_k)) * np.sqrt(n_med / max(inliers, 30)))
-
     def _stereo_pnp(self, gyro_mb, gyro_sigma_deg, tracks, corner_z):
         """The metric pose of the current frame b in the last measured frame m from the corners tracked between them
         (vgio_klt; tracks: their positions on m and on b, their ids among the corners detected on m) and the stereo
@@ -730,18 +683,6 @@ class VggtImuFrontend:
         if diff > max(1.0, 3.0 * gyro_sigma_deg):              # the corners' rotation-only factor's test (1 deg)
             self.stats["pnp_rejected"] = self.stats.get("pnp_rejected", 0) + 1
             return None, info | {"ok": False, "reason": "gyro"}
-        if self.config.imu.vgio_stereo_pnp_rotation == "calibrated":
-            # the rotation's noise self-calibrated like the corners' rotation-only factor: the median disagreement with
-            # the gyro over the last 100 accepted ones (median of a 3-D error norm: 1.54 sigma per axis) as a floor of
-            # the analytic covariance, which knows the pixel and depth noise but not their systematic errors
-            self.pnp_diffs = (getattr(self, "pnp_diffs", []) + [diff])[-100:]
-            if len(self.pnp_diffs) >= 10:
-                s_r = np.radians(max(0.05, float(np.median(self.pnp_diffs)) / 1.54))
-                w, V = np.linalg.eigh(cov[0:3, 0:3])
-                extra = V @ np.diag(np.maximum(s_r ** 2 - w, 0.0)) @ V.T
-                cov = cov.copy()
-                cov[0:3, 0:3] += extra
-                info["rot_floor_deg"] = round(float(np.degrees(s_r)), 3)
         self.stats["pnp_used"] = self.stats.get("pnp_used", 0) + 1
         return (R_mb, t_mb, cov), info
 
@@ -796,12 +737,6 @@ class VggtImuFrontend:
         gyro_sigma_deg = float(np.degrees(np.sqrt(max(np.trace(pre.cov[0:3, 0:3]) / 3.0, 0.0))))
         pass_ok = vdiff <= max(self.rotation_gate_deg_graph, 3.0 * gyro_sigma_deg)
         self._rot_checks = (self._rot_checks + [bool(pass_ok)])[-5:]
-        if pass_ok and self.config.imu.vgio_online_noise:
-            # the passes' rotation noise, online: median disagreement with the gyro over the last 100 measurements
-            self.vggt_diffs = (getattr(self, "vggt_diffs", []) + [vdiff])[-100:]
-            if len(self.vggt_diffs) >= 10:
-                G.cfg.rot_std = np.radians(max(0.2, float(np.median(self.vggt_diffs)) / 1.54))
-                self.stats["vggt_rot_sigma_deg"] = round(float(np.degrees(G.cfg.rot_std)), 3)
         ratio, spread = s["link"]
         link_ok = bool(np.isfinite(ratio) and spread < 0.25)
         lam_init = stereo[0] if stereo is not None else G.lam[m_node] + (np.log(ratio) if link_ok else 0.0)
@@ -826,20 +761,16 @@ class VggtImuFrontend:
             pass_ok = False
             self.stats["trans_gated"] = self.stats.get("trans_gated", 0) + 1
         self.klt_last = None
-        pnp_rot = self.config.imu.vgio_stereo_pnp_rotation not in (False, "false", "none", 0)
         if pnp is not None:
             R_p, t_p, cov_p = pnp
-            if not pnp_rot:
-                # the translation only (its marginal covariance): the corners' rotation stays the essential matrix's
-                # factor below, whose noise is calibrated against the gyro
-                cov_p = cov_p.copy()
-                cov_p[0:3, :] = 0.0
-                cov_p[:, 0:3] = 0.0
-                cov_p[0:3, 0:3] = np.eye(3) * 1e4
+            # the translation only (its marginal covariance): the corners' rotation stays the essential matrix's
+            # factor below, whose noise is calibrated against the gyro
+            cov_p = cov_p.copy()
+            cov_p[0:3, :] = 0.0
+            cov_p[:, 0:3] = 0.0
+            cov_p[0:3, 0:3] = np.eye(3) * 1e4
             G.add_metric_relative(m_node, j, R_p, t_p, cov_p)
-        klt = self._klt_rotation(gyro_mb, tracks) if self.klt and (pnp is None or not pnp_rot) else None
-        if klt is not None and self.config.imu.vgio_noise_hat:
-            klt = self._noise_hat(gyro_mb, T_mb[:3, :3] if pass_ok else None, klt, a1 - a0) or klt
+        klt = self._klt_rotation(gyro_mb, tracks) if self.klt else None
         if klt is not None:
             G.add_rotation(m_node, j, *klt)
         rest = self._rest_rate(samples, pre, a0, a1, tracks) if self.klt and self.config.imu.vgio_zero_rate else None
