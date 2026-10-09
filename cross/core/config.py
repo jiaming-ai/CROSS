@@ -694,7 +694,7 @@ class WorldCaptureConfig:
     """Input frames kept for a later 3D reconstruction of the map (cross/core/world_capture.py, cross_world): every
     `min_translation` m / `min_rotation_deg` deg, at the input resolution and uncropped, posed relative to their nearest
     permanent keyframes, saved next to the map (map.pkl.capture/), not in its database.  Off by default: it only
-    costs disk (KITTI 07 stereo, every frame: ~0.3 GB of JPEG) and a few ms per captured frame."""
+    costs disk (KITTI 07 stereo, every frame: 0.38 GB of JPEG) and a synchronous image encode per captured frame."""
     enabled: bool = False
     min_translation: float = 0.25
     min_rotation_deg: float = 5.0
