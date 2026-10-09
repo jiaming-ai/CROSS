@@ -87,7 +87,7 @@ def isotonic(x, y, n_bins: int = 200):
             y2, w2, x2 = blocks.pop(); y1, w1, x1 = blocks.pop()
             blocks.append([(y1 * w1 + y2 * w2) / (w1 + w2), w1 + w2, x1 + x2])
     kx = np.array([b[2] / b[1] for b in blocks]); ky = np.array([b[0] for b in blocks])
-    return np.concatenate([[0.0], kx, [1.0]]), np.concatenate([[min(0.0, ky[0])], ky, [max(ky[-1], ky[-1])]])
+    return np.concatenate([[0.0], kx, [1.0]]), np.concatenate([[0.0], ky, [ky[-1]]])   # 0 -> 0, flat above the last knot
 
 
 def map_geo(G, a):
