@@ -1,0 +1,2 @@
+# Defaults of an RGB-D map (indoor): the code defaults. Free-space carving with sensor depth was mixed on home1-1
+# (-0.40 dB held-out, +0.12 dB between keyframes), so it stays off; there is no sky.
