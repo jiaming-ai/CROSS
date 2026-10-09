@@ -291,13 +291,17 @@ def apply_appearance(rgb: torch.Tensor, A: torch.Tensor) -> torch.Tensor:
 
 
 def finish(rgb: torch.Tensor, alpha: torch.Tensor, A: Optional[torch.Tensor] = None, sky=None,
-           dirs: Optional[torch.Tensor] = None, frozen: bool = False) -> torch.Tensor:
+           dirs: Optional[torch.Tensor] = None, frozen: bool = False, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
     """Pixel colour: the Gaussians (premultiplied colour, alpha) with the view's affine colour A, over the sky (a
-    SkyModel along `dirs`)."""
+    SkyModel along `dirs`); `mask` (C, H, W): the sky only behind these pixels (training: elsewhere the background
+    stays black, so that the direction-only texture cannot stand in for distant buildings)."""
     if A is not None:
         rgb = apply_appearance(rgb, A)
     if sky is not None:
-        rgb = rgb + (1 - alpha) * sky(dirs, frozen=frozen)
+        bg = sky(dirs, frozen=frozen)
+        if mask is not None:
+            bg = bg * mask[..., None]
+        rgb = rgb + (1 - alpha) * bg
     return rgb
 
 
@@ -429,7 +433,7 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
             dirs = pixel_dirs(T.detach(), vb.Ks[idx], vb.width, vb.height)
             sky.mark_seen(dirs, vb.sky[idx])
         A_b = app_emb(idx).view(-1, 3, 4) if cfg.app_opt else None
-        rgb = finish(rgb, alpha, A_b, sky, dirs)
+        rgb = finish(rgb, alpha, A_b, sky, dirs, mask=vb.sky[idx] if sky is not None else None)
         gt = vb.images[idx].float() / 255.0
         strategy.step_pre_backward(params, optimizers, state, step, info)
         l1 = (rgb - gt).abs().mean()
