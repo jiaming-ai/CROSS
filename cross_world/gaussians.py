@@ -50,6 +50,8 @@ class TrainConfig:
     depth_lambda: float = 0.2           # L1 on inverse depth (scaled by the median depth), decays 10x over training
     opacity_reg: float = 0.01           # MCMC regularisers
     scale_reg: float = 0.01
+    aniso_reg: float = 0.0              # penalty on needles: mean(relu(largest / middle scale - aniso_max))
+    aniso_max: float = 10.0
     pose_opt: bool = True
     pose_lr: float = 2e-4               # lazy Adam (only the batch's views): ~lr per time a view is sampled
     pose_reg: float = 1e-4
@@ -416,6 +418,9 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
         if cfg.strategy == "mcmc":
             loss = loss + cfg.opacity_reg * torch.sigmoid(params["opacities"]).mean() \
                 + cfg.scale_reg * torch.exp(params["scales"]).mean()
+        if cfg.aniso_reg > 0:
+            sc = torch.exp(params["scales"]).sort(1, descending=True).values
+            loss = loss + cfg.aniso_reg * torch.relu(sc[:, 0] / sc[:, 1].clamp(min=1e-9) - cfg.aniso_max).mean()
         if cfg.app_opt:
             loss = loss + cfg.app_reg * ((A_b - eye34) ** 2).mean()
         if cfg.pose_opt and cfg.pose_reg > 0:

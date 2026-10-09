@@ -201,7 +201,7 @@ def main(argv=None):
     cl.add_argument("--world", required=True)
     cl.add_argument("--out", required=True)
     cl.add_argument("--min-views", type=int, default=2)
-    cl.add_argument("--needle-ratio", type=float, default=30.0)
+    cl.add_argument("--needle-ratio", type=float, default=0.0)
     cl.add_argument("--eval", action="store_true")
     cl.set_defaults(fn=cmd_clean)
     r = sub.add_parser("repose")

@@ -105,7 +105,7 @@ def _split_by_size(sp, max_bytes: float, bytes_per: float):
 
 
 def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: int = 640, max_file_mb: float = 14.0,
-                 min_opacity: float = 0.02, ply: bool = False, metrics: Optional[dict] = None,
+                 min_opacity: float = 0.02, ply: bool = False, needle_ratio: float = 10.0, metrics: Optional[dict] = None,
                  renders_dir: Optional[Path] = None) -> dict:
     import cv2
     out = Path(out)
@@ -128,6 +128,14 @@ def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: i
             hi = torch.from_numpy(hh > cut)
             layers["near"] = {k: v[~hi] for k, v in nsp.items()}
             layers["above"] = {k: v[hi] for k, v in nsp.items()}
+        if needle_ratio > 0 and "near" in layers:
+            # needles (long along one axis only) render right from viewpoints like the training views and as streaks
+            # from far off them: a layer of their own, which the viewer hides in its overview
+            nsp = layers["near"]
+            sc = torch.exp(nsp["scales"].float()).sort(1, descending=True).values
+            nd = (sc[:, 0] / sc[:, 1].clamp(min=1e-9) > needle_ratio) & (sc[:, 0] > 0.02 * zmed)
+            layers["near"] = {k: v[~nd] for k, v in nsp.items()}
+            layers["needle"] = {k: v[nd] for k, v in nsp.items()}
         for layer, sp in layers.items():
             sp = _prune({k: v.float() for k, v in sp.items()}, min_opacity)
             if len(sp["means"]) == 0:

@@ -262,7 +262,7 @@ async function loadScene(entry) {
   applyToggles();
   renderStrip(W); renderGallery(W);
   const files = [];
-  for (const c of W.chunks) for (const layer of ["near", "above", "far"]) for (const f of (c.files[layer] || [])) files.push({ chunk: c.index, layer, file: f.file, n: f.n });
+  for (const c of W.chunks) for (const layer of ["near", "needle", "above", "far"]) for (const f of (c.files[layer] || [])) files.push({ chunk: c.index, layer, file: f.file, n: f.n });
   const startChunk = (W.keyframes.find((k) => !k.test) || W.keyframes[0] || {}).chunk;
   files.sort((a, b) => (a.chunk !== startChunk) - (b.chunk !== startChunk) || (a.layer === "far") - (b.layer === "far"));
   W.splatCount = files.reduce((a, f) => a + f.n, 0);
@@ -308,9 +308,10 @@ function updateFar(force) {
   for (const k of W.keyframes) { const d = (k.T[3] - p.x) ** 2 + (k.T[7] - p.y) ** 2 + (k.T[11] - p.z) ** 2; if (d < bd) { bd = d; best = k.chunk; } }
   if (best !== S.ownChunk || force) {
     S.ownChunk = best;
-    // overview: no ceiling ("above") and no far layer (the sky shell would hide the map); otherwise the camera's chunk's far layer
+    // overview: no ceiling ("above"), no needles (streaks off the training viewpoints) and no far layer (the sky shell
+    // would hide the map); otherwise everything, with the far layer of the camera's chunk
     for (const m of S.meshes) m.mesh.visible = $("tSplat").checked &&
-      (m.layer === "near" || (m.layer === "above" && !overview) || (m.layer === "far" && !overview && m.chunk === best));
+      (m.layer === "near" || ((m.layer === "above" || m.layer === "needle") && !overview) || (m.layer === "far" && !overview && m.chunk === best));
   }
   $("hudPos").textContent = `chunk ${best}`;
 }

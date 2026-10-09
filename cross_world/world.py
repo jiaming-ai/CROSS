@@ -458,13 +458,15 @@ def _second_stage(res, kf_views, ex_views, depths, cfg: "BuildConfig", scene_sca
 
 
 @torch.no_grad()
-def clean_world(world: World, views: List[View], min_views: int = 2, needle_ratio: float = 30.0,
+def clean_world(world: World, views: List[View], min_views: int = 2, needle_ratio: float = 0.0,
                 needle_size: float = 0.02, device="cuda", log=print) -> dict:
     """Remove Gaussians no training view constrains: those that project into fewer than `min_views` of the chunk's
     training views (outside every frustum or seen once: the photometric loss never checked them from a second
-    direction), and needles (largest / smallest scale > needle_ratio, largest scale > needle_size x the median depth),
-    which are right edge-on from the training rays and streaks from anywhere else.  Views far from the training
-    trajectory (an overhead overview) show both as clutter; the training and test views barely change."""
+    direction), and needles (largest scale > needle_size x the median depth and largest / middle scale > needle_ratio:
+    long along one axis only), which are right edge-on from the training rays and streaks from anywhere else.
+    Measured on home1-1 (512 px): the visibility test removes < 0.2 % (opacity pruning already took the junk) at no
+    cost; the needle test (ratio 10) 15 % at -0.38 dB held-out PSNR, so it is off by default and the export puts
+    needles in a layer of their own that the viewer hides only in its overview (export_world needle_ratio)."""
     by = {v.id: v for v in views}
     zmed = float(world.meta.get("zmed", 1.0))
     stats = {}
@@ -491,9 +493,9 @@ def clean_world(world: World, views: List[View], min_views: int = 2, needle_rati
                 count += vis.int()
             keep = count >= min_views
             if l == "near" and needle_ratio > 0:
-                sc = torch.exp(g["scales"])
-                smax, smin = sc.max(1).values, sc.min(1).values.clamp(min=1e-9)
-                keep &= ~((smax / smin > needle_ratio) & (smax > needle_size * zmed))
+                # a needle is long along one axis only (a flat disk, the usual surface Gaussian, has two long axes)
+                sc = torch.exp(g["scales"]).sort(1, descending=True).values
+                keep &= ~((sc[:, 0] / sc[:, 1].clamp(min=1e-9) > needle_ratio) & (sc[:, 0] > needle_size * zmed))
             keep = keep.cpu()
             c.layers[l] = {k: v[keep] for k, v in sp.items()}
             c.anchor_ids[l] = c.anchor_ids[l][keep]
