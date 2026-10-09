@@ -406,9 +406,10 @@ def _blend_poses(Ts: List[np.ndarray], w: np.ndarray) -> np.ndarray:
 
 def load_capture_views(mv: MapViews, *, max_side: Optional[int] = None, exclude_times: Optional[np.ndarray] = None,
                        exclude_dt: float = 0.15) -> List[View]:
-    """The frames of the map's capture directory (cross/core/world_capture.py, mapping.world_capture) as views,
-    posed by their anchor keyframes' poses in the saved map (T_kf T_rel, blended).  Frames whose timestamp is within
-    `exclude_dt` of `exclude_times` (the evaluation frames) are left out."""
+    """The frames of the map's capture directory (cross/core/world_capture.py, mapping.world_capture) between the
+    keyframes as views, posed by their anchor keyframes' poses in the saved map (T_kf T_rel, blended).  Frames whose
+    timestamp is within `exclude_dt` of `exclude_times` (the evaluation frames) or of a keyframe (its own frame, which
+    the keyframe view already uses) are left out."""
     from cross.core.world_capture import capture_dir
     d = capture_dir(mv.map_path)
     f = d / "capture.json"
@@ -422,6 +423,7 @@ def load_capture_views(mv: MapViews, *, max_side: Optional[int] = None, exclude_
     poses = {v.id: v.T_wc for v in mv.views}
     poses.update(mv.temporary_poses)
     ex = np.asarray(exclude_times, np.float64) if exclude_times is not None and len(exclude_times) else None
+    kf_t = np.array([v.timestamp for v in mv.views if v.timestamp is not None], np.float64)
     fdir = d / "frames"
     out = []
 
@@ -436,7 +438,8 @@ def load_capture_views(mv: MapViews, *, max_side: Optional[int] = None, exclude_
         return load
     for fr in idx["frames"]:
         t = fr.get("timestamp")
-        if ex is not None and t is not None and np.min(np.abs(ex - t)) < exclude_dt:
+        if t is not None and ((ex is not None and np.min(np.abs(ex - t)) < exclude_dt)
+                              or (len(kf_t) and np.min(np.abs(kf_t - t)) < 1e-6)):
             continue
         an = [a for a in fr["anchors"] if a["kf"] in poses]
         if not an:

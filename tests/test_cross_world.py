@@ -189,3 +189,14 @@ def test_sky_texture_directions_fill_and_shell():
     col = m(torch.nn.functional.normalize(sp["means"], dim=-1))
     from cross_world.gaussians import sh_to_rgb
     assert float((col - sh_to_rgb(sp["sh0"][:, 0])).abs().max()) < 0.05
+
+
+def test_capture_keeps_keyframes_and_frames_between_only_on_request():
+    K = np.array([[100.0, 0, 32], [0, 100.0, 24], [0, 0, 1]])
+    T0, T1 = _pose(0.0, (0, 0, 0)), _pose(0.0, (1, 0, 0))
+    kf_only = WorldCapture(WorldCaptureConfig(enabled=True), K, 64, 48)
+    assert kf_only.wants(T0, new_keyframe=True) and not kf_only.wants(T0) and not kf_only.wants(T1)
+    between = WorldCapture(WorldCaptureConfig(enabled=True, between=True, min_translation=0.5), K, 64, 48)
+    assert between.wants(T0) and between.wants(T1, new_keyframe=True)
+    kf_only.cleanup()
+    between.cleanup()

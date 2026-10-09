@@ -1,9 +1,10 @@
 """Frames kept for a later 3D reconstruction of the map (cross_world), outside the map's database.
 
 A map stores only its permanent keyframes, at the pose estimator's resolution (<= 512 px, cropped in the stereo
-mode), which is too sparse and too small for a good radiance field.  With `mapping.world_capture.enabled` the system
-also keeps the input frames it observes every `min_translation` metres / `min_rotation_deg` degrees, at their input
-resolution and uncropped (plus the right image / depth where the input has them).  Each captured frame's pose is held
+mode), which is too small for a good radiance field.  With `mapping.world_capture.enabled` the system also keeps the
+input frame of every new permanent keyframe, and with `between` the frames it observes every `min_translation` metres /
+`min_rotation_deg` degrees, at their input resolution and uncropped (plus the right image / depth where the input has
+them).  Each captured frame's pose is held
 relative to its `anchors` nearest permanent keyframes (T_kf^-1 T_frame at capture time), so it follows the graph when a
 later optimisation moves the keyframes: its pose in the saved map is the weighted blend of T_kf(saved) T_kf^-1 T_frame.
 
@@ -75,9 +76,13 @@ class WorldCapture:
         self._last_T = None
 
     def wants(self, T: np.ndarray, new_keyframe: bool = False) -> bool:
-        """A frame every min_translation / min_rotation_deg, and every frame that became a keyframe (so that each
-        keyframe has its uncropped, full-resolution image)."""
-        if self._last_T is None or new_keyframe:
+        """Every frame that became a keyframe (so that each keyframe has its uncropped, full-resolution image) and,
+        with `between`, a frame every min_translation / min_rotation_deg."""
+        if new_keyframe:
+            return True
+        if not self.cfg.between:
+            return False
+        if self._last_T is None:
             return True
         d = _inv(self._last_T) @ T
         return np.linalg.norm(d[:3, 3]) >= self.cfg.min_translation or _rot_deg(d[:3, :3]) >= self.cfg.min_rotation_deg
