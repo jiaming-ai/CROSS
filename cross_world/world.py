@@ -461,7 +461,8 @@ def _second_stage(res, kf_views, ex_views, depths, cfg: "BuildConfig", scene_sca
 
 @torch.no_grad()
 def clean_world(world: World, views: List[View], min_views: int = 2, needle_ratio: float = 0.0,
-                needle_size: float = 0.02, device="cuda", log=print) -> dict:
+                needle_size: float = 0.02, device="cuda", log=print, depths: Optional[Dict[int, np.ndarray]] = None,
+                carve_tol: float = 0.15) -> dict:
     """Remove Gaussians no training view constrains: those that project into fewer than `min_views` of the chunk's
     training views (outside every frustum or seen once: the photometric loss never checked them from a second
     direction), and needles (largest scale > needle_size x the median depth and largest / middle scale > needle_ratio:
@@ -494,6 +495,14 @@ def clean_world(world: World, views: List[View], min_views: int = 2, needle_rati
                 vis = (r > 0).all(-1) if r.dim() == 2 else r > 0
                 count += vis.int()
             keep = count >= min_views
+            if depths:
+                # free-space carving with every training view's depth (cross_world/floaters.py)
+                from cross_world.floaters import free_space_votes
+                dv = [i for i in ids if i in depths]
+                viol, agree = free_space_votes(g["means"], torch.sigmoid(g["opacities"]),
+                                               [Ts[ids.index(i)] for i in dv], [Ks[ids.index(i)] for i in dv],
+                                               [torch.from_numpy(depths[i]).to(device) for i in dv], tol=carve_tol)
+                keep &= ~((viol >= 2) & (agree == 0))
             if l == "near" and needle_ratio > 0:
                 # a needle is long along one axis only (a flat disk, the usual surface Gaussian, has two long axes)
                 sc = torch.exp(g["scales"]).sort(1, descending=True).values

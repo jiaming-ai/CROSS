@@ -166,7 +166,14 @@ def cmd_clean(args):
     from cross_world.world import World, clean_world
     world = World.load(args.world)
     mv = _views(args)
-    clean_world(world, mv.views, min_views=args.min_views, needle_ratio=args.needle_ratio, device=args.device)
+    depths = None
+    if args.carve:
+        from cross_world.depth import StereoDepth, view_depth
+        st = StereoDepth(mv.views[0].width)
+        depths = {v.id: d for v in mv.views if v.id in set(world.meta["train_ids"])
+                  for d in [view_depth(v, mv, "auto", None, st)] if d is not None}
+    clean_world(world, mv.views, min_views=args.min_views, needle_ratio=args.needle_ratio, device=args.device,
+                depths=depths, carve_tol=args.carve_tol)
     world.save(args.out)
     if args.eval:
         res = run_eval(world, mv, args, Path(args.out).parent / "eval_clean", print)
@@ -225,6 +232,8 @@ def main(argv=None):
     cl.add_argument("--min-views", type=int, default=2)
     cl.add_argument("--needle-ratio", type=float, default=0.0)
     cl.add_argument("--eval", action="store_true")
+    cl.add_argument("--carve", action="store_true", help="also remove free-space violators (training views' depth)")
+    cl.add_argument("--carve-tol", type=float, default=0.15)
     cl.set_defaults(fn=cmd_clean)
     r = sub.add_parser("repose")
     common(r)
