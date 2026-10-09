@@ -356,3 +356,18 @@ def test_catch_up_pulls_the_tail_toward_its_loop_edges_to_optimised_keyframes():
         res[catch] = (err, poses(hm)[243])
     assert res[True][0] < res[False][0]            # (a robust visual edge against four odometry edges: a small pull)
     assert not np.array_equal(res[True][1], res[False][1])
+
+
+def test_provisional_window_optimisation_only_in_the_modes_that_process_frames_on_a_stale_map():
+    stats = {}
+    for lag in (0, 1, 2):
+        s = make_system(False, True, async_lag=lag, n=240)
+        s.config.mapping.loop_closure.async_pgo_provisional_kf = 20
+        s.config.mapping.loop_closure.pgo_window_min_nodes = 100
+        s.config.mapping.loop_closure.pgo_window_margin = 5
+        keys, ref = s.new_keys, min(a for a, b in s.new_keys)
+        s._submit_async_pgo({}, list(keys), ref, list(keys))
+        stats[lag] = s._apgo.stats.get("provisional", 0)
+        if s._apgo.busy:
+            s._apgo.cancel(requeue=False)
+    assert stats == {0: 0, 1: 0, 2: 1}

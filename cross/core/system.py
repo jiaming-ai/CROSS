@@ -1734,7 +1734,7 @@ class System:
             ap.observe(time.perf_counter() - t0, nv)
             return done
         W = int(self.config.mapping.loop_closure.async_pgo_provisional_kf)
-        if W > 0 and ap.lag != 1 and nv > 2 * W:
+        if W > 0 and ap.lag not in (0, 1) and nv > 2 * W:
             # a fast optimisation of the latest keyframes first, so that the frames processed while the full one runs see a
             # map that is already roughly corrected (the consistency tests compare poses across the loop error)
             t0 = time.perf_counter()
