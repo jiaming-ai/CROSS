@@ -160,10 +160,14 @@ def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: i
         traj = [[int(k)] + (allp[k][:3, 3] - origin).round(3).tolist() for k in sorted(allp)]
     comps = []
     if renders_dir is not None and Path(renders_dir).is_dir():
-        for p in sorted(Path(renders_dir).glob("*/view_*.jpg"))[:48]:
-            data = p.read_bytes()
-            comps.append({"set": p.parent.name, "view": p.stem, "img": [len(blob), len(data)]})
-            blob += data
+        for sub in ("heldout", "novel"):          # photo above render, at most 8 of each, <= 640 px wide
+            for p in sorted((Path(renders_dir) / sub).glob("view_*.jpg"))[:8]:
+                im = cv2.imread(str(p))
+                if im.shape[1] > 640:
+                    im = cv2.resize(im, (640, int(round(im.shape[0] * 640 / im.shape[1]))), interpolation=cv2.INTER_AREA)
+                ok, enc = cv2.imencode(".jpg", im, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                comps.append({"set": sub, "view": p.stem, "img": [len(blob), len(enc)]})
+                blob += enc.tobytes()
     if blob:
         (out / "thumbs.bin").write_bytes(bytes(blob))
     R = view_rotation(part.up, part.axes)
