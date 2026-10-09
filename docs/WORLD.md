@@ -51,16 +51,35 @@ e.g. `--set max_views=150 train.steps_per_view=80 train.sh_degree=2`. `--chunks 
 
 - **Views.** Permanent keyframes with images (temporary keyframes have none), posed by hypothesis 0's component of
   the map (camera-to-map, OpenCV axes). Every 8th keyframe is held out for evaluation.
-- **Depth.** Sensor depth (RGB-D), or semi-global matching of the stored stereo pair with a left-right check (stereo).
-  Monocular maps have no depth source yet (the Gaussians would start from the other views' depth only).
+- **Depth** (`--set depth=...`). `auto`: sensor depth (RGB-D), else semi-global matching of the stereo pair with a
+  left-right check (`sgbm`). Learned options for stereo maps: `fstereo` (FoundationStereo, the most accurate),
+  `vggt` (VGGT-Omega on the pair, scaled by the baseline), `vggt_sgbm` (its scale from SGBM), `fused` (SGBM where it
+  matched, scaled VGGT-Omega elsewhere). KITTI 07, 40 keyframes against LiDAR (`python -m cross_world.depth_eval`):
+
+  | depth | AbsRel | delta < 1.25 | LiDAR points covered | s / view (RTX 5090) |
+  |---|---|---|---|---|
+  | `fstereo` | 0.041 | 0.954 | 97 % | 1.1 |
+  | `sgbm` | 0.044 | 0.955 | 53 % | 0.4 |
+  | `fused` | 0.054 | 0.945 | 99 % | 0.7 |
+  | `vggt_sgbm` | 0.058 | 0.949 | 97 % | 0.7 |
+  | `vggt` | 0.119 | 0.879 | 97 % | 0.3 |
+
+  FoundationStereo is not vendored (NVIDIA licence, non-commercial): clone github.com/NVlabs/FoundationStereo, set
+  `FOUNDATION_STEREO_REPO` to it, download `23-51-11/model_best_bp2.pth` + `cfg.yaml` (e.g. from the Hugging Face
+  mirror `yizhouzhao-nv/FoundationStereo-Backup`) and pass `--set depth=fstereo fstereo_checkpoint=...`; it needs
+  `timm omegaconf trimesh joblib open3d pandas scikit-image`. Monocular maps have no depth source yet.
 - **Chunks.** Keyframe camera centres on the ground plane are split at the median until a cell holds at most
   `max_views` (200) keyframes. A chunk trains on the keyframes in its cell plus a margin, and on any keyframe that sees
   enough of the cell (VastGaussian-style visibility selection); it keeps the Gaussians in its own cell (near layer) and
   those beyond the mapped region (far layer: sky, distant scenery), which a renderer draws only while the camera is in
   that chunk. Chunks are independent: memory per chunk is bounded and they train in parallel.
 - **Training** (gsplat): one Gaussian per voxel of back-projected depth (voxel size grows with depth; coarsened to fit
-  70 % of the budget), MCMC densification with a budget per view, L1 + D-SSIM, L1 on inverse depth, per-view pose
-  refinement (CROSS keyframe poses carry 0.2-0.6 degree errors, a few pixels), per-view affine colour (exposure).
+  70 % of the budget), MCMC densification with a budget per megapixel of training images, L1 + D-SSIM, L1 on inverse
+  depth, per-view pose refinement (CROSS keyframe poses carry 0.2-0.6 degree errors, a few pixels) and affine colour
+  (exposure), both as sparse embeddings with lazy Adam (only the batch's views move), opacity pruning after training.
+- **Captured frames** (`--capture`) train each chunk in a second stage: after the keyframes alone, every captured
+  frame's pose is aligned photometrically against the chunk (frames between keyframes carry odometry errors of up to
+  a few degrees indoors), frames that still do not fit are dropped, and training continues on all views.
 - **Anchoring.** Every Gaussian is anchored to its four nearest keyframes. `World.repose(new_poses)` moves it with the
   weighted blend of their pose corrections (embedded deformation over the map graph), so a re-optimised or extended
   map does not need a new reconstruction.
