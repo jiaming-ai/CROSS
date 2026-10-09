@@ -1,8 +1,8 @@
 """Does the reconstruction follow a changed map without retraining?
 
-The map's keyframe poses are bent smoothly, as a later loop closure or merged session bends a graph: a rotation about
-the vertical that grows linearly along the trajectory up to `--deg` degrees at its end (about the first keyframe),
-which moves the far end of the map by metres but its neighbouring keyframes by about the same amount.  The held-out
+The map's keyframe poses are bent as a later loop closure or merged session bends a graph: a heading drift of up to
+`--deg` degrees compounded along the keyframe chain (see `bend`), which moves keyframes far along the trajectory by
+metres and changes the relative pose of neighbouring keyframes by hundredths of a degree.  The held-out
 keyframes are evaluated at their bent poses with
 
     stale      the reconstruction as trained (it no longer matches the map)
@@ -27,23 +27,35 @@ from cross_world.map_views import View, load_map_views
 from cross_world.world import World, evaluate
 
 
+def _rot_about(axis: np.ndarray, a: float) -> np.ndarray:
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    return np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * K @ K
+
+
 def bend(mv, deg: float):
-    """{keyframe id: bent pose} and the bend of every keyframe."""
+    """{keyframe id: bent pose}: a heading drift compounded along the keyframe chain, as odometry accumulates it and
+    a pose-graph optimisation redistributes it.  The heading offset follows deg * sin(pi s) over the travelled
+    fraction s, and each keyframe-to-keyframe motion is turned by the increment about the vertical at its start: the
+    relative motion of neighbouring keyframes changes by hundredths of a degree, while positions far along the
+    trajectory move by metres.  The heading returns to zero at the end, but the end of a loop stays displaced from
+    its start (the map is inconsistent there, as before a loop closure)."""
     vs = sorted(mv.views, key=lambda v: (v.timestamp if v.timestamp is not None else v.id))
     c = np.array([v.center for v in vs])
+    up = mv.up()
     s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(c, axis=0), axis=1))])
     s = s / max(s[-1], 1e-9)
-    up = mv.up()
-    p0 = c[0]
-    out = {}
-    for v, si in zip(vs, s):
-        a = np.radians(deg * si)
-        K = np.array([[0, -up[2], up[1]], [up[2], 0, -up[0]], [-up[1], up[0], 0]])
-        R = np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * K @ K
-        D = np.eye(4)
-        D[:3, :3] = R
-        D[:3, 3] = p0 - R @ p0
-        out[v.id] = D @ v.T_wc
+    theta = np.radians(deg) * np.sin(np.pi * s)
+    out = {vs[0].id: vs[0].T_wc.copy()}
+    prev_new, prev = vs[0].T_wc.copy(), vs[0].T_wc
+    for i in range(1, len(vs)):
+        M = np.linalg.inv(prev) @ vs[i].T_wc                     # motion in the previous camera's frame
+        Rw = _rot_about(up, theta[i] - theta[i - 1])             # turned about the vertical (world axes)
+        T = np.eye(4)
+        u, _, vt = np.linalg.svd(Rw @ prev_new[:3, :3] @ M[:3, :3])
+        T[:3, :3] = u @ vt                                       # re-orthonormalised (no error growth along the chain)
+        T[:3, 3] = prev_new[:3, 3] + Rw @ prev_new[:3, :3] @ M[:3, 3]
+        out[vs[i].id] = T
+        prev_new, prev = T, vs[i].T_wc
     return out
 
 

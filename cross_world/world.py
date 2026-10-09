@@ -371,7 +371,8 @@ def _nearest_appearance(world: World, v: View, by_time: List) -> Optional[np.nda
 
 
 def evaluate(world: World, views: List[View], device="cuda", align: bool = True, align_iters: int = 100,
-             save_dir: Optional[Path] = None, save_max: int = 12, log=print, kf_times: Optional[Dict[int, float]] = None) -> dict:
+             save_dir: Optional[Path] = None, save_max: int = 12, log=print, kf_times: Optional[Dict[int, float]] = None,
+             common_width: int = 512) -> dict:
     """PSNR / SSIM / LPIPS (and depth error where the view has depth) of renders at the test views: as posed, and
     after test-time pose alignment.  Appearance: the affine colour of the training keyframe nearest in time."""
     by_time = sorted((t, k) for k, t in (kf_times or {}).items() if k in world.appearance)
@@ -404,6 +405,16 @@ def evaluate(world: World, views: List[View], device="cuda", align: bool = True,
                 row[f"psnr_{tag}"] = psnr(rgb, gt[None])
                 row[f"ssim_{tag}"] = float(ssim(rgb, gt[None]))
                 row[f"lpips_{tag}"] = lpips(rgb, gt[None])
+                if common_width and v.width > common_width:
+                    # the same metrics after area-downsampling render and photo to a common width: models trained /
+                    # evaluated at different resolutions compare here (blur costs more at a higher resolution)
+                    hh = int(round(v.height * common_width / v.width))
+                    ds = lambda x: torch.nn.functional.interpolate(x.permute(0, 3, 1, 2), size=(hh, common_width),
+                                                                    mode="area").permute(0, 2, 3, 1)
+                    r2, g2 = ds(rgb), ds(gt[None])
+                    row[f"psnr_{tag}_w{common_width}"] = psnr(r2, g2)
+                    row[f"ssim_{tag}_w{common_width}"] = float(ssim(r2, g2))
+                    row[f"lpips_{tag}_w{common_width}"] = lpips(r2, g2)
                 if v.has_depth:
                     dg = torch.from_numpy(v.depth()).to(device)
                     m = dg > 0
@@ -420,5 +431,7 @@ def evaluate(world: World, views: List[View], device="cuda", align: bool = True,
                if any(r.get(k) is not None for r in rows)}
     summary["n"] = len(rows)
     summary["eval_s"] = round(time.time() - t0, 1)
-    log("eval: " + "  ".join(f"{k} {v:.4f}" for k, v in summary.items() if isinstance(v, float)))
+    log("eval: " + "  ".join(f"{k} {v:.4f}" for k, v in summary.items() if isinstance(v, float) and "_w" not in k))
+    if any("_w" in k for k in summary):
+        log(f"eval @{common_width}px: " + "  ".join(f"{k.replace(f'_w{common_width}', '')} {v:.4f}" for k, v in summary.items() if "_w" in k))
     return {"summary": summary, "rows": rows}
