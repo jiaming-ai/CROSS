@@ -64,7 +64,10 @@ class TrainConfig:
     shN_lr: float = 2.5e-3 / 20
     strategy: str = "mcmc"              # mcmc | default (adaptive density control with absgrad)
     view_opt: str = "lazy"              # per-view pose / colour: lazy (sparse Adam, the batch's views) | dense (Adam)
-    depth_loss: str = "masked_clamp"    # raw | masked (covered pixels) | masked_clamp (and residuals clamped at 1)
+    # raw: L1 on inverse depth everywhere the sensor has depth (best of the ablation; masked: covered pixels only,
+    # equal; masked_clamp: residuals clamped at 1, which zeroes the gradient of floaters in front of the camera and
+    # collapsed full-resolution runs)
+    depth_loss: str = "raw"
     consistency_tol: float = 0.0        # > 0: multi-view depth consistency filter (relative tolerance)
     log_every: int = 500
 
