@@ -89,7 +89,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
         <span class="lab" style="left:6px">photo</span><span class="lab" style="right:6px">reconstruction</span></div>
     </div>
     <div class="hud"><span class="tag" id="hudScene">loading</span><span class="tag" id="hudLoad"></span><span class="tag" id="hudPos"></span></div>
-    <div class="hint" id="hint">Drag to look · WASD / arrows to move · Shift faster · scroll to dolly</div>
+    <div class="hint" id="hint">Drag to look · WASD / arrows to move · Shift faster · scroll to dolly · the map graph shows once you move</div>
   </div>
   <aside class="panel">
     <div>
@@ -245,6 +245,7 @@ async function loadScene(entry) {
   S = null;                                         // a load still running for the previous scene stops adding
   flying = null; setPressed("bFly", false);
   $("hudScene").textContent = entry.title; $("sceneDesc").textContent = entry.description || "";
+  for (const b of $("scenes").children) b.setAttribute("aria-pressed", String(b.textContent === entry.title));
   const base = entry.dir.replace(/\/?$/, "/");
   const W = await (await fetch(base + "world.json")).json();
   const R = W.view_rotation;
@@ -367,7 +368,10 @@ function select(kf, go) {
   if (go) viewFrom(kf);
 }
 
-function viewFrom(kf) { flying = null; setPressed("bFly", false); setCamera(kfCameraMatrix(kf), kfVfov(kf)); if (compare) placeCompare(); updateFar(); }
+// the map graph is hidden while the camera stands at a keyframe pose or flies the path (it would cut across the
+// view at eye level); it comes back on Overview or when the viewer starts moving
+function showGraph(v) { if (S) S.ov.group.visible = v; }
+function viewFrom(kf) { flying = null; setPressed("bFly", false); setCamera(kfCameraMatrix(kf), kfVfov(kf)); showGraph(false); if (compare) placeCompare(); updateFar(); }
 
 // compare: the photo in a box of its aspect, the camera's field of view matched to that box
 function placeCompare() {
@@ -397,7 +401,7 @@ $("bTop").onclick = () => {
   const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
   const d = Math.max(s.x, s.z, 4) * 0.9;
   camera.fov = 50; camera.updateProjectionMatrix();
-  camera.position.set(c.x, c.y + d, c.z + d * 0.35); camera.lookAt(c); flying = null; setPressed("bFly", false); updateFar();
+  camera.position.set(c.x, c.y + d, c.z + d * 0.35); camera.lookAt(c); flying = null; setPressed("bFly", false); showGraph(true); updateFar();
 };
 $("bFly").onclick = () => {
   if (flying) { flying = null; setPressed("bFly", false); return; }
@@ -410,9 +414,11 @@ $("bFly").onclick = () => {
   const L = []; let acc = 0; for (let i = 0; i < P.length; i++) { if (i) acc += P[i].distanceTo(P[i - 1]); L.push(acc); }
   camera.fov = kfVfov(kfs[0]); camera.updateProjectionMatrix();
   flying = { curve, Q, L, total: acc, s: 0, speed: Math.max(0.6, (S.W.meta.zmed || 5) * 0.45), kfs };
+  showGraph(false);
   setPressed("bFly", true);
 };
-canvas.addEventListener("pointerdown", () => { if (flying) { flying = null; setPressed("bFly", false); } });
+canvas.addEventListener("pointerdown", () => { if (flying) { flying = null; setPressed("bFly", false); } if (!compare) showGraph(true); });
+canvas.addEventListener("keydown", () => { if (!compare) showGraph(true); });
 
 // toggles
 function applyToggles() {
