@@ -34,7 +34,7 @@ def build_parser():
     parser.add_argument("sequence", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frontend-only", action="store_true")
-    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt", "streaming_pnp", "streaming_dpvo"], default="da3")
+    parser.add_argument("--frontend", choices=["da3", "dpvo", "metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt", "streaming_dpvo"], default="da3")
     parser.add_argument("--input-fps", type=float, help="Pose deadline rate; also pace arrivals uniformly unless --replay-timestamps")
     parser.add_argument("--sample-fps", type=float, help="Select the first RGB in each timestamp bin at this rate; keep original timestamps")
     parser.add_argument("--replay-timestamps", action="store_true", help="Pace arrivals with original RGB timestamp differences; requires the paced input worker")
@@ -43,26 +43,8 @@ def build_parser():
     parser.add_argument("--input-process", action="store_true", help="Run paced RGB acquisition in an independent CPU process")
     parser.add_argument("--input-buffer", type=int, default=2, help="Maximum pending input frames; overflow fails instead of dropping data")
     parser.add_argument("--mapping-process", action="store_true", help="Isolate CROSS mapping from the streaming frontend's Python process")
-    parser.add_argument("--delayed-recovery", action="store_true", help="Experimental delayed reverse PnP; may cause large pose corrections")
-    parser.add_argument("--teacher-lag-frames", type=int, default=0, help="Minimum source age before applying a ready metric result; late results never block tracking")
-    parser.add_argument("--adaptive-anchor", action="store_true",
-                        help="Experimental metric refresh before tracking loss; request on fewer than 80 PnP inliers")
-    parser.add_argument("--stable-teacher-cadence", action="store_true",
-                        help="Experimental fixed regular request grid with bounded emergency requests; streaming_pnp only")
-    parser.add_argument('--retrieve-during-loss', action='store_true',
-                        help='Experimental global observations during local tracking loss; preserve failed motion uncertainty and mapping cadence')
-    parser.add_argument("--trace-metric-sources", action="store_true",
-                        help="Record reused teacher identities and signed scale responses; does not change inference")
-    parser.add_argument('--conditional-sources', action='store_true',
-                        help='Experimental shared source inference; requires streaming_pnp, metric_pnp, chart-aware and session-recovery')
-    parser.add_argument('--motion-covariance-bound', choices=['axes', 'matrix'], default='axes',
-                        help='Experimental full-moment correlation bound before diagonal motion input; requires conditional sources')
-    parser.add_argument('--source-log-std', type=float, default=.12,
-                        help='Declared per-prediction log-depth prior std for conditional inference; not empirically calibrated')
     parser.add_argument("--freeze-gc", action="store_true", help="Freeze long-lived startup objects during the run; retain collection of new objects")
     parser.add_argument("--dpvo-checkpoint", type=Path)
-    parser.add_argument('--rotation-tracker', choices=['none', 'dpvo'], default='none',
-                        help='Experimental native rotation with streaming_pnp; shares masks and preserves delayed source poses')
     parser.add_argument("--dpvo-metric-bootstrap", action="store_true")
     parser.add_argument("--mask-people", action="store_true")
     parser.add_argument("--mask-interval", type=int, default=1)
@@ -77,7 +59,7 @@ def build_parser():
     parser.add_argument("--anchor-interval", type=int, default=30)
     parser.add_argument("--metric-interval", type=int, default=30)
     parser.add_argument("--mapping-interval", type=int, default=5)
-    parser.add_argument("--retrieval-pose", choices=["da3", "metric_pnp", "metric_two_view", "ff"], default="da3")
+    parser.add_argument("--retrieval-pose", choices=["da3", "metric_pnp", "ff"], default="da3")
     parser.add_argument("--ff-backend", choices=["da3", "vggt_omega"], default="da3",
                         help="Feed-forward multi-view model for --retrieval-pose ff")
     parser.add_argument("--ff-checkpoint", default="depth-anything/DA3-LARGE-1.1",
@@ -89,12 +71,6 @@ def build_parser():
     parser.add_argument("--ff-scope", choices=["all", "map", "relocalization"], default="all",
                         help="With --ff-fallback-only: which rejected references the model sees (map: loaded-map "
                              "references; relocalization: loaded-map references before the session is joined)")
-    parser.add_argument("--retrieval-matcher", choices=["mnn", "lighterglue", "superpoint_lightglue"], default="mnn",
-                        help="Matcher for low-rate metric-PnP retrieval; local tracking is unchanged")
-    parser.add_argument("--two-view-rotation-check", action="store_true",
-                        help="Experimentally screen two-view fallback rotation with the configured pose model")
-    parser.add_argument("--filter-mode", choices=["full", "skip_active", "adaptive"], default="full",
-                        help="Inherited CROSS retrieval pose-update policy; delayed commitment remains enabled")
     parser.add_argument("--pose-model", default="depth-anything/DA3-SMALL")
     parser.add_argument("--pose-refinement", choices=["none", "xfeat"], default="none")
     parser.add_argument("--refinement-anchor-only", action="store_true")
@@ -111,10 +87,6 @@ def build_parser():
                         help="Experimental loaded-map recovery using historical support and inherited delayed evidence")
     parser.add_argument("--chart-aware", action="store_true",
                         help="Keep disconnected pose charts separate; requires --session-recovery")
-    parser.add_argument("--schmidt-map-geometry", action="store_true",
-                        help="Experimental shared map uncertainty; requires conditional sources and a complete graph")
-    parser.add_argument('--map-geometry-basis', choices=['epoch','factor'], default='epoch',
-                        help='Experimental shared-geometry coordinates; factor preserves noise identity across competing hypotheses')
     parser.add_argument("--historical-retrieval-slots", type=int, default=0,
                         help="Reserve saved-map candidates within the same retrieval/verification budget")
     parser.add_argument("--historical-min-score", type=float,
@@ -163,21 +135,11 @@ def config_from_args(args):
     return MonoConfig(frontend=args.frontend, imu=imu_config_from_args(args),
                         seed=args.seed,
                         dpvo_metric_bootstrap=args.dpvo_metric_bootstrap,
-                        rotation_tracker=args.rotation_tracker,
                         mask_people=args.mask_people,
                         mask_interval=args.mask_interval,
                         rotation_selection=args.rotation_selection,
                         subpixel=args.subpixel,
-                        mapping_process=args.mapping_process, delayed_recovery=args.delayed_recovery,
-                        teacher_lag_frames=args.teacher_lag_frames,
-                        adaptive_anchor=args.adaptive_anchor,
-                        stable_teacher_cadence=args.stable_teacher_cadence,
-                        retrieve_during_loss=args.retrieve_during_loss,
-                        trace_metric_sources=args.trace_metric_sources,
-                        conditional_sources=args.conditional_sources,source_log_std=args.source_log_std,
-                        motion_covariance_bound=args.motion_covariance_bound,
-                        schmidt_map_geometry=args.schmidt_map_geometry,
-                        map_geometry_basis=args.map_geometry_basis,
+                        mapping_process=args.mapping_process,
                         dpvo_checkpoint=str(args.dpvo_checkpoint) if args.dpvo_checkpoint else None,
                         pose_model=args.pose_model, metric_model=args.metric_model,
                         resolution=args.resolution, metric_resolution=args.metric_resolution,
@@ -186,9 +148,6 @@ def config_from_args(args):
                         ff_backend=args.ff_backend, ff_checkpoint=args.ff_checkpoint,
                         ff_resolution=args.ff_resolution, ff_min_covisibility=args.ff_min_covisibility,
                         ff_fallback_only=args.ff_fallback_only, ff_scope=args.ff_scope,
-                        retrieval_matcher=args.retrieval_matcher,
-                        two_view_rotation_check=args.two_view_rotation_check,
-                        filter_mode=args.filter_mode,
                         session_recovery=args.session_recovery,
                         chart_aware=args.chart_aware,
                         historical_retrieval_slots=args.historical_retrieval_slots,
@@ -217,16 +176,8 @@ def main():
         parser.error("--input-process requires --paced-input-worker")
     if args.input_buffer < 1:
         parser.error("--input-buffer must be positive")
-    if args.teacher_lag_frames < 0 or (args.teacher_lag_frames and args.frontend != "streaming_pnp"):
-        parser.error("--teacher-lag-frames must be nonnegative and requires streaming_pnp")
-    if args.adaptive_anchor and args.frontend != "streaming_pnp":
-        parser.error("--adaptive-anchor requires streaming_pnp")
-    if args.stable_teacher_cadence and args.frontend != "streaming_pnp":
-        parser.error("--stable-teacher-cadence requires streaming_pnp")
-    if args.mapping_process and args.frontend not in {"streaming_pnp", "streaming_dpvo"}:
+    if args.mapping_process and args.frontend != "streaming_dpvo":
         parser.error("--mapping-process requires a streaming frontend")
-    if args.delayed_recovery and args.frontend != "streaming_pnp":
-        parser.error("--delayed-recovery requires streaming_pnp")
     import torch
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -277,10 +228,6 @@ def main():
         from .streaming_dpvo import StreamingDPVOFrontend
         frontend = StreamingDPVOFrontend(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
-    elif args.frontend == "streaming_pnp":
-        from .streaming import StreamingPnPFrontend
-        frontend = StreamingPnPFrontend(sequence.K, config, args.device)
-        frontend.provide_mapping_depth = not args.frontend_only
     elif args.frontend == "dpvo":
         from .dpvo_frontend import DPVOFrontend
         frontend = DPVOFrontend(sequence.K, config, args.device)
@@ -314,7 +261,7 @@ def main():
     (args.output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
     tracker = frontend
     if not args.frontend_only:
-        if args.frontend in {"streaming_pnp", "streaming_dpvo"}:
+        if args.frontend == "streaming_dpvo":
             from .streaming import StreamingMonocularSystem as MonocularSystem
         else:
             from .system import MonocularSystem
@@ -358,7 +305,7 @@ def main():
     latencies, arrival_latencies, image_io, output_io = [], [], [], []
     valid_count, metric_count = 0, 0
     tracking_stream = None
-    if args.frontend in {"streaming_pnp", "streaming_dpvo"} and args.device.startswith("cuda"):
+    if args.frontend == "streaming_dpvo" and args.device.startswith("cuda"):
         tracking_stream = torch.cuda.Stream(device=args.device, priority=-1)
         tracking_stream.wait_stream(torch.cuda.current_stream(args.device))
     if args.freeze_gc:
@@ -521,7 +468,7 @@ def main():
             child_peak = max((e.get("mapper_process_peak_gpu_allocated_gb", 0.) for e in tracker.map_events), default=0.)
             summary["mapper_process_peak_gpu_allocated_gb"] = child_peak
             summary["sum_process_peak_gpu_allocated_gb"] = summary["peak_gpu_allocated_gb"]+child_peak
-    if args.frontend in {"dpvo", "rotation_metric", "streaming_dpvo"} or args.rotation_tracker == 'dpvo':
+    if args.frontend in {"dpvo", "rotation_metric", "streaming_dpvo"}:
         native_frontend = (frontend if args.frontend == "dpvo" else frontend.native_frontend
                            if args.frontend == 'streaming_dpvo' else frontend.rotation_tracker)
         native_tracker = native_frontend.tracker

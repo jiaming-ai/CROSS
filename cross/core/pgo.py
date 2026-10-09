@@ -651,9 +651,6 @@ class PoseGraph:
         self.vertex_map = {v.id: v for v in vertices}
         if self.chart_aware:
             self._retain_connected_chart_graph(target_node_id, other_hypothesis_id)
-        if self.hypothesis_manager.source_states is not None:
-            from cross.core.conditional_pgo import prepare
-            prepare(self,other_hypothesis_id)
 
     def construct_window(self, first_free_id: int) -> Set[int]:
         """Hypothesis-0 graph for a windowed loop-closure optimisation: the keyframes with id >= first_free_id (free)
@@ -899,8 +896,6 @@ class PoseGraph:
 
         # 3. Add between factors for all edges
         has_edges = False
-        conditional_factors = []
-        record_conditional = hasattr(self, 'conditional_belief')
         noise_key = self._noise_cache_key()
         self.n_factors = {"used_visual": 0, "skipped_visual": 0, "odometry": 0, "loop_closure": 0}
         skip_fn, counts = self.skip_fn, self.n_factors
@@ -931,8 +926,6 @@ class PoseGraph:
                     graph.add(nonlinear)
                     used.add(id1)
                     used.add(id2)
-                    if record_conditional:
-                        conditional_factors.append((nonlinear,factor))
 
         # Log edge statistics for debugging
         if has_edges and logger.level("DEBUG").no >= 100:   # disabled: costs a device sync per factor
@@ -1000,9 +993,3 @@ class PoseGraph:
             with _plain_tensor_ops():
                 for i, node_id in enumerate(kept_ids):
                     self.optimized_poses[node_id] = as_se3(poses[i].clone())
-        if hasattr(self,'conditional_belief'):
-            from cross.core.conditional_pgo import solve_responses
-            solve_responses(self,result,conditional_factors,optim_node_ids,fixed_node_ids)
-            # Fixed nodes also need their bias-centered pose/model persisted.
-            for node_id in fixed_node_ids:
-                self.optimized_poses[node_id] = gtsam_to_pypose_pose3(result.atPose3(node_id),self.device)

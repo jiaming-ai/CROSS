@@ -51,8 +51,7 @@ def _state(monkeypatch, n=6, depth=True, right=True, scfg=None):
         mu = pp.randn_SE3(3)
         kf = db.insert(i, _rng_image(rng), torch.from_numpy((rng.random((1, 48, 64)) * 5).astype(np.float16)) if depth else None,
                        mu=mu, sigma=pp.se3(torch.rand(3, 6)), weights=torch.tensor([1., 0., 0.]), atlas=atlas,
-                       timestamp=float(i), raw_rgb_right=_rng_image(rng) if right else None,
-                       metric_source=None if i % 2 else dict(source_id=f"s{i}"))
+                       timestamp=float(i), raw_rgb_right=_rng_image(rng) if right else None)
         hm.nodes[kf.id] = kf
         t = Keyframe(pp.randn_SE3(3), pp.se3(torch.rand(3, 6)), torch.tensor([1., 0., 0.]), timestamp=i + .5,
                      temporary=True)

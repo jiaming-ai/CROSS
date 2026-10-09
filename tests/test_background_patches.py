@@ -1,18 +1,6 @@
 import numpy as np
 import pytest
 
-from cross.mono.config import MonoConfig
-
-
-def test_streaming_rotation_requires_explicit_frontend_and_checkpoint():
-    with pytest.raises(ValueError,match='streaming_pnp'):
-        MonoConfig(rotation_tracker='dpvo',dpvo_checkpoint='weights.pth')
-    with pytest.raises(ValueError,match='checkpoint'):
-        MonoConfig(frontend='streaming_pnp',rotation_tracker='dpvo')
-    config=MonoConfig(frontend='streaming_pnp',rotation_tracker='dpvo',dpvo_checkpoint='weights.pth',
-                      conditional_sources=True,chart_aware=True,session_recovery=True,retrieval_pose='metric_pnp')
-    assert config.trace_metric_sources and config.conditional_sources
-
 
 def test_shared_patch_mask_uses_the_current_padded_boxes_once():
     torch=pytest.importorskip('torch')

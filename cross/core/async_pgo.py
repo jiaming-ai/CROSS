@@ -324,11 +324,11 @@ class AsyncPgo:
 
     def usable(self) -> bool:
         """The fork runs the CPU code of the optimisation on a copy of the state: not with the state on a GPU, not
-        for coordinate-chart / conditional graphs (their write-back needs the optimiser's own graph)."""
+        for coordinate-chart graphs (their write-back needs the optimiser's own graph)."""
         sys_ = self.system
         hm = sys_.hypothesis_manager
         return (not self.disabled and hasattr(os, "fork") and str(getattr(hm, "device", "cpu")).startswith("cpu")
-                and not hm.chart_aware and hm.source_states is None)
+                and not hm.chart_aware)
 
     # ---- submit
     def submit(self, new_keys, window_ref, step: int, kind: str = "verified", loop_keys=None, **extra) -> None:
