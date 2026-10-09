@@ -87,6 +87,12 @@ mono = [
     "yacs",
     "numba>=0.59,<0.62",
 ]
+# 3D reconstruction of a map (cross_world/, docs/WORLD.md): gsplat compiles its CUDA kernels (needs nvcc)
+world = [
+    "gsplat>=1.5.3",
+    "lpips",
+    "plyfile",
+]
 all = [
     "cross[detection,recording,dev]",
 ]
@@ -97,7 +103,7 @@ Repository = "https://github.com/jiaming-ai/CROSS"
 Issues = "https://github.com/jiaming-ai/CROSS/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cross", "vggt_ft"]
+packages = ["cross", "cross_world", "vggt_ft"]
 
 # the edge package (edge/, its own distribution cross-edge) ships inside the full package too: the server and the CROSS
 # runners' edge use its wire format, cadence copy and session

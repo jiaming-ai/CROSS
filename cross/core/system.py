@@ -366,6 +366,13 @@ class System:
             self.pose_est.set_camera(camera.K, camera.frame_width, camera.frame_height)
         if self._kf_quality is not None:
             self._kf_quality.set_stereo(camera.K, T_right_in_left)
+        # input frames kept for a 3D reconstruction of the map (mapping.world_capture, off by default)
+        self._world_capture = None
+        wc = self.config.mapping.world_capture
+        if wc.enabled:
+            from cross.core.world_capture import WorldCapture
+            self._world_capture = WorldCapture(wc, original_camera.K, original_camera.frame_width,
+                                               original_camera.frame_height, T_right_in_left)
 
         ################ visualization ################
         if visualizer is not None:
@@ -788,6 +795,9 @@ class System:
             "hypo_data": hypo_data,
             "class_vars": class_vars,
             "current_atlas_id": self.current_atlas.id if hasattr(self, 'current_atlas') else None,
+            # intrinsics of the stored keyframe images (after the mode's resize / crop) and the stereo rig: what a
+            # reader of the map needs to use its images geometrically (cross_world); load_map does not read it
+            "camera": self._camera_record(),
         }
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
@@ -844,6 +854,8 @@ class System:
         else:
             raise ValueError(f"storage.format: v2 | pickle, not {scfg.format}")
 
+        if getattr(self, "_world_capture", None) is not None:
+            self._world_capture.save(save_path)
         logger.info(f"Map saved successfully to {save_path}")
         n_rec = map_store.count_records
         logger.info(f"  - Saved {len(db_data['keyframes'])} permanent keyframes")
@@ -854,6 +866,16 @@ class System:
         logger.info(f"  - Tracking state (GMM dist, metadata) NOT saved - will re-initialize on first step")
 
         # Note: planning system (sparse graph) will be rebuilt on load if enabled
+
+    def _camera_record(self):
+        """Intrinsics of the stored keyframe images and the stereo rig, as saved with the map (None without a camera)."""
+        cam = getattr(self, "camera", None)
+        if cam is None:
+            return None
+        T = getattr(self, "T_right_in_left", None)
+        return {"K": np.asarray(cam.K, dtype=np.float64).tolist(), "width": int(cam.frame_width),
+                "height": int(cam.frame_height),
+                "T_right_in_left": np.asarray(T, dtype=np.float64).tolist() if T is not None else None}
 
     def session_localized(self) -> bool:
         """Whether hypothesis 0 is expressed in the frame of the stored map.
@@ -960,6 +982,8 @@ class System:
         self._contra_pending.clear()
         self._last_retrieved_results = None
 
+        if getattr(self, "_world_capture", None) is not None:
+            self._world_capture.load(load_path)
         if getattr(self, "_geo", None) is not None and save_data.get("geo"):
             self._geo.load_state(save_data["geo"])
             if self._geo.anchored:
@@ -1051,11 +1075,30 @@ class System:
                 self._step_async(obs, **kwargs)
             else:
                 self._step_sync(obs, **kwargs)
+            if getattr(self, "_world_capture", None) is not None:
+                self._capture_frame(obs)
 
         if kwargs.get("get_current_kf", False):
             return {
                 "current_kf": self.get_current_kf(),
             }
+
+    def _capture_frame(self, obs: dict) -> None:
+        """Keep this input frame for a 3D reconstruction (mapping.world_capture) when the pose moved enough since
+        the last kept frame and hypothesis 0 is a pose in the stored map.  Never fails the step."""
+        cap = self._world_capture
+        try:
+            if obs.get("rgb") is None or self.hypothesis_manager.dist is None or not self.session_localized():
+                return
+            T = self.get_current_pose().matrix().detach().cpu().numpy().astype(np.float64)
+            if not cap.wants(T):
+                return
+            from cross.core.world_capture import anchor_candidates
+            cap.add(T, anchor_candidates(self, T, cap.cfg.anchors), obs, obs.get("timestamp"))
+        except Exception as ex:
+            if not getattr(self, "_capture_warned", False):
+                logger.warning(f"world capture failed (frames are not kept): {ex}")
+                self._capture_warned = True
 
     def _step_async(
         self,

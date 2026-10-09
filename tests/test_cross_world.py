@@ -1,0 +1,136 @@
+"""CROSS World (cross_world/) and the frame capture of the mapping (cross/core/world_capture.py): the parts that run
+without a GPU rasterizer."""
+import gzip
+import json
+import struct
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import torch
+
+from cross.core.config import WorldCaptureConfig
+from cross.core.world_capture import WorldCapture, capture_dir
+from cross_world.export import spz_bytes, view_rotation
+from cross_world.gaussians import matrix_to_quat, quat_mul
+from cross_world.map_views import MapViews, SourceSequence, View, load_capture_views
+from cross_world.partition import assign_views, make_partition
+from cross_world.world import ChunkModel, World, compute_anchors
+
+
+def _pose(yaw=0.0, t=(0, 0, 0)):
+    c, s = np.cos(yaw), np.sin(yaw)
+    T = np.eye(4)
+    T[:3, :3] = [[c, 0, s], [0, 1, 0], [-s, 0, c]]           # turn about the camera's y (vertical) axis
+    T[:3, 3] = t
+    return T
+
+
+def test_partition_balanced_cells_tile_the_region():
+    rng = np.random.default_rng(0)
+    centers = np.c_[rng.uniform(0, 100, 500), rng.normal(0, 0.1, 500), rng.uniform(0, 20, 500)]
+    ids = list(range(500))
+    part = make_partition(ids, centers, np.array([0, -1.0, 0]), max_views=100, margin=5.0)
+    assert all(len(c.core_ids) <= 100 for c in part.chunks)
+    assert sorted(i for c in part.chunks for i in c.core_ids) == ids
+    pts = np.c_[rng.uniform(-4, 104, 2000), np.zeros(2000), rng.uniform(-4, 24, 2000)]
+    cell = part.cell_of(pts)
+    assert (cell >= 0).all()                                   # the cells cover the region without gaps
+    samples = {i: centers[i][None] + np.array([[0, 0, 1.0]]) for i in ids}
+    assign_views(part, ids, centers, samples, min_visible=0.5, min_points=1)
+    for c in part.chunks:
+        assert set(c.core_ids) <= set(c.train_ids)
+
+
+def test_spz_header_and_layout():
+    n = 10
+    rng = np.random.default_rng(1)
+    q = rng.normal(size=(n, 4))
+    b = spz_bytes(rng.normal(size=(n, 3)), q, np.full((n, 3), -3.0), rng.uniform(size=n), rng.normal(size=(n, 3)),
+                  rng.normal(scale=0.1, size=(n, 15, 3)), sh_degree=1)
+    raw = gzip.decompress(b)
+    magic, version, count, deg, frac, flags, _ = struct.unpack("<IIIBBBB", raw[:16])
+    assert (magic, version, count, deg, frac) == (0x5053474E, 2, n, 1, 12)
+    assert len(raw) == 16 + n * (9 + 1 + 3 + 3 + 3 + 9)       # centres, alpha, colour, scale, rotation, SH band 1
+    scale = raw[16 + n * 13: 16 + n * 16]
+    assert set(scale) == {round((-3.0 + 10) * 16)}
+
+
+def test_view_rotation_maps_up_to_y():
+    up = np.array([0.1, -0.99, 0.05])
+    up /= np.linalg.norm(up)
+    R = view_rotation(up, np.array([[1.0, 0, 0], [0, 0, 1.0]]))
+    assert np.allclose(R @ up, [0, 1, 0], atol=1e-9)
+    assert np.allclose(R @ R.T, np.eye(3), atol=1e-9)
+
+
+def test_quaternions():
+    R = torch.from_numpy(_pose(0.3)[:3, :3]).float()
+    q = matrix_to_quat(R[None])[0]
+    q2 = quat_mul(q, q)
+    R2 = torch.from_numpy(_pose(0.6)[:3, :3]).float()
+    assert torch.allclose(matrix_to_quat(R2[None])[0], q2, atol=1e-5)
+
+
+def _world(kf_poses, means):
+    from cross_world.partition import Chunk, Partition
+    part = Partition(np.zeros(3), np.array([[1.0, 0, 0], [0, 0, 1.0]]), np.array([0, -1.0, 0]), np.array([-1e3, -1e3]),
+                     np.array([1e3, 1e3]), [Chunk(0, np.array([-1e3, -1e3]), np.array([1e3, 1e3]), list(kf_poses))], 1.0)
+    n = len(means)
+    sp = {"means": means.float(), "quats": torch.tensor([[1.0, 0, 0, 0]]).repeat(n, 1), "scales": torch.zeros(n, 3),
+          "opacities": torch.zeros(n), "sh0": torch.zeros(n, 1, 3), "shN": torch.zeros(n, 0, 3)}
+    ids = sorted(kf_poses)
+    ai, aw = compute_anchors(sp["means"], ids, np.stack([kf_poses[k][:3, 3] for k in ids]), 2)
+    return World(part, [ChunkModel(0, {"near": sp}, {"near": ai}, {"near": aw})], dict(kf_poses), {}, {}, {"sh_degree": 0})
+
+
+def test_repose_identity_and_rigid_motion():
+    kf = {1: _pose(0, (0, 0, 0)), 2: _pose(0, (2, 0, 0)), 3: _pose(0, (4, 0, 0))}
+    means = torch.tensor([[0.5, 0.2, 3.0], [3.0, -0.1, 5.0]])
+    w = _world(kf, means)
+    w.repose(dict(kf))
+    assert torch.allclose(w.chunks[0].layers["near"]["means"], means, atol=1e-6)
+    D = _pose(0.2, (1.0, 0.0, -2.0))                          # the whole map moves rigidly: the Gaussians follow exactly
+    w.repose({k: D @ T for k, T in kf.items()})
+    expect = (torch.from_numpy(D[:3, :3]).float() @ means.T).T + torch.from_numpy(D[:3, 3]).float()
+    assert torch.allclose(w.chunks[0].layers["near"]["means"], expect, atol=1e-5)
+    q = w.chunks[0].layers["near"]["quats"][0]
+    assert torch.allclose(q, matrix_to_quat(torch.from_numpy(D[:3, :3]).float()[None])[0], atol=1e-5)
+
+
+def test_source_clock_calibration(tmp_path):
+    (tmp_path / "left").mkdir()
+    for i in range(20):
+        (tmp_path / "left" / f"{i:06d}.png").write_bytes(b"")
+    (tmp_path / "calib.json").write_text(json.dumps({"K": np.eye(3).tolist(), "width": 4, "height": 4, "fps": 10.0}))
+    t = 1.3e9 + np.arange(20) * 0.1037                        # absolute, drifting clock in times.txt
+    np.savetxt(tmp_path / "times.txt", t, fmt="%.6f")
+    src = SourceSequence(tmp_path)
+    src.calibrate([0.0, 1.2, 1.5])                            # the map uses frame index / fps
+    assert src.index_of(1.2) == 12 and src.index_of(1.5) == 15
+    src.calibrate([t[3], t[7]])                               # the map uses times.txt
+    assert src.index_of(t[7]) == 7
+
+
+def test_capture_frames_follow_their_anchor_keyframes(tmp_path):
+    cfg = WorldCaptureConfig(enabled=True, min_translation=0.0, min_rotation_deg=0.0)
+    cap = WorldCapture(cfg, np.array([[100.0, 0, 32], [0, 100.0, 24], [0, 0, 1]]), 64, 48)
+    kf = {7: _pose(0.0, (0, 0, 0)), 9: _pose(0.1, (1, 0, 0))}
+    T = _pose(0.05, (0.5, 0, 0.2))
+    img = (np.random.default_rng(0).uniform(size=(48, 64, 3)) * 255).astype(np.uint8)
+    cap.add(T, [(7, kf[7], 0.5), (9, kf[9], 0.6)], {"rgb": img, "depth": np.full((48, 64), 2.0, np.float32)}, 3.0)
+    map_path = tmp_path / "map.pkl"
+    cap.save(map_path)
+    assert (capture_dir(map_path) / "capture.json").exists()
+    views = [View(id=k, T_wc=P, K=np.eye(3), width=64, height=48, _image=lambda: img) for k, P in kf.items()]
+    mv = MapViews(views=views, edges=[], T_right_in_left=None, mode="rgbd", map_path=str(map_path))
+    cv = load_capture_views(mv)
+    assert len(cv) == 1 and np.allclose(cv[0].T_wc, T, atol=1e-9)
+    assert cv[0].image().shape == (48, 64, 3)
+    assert np.allclose(cv[0].depth(), 2.0, atol=1e-3)
+    D = _pose(0.3, (5, 0, 1))                                 # the map moves rigidly: the frame moves with it
+    for v in views:
+        v.T_wc = D @ v.T_wc
+    assert np.allclose(load_capture_views(mv)[0].T_wc, D @ T, atol=1e-9)
+    assert load_capture_views(mv, exclude_times=np.array([3.05]))  == []
+    cap.cleanup()
