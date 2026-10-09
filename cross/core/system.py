@@ -791,10 +791,7 @@ class System:
             "current_atlas_id": self.current_atlas.id if hasattr(self, 'current_atlas') else None,
             # intrinsics of the stored keyframe images (after the mode's resize / crop) and the stereo rig: what a
             # reader of the map needs to use its images geometrically (cross_world); load_map does not read it
-            "camera": {"K": np.asarray(self.camera.K, dtype=np.float64).tolist(),
-                       "width": int(self.camera.frame_width), "height": int(self.camera.frame_height),
-                       "T_right_in_left": (np.asarray(self.T_right_in_left, dtype=np.float64).tolist()
-                                           if self.T_right_in_left is not None else None)},
+            "camera": self._camera_record(),
         }
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
@@ -863,6 +860,16 @@ class System:
         logger.info(f"  - Tracking state (GMM dist, metadata) NOT saved - will re-initialize on first step")
 
         # Note: planning system (sparse graph) will be rebuilt on load if enabled
+
+    def _camera_record(self):
+        """Intrinsics of the stored keyframe images and the stereo rig, as saved with the map (None without a camera)."""
+        cam = getattr(self, "camera", None)
+        if cam is None:
+            return None
+        T = getattr(self, "T_right_in_left", None)
+        return {"K": np.asarray(cam.K, dtype=np.float64).tolist(), "width": int(cam.frame_width),
+                "height": int(cam.frame_height),
+                "T_right_in_left": np.asarray(T, dtype=np.float64).tolist() if T is not None else None}
 
     def session_localized(self) -> bool:
         """Whether hypothesis 0 is expressed in the frame of the stored map.
