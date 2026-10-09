@@ -160,9 +160,11 @@ def make_trajectories(out: dict, aux: dict, n: int, seed: int, width=640, height
     pw = np.array([0.22, 0.2, 0.18, 0.18, 0.12, 0.1])[: len(presets)]
     trajs = []
     for t in range(n):
-        for attempt in range(4):
+        for attempt in range(6):
             p = sample_params(rng)
-            tr = make_trajectory(bev, rmask, origin, ground, res, rng, p)
+            if attempt >= 3:                      # fall back to all free space (rooms not annotated / too cramped)
+                p["radius"] = min(p["radius"], 0.22)
+            tr = make_trajectory(bev, rmask if attempt < 3 else None, origin, ground, res, rng, p)
             if tr is not None and len(tr["c2w"]) >= 60:
                 break
         else:

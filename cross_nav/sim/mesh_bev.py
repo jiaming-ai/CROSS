@@ -152,8 +152,15 @@ def build_mesh_bev(geom: dict, seeds_xyz=None, seeds_h=None, regions=None, cfg: 
                 continue
             cc = cand[cy, cx, :ncand[cy, cx]]
             k = int(np.argmin(np.abs(cc - (p[2] - h))))
-            if abs(cc[k] - (p[2] - h)) < 0.1:
-                sy.append(cy), sx.append(cx), sh.append(cc[k])
+            if abs(cc[k] - (p[2] - h)) >= 0.1:
+                # the camera's planned height is relative to another floor level (e.g. a SimChange route at a
+                # constant absolute height over a sunken courtyard): the surface nearest to z - h that lies
+                # 0.2 .. 2.6 m below the camera
+                below = (p[2] - cc >= 0.2) & (p[2] - cc <= 2.6)
+                if not below.any():
+                    continue
+                k = int(np.flatnonzero(below)[np.argmin(np.abs(cc[below] - (p[2] - h)))])
+            sy.append(cy), sx.append(cx), sh.append(cc[k])
         h0 = float(np.median(sh)) if sh else float("nan")
     sy, sx, sh = np.asarray(sy, np.int32), np.asarray(sx, np.int32), np.asarray(sh, np.float32)
     if len(sy) == 0:

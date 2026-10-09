@@ -6,7 +6,8 @@
 Reuses SimChange's renderer (simchange/render.py, imported from $SIMCHANGE_ROOT): its lighting presets (sun / sky /
 interior lamps), glass fix and the Cycles + depth-pass setup.  One trajectory = one sequence (its own session) of one
 SceneWriter scene; every trajectory re-opens the blend file (lighting changes the scene).  A per-trajectory exposure is
-chosen from a quick low-resolution pre-render of a few frames (camera auto-exposure).  Depth = the Cycles Z pass
+chosen per frame from a quick low-resolution pre-render (camera auto-exposure, smoothed over time); night / evening
+presets fall back to daylight in scenes with fewer than MIN_LAMPS lamp objects.  Depth = the Cycles Z pass
 (distance along the optical axis); E = camera-from-world in OpenCV axes, world = the blend's z-up frame.
 """
 from __future__ import annotations
@@ -30,6 +31,7 @@ def simchange_render():
     return R
 
 
+MIN_LAMPS = 10            # night / evening presets need at least this many lamp objects in the scene
 HSSD_CFG = {
     "engine": "CYCLES", "samples": 32, "hide_categories": ["door"], "fix_glass": True,
     "sky_nishita": True, "sun_light": None, "sun_energy": 1.0, "window_azimuth_deg": 0.0,
@@ -40,7 +42,7 @@ HSSD_CFG = {
 }
 
 
-def prepare_scene(R, blend: str, cfg: dict, preset: str, azimuth: float):
+def prepare_scene(R, blend: str, cfg: dict, preset: str, azimuth: float, seed: int = 0):
     import bpy
     bpy.ops.wm.open_mainfile(filepath=blend)
     scene = bpy.context.scene
@@ -52,9 +54,51 @@ def prepare_scene(R, blend: str, cfg: dict, preset: str, azimuth: float):
         import hssd_scene
         hssd_scene.fix_glass(scene)
     scene.view_settings.exposure = float(cfg["exposure_base"])
-    meta = {}
+    meta = {"preset_planned": preset}
+    n_lamps = sum(1 for o in scene.objects if o.get("hssd_lamp") and not o.hide_render)
+    if preset in ("night", "evening") and n_lamps < MIN_LAMPS:
+        # too few interior lamps: a night / evening render would be black; use daylight instead
+        preset = ["overcast", "afternoon", "morning"][n_lamps % 3]
+    meta["n_lamp_objects"] = n_lamps
     R.apply_lighting(scene, dict(cfg, window_azimuth_deg=azimuth), preset, meta)
+    meta["preset"] = preset
+    meta["room_lights"] = room_lights(scene, blend, gain=1.0 if preset in ("night", "evening") else 0.5, seed=seed)
     return scene, meta
+
+
+def room_lights(scene, blend: str, gain: float, seed: int = 0):
+    """A ceiling area light in every annotated room (layout.json regions, outdoor ones skipped): windowless rooms are
+    otherwise black in the daylight presets, and many scenes have few lamp objects.  Energy ~ room area, warm white."""
+    import bpy
+    p = Path(str(blend) + ".layout.json")
+    if not p.exists():
+        return 0
+    rng = np.random.default_rng(seed)
+    kelvin = float(rng.uniform(2800, 4500))
+    import render as R
+    col = R.blackbody_rgb(kelvin)
+    n = 0
+    for r in json.loads(p.read_text()).get("regions", []):
+        name = (r.get("name") or "").lower()
+        poly = np.array(r.get("poly") or [], float)
+        if len(poly) < 3 or any(w in name for w in ("outdoor", "terrace", "balcony", "porch", "driveway", "pool")):
+            continue
+        x, y = poly[:, 0], poly[:, 1]
+        area = 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+        if area < 1.0:
+            continue
+        z0 = float(r.get("floor_height") or 0.0)
+        hz = float(r.get("extrusion_height") or 2.5)
+        ld = bpy.data.lights.new(f"room_light_{n}", type="AREA")
+        ld.shape = "SQUARE"
+        ld.size = float(np.clip(np.sqrt(area) * 0.3, 0.4, 1.5))
+        ld.energy = float(np.clip(25.0 * area, 80.0, 800.0) * gain)
+        ld.color = col
+        lo = bpy.data.objects.new(ld.name, ld)
+        lo.location = (float(x.mean()), float(y.mean()), z0 + min(hz, 3.2) - 0.15)
+        scene.collection.objects.link(lo)
+        n += 1
+    return n
 
 
 def make_camera(scene, width, height, K):
@@ -96,30 +140,36 @@ def keyframe(scene, cam, c2w):
     scene.frame_start, scene.frame_end = 0, len(c2w) - 1
 
 
-def auto_exposure(R, scene, cam, c2w, cfg, tmp: Path, target=0.42):
-    """Exposure offset (stops) that brings the median luminance of a few low-resolution, low-sample renders to target."""
+def auto_exposure(scene, cam, c2w, fo, tmp: Path, target=0.40, pct=20, samples=4, smooth=5, clip=6.0):
+    """Per-frame camera auto-exposure: a low-resolution, low-sample pre-render of every frame gives its median display
+    value; the offset (stops) that brings it to `target` is smoothed over +-`smooth` frames (exposure adaptation) and
+    keyframed on the view exposure.  Returns the offsets."""
     import bpy
     import cv2
-    sel = np.linspace(0, len(c2w) - 1, min(6, len(c2w))).round().astype(int)
-    rx, ry, pct = scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage
-    scene.render.resolution_percentage = 25
-    samples = scene.cycles.samples
-    scene.cycles.samples = 8
-    lum = []
-    for i in sel:
-        keyframe(scene, cam, c2w[i:i + 1])
-        scene.render.filepath = str(tmp / f"ae_{i}.png")
-        bpy.ops.render.render(write_still=True)
-        img = cv2.imread(str(tmp / f"ae_{i}.png"), cv2.IMREAD_COLOR)
-        if img is not None:
-            lum.append(np.median(img.astype(np.float32).mean(2)) / 255.0)
+    from scipy.ndimage import uniform_filter1d
+    pct0, samples0 = scene.render.resolution_percentage, scene.cycles.samples
     scene.render.resolution_percentage = pct
     scene.cycles.samples = samples
-    if not lum:
-        return 0.0
-    m = float(np.median(lum))
-    # display transform is roughly gamma 1/2.2 on linear exposure: one stop = x 2^(1/2.2) in display value
-    off = float(np.clip(2.2 * np.log2(target / max(m, 1e-3)), -4.0, 4.0))
+    fo.mute = True
+    keyframe(scene, cam, c2w)
+    scene.render.filepath = str(tmp / "_ae" / "####")
+    bpy.ops.render.render(animation=True, write_still=False)
+    lum = np.full(len(c2w), np.nan)
+    for k in range(len(c2w)):
+        img = cv2.imread(str(tmp / "_ae" / f"{k:04d}.png"), cv2.IMREAD_GRAYSCALE)
+        if img is not None:
+            lum[k] = np.median(img) / 255.0
+    scene.render.resolution_percentage = pct0
+    scene.cycles.samples = samples0
+    fo.mute = False
+    lum = np.where(np.isfinite(lum), lum, np.nanmedian(lum) if np.isfinite(lum).any() else target)
+    # display value ~ (linear exposure)^(1/2.2) below saturation; saturated frames get a fixed step down
+    off = np.where(lum > 0.97, -2.5, 2.2 * np.log2(target / np.maximum(lum, 1e-3)))
+    off = np.clip(uniform_filter1d(np.clip(off, -clip, clip), 2 * smooth + 1, mode="nearest"), -clip, clip)
+    base = float(scene.view_settings.exposure)
+    for k, o in enumerate(off):
+        scene.view_settings.exposure = base + float(o)
+        scene.keyframe_insert(data_path="view_settings.exposure", frame=k)
     return off
 
 
@@ -128,19 +178,18 @@ def render_traj(R, args, tr: dict, sw, tmp_root: Path):
     import cv2
     t0 = time.time()
     cfg = dict(HSSD_CFG)
-    scene, meta = prepare_scene(R, args.blend, cfg, tr["preset"], tr.get("azimuth", 0.0))
+    scene, meta = prepare_scene(R, args.blend, cfg, tr["preset"], tr.get("azimuth", 0.0), seed=int(tr.get("azimuth", 0.0) * 1000))
     c2w, K, W, H = tr["c2w"], tr["K"], int(tr["width"]), int(tr["height"])
     tmp = Path(tempfile.mkdtemp(prefix=f"{args.scene}_{tr['name']}_", dir=tmp_root))
     depth_dir = tmp / "_exr"
     depth_dir.mkdir()
     cam = make_camera(scene, W, H, K)
-    R.setup_render(scene, cfg, args.samples, depth_dir)
+    fo = R.setup_render(scene, cfg, args.samples, depth_dir)
     scene.render.image_settings.compression = 15
-    expo = auto_exposure(R, scene, cam, c2w, cfg, tmp) if args.auto_exposure else 0.0
-    scene.view_settings.exposure = float(scene.view_settings.exposure) + expo
+    keyframe(scene, cam, c2w)
+    expo = auto_exposure(scene, cam, c2w, fo, tmp) if args.auto_exposure else np.zeros(1)
     for f in depth_dir.iterdir():
         f.unlink()
-    keyframe(scene, cam, c2w)
     frames = tmp / "_frames"
     frames.mkdir()
     scene.render.filepath = str(frames / "####")
@@ -165,9 +214,11 @@ def render_traj(R, args, tr: dict, sw, tmp_root: Path):
         E = np.linalg.inv(c2w[k])
         q.add(f"{k:06d}", cv2.cvtColor(img, cv2.COLOR_BGR2RGB), d, K, E)
     shutil.rmtree(tmp, ignore_errors=True)
-    info = {"name": tr["name"], "frames": len(c2w), "preset": tr["preset"], "exposure": float(scene.view_settings.exposure),
-            "auto_exposure_offset": expo, "render_s": round(t2 - t1, 1), "total_s": round(time.time() - t0, 1),
-            "s_per_frame": round((t2 - t1) / max(len(c2w), 1), 2), "lamps": meta.get("n_lamp_lights", 0)}
+    info = {"name": tr["name"], "frames": len(c2w), "preset": meta.get("preset"), "preset_planned": tr["preset"],
+            "auto_exposure_offset": [round(float(np.min(expo)), 2), round(float(np.median(expo)), 2), round(float(np.max(expo)), 2)],
+            "render_s": round(t2 - t1, 1), "total_s": round(time.time() - t0, 1),
+            "s_per_frame": round((t2 - t1) / max(len(c2w), 1), 2), "lamps": meta.get("n_lamp_lights", 0),
+            "room_lights": meta.get("room_lights", 0)}
     print("[render]", json.dumps(info), flush=True)
     return info
 
