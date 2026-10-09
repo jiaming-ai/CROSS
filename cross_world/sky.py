@@ -76,8 +76,10 @@ def _grid(dirs: torch.Tensor, R: torch.Tensor) -> torch.Tensor:
 class SkyModel(torch.nn.Module):
     """Sky colour by direction: a (3, res, 2 res) equirectangular texture (logits) in the sky frame."""
 
-    def __init__(self, R: np.ndarray, res: int = 256, init_rgb=(0.7, 0.8, 0.9), tex: Optional[torch.Tensor] = None):
+    def __init__(self, R: np.ndarray, res: int = 256, init_rgb=(0.7, 0.8, 0.9), tex: Optional[torch.Tensor] = None,
+                 app: bool = True):
         super().__init__()
+        self.app = app                  # the view's affine colour applies to the sky too (gaussians.finish)
         self.register_buffer("R", torch.as_tensor(np.asarray(R), dtype=torch.float32))
         if tex is None:
             c = torch.logit(torch.tensor(init_rgb, dtype=torch.float32).clamp(0.02, 0.98))
@@ -133,18 +135,20 @@ def push_pull(img: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
 
 
 def composite(rgb: torch.Tensor, alpha: torch.Tensor, sky: Optional[SkyModel], T_wc: torch.Tensor, Ks: torch.Tensor,
-              width: int, height: int) -> torch.Tensor:
-    """Gaussians over the sky: rgb (C, H, W, 3) premultiplied, alpha (C, H, W, 1)."""
+              width: int, height: int, A: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """Gaussians over the sky (rgb (C, H, W, 3) premultiplied, alpha (C, H, W, 1)) and the views' affine colour A."""
+    from cross_world.gaussians import apply_appearance, finish
     if sky is None:
-        return rgb
-    return rgb + (1 - alpha) * sky(pixel_dirs(T_wc, Ks, width, height))
+        return apply_appearance(rgb, A) if A is not None else rgb
+    return finish(rgb, alpha, A, sky, pixel_dirs(T_wc, Ks, width, height), frozen=True)
 
 
 def sky_from_state(state: Optional[dict], device="cuda") -> Optional[SkyModel]:
     """A frozen SkyModel from a saved chunk sky ({"tex": (3, H, W) colours, "R": (3, 3)})."""
     if not state:
         return None
-    m = SkyModel(state["R"].numpy() if torch.is_tensor(state["R"]) else state["R"], tex=state["tex"].float())
+    m = SkyModel(state["R"].numpy() if torch.is_tensor(state["R"]) else state["R"], tex=state["tex"].float(),
+                 app=bool(state.get("app", True)))
     m.seen.fill_(1)
     return m.to(device).requires_grad_(False)
 

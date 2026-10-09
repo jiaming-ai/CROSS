@@ -395,7 +395,7 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
             from cross_world.sky import SkyModel, sky_frame
             px = vb.images[vb.sky][::97].float() / 255.0
             init_rgb = tuple(px.median(0).values.tolist()) if len(px) else (0.7, 0.8, 0.9)
-            sky = SkyModel(sky_frame(mv.up()), cfg.train.sky_res, init_rgb).to(device)
+            sky = SkyModel(sky_frame(mv.up()), cfg.train.sky_res, init_rgb, app=cfg.train.sky_app).to(device)
             del px
         res = train_chunk(vb, init, cfg.train, local_scale, log=log, sky=sky)
         if ex_views:
@@ -419,7 +419,7 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
             f"of {res.stats['n_final']}")
         sky_state = None
         if res.sky is not None:
-            sky_state = {"tex": res.sky.colours().half().cpu(), "R": res.sky.R.cpu().clone()}
+            sky_state = {"tex": res.sky.colours().half().cpu(), "R": res.sky.R.cpu().clone(), "app": res.sky.app}
             st["sky_seen"] = float((res.sky.seen > 0).float().mean())
         cm = ChunkModel(c.index, layers, aids, aws, st, sky_state)
         for vid in c.core_ids:                      # a view's refinement / appearance from the chunk that owns it
@@ -465,10 +465,8 @@ def _second_stage(res, kf_views, ex_views, depths, cfg: "BuildConfig", scene_sca
         T = align_pose(sp, T0, K, v.width, v.height, gt, sh, A, iters=cfg.capture_align_iters, sky=res.sky)
         with torch.no_grad():
             rgb, _, alpha, _ = render(sp, T[None], K[None], v.width, v.height, sh, render_mode="RGB")
-            if res.sky is not None:
-                from cross_world.sky import composite
-                rgb = composite(rgb, alpha, res.sky, T[None], K[None], v.width, v.height)
-            rgb = apply_appearance(rgb, A[None]).clamp(0, 1)
+            from cross_world.sky import composite
+            rgb = composite(rgb, alpha, res.sky, T[None], K[None], v.width, v.height, A[None]).clamp(0, 1)
             resid.append(float((rgb[0] - gt).abs().mean()))
         D = (torch.linalg.inv(T0) @ T).cpu().numpy()
         moves.append((float(np.linalg.norm(D[:3, 3])),
@@ -616,14 +614,11 @@ def evaluate(world: World, views: List[View], device="cuda", align: bool = True,
                                                    sky=sky)
             with torch.no_grad():
                 rgb, ed, alpha, _ = render(sp, Tu[None], K[None], v.width, v.height, world.sh_degree)
-                if sky is not None:
-                    from cross_world.sky import composite
-                    rgb = composite(rgb, alpha, sky, Tu[None], K[None], v.width, v.height)
+                from cross_world.sky import composite
+                rgb = composite(rgb, alpha, sky, Tu[None], K[None], v.width, v.height,
+                                At[None] if At is not None else None).clamp(0, 1)
                 if sky_m is not None and sky_m.any():
                     row[f"sky_alpha_{tag}"] = float(alpha[0, ..., 0][sky_m].mean())
-                if At is not None:
-                    rgb = apply_appearance(rgb, At[None])
-                rgb = rgb.clamp(0, 1)
                 row[f"psnr_{tag}"] = psnr(rgb, gt[None])
                 row[f"ssim_{tag}"] = float(ssim(rgb, gt[None]))
                 row[f"lpips_{tag}"] = lpips(rgb, gt[None])

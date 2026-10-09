@@ -84,6 +84,8 @@ class TrainConfig:
     # the accumulated opacity against the masks (0 on sky, 1 elsewhere), and the texture's resolution / learning rate
     sky_lambda: float = 0.05
     sky_fg: bool = True                 # the cross-entropy also on the other pixels (opacity -> 1); False: sky pixels only
+    sky_app: bool = True                # the view's affine colour also on the sky (False: on the Gaussians only)
+    sky_far: bool = False               # far points also on sky pixels
     sky_res: int = 256
     sky_lr: float = 1e-2
 
@@ -202,7 +204,7 @@ def init_gaussians(vb: ViewBatch, cfg: TrainConfig, masks: Optional[List[torch.T
         foot.append(z / vb.Ks[i, 0, 0])
         if cfg.far_points > 0:
             nd = (vb.depths[i] <= 0)
-            if vb.sky is not None:               # the sky model draws the sky
+            if vb.sky is not None and not cfg.sky_far:    # the sky model draws the sky
                 nd &= ~vb.sky[i]
             yy, xx = torch.nonzero(nd[::4, ::4], as_tuple=True)
             if len(yy):
@@ -287,6 +289,20 @@ def render(splats: Dict[str, torch.Tensor], T_wc: torch.Tensor, Ks: torch.Tensor
 def apply_appearance(rgb: torch.Tensor, A: torch.Tensor) -> torch.Tensor:
     """rgb (C, H, W, 3), A (C, 3, 4): per-view affine colour."""
     return torch.einsum("chwj,cij->chwi", rgb, A[:, :, :3]) + A[:, None, None, :, 3]
+
+
+def finish(rgb: torch.Tensor, alpha: torch.Tensor, A: Optional[torch.Tensor] = None, sky=None,
+           dirs: Optional[torch.Tensor] = None, frozen: bool = False) -> torch.Tensor:
+    """Pixel colour: the Gaussians (premultiplied colour, alpha) over the sky (a SkyModel along `dirs`), with the view's
+    affine colour A on both (or, sky.app False, on the Gaussians only)."""
+    on_both = sky is None or getattr(sky, "app", True)
+    if sky is not None and on_both:
+        rgb = rgb + (1 - alpha) * sky(dirs, frozen=frozen)
+    if A is not None:
+        rgb = apply_appearance(rgb, A)
+    if sky is not None and not on_both:
+        rgb = rgb + (1 - alpha) * sky(dirs, frozen=frozen)
+    return rgb
 
 
 # ---------------------------------------------------------------------------------------------------------- metrics
@@ -411,14 +427,13 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
             T = T @ delta_transform(pose_emb(idx))
         sh_deg = min(cfg.sh_degree, step // max(1, cfg.sh_degree_interval))
         rgb, ed, alpha, info = render(params, T, vb.Ks[idx], vb.width, vb.height, sh_deg)
+        dirs = None
         if sky is not None:
             from cross_world.sky import pixel_dirs
             dirs = pixel_dirs(T.detach(), vb.Ks[idx], vb.width, vb.height)
-            rgb = rgb + (1 - alpha) * sky(dirs)
             sky.mark_seen(dirs, vb.sky[idx])
-        if cfg.app_opt:
-            A_b = app_emb(idx).view(-1, 3, 4)
-            rgb = apply_appearance(rgb, A_b)
+        A_b = app_emb(idx).view(-1, 3, 4) if cfg.app_opt else None
+        rgb = finish(rgb, alpha, A_b, sky, dirs)
         gt = vb.images[idx].float() / 255.0
         strategy.step_pre_backward(params, optimizers, state, step, info)
         l1 = (rgb - gt).abs().mean()
@@ -534,8 +549,8 @@ def align_pose(splats, T_wc: torch.Tensor, K: torch.Tensor, width: int, height: 
         rgb, _, alpha, _ = render(frozen, T, K[None], width, height, sh_degree, render_mode="RGB")
         if sky is not None:
             from cross_world.sky import pixel_dirs
-            rgb = rgb + (1 - alpha) * sky(pixel_dirs(T, K[None], width, height), frozen=True)
-        if A is not None:
+            rgb = finish(rgb, alpha, A[None] if A is not None else None, sky, pixel_dirs(T, K[None], width, height), frozen=True)
+        elif A is not None:
             rgb = apply_appearance(rgb, A[None])
         loss = (rgb - gt[None]).abs().mean()
         if float(loss) < best_loss:
