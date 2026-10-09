@@ -68,9 +68,20 @@ class World:
     def count(self) -> Dict[str, int]:
         return {l: sum(len(c.layers[l]["means"]) for c in self.chunks if l in c.layers) for l in LAYERS}
 
+    def chunk_of(self, center: np.ndarray) -> int:
+        """Chunk of a camera position: the chunk that owns the nearest keyframe (at the keyframes' current poses, so
+        it stays right after a repose bends the map; the build-time cells would not)."""
+        if not hasattr(self, "_kf_chunk"):
+            self._kf_chunk = {k: c.index for c in self.partition.chunks for k in c.core_ids}
+        ids = [k for k in self.kf_poses if k in self._kf_chunk]
+        if not ids:
+            return int(self.partition.nearest_cell(center[None])[0])
+        P = np.stack([self.kf_poses[k][:3, 3] for k in ids])
+        return self._kf_chunk[ids[int(np.argmin(np.linalg.norm(P - center, axis=1)))]]
+
     def splats_for(self, center: Optional[np.ndarray] = None, device="cuda", chunks: Optional[List[int]] = None):
-        """Every near layer, and the far layer of the chunk whose cell holds `center` (all far layers when None)."""
-        own = int(self.partition.nearest_cell(center[None])[0]) if center is not None else None
+        """Every near layer, and the far layer of the camera's chunk (chunk_of; all far layers when None)."""
+        own = self.chunk_of(center) if center is not None else None
         parts = []
         for c in self.chunks:
             if chunks is not None and c.index not in chunks:
@@ -368,7 +379,7 @@ def evaluate(world: World, views: List[View], device="cuda", align: bool = True,
     cache = {}
     t0 = time.time()
     for n, v in enumerate(views):
-        own = int(world.partition.nearest_cell(v.center[None])[0])
+        own = world.chunk_of(v.center)
         if own not in cache:
             cache.clear()
             cache[own] = world.splats_for(v.center, device)

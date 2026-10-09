@@ -18,6 +18,7 @@
   --bg: #12171c; --panel: #171d23; --fg: #e3e8ed; --muted: #94a0ac; --line: #2a333c;
   --accent: #e3963c; --edge: #6fa2d2; --test: #e0679c; --stage: #0b0f13; --stage-fg: #e6eaee; --chip: #222a32; color-scheme: dark }
 html, body { height: 100%; }
+[hidden] { display: none !important; }
 body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px; }
 .app { display: grid; grid-template-columns: minmax(0, 1fr) 360px; height: 100%; }
 .stage { position: relative; background: var(--stage); overflow: hidden; min-height: 320px; }
@@ -133,6 +134,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
   "@sparkjsdev/spark": "https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.2.0/dist/spark.module.js"
 } }
 </script>
@@ -185,7 +187,7 @@ function buildOverlays(W) {
   const g = new THREE.Group();
   const kfs = W.keyframes;
   const zs = W.meta.zmed || 5;
-  const sz = Math.max(0.08, Math.min(2.0, zs * 0.04));
+  const sz = Math.max(0.05, Math.min(1.0, zs * 0.02));
   const accent = new THREE.Color(css("--accent")), test = new THREE.Color(css("--test"));
   const pos = [], col = [], tpos = [], tcol = [];
   const v = (x, y, z, T) => new THREE.Vector3(x, y, z).applyMatrix4(T);
@@ -282,10 +284,9 @@ function updateFar(force) {
   if (!S) return;
   const W = S.W;
   const p = camera.position.clone().applyMatrix4(world.matrix.clone().invert());      // map coordinates (origin-subtracted)
-  const g = [W.axes[0][0] * p.x + W.axes[0][1] * p.y + W.axes[0][2] * p.z, W.axes[1][0] * p.x + W.axes[1][1] * p.y + W.axes[1][2] * p.z];
+  // the chunk of the nearest keyframe (topological: right also after the map's poses change)
   let best = -1, bd = Infinity;
-  for (const c of W.chunks) { if (!c.lo) continue; const dx = Math.max(c.lo[0] - g[0], 0, g[0] - c.hi[0]), dy = Math.max(c.lo[1] - g[1], 0, g[1] - c.hi[1]);
-    const d = Math.hypot(dx, dy); if (d < bd) { bd = d; best = c.index; } }
+  for (const k of W.keyframes) { const d = (k.T[3] - p.x) ** 2 + (k.T[7] - p.y) ** 2 + (k.T[11] - p.z) ** 2; if (d < bd) { bd = d; best = k.chunk; } }
   if (best !== S.ownChunk || force) {
     S.ownChunk = best;
     for (const m of S.meshes) m.mesh.visible = $("tSplat").checked && (m.layer === "near" || m.chunk === best);

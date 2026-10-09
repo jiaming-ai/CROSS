@@ -146,7 +146,7 @@ def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: i
             T[:3, 3] -= origin
             row = {"id": v.id, "T": np.round(T, 5).reshape(-1).tolist(), "K": np.round(v.K, 3).reshape(-1).tolist(),
                    "w": v.width, "h": v.height, "t": v.timestamp, "test": v.id in test_ids,
-                   "chunk": int(part.nearest_cell(v.center[None])[0])}
+                   "chunk": int(world.chunk_of(v.center))}
             if thumbs:
                 img = v.image()
                 s = thumbs / img.shape[1]

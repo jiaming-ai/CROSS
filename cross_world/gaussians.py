@@ -144,6 +144,11 @@ def backproject(depth: torch.Tensor, K: torch.Tensor, T_wc: torch.Tensor, stride
     return pw, ys[ok], xs[ok], z
 
 
+def init_budget(cfg: TrainConfig, n_views: int) -> int:
+    """Initial Gaussians at most: 70 % of the MCMC budget, so that densification has room."""
+    return int(0.7 * np.clip(cfg.cap_per_view * n_views, cfg.cap_min, cfg.cap_max))
+
+
 @torch.no_grad()
 def init_gaussians(vb: ViewBatch, cfg: TrainConfig, masks: Optional[List[torch.Tensor]] = None,
                    keep_fn=None, seed: int = 0) -> Dict[str, torch.Tensor]:
@@ -184,10 +189,16 @@ def init_gaussians(vb: ViewBatch, cfg: TrainConfig, masks: Optional[List[torch.T
     if len(P):
         f0 = float(Fp.median())
         L = torch.floor(torch.log2((Fp / f0).clamp(min=1e-6))).clamp(-8, 8)
-        cell = f0 * cfg.init_voxel_px * torch.pow(2.0, L)
-        key = torch.cat([L[:, None], torch.floor(P / cell[:, None])], 1).long()
-        uniq, inv = torch.unique(key, dim=0, return_inverse=True)
-        n = len(uniq)
+        budget = init_budget(cfg, len(vb.ids)) - (cfg.far_points if cfg.far_points > 0 else 0)
+        vox = cfg.init_voxel_px
+        while True:              # coarser voxels until the initial points fit the budget
+            cell = f0 * vox * torch.pow(2.0, L)
+            key = torch.cat([L[:, None], torch.floor(P / cell[:, None])], 1).long()
+            uniq, inv = torch.unique(key, dim=0, return_inverse=True)
+            n = len(uniq)
+            if n <= max(budget, 1000) or vox > 64:
+                break
+            vox *= 1.25
         cnt = torch.zeros(n, device=dev).index_add_(0, inv, torch.ones(len(P), device=dev))
         P = torch.zeros(n, 3, device=dev).index_add_(0, inv, P) / cnt[:, None]
         Cc = torch.zeros(n, 3, device=dev).index_add_(0, inv, Cc) / cnt[:, None]
