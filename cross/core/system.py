@@ -508,12 +508,10 @@ class System:
 
         # .to() aliases when storage and tracking use the same device. The
         # first saved node must remain a snapshot when live motion mutates
-        # its prior, including its conditional source-response center.
+        # its prior.
         self.hypothesis_manager.dist = (mu.to(self.state_device).clone(), sigma.to(self.state_device).clone(),
                                        weights.to(self.state_device).clone())
         self.hypothesis_manager.start_tracking_chart()
-        if self.config.mapping.hypothesis.conditional_sources:
-            self.hypothesis_manager.initialize_source_filter()
 
         # insert the initial keyframe
         kf = self.db.insert(
@@ -530,7 +528,6 @@ class System:
             temporary=False,
             raw_rgb_right=rgb_right.to(self.device) if (rgb_right is not None and self._store_right_images) else None,
             pose_charts=self.hypothesis_manager.get_active_charts(),
-            metric_source=getattr(self, "_current_metric_source", None),
         )
         kf.step_created = int(self._processed_frame_num)
         self.hypothesis_manager.add_node(kf)
@@ -786,10 +783,6 @@ class System:
         # --- 4. Combine All Data ---
         save_data = {
             "coordinate_charts_version": 1 if self.hypothesis_manager.chart_aware else 0,
-            "schmidt_map_geometry_version": ((2 if self.hypothesis_manager.map_geometry_basis == 'factor' else 1)
-                                             if self.hypothesis_manager.schmidt_map_geometry else 0),
-            "conditional_sources_version": 1 if (self.hypothesis_manager.source_states is not None or
-                                                   self.hypothesis_manager.saved_source_belief is not None) else 0,
             "config": config_to_dict(self.config),
             "db_data": db_data,
             "hypo_data": hypo_data,
@@ -947,11 +940,9 @@ class System:
         save_data = map_store.read_map(load_path, packed=True)   # tensor fields as numpy rows (compact keyframes / edges)
         if save_data.get("coordinate_charts_version", 0) and not self.hypothesis_manager.chart_aware:
             raise ValueError("This map contains coordinate charts; enable chart-aware mapping to load it")
-        if bool(save_data.get('conditional_sources_version',0)) != self.config.mapping.hypothesis.conditional_sources:
-            raise ValueError('Conditional source maps require the same inference mode; rebuild a legacy reference map')
-        from .map_geometry import validate_load_mode
-        validate_load_mode(save_data,self.hypothesis_manager.schmidt_map_geometry,
-                           self.hypothesis_manager.map_geometry_basis)
+        if save_data.get("conditional_sources_version", 0) or save_data.get("schmidt_map_geometry_version", 0):
+            raise ValueError("This map was built with the removed conditional-source filter (git tag "
+                             "opt-conditional-sources); rebuild it")
 
         # --- 2. Restore Class Variables ---
         Keyframe._next_id = save_data["class_vars"]["keyframe_next_id"]
@@ -1063,8 +1054,7 @@ class System:
             v = getattr(self, "_lc_verifier", None)       # absent in test stubs built without __init__
             if v is not None and v.odom_scale != 1.0 and obs.get("delta_pose") is not None:
                 obs = dict(obs, delta_pose=_scale_translation(obs["delta_pose"], v.odom_scale))
-            self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"),
-                                              source_factor=obs.get('motion_source_factor'))
+            self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"))
         
         # a remote session (cross.remote) steps every frame the edge maps, but sends the image only of the frames it
         # expects the back end to observe (remote_frame without rgb: the step without an observation)
@@ -1152,11 +1142,6 @@ class System:
         confidence_map = last_obs.get("conf", None)
         rgb_right = last_obs.get("rgb_right", None)
         timestamp = last_obs.get("timestamp", None)
-        self._current_metric_source = last_obs.get("metric_source")
-        if "metric_input" in last_obs:
-            # These are frontend input derivatives, not filtered node-pose
-            # sensitivities. Retain them as diagnostics for the coupled model.
-            self.last_step_diagnostics["metric_input"] = last_obs["metric_input"]
 
         if timestamp is None:
             timestamp = self._processed_frame_num
@@ -1236,8 +1221,7 @@ class System:
         ################################
         # update the motion model gmm with odometry
         if not ret["kidnapped"]:
-            self.hypothesis_manager.motion_update(ret["delta_pose"], ret["delta_std"],
-                                                  source_factor=ret.get('motion_source_factor'))
+            self.hypothesis_manager.motion_update(ret["delta_pose"], ret["delta_std"])
             if self.config.retrieval.locality.enabled:
                 self._locality_path += float(torch.linalg.norm(ret["delta_pose"].tensor().reshape(-1)[:3]))
             logger.debug(f"Updated the current state gmm with odometry at step {self._processed_frame_num}")
@@ -1409,12 +1393,7 @@ class System:
             proposal_gmm_confidence,
             pose_update_mask=pose_update_mask,
             variance_update_mask=variance_update_mask,
-            **(dict(source_factors={i:m.factor for i,m in self.hypothesis_manager.aligned_conditional_models.items()},
-                    source_covariances={i:m.geometry_covariance for i,m in self.hypothesis_manager.aligned_conditional_models.items()})
-               if self.hypothesis_manager.source_states is not None else {}),
         )
-        if self.hypothesis_manager.source_states is not None:
-            self.last_step_diagnostics['conditional_filter'] = self.hypothesis_manager.last_conditional_audit
         current_mu, current_sigma, current_weights = self.hypothesis_manager.dist
 
         ret['current_mu'] = current_mu
@@ -2094,7 +2073,6 @@ class System:
         """
         ret = {"kidnapped": False}
         if self.use_odometry:
-            ret['motion_source_factor'] = self.odom_accumulator.source_since_last_reading('since_last_step')
             delta_pose, std = self.odom_accumulator.get_since_last_reading("since_last_step")
             ret["delta_pose"] = delta_pose
             ret["delta_std"] = std
@@ -2212,11 +2190,6 @@ class System:
         # force true => add permanent kf
         is_temp_kf = False if force_permanent else True
         delta_pose, std = self.odom_accumulator.get_since_last_reading("since_last_add_kf", reset=False)
-        conditional_motion = None
-        if self.hypothesis_manager.source_states is not None:
-            from cross.core.conditional_pose import ConditionalPose
-            factor = self.odom_accumulator.source_since_last_reading('since_last_add_kf')
-            conditional_motion = ConditionalPose(np.diag(std.tensor().double().cpu().numpy()**2),factor)
 
         # if the robot moves too little, skip adding a kf
         if not force_add and rotation_angle_from_quat(delta_pose.tensor()[3:]) < 0.1 and \
@@ -2261,7 +2234,6 @@ class System:
                 temporary=is_temp_kf,
                 raw_rgb_right=rgb_right.to(self.device) if (rgb_right is not None and self._store_right_images) else None,
                 pose_charts=pose_charts,
-                metric_source=getattr(self, "_current_metric_source", None),
             )
             logger.debug(f"Add permanent keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         else:
@@ -2273,7 +2245,6 @@ class System:
                 timestamp=timestamp,
                 temporary=is_temp_kf,
                 pose_charts=pose_charts,
-                metric_source=getattr(self, "_current_metric_source", None),
             )
             logger.debug(f"Add temporary keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         
@@ -2306,7 +2277,6 @@ class System:
                     type=EdgeType.VISUAL,
                     from_comp_id=source_comp_id,
                     to_comp_id=dest_comp_id,
-                    conditional_pose=ret.get('relative_conditional_poses',[None]*len(valid_keyframes))[i],
                     meta={"conf": float(confs[i]) if confs is not None else None,
                           "noise_scale": float(self._lc_verifier.scale_for(kf_i.id)) if self._lc_verifier is not None else 1.0,
                           # anisotropic noise model: the scale along the measured bearing (None: isotropic model)
@@ -2355,7 +2325,6 @@ class System:
                 rel_pose_mean=delta_pose,
                 rel_pose_std=std,
                 type=EdgeType.ODOMETRY,
-                conditional_pose=conditional_motion,
                 meta=meta,
             )
         self.odom_accumulator.reset_item("since_last_add_kf")
@@ -2766,20 +2735,6 @@ class System:
             })
             if self.hypothesis_manager.chart_aware:
                 hypotheses[-1]['chart_id'] = int(flat_charts[best_candidate_in_cluster_idx])
-            if self.hypothesis_manager.source_states is not None:
-                from cross.core.conditional_pose import ConditionalPose
-                b,c = [int(v[best_candidate_in_cluster_idx]) for v in valid_indices_tuple]
-                message = ret['convolved_conditional_poses'][b][c]
-                S = message.geometry_covariance.copy()
-                if len(cluster_indices) > 1:
-                    # Dispersion does not replace the selected factor's
-                    # conditional geometric uncertainty. Nearby duplicates
-                    # cannot turn a noisy node/PnP fit into exact geometry.
-                    S += np.diag(representative_std.tensor().double().cpu().numpy()**2)
-                message = ConditionalPose(S,message.factor)
-                hypotheses[-1]['conditional_pose'] = message
-                hypotheses[-1]['std'] = pp.se3(torch.as_tensor(S.diagonal().copy(),
-                                            device=self.state_device,dtype=representative_std.dtype).clamp_min(0).sqrt())
 
         # make sure the hypotheses are in the same order as the current state GMM
         return self.hypothesis_manager.align_proposal_prior(hypotheses)
@@ -3077,15 +3032,9 @@ class System:
         ref_depths = torch.cat(ref_depths, dim=0) if ref_depths is not None else None
 
         # then estimate the relative pose
-        source_context = {}
-        if getattr(self, "_current_metric_source", None) is not None:
-            source_context = dict(ref_metric_sources=[getattr(k, "metric_source", None) for k in keyframes],
-                                  curr_metric_source=self._current_metric_source)
-        if self.hypothesis_manager.source_states is not None:
-            source_context['excluded_factor_ids'] = set().union(*(s.seen_factors for s in self.hypothesis_manager.source_states if s is not None))
         # which references belong to a loaded map, and whether this session is still unjoined to it
-        source_context['ref_loaded'] = [k.id in self.loaded_node_ids for k in keyframes]
-        source_context['session_unanchored'] = bool(self.hypothesis_manager.reference_support.unanchored)
+        source_context = {'ref_loaded': [k.id in self.loaded_node_ids for k in keyframes],
+                          'session_unanchored': bool(self.hypothesis_manager.reference_support.unanchored)}
         if self.pose_est_type == PoseEstType.FF:
             valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
                 ref_rgbs, None, rgb_image, None,
@@ -3212,38 +3161,7 @@ class System:
         )
         convolved_mus = normalize_SE3(convolved_mus)
 
-        conditional_ret = {}
-        if self.hypothesis_manager.source_states is not None:
-            from cross.core.conditional_pose import ConditionalPose, compose
-            relative_models = getattr(self.pose_est, 'last_conditional_poses', None)
-            if relative_models is None or len(relative_models) != len(valid_keyframes):
-                raise ValueError('Conditional retrieval needs one model for every verified relative pose')
-            models = []
-            for i,(kf,relative) in enumerate(zip(valid_keyframes,relative_models)):
-                if kf.conditional_poses is None:
-                    raise ValueError('A retrieved node has no conditional pose model; rebuild the reference map')
-                # Retain CROSS confidence/retrieval-dependent geometry weights,
-                # without reintroducing the old teacher-scale marginal.
-                relative = ConditionalPose(np.diag(valid_stds[i].tensor().double().cpu().numpy()**2),relative.factor)
-                relative_models[i] = relative
-                row = []
-                for c,node_model in enumerate(kf.conditional_poses):
-                    if valid_ref_component_weights[i,c] <= 1e-3:
-                        row.append(None)
-                        continue
-                    if node_model is None:
-                        raise ValueError('An active retrieved component has no conditional pose model')
-                    pose,model = compose(kf.pose_mu[c].matrix().double().cpu().numpy(),node_model,
-                        valid_poses[i].matrix().double().cpu().numpy(),relative,self.hypothesis_manager.source_states[0])
-                    convolved_mus[i,c] = pp.from_matrix(torch.as_tensor(pose,device=self.state_device,dtype=convolved_mus.dtype),pp.SE3_type)
-                    convolved_stds[i,c] = pp.se3(torch.as_tensor(model.geometry_covariance.diagonal().copy(),
-                                                device=self.state_device,dtype=convolved_stds.dtype).clamp_min(0).sqrt())
-                    row.append(model)
-                models.append(row)
-            conditional_ret = dict(convolved_conditional_poses=models,relative_conditional_poses=relative_models)
-
         return {
-            **conditional_ret,
             # retrieval
             "retrieval_audit": ret["retrieval_audit"],
             "retrieval_scores": retrieval_scores,

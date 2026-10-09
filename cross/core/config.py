@@ -447,9 +447,6 @@ class ClusterStdConfig:
 class HypothesisConfig:
     """All tuning parameters for HypothesisManager."""
 
-    conditional_sources: bool = False
-    schmidt_map_geometry: bool = False  # experimental shared map uncertainty
-    map_geometry_basis: str = 'epoch'  # 'factor' retains raw factor identities across solves
     # --- Observation update ---
     # process noise (std, metres / radians per axis) added to the prior of every component before it is fused with
     # an observation.  0.05 is the original CROSS value: it keeps the Kalman gain away from zero but, with good

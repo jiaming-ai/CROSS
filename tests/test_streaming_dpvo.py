@@ -145,8 +145,7 @@ def test_async_replay_consumes_only_scale_scheduled_results():
 
 
 @pytest.mark.parametrize('options', [dict(dpvo_checkpoint=None), dict(scale=ScaleConfig(mode='relative')),
-                                   dict(delayed_recovery=True), dict(dpvo_metric_bootstrap=True),
-                                   dict(conditional_sources=True, chart_aware=True, session_recovery=True)])
+                                   dict(dpvo_metric_bootstrap=True)])
 def test_incompatible_streaming_dpvo_options_are_explicit(options):
     values = dict(frontend='streaming_dpvo', dpvo_checkpoint='weights')
     values.update(options)

@@ -3,7 +3,6 @@
 The native tracker sees RGB only. Mature sparse depths and their source image
 are frozen together for the teacher; the teacher never overwrites native BA.
 The existing streaming mapper consumes timestamped metric-depth snapshots.
-This scalar bridge does not implement conditional pose/source inference.
 """
 
 from dataclasses import asdict, dataclass, replace

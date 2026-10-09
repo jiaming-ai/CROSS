@@ -88,7 +88,6 @@ def keyframes(enc: dict, atlas_of, normalize_mu: bool = False, images: Optional[
     """Keyframes of an encoded record list (database keyframes or temporary keyframes), in record order.
     `atlas_of(atlas_id or None)` gives the Atlas; `images` = (index, pack) of the map's stored images (database
     keyframes)."""
-    from cross.core.conditional_pose import restore
     from cross.db.store import IMAGE_FIELDS, ImageRef, _CODEC_NAMES
     n, cols = enc["n"], enc["cols"]
     if n == 0:
@@ -111,8 +110,6 @@ def keyframes(enc: dict, atlas_of, normalize_mu: bool = False, images: Optional[
     timestamps = _values(col("timestamp"), n)
     temporary = _values(col("temporary"), n)
     last_pgo = _values(col("last_pgo_step"), n)
-    metric = _values(col("metric_source"), n)
-    cond = _values(col("conditional_poses"), n)
     imgs = {f: [None] * n for f in ("raw_rgb_image", "depth_image", "raw_rgb_right")}
     if images is not None:
         idx, pack = images
@@ -148,8 +145,6 @@ def keyframes(enc: dict, atlas_of, normalize_mu: bool = False, images: Optional[
         kf.atlas, kf.timestamp, kf.temporary, kf.last_pgo_step = atlases[atlas_ids[i]], timestamps[i], temporary[i], last_pgo[i]
         kf._pose_charts = ch[i]
         kf._pose_charts_lt = ch_lt if ch[i] is not None else None
-        kf.metric_source = metric[i]
-        kf.conditional_poses = restore(cond[i]) if cond[i] is not None else None
         kf.id = ids[i]
         append(kf)
     Keyframe._next_id += n                  # as n constructions would (System.load_map sets it afterwards)
@@ -172,7 +167,6 @@ def _measurement(col):
 
 def edges(enc: dict, visual: bool) -> Optional[list]:
     """Edges of an encoded record list (odometry edge records, or the flattened visual edge records)."""
-    from cross.core.conditional_pose import ConditionalPose
     n, cols = enc["n"], enc["cols"]
     if n == 0:
         return []
@@ -183,7 +177,6 @@ def edges(enc: dict, visual: bool) -> Optional[list]:
     m, m_lt, m_dt = mean
     s, s_lt, s_dt = std
     types = _edge_types(col("type"), n)
-    cond = _values(col("conditional_pose"), n)
     out = []
     append = out.append
     if not visual:
@@ -194,11 +187,9 @@ def edges(enc: dict, visual: bool) -> Optional[list]:
             e = new(Edge)
             e._m, e._mt, e._md = m[i], m_lt, m_dt
             e._s, e._st, e._sd = s[i], s_lt, s_dt
-            e.type, e._cost, e.conditional_pose, e.n_frames, e.conf = types[i], None, None, n_frames[i], None
+            e.type, e._cost, e.n_frames, e.conf = types[i], None, n_frames[i], None
             if fault[i]:
                 e.odom_fault = float(fault[i])
-            if cond[i] is not None:
-                e.conditional_pose = ConditionalPose.from_record(cond[i])
             append(e)
         return out
     fc, tc = _values(col("from_comp_id"), n), _values(col("to_comp_id"), n)
@@ -210,11 +201,9 @@ def edges(enc: dict, visual: bool) -> Optional[list]:
         e = new(VisualEdge)
         e._m, e._mt, e._md = m[i], m_lt, m_dt
         e._s, e._st, e._sd = s[i], s_lt, s_dt
-        e.type, e._cost, e.conditional_pose, e.n_frames = types[i], None, None, None
+        e.type, e._cost, e.n_frames = types[i], None, None
         e.from_comp_id, e.to_comp_id = fc[i], tc[i]
         e.conf, e.noise_scale, e.noise_scale_along, e.noise_scale_rot, e.informative = conf[i], ns[i], nsa[i], nsr[i], inf[i]
-        if cond[i] is not None:
-            e.conditional_pose = ConditionalPose.from_record(cond[i])
         append(e)
     return out
 
@@ -307,7 +296,6 @@ def encode_keyframes(kfs: list, image_fields: bool) -> Optional[dict]:
     """encode_records of the keyframe records of HypothesisManager.save_state (temporary keyframes) or, with
     `image_fields`, of KeyframeDatabase.save_state with its image fields already set to None (store.write_map encodes
     the images separately)."""
-    from cross.core.conditional_pose import records
     from cross.db.store import _encode_column
     n = len(kfs)
     if n == 0:
@@ -320,8 +308,6 @@ def encode_keyframes(kfs: list, image_fields: bool) -> Optional[dict]:
             return None
         cols[f] = c
     cols["id"] = _encode_column([kf.id for kf in kfs])
-    cols["metric_source"] = _encode_column([kf.metric_source for kf in kfs])
-    cols["conditional_poses"] = _encode_column([records(kf.conditional_poses) for kf in kfs])
     cols["timestamp"] = _encode_column([kf.timestamp for kf in kfs])
     cols["temporary"] = _encode_column([kf.temporary for kf in kfs])
     cols["atlas_id"] = _encode_column([kf.atlas.id if kf.atlas is not None else None for kf in kfs])
@@ -330,12 +316,11 @@ def encode_keyframes(kfs: list, image_fields: bool) -> Optional[dict]:
             cols[f] = {"k": "none", "n": n}
         cols["last_pgo_step"] = _encode_column([kf.last_pgo_step for kf in kfs])
         keys = ["id", "raw_rgb_image", "depth_image", "raw_rgb_right", "pose_mu", "pose_std", "pose_weights",
-                "pose_charts", "metric_source", "conditional_poses", "atlas_id", "timestamp", "temporary",
+                "pose_charts", "atlas_id", "timestamp", "temporary",
                 "last_pgo_step"]
     else:
         cols["last_pgo_step"] = _encode_column([getattr(kf, "last_pgo_step", -1) for kf in kfs])
-        keys = ["id", "pose_mu", "pose_std", "pose_weights", "pose_charts", "metric_source", "conditional_poses",
-                "timestamp", "temporary", "atlas_id", "last_pgo_step"]
+        keys = ["id", "pose_mu", "pose_std", "pose_weights", "pose_charts", "timestamp", "temporary", "atlas_id", "last_pgo_step"]
     return _records_columns(keys, cols, n)
 
 
@@ -350,15 +335,13 @@ def encode_edges(edges: list, visual: bool) -> Optional[dict]:
     mean, std = _measurement_column(edges, "m"), _measurement_column(edges, "s")
     if mean is None or std is None:
         return None
-    cols = {"mean": mean, "std": std, "type": _encode_column([e.type.name for e in edges]),
-            "conditional_pose": _encode_column([e.conditional_pose.record() if e.conditional_pose is not None
-                                                else None for e in edges])}
+    cols = {"mean": mean, "std": std, "type": _encode_column([e.type.name for e in edges])}
     if not visual:
         cols["n_frames"] = _encode_column([getattr(e, "n_frames", None) for e in edges])
-        return _records_columns(["mean", "std", "type", "conditional_pose", "n_frames"], cols, n)
+        return _records_columns(["mean", "std", "type", "n_frames"], cols, n)
     cols["from_comp_id"] = _encode_column([e.from_comp_id for e in edges])
     cols["to_comp_id"] = _encode_column([e.to_comp_id for e in edges])
     for k in ("conf", "noise_scale", "noise_scale_along", "noise_scale_rot", "informative"):
         cols[k] = _encode_column([getattr(e, k, None) for e in edges])
-    return _records_columns(["mean", "std", "type", "from_comp_id", "to_comp_id", "conditional_pose", "conf",
+    return _records_columns(["mean", "std", "type", "from_comp_id", "to_comp_id", "conf",
                              "noise_scale", "noise_scale_along", "noise_scale_rot", "informative"], cols, n)

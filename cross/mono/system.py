@@ -44,20 +44,19 @@ class MonocularSystem(Pipeline):
     depth and an injected monocular relative-pose estimator.
 
     pose_estimator: reuse the estimator of an earlier session (its models); mono_defaults: apply the monocular back-end
-    defaults (filter mode, visual-odometry motion noise, top_k 3) on top of system_config (default: only when no
+    defaults (visual-odometry motion noise, top_k 3) on top of system_config (default: only when no
     system_config is given); external_odometry: the frontend passes on dataset odometry, keep the back end's default
     odometry noise model; odometry: the pipeline's odometry label (default external / visual), vio keeps the back end's
     default odometry noise model as well (the motion is metric, as with external odometry)."""
 
     def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None,
                  pose_estimator=None, mono_defaults=None, external_odometry=False, odometry=None):
-        if frontend is None and getattr(config, "frontend", None) in {"streaming_pnp", "streaming_dpvo"}:
+        if frontend is None and getattr(config, "frontend", None) == "streaming_dpvo":
             raise ValueError("Use StreamingMonocularSystem for a streaming frontend")
-        from cross.core.config import FilterMode, PoseEstType, SystemConfig
+        from cross.core.config import PoseEstType, SystemConfig
         from cross.core.system import System
         from cross.core.types import Camera
         from .retrieval import DA3RelativePose, MetricRelativePose
-        from .two_view_retrieval import MetricTwoViewRelativePose
 
         self.config = config or MonoConfig()
         if frontend is not None:
@@ -104,15 +103,9 @@ class MonocularSystem(Pipeline):
         if self.config.session_recovery:
             cfg.mapping.hypothesis.session_recovery = True
         cfg.mapping.hypothesis.chart_aware = self.config.chart_aware
-        cfg.mapping.hypothesis.conditional_sources = self.config.conditional_sources
-        cfg.mapping.hypothesis.schmidt_map_geometry = self.config.schmidt_map_geometry
-        cfg.mapping.hypothesis.map_geometry_basis = self.config.map_geometry_basis
-        if self.config.conditional_sources and (cfg.mapping.loop_closure.async_ or cfg.mapping.hypothesis.no_pgo_for_lc):
-            raise ValueError('Conditional sources require synchronous graph optimization in the mapping worker')
         if mono_defaults is None:
             mono_defaults = system_config is None
         if mono_defaults:
-            cfg.tracking.filter_mode = FilterMode(self.config.filter_mode)
             cfg.tracking.odom_min_std_translation = 0.005
             cfg.tracking.odom_min_std_rotation = 0.01
             cfg.tracking.odom_std_per_meter = 0.1
@@ -135,7 +128,6 @@ class MonocularSystem(Pipeline):
             raise ValueError("Historical retrieval slots cannot exceed the total retrieval budget")
         camera = Camera(np.array(K).copy(), *image_size)
         # System rescales camera.K in place to its stored-image resolution.
-        metric_adapter = MetricTwoViewRelativePose if self.config.retrieval_pose == "metric_two_view" else MetricRelativePose
         if pose_estimator is not None:
             pass
         elif self.config.retrieval_pose == "ff":
@@ -143,16 +135,14 @@ class MonocularSystem(Pipeline):
             pose_estimator = FeedForwardRelativePose(self.config.ff_backend, self.config.ff_checkpoint, device,
                                                      self.config.ff_resolution, self.config.ff_min_covisibility)
             if self.config.ff_fallback_only:
+                from .two_view_retrieval import MetricTwoViewRelativePose
                 pose_estimator = FallbackFeedForwardRelativePose(
                     MetricTwoViewRelativePose(camera.K, device, self.config.mask_people, "superpoint_lightglue"),
                     pose_estimator, scope=self.config.ff_scope)
         elif self.config.retrieval_pose == "da3":
             pose_estimator = DA3RelativePose(self.frontend.geometry, device)
         else:
-            pose_estimator = metric_adapter(camera.K, device, self.config.mask_people, self.config.retrieval_matcher,
-                                            self.config.conditional_sources, self.config.source_log_std,
-                                            **(dict(rotation_geometry=self.frontend.geometry)
-                                               if self.config.two_view_rotation_check else {}))
+            pose_estimator = MetricRelativePose(camera.K, device, self.config.mask_people)
         mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         attach_pair_motion(self.frontend, pose_estimator, self.config, K)
         super().__init__(mapper, self.frontend, self.config.mapping_interval, mode="mono", odometry=odometry,
