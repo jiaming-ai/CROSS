@@ -144,6 +144,8 @@ def cmd_eval(args):
     from cross_world.world import World
     out = Path(args.out or Path(args.world).parent)
     world = World.load(args.world)
+    if args.render_sh is not None:          # e.g. 1: what the web viewer draws from an SH-1 export
+        world.meta["sh_degree"] = min(int(args.render_sh), world.sh_degree)
     mv = _views(args)
     res = run_eval(world, mv, args, out, print)
     (out / "metrics_eval.json").write_text(json.dumps(res, indent=1, default=float))
@@ -215,6 +217,7 @@ def main(argv=None):
     common(e)
     e.add_argument("--world", required=True)
     e.add_argument("--out", default=None)
+    e.add_argument("--render-sh", type=int, default=None, help="evaluate with the SH truncated to this degree")
     e.set_defaults(fn=cmd_eval)
     x = sub.add_parser("export")
     common(x)
