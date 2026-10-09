@@ -685,6 +685,23 @@ class KeyframeQualityConfig:
 
 
 @dataclass
+class WorldCaptureConfig:
+    """Input frames kept for a later 3D reconstruction of the map (cross/core/world_capture.py, cross_world): every
+    `min_translation` m / `min_rotation_deg` deg, at the input resolution and uncropped, posed relative to their nearest
+    permanent keyframes, saved next to the map (map.pkl.capture/), not in its database.  Off by default: it only
+    costs disk (KITTI 07 stereo, every frame: ~0.3 GB of JPEG) and a few ms per captured frame."""
+    enabled: bool = False
+    min_translation: float = 0.25
+    min_rotation_deg: float = 5.0
+    max_side: int = 0                   # downscale the longer side to this (0: input resolution)
+    image_codec: str = "jpeg"           # jpeg | png | webp
+    image_quality: int = 95
+    depth: bool = True                  # keep the input depth (RGB-D)
+    right: bool = True                  # keep the right image (stereo)
+    anchors: int = 3                    # nearest permanent keyframes the pose is held relative to
+
+
+@dataclass
 class MappingConfig:
     kf_gmm_n_components: int = 5
     kf_retrieval_threshold_new_kf: float = 0.75
@@ -698,6 +715,7 @@ class MappingConfig:
     hypothesis: HypothesisConfig = field(default_factory=HypothesisConfig)
     topo: TopoConfig = field(default_factory=TopoConfig)
     keyframe_quality: KeyframeQualityConfig = field(default_factory=KeyframeQualityConfig)
+    world_capture: WorldCaptureConfig = field(default_factory=WorldCaptureConfig)
 
 
 @dataclass

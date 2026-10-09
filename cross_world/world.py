@@ -232,11 +232,15 @@ def split_views(mv: MapViews, test_every: int):
 
 
 def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_chunks: Optional[List[int]] = None,
-                chunk_dir: Optional[Path] = None) -> World:
+                chunk_dir: Optional[Path] = None, extra_views: Optional[List[View]] = None) -> World:
+    """`extra_views`: more training views that are not keyframes (frames kept by mapping.world_capture); they
+    train the chunks that see them but anchor nothing (the Gaussians follow the keyframes)."""
     t_all = time.time()
-    train_views, test_views = split_views(mv, cfg.test_every)
-    log(f"{len(mv.views)} keyframes ({mv.mode}): {len(train_views)} train, {len(test_views)} test; "
-        f"{mv.views[0].width}x{mv.views[0].height} images")
+    kf_train, test_views = split_views(mv, cfg.test_every)
+    extra = list(extra_views or [])
+    train_views = kf_train + extra
+    log(f"{len(mv.views)} keyframes ({mv.mode}): {len(kf_train)} train, {len(test_views)} test; "
+        f"{mv.views[0].width}x{mv.views[0].height} images; {len(extra)} extra (captured) training views")
     # ---- depth of every training view (needed for the partition's visibility and the initialisation)
     t0 = time.time()
     depths: Dict[int, np.ndarray] = {}
@@ -249,7 +253,7 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
             if d is not None:
                 depths[v.id] = d
     t_depth = time.time() - t0
-    if cfg.train.consistency_tol > 0 and depths:
+    if cfg.train.consistency_tol > 0 and depths and len(train_views) == len(depths):
         T_all = np.stack([v.T_wc for v in train_views])
         nb = _neighbours(T_all)
         dl = [torch.from_numpy(depths[v.id]).to(device) for v in train_views]
@@ -265,11 +269,13 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
     zs = np.concatenate([d[d > 0][::97] for d in depths.values()]) if depths else np.array([5.0])
     zmed = float(np.median(zs)) if len(zs) else 5.0
     log(f"depth ({cfg.depth}, {len(depths)} views) in {t_depth:.1f}s, median {zmed:.2f} m")
-    # ---- partition
+    # ---- partition (cells from the keyframes; captured frames join the chunks that see them)
+    kf_ids = [v.id for v in kf_train]
+    kf_centers = np.stack([v.center for v in kf_train])
     ids = [v.id for v in train_views]
     centers = np.stack([v.center for v in train_views])
     margin = cfg.margin or max(2.0, 1.5 * zmed)
-    part = make_partition(ids, centers, mv.up(), cfg.max_views, margin)
+    part = make_partition(kf_ids, kf_centers, mv.up(), cfg.max_views, margin)
     samples = {}
     for v in train_views:
         if v.id in depths:
@@ -278,8 +284,8 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
     assign_views(part, ids, centers, samples, cfg.min_visible)
     log(f"partition: {len(part.chunks)} chunks, margin {margin:.1f} m, train views per chunk "
         f"{[len(c.train_ids) for c in part.chunks]}")
-    scene_scale = float(np.linalg.norm(centers - centers.mean(0), axis=1).max()) * 1.1 + 1e-3
     by_id = {v.id: v for v in train_views}
+    kf_set = set(kf_ids)
     chunks, pose_delta, appearance = [], {}, {}
     for c in part.chunks:
         if only_chunks is not None and c.index not in only_chunks:
@@ -305,7 +311,7 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
         far = torch.from_numpy(~part.in_region(sp["means"].numpy()))
         layers = {"near": {k: v[own] for k, v in sp.items()}, "far": {k: v[far] for k, v in sp.items()}}
         aids, aws = {}, {}
-        cids = list(c.train_ids)
+        cids = [i for i in c.train_ids if i in kf_set]
         cc = np.stack([by_id[i].center for i in cids])
         for l, s in layers.items():
             aids[l], aws[l] = compute_anchors(s["means"], cids, cc, cfg.anchors)
@@ -326,7 +332,7 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
         chunks.append(cm)
         del vb, res
         torch.cuda.empty_cache()
-    meta = {"map": mv.map_path, "mode": mv.mode, "n_views": len(mv.views), "train_ids": ids,
+    meta = {"map": mv.map_path, "mode": mv.mode, "n_views": len(mv.views), "train_ids": kf_ids, "n_extra": len(extra),
             "test_ids": [v.id for v in test_views], "sh_degree": cfg.train.sh_degree, "zmed": zmed,
             "depth_s": round(t_depth, 1), "build_s": round(time.time() - t_all, 1),
             "config": {**{k: v for k, v in asdict(cfg).items() if k != "train"}, "train": asdict(cfg.train)},

@@ -50,6 +50,7 @@ class View:
     timestamp: Optional[float] = None
     source_index: Optional[int] = None   # frame of the source sequence
     atlas: Optional[int] = None
+    kind: str = "keyframe"               # keyframe | capture (mapping.world_capture frame) | test (source frame)
     _image: Callable[[], np.ndarray] = field(default=None, repr=False)      # (H, W, 3) uint8 RGB
     _depth: Optional[Callable[[], np.ndarray]] = field(default=None, repr=False)   # (H, W) float32 metres, 0 = none
     _right: Optional[Callable[[], np.ndarray]] = field(default=None, repr=False)   # (H, W, 3) uint8 RGB
@@ -299,4 +300,67 @@ def source_test_views(mv: MapViews, *, every: int = 1, min_gap: int = 1, max_sid
     if limit and len(out) > limit:
         sel = np.linspace(0, len(out) - 1, limit).round().astype(int)
         out = [out[k] for k in sel]
+    return out
+
+
+def _blend_poses(Ts: List[np.ndarray], w: np.ndarray) -> np.ndarray:
+    """Weighted blend of nearby poses: weighted mean position, normalised weighted mean of sign-aligned quaternions."""
+    from scipy.spatial.transform import Rotation
+    q = Rotation.from_matrix(np.stack([T[:3, :3] for T in Ts])).as_quat()
+    q = q * np.where((q @ q[0]) < 0, -1.0, 1.0)[:, None]
+    qm = (w[:, None] * q).sum(0)
+    T = np.eye(4)
+    T[:3, :3] = Rotation.from_quat(qm / np.linalg.norm(qm)).as_matrix()
+    T[:3, 3] = (w[:, None] * np.stack([T_[:3, 3] for T_ in Ts])).sum(0)
+    return T
+
+
+def load_capture_views(mv: MapViews, *, max_side: Optional[int] = None, exclude_times: Optional[np.ndarray] = None,
+                       exclude_dt: float = 0.15) -> List[View]:
+    """The frames of the map's capture directory (cross/core/world_capture.py, mapping.world_capture) as views,
+    posed by their anchor keyframes' poses in the saved map (T_kf T_rel, blended).  Frames whose timestamp is within
+    `exclude_dt` of `exclude_times` (the evaluation frames) are left out."""
+    from cross.core.world_capture import capture_dir
+    d = capture_dir(mv.map_path)
+    f = d / "capture.json"
+    if not f.exists():
+        return []
+    idx = json.loads(f.read_text())
+    W, H = int(idx["width"]), int(idx["height"])
+    s = 1.0 if not max_side else min(1.0, max_side / max(W, H))
+    w_s, h_s = int(round(W * s)), int(round(H * s))
+    K = _resize_K(np.asarray(idx["K"], np.float64), w_s / W, h_s / H)
+    poses = {v.id: v.T_wc for v in mv.views}
+    poses.update(mv.temporary_poses)
+    ex = np.asarray(exclude_times, np.float64) if exclude_times is not None and len(exclude_times) else None
+    fdir = d / "frames"
+    out = []
+
+    def rgb_loader(path):
+        return lambda: np.ascontiguousarray(_fit(cv2.imread(str(path), cv2.IMREAD_COLOR)[..., ::-1], (w_s, h_s)))
+
+    def depth_loader(path):
+        def load():
+            a = cv2.imread(str(path), cv2.IMREAD_UNCHANGED).view(np.float16).astype(np.float32)
+            a[~np.isfinite(a)] = 0
+            return _fit(a, (w_s, h_s), nearest=True)
+        return load
+    for fr in idx["frames"]:
+        t = fr.get("timestamp")
+        if ex is not None and t is not None and np.min(np.abs(ex - t)) < exclude_dt:
+            continue
+        an = [a for a in fr["anchors"] if a["kf"] in poses]
+        if not an:
+            continue
+        Ts = [poses[a["kf"]] @ np.asarray(a["T_rel"], np.float64).reshape(4, 4) for a in an]
+        w = np.array([a["w"] for a in an], np.float64)
+        T = _blend_poses(Ts, w / w.sum())
+        files = fr["files"]
+        v = View(id=-(10 ** 7) - int(fr["n"]), T_wc=T, K=K, width=w_s, height=h_s, timestamp=t, kind="capture",
+                 _image=rgb_loader(fdir / files["rgb"]))
+        if "depth" in files:
+            v._depth = depth_loader(fdir / files["depth"])
+        if "right" in files:
+            v._right = rgb_loader(fdir / files["right"])
+        out.append(v)
     return out

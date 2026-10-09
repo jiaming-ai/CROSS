@@ -71,7 +71,18 @@ def cmd_build(args):
     log(f"cross_world build {_commit()} map {args.map} source {args.source} cfg {cfg}")
     mv = _views(args)
     only = [int(x) for x in args.chunks.split(",")] if args.chunks else None
-    world = build_world(mv, cfg, device=args.device, log=log, only_chunks=only)
+    extra = None
+    if args.capture:
+        from cross_world.map_views import load_capture_views, source_test_views
+        # evaluation frames (held-out keyframes, novel source frames) never train, also not as captured frames
+        _, test = split_views(mv, cfg.test_every)
+        ex = [v.timestamp for v in test if v.timestamp is not None]
+        if args.novel and mv.source is not None:
+            ex += [v.timestamp for v in source_test_views(mv, min_gap=args.novel_gap, max_side=args.max_side,
+                                                          limit=args.novel) if v.timestamp is not None]
+        extra = load_capture_views(mv, max_side=args.max_side, exclude_times=np.array(ex))
+        log(f"captured frames: {len(extra)} training views (evaluation frames excluded)")
+    world = build_world(mv, cfg, device=args.device, log=log, only_chunks=only, extra_views=extra)
     world.meta.update({"commit": _commit(), "source": args.source, "max_side": args.max_side})
     world.save(out / "world.pt")
     log(f"saved {out / 'world.pt'}: {world.count()} Gaussians, build {world.meta['build_s']} s")
@@ -153,6 +164,7 @@ def main(argv=None):
     b.add_argument("--set", nargs="*", default=[])
     b.add_argument("--chunks", default=None, help="train only these chunks (comma separated)")
     b.add_argument("--no-eval", action="store_true")
+    b.add_argument("--capture", action="store_true", help="also train on the map's captured frames (mapping.world_capture)")
     b.set_defaults(fn=cmd_build)
     e = sub.add_parser("eval")
     common(e)
