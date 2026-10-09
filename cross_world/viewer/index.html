@@ -1,0 +1,448 @@
+<title>CROSS World Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700&family=Public+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: an instrument console. The 3D stage takes the window; a narrow survey panel on the right (below on phones)
+   holds the map's numbers, layers and keyframe strip. */
+:root {
+  --bg: #eef0f2; --panel: #f8f9fa; --fg: #1d2329; --muted: #5d6874; --line: #d5dae0;
+  --accent: #b86a12; --edge: #3d6f9e; --test: #b8326e; --stage: #11161b; --stage-fg: #e6eaee; --chip: #e3e7eb;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Public Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12171c; --panel: #171d23; --fg: #e3e8ed; --muted: #94a0ac; --line: #2a333c;
+  --accent: #e3963c; --edge: #6fa2d2; --test: #e0679c; --stage: #0b0f13; --stage-fg: #e6eaee; --chip: #222a32; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12171c; --panel: #171d23; --fg: #e3e8ed; --muted: #94a0ac; --line: #2a333c;
+  --accent: #e3963c; --edge: #6fa2d2; --test: #e0679c; --stage: #0b0f13; --stage-fg: #e6eaee; --chip: #222a32; color-scheme: dark }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px; }
+.app { display: grid; grid-template-columns: minmax(0, 1fr) 360px; height: 100%; }
+.stage { position: relative; background: var(--stage); overflow: hidden; min-height: 320px; }
+#c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+.hud { position: absolute; left: 12px; top: 12px; right: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  pointer-events: none; color: var(--stage-fg); font-family: var(--mono); font-size: 12px; }
+.hud .tag { background: rgba(10, 14, 18, .62); border: 1px solid rgba(255,255,255,.12); padding: 4px 8px; border-radius: 4px; }
+.hint { position: absolute; left: 12px; bottom: 12px; color: rgba(230,234,238,.72); font-size: 12px; pointer-events: none;
+  background: rgba(10,14,18,.5); padding: 4px 8px; border-radius: 4px; }
+.cmp { position: absolute; inset: 0; pointer-events: none; display: flex; align-items: center; justify-content: center; }
+.cmp .box { position: relative; outline: 1px solid rgba(255,255,255,.55); }
+.cmp img { display: block; width: 100%; height: 100%; object-fit: fill; }
+.cmp .bar { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.4); }
+.cmp .lab { position: absolute; top: 6px; font: 600 11px var(--mono); color: #fff; background: rgba(0,0,0,.55); padding: 2px 6px; border-radius: 3px; }
+.panel { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; min-width: 0;
+  padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+h1 { font-family: var(--display); font-weight: 700; font-size: 20px; margin: 0; letter-spacing: .01em; text-wrap: balance; }
+h2 { font-family: var(--display); font-weight: 500; font-size: 12px; margin: 0 0 8px; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted); }
+p { margin: 0; line-height: 1.5; color: var(--muted); }
+.lede { font-size: 13px; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+button { font: 600 12px var(--body); color: var(--fg); background: var(--chip); border: 1px solid var(--line);
+  border-radius: 5px; padding: 6px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 8px; }
+.stat b { display: block; font: 600 16px var(--mono); font-variant-numeric: tabular-nums; color: var(--fg); }
+.stat span { font-size: 11px; color: var(--muted); }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 4px 4px; border-bottom: 1px solid var(--line); font-size: 12px; }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 600; color: var(--muted); font-size: 11px; }
+td.num { font-family: var(--mono); }
+.sub { font-size: 11px; color: var(--muted); }
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+.toggles label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.strip { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; }
+.strip button { padding: 0; border-width: 2px; flex: 0 0 auto; scroll-snap-align: start; background: var(--stage); }
+.strip img { display: block; height: 54px; width: auto; border-radius: 3px; }
+.strip button.test { border-color: var(--test); }
+.strip button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); }
+.card { display: flex; flex-direction: column; gap: 8px; }
+.card img { width: 100%; border-radius: 4px; background: var(--stage); }
+.row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.pill { font: 600 11px var(--mono); padding: 2px 6px; border-radius: 3px; background: var(--chip); color: var(--muted); }
+.pill.test { background: var(--test); color: #fff; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.gallery { display: flex; flex-direction: column; gap: 8px; }
+.gallery figure { margin: 0; }
+.gallery img { width: 100%; border-radius: 4px; }
+.gallery figcaption { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.err { color: var(--test); font-size: 12px; }
+@media (max-width: 820px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: 62vh auto; height: auto; }
+  .panel { border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="app">
+  <div class="stage" id="stage">
+    <canvas id="c" tabindex="0" aria-label="3D view of the reconstruction"></canvas>
+    <div class="cmp" id="cmp" hidden>
+      <div class="box" id="cmpBox"><img id="cmpImg" alt="Keyframe photo"><div class="bar" id="cmpBar"></div>
+        <span class="lab" style="left:6px">photo</span><span class="lab" style="right:6px">reconstruction</span></div>
+    </div>
+    <div class="hud"><span class="tag" id="hudScene">loading</span><span class="tag" id="hudLoad"></span><span class="tag" id="hudPos"></span></div>
+    <div class="hint" id="hint">Drag to look · WASD / arrows to move · Shift faster · scroll to dolly</div>
+  </div>
+  <aside class="panel">
+    <div>
+      <h1>CROSS World</h1>
+      <p class="lede">A Gaussian-splatting reconstruction trained from the posed keyframes of a CROSS topological map. The graph you see is the map; the scene around it is what the reconstruction renders.</p>
+    </div>
+    <section><h2>Map</h2><div class="seg" id="scenes" role="group" aria-label="Scene"></div><p class="sub" id="sceneDesc" style="margin-top:8px"></p></section>
+    <section><h2>Reconstruction</h2><div class="stats" id="stats"></div></section>
+    <section><h2>Image quality</h2><div id="quality"></div>
+      <p class="sub" style="margin-top:6px">PSNR / SSIM higher is better, LPIPS lower. Held-out keyframes never trained the model; "aligned" refines each test pose against the frozen reconstruction first (map poses carry 0.2 to 0.6 degree errors).</p></section>
+    <section><h2>Layers</h2>
+      <div class="toggles">
+        <label><input type="checkbox" id="tSplat" checked> Splats</label>
+        <label><input type="checkbox" id="tKf" checked><span class="sw" style="background:var(--accent)"></span> Keyframes</label>
+        <label><input type="checkbox" id="tEdge"><span class="sw" style="background:var(--edge)"></span> Covisibility</label>
+        <label><input type="checkbox" id="tPath" checked><span class="sw" style="background:#9aa6b2"></span> Path</label>
+        <label><input type="checkbox" id="tCell"><span class="sw" style="background:#7dbb6b"></span> Chunk cells</label>
+        <label><input type="checkbox" id="tTest" checked><span class="sw" style="background:var(--test)"></span> Held-out</label>
+      </div>
+    </section>
+    <section class="card"><h2>Keyframe</h2>
+      <div class="strip" id="strip" role="listbox" aria-label="Keyframes"></div>
+      <img id="kfImg" alt="Selected keyframe photo">
+      <div class="row"><span class="pill" id="kfId">-</span><span class="pill" id="kfKind">-</span><span class="pill" id="kfChunk">-</span></div>
+      <div class="row">
+        <button id="bGo">View from keyframe</button>
+        <button id="bCmp" aria-pressed="false">Compare with photo</button>
+        <button id="bFly" aria-pressed="false">Fly the path</button>
+        <button id="bTop">Overview</button>
+      </div>
+      <label class="sub" for="wipe">Photo / reconstruction split</label>
+      <input type="range" id="wipe" min="0" max="100" value="50">
+    </section>
+    <section><h2>Evaluation renders</h2><p class="sub" style="margin-bottom:8px">Top: the photo. Bottom: the reconstruction at that pose.</p><div class="gallery" id="gallery"></div></section>
+    <section><h2>How it is built</h2>
+      <p>Keyframe images and poses come from the saved map; depth from the stereo pair (SGBM) or the RGB-D sensor initialises one Gaussian per voxel. Large maps split into chunks of up to 200 keyframes on the ground plane, each trained independently with gsplat (MCMC densification, depth loss, per-keyframe pose and exposure refinement). Each chunk keeps its own cell; every Gaussian is anchored to its four nearest keyframes, so a re-optimised map moves the reconstruction without retraining.</p>
+    </section>
+    <p class="err" id="err" hidden></p>
+  </aside>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+  "@sparkjsdev/spark": "https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.2.0/dist/spark.module.js"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { SparkRenderer, SplatMesh, SparkControls } from "@sparkjsdev/spark";
+
+const $ = (id) => document.getElementById(id);
+const canvas = $("c"), stage = $("stage");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0f13);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 5000);
+const spark = new SparkRenderer({ renderer });
+scene.add(spark);
+const controls = new SparkControls({ canvas });
+const world = new THREE.Group();          // map frame (origin-subtracted) -> viewer frame (Y up)
+scene.add(world);
+
+let S = null;          // current scene state
+let flying = null, compare = false, selected = null;
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function resize() {
+  const r = stage.getBoundingClientRect();
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = r.width / Math.max(1, r.height);
+  camera.updateProjectionMatrix();
+  if (compare && selected) placeCompare();
+}
+new ResizeObserver(resize).observe(stage);
+
+function m4(rowMajor16) { return new THREE.Matrix4().set(...rowMajor16); }
+const FLIP = new THREE.Matrix4().makeScale(1, -1, -1);     // OpenCV camera axes -> three.js camera axes
+
+function kfCameraMatrix(kf) { return world.matrix.clone().multiply(m4(kf.T)).multiply(FLIP); }
+
+function setCamera(M, vfovDeg) {
+  const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  M.decompose(p, q, s);
+  camera.position.copy(p); camera.quaternion.copy(q);
+  if (vfovDeg) { camera.fov = vfovDeg; camera.updateProjectionMatrix(); }
+}
+
+function kfVfov(kf) { return 2 * Math.atan(kf.h / (2 * kf.K[4])) * 180 / Math.PI; }
+
+// ------------------------------------------------------------------------------------------------ overlays
+function buildOverlays(W) {
+  const g = new THREE.Group();
+  const kfs = W.keyframes;
+  const zs = W.meta.zmed || 5;
+  const sz = Math.max(0.08, Math.min(2.0, zs * 0.04));
+  const accent = new THREE.Color(css("--accent")), test = new THREE.Color(css("--test"));
+  const pos = [], col = [], tpos = [], tcol = [];
+  const v = (x, y, z, T) => new THREE.Vector3(x, y, z).applyMatrix4(T);
+  for (const kf of kfs) {
+    const T = m4(kf.T);
+    const w = kf.w / (2 * kf.K[0]) * sz, h = kf.h / (2 * kf.K[4]) * sz;
+    const o = v(0, 0, 0, T), c = [v(-w, -h, sz, T), v(w, -h, sz, T), v(w, h, sz, T), v(-w, h, sz, T)];
+    const segs = [[o, c[0]], [o, c[1]], [o, c[2]], [o, c[3]], [c[0], c[1]], [c[1], c[2]], [c[2], c[3]], [c[3], c[0]]];
+    const P = kf.test ? tpos : pos, C = kf.test ? tcol : col, cc = kf.test ? test : accent;
+    for (const [a, b] of segs) { P.push(a.x, a.y, a.z, b.x, b.y, b.z); C.push(cc.r, cc.g, cc.b, cc.r, cc.g, cc.b); }
+  }
+  const mk = (P, C) => { const geo = new THREE.BufferGeometry(); geo.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(C, 3)); return new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .9, depthTest: true })); };
+  const kfLines = mk(pos, col), testLines = mk(tpos, tcol);
+  // covisibility edges
+  const byId = new Map(kfs.map((k) => [k.id, k]));
+  const ep = [];
+  for (const [a, b] of W.edges) { const A = byId.get(a), B = byId.get(b); if (!A || !B) continue;
+    ep.push(A.T[3], A.T[7], A.T[11], B.T[3], B.T[7], B.T[11]); }
+  const eg = new THREE.BufferGeometry(); eg.setAttribute("position", new THREE.Float32BufferAttribute(ep, 3));
+  const edges = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: new THREE.Color(css("--edge")), transparent: true, opacity: .45 }));
+  // path through every keyframe of the session (permanent and temporary) in creation order
+  const pts = (W.path || []).map((p) => new THREE.Vector3(p[1], p[2], p[3]));
+  const path = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x9aa6b2, transparent: true, opacity: .8 }));
+  // chunk cells at the cameras' mean height
+  const up = new THREE.Vector3(...W.up), ax = W.axes.map((a) => new THREE.Vector3(...a));
+  let hgt = 0; for (const k of kfs) hgt += k.T[3] * up.x + k.T[7] * up.y + k.T[11] * up.z; hgt /= Math.max(1, kfs.length);
+  const cp = [];
+  const corner = (a, b) => ax[0].clone().multiplyScalar(a).add(ax[1].clone().multiplyScalar(b)).add(up.clone().multiplyScalar(hgt));
+  for (const c of W.chunks) { if (!c.lo) continue; const q = [corner(c.lo[0], c.lo[1]), corner(c.hi[0], c.lo[1]), corner(c.hi[0], c.hi[1]), corner(c.lo[0], c.hi[1])];
+    for (let i = 0; i < 4; i++) { const a = q[i], b = q[(i + 1) % 4]; cp.push(a.x, a.y, a.z, b.x, b.y, b.z); } }
+  const cg = new THREE.BufferGeometry(); cg.setAttribute("position", new THREE.Float32BufferAttribute(cp, 3));
+  const cells = new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: 0x7dbb6b, transparent: true, opacity: .9 }));
+  // pick targets
+  const pp = new THREE.BufferGeometry(); pp.setAttribute("position", new THREE.Float32BufferAttribute(kfs.flatMap((k) => [k.T[3], k.T[7], k.T[11]]), 3));
+  const pick = new THREE.Points(pp, new THREE.PointsMaterial({ size: 1, visible: false }));
+  const sel = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffffff }));
+  g.add(kfLines, testLines, edges, path, cells, pick, sel);
+  return { group: g, kfLines, testLines, edges, path, cells, pick, sel, size: sz };
+}
+
+function highlight(kf) {
+  const O = S.ov, sz = O.size * 1.6, T = m4(kf.T);
+  const w = kf.w / (2 * kf.K[0]) * sz, h = kf.h / (2 * kf.K[4]) * sz;
+  const v = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(T);
+  const o = v(0, 0, 0), c = [v(-w, -h, sz), v(w, -h, sz), v(w, h, sz), v(-w, h, sz)];
+  const P = [];
+  for (const [a, b] of [[o, c[0]], [o, c[1]], [o, c[2]], [o, c[3]], [c[0], c[1]], [c[1], c[2]], [c[2], c[3]], [c[3], c[0]]]) P.push(a.x, a.y, a.z, b.x, b.y, b.z);
+  O.sel.geometry.dispose(); O.sel.geometry = new THREE.BufferGeometry(); O.sel.geometry.setAttribute("position", new THREE.Float32BufferAttribute(P, 3));
+}
+
+// ------------------------------------------------------------------------------------------------ loading
+async function loadScene(entry) {
+  if (S) { for (const m of S.meshes) { world.remove(m.mesh); m.mesh.dispose?.(); } world.remove(S.ov.group); }
+  flying = null; setPressed("bFly", false);
+  $("hudScene").textContent = entry.title; $("sceneDesc").textContent = entry.description || "";
+  const base = entry.dir.replace(/\/?$/, "/");
+  const W = await (await fetch(base + "world.json")).json();
+  const R = W.view_rotation;
+  world.matrix.identity(); world.matrixAutoUpdate = false;
+  world.matrix.set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1);
+  world.updateMatrixWorld(true);
+  let thumbs = null;
+  try { thumbs = await (await fetch(base + "thumbs.bin")).arrayBuffer(); } catch (e) { thumbs = null; }
+  const urls = new Map();
+  const imgUrl = (span) => { if (!thumbs || !span) return ""; const k = span[0]; if (!urls.has(k)) urls.set(k, URL.createObjectURL(new Blob([thumbs.slice(span[0], span[0] + span[1])], { type: "image/jpeg" }))); return urls.get(k); };
+  S = { W, base, meshes: [], ov: buildOverlays(W), imgUrl, ownChunk: -1 };
+  world.add(S.ov.group);
+  applyToggles();
+  renderStats(W); renderQuality(W); renderStrip(W); renderGallery(W);
+  const files = [];
+  for (const c of W.chunks) for (const layer of ["near", "far"]) for (const f of (c.files[layer] || [])) files.push({ chunk: c.index, layer, file: f.file, n: f.n });
+  let done = 0;
+  $("hudLoad").textContent = `splats 0/${files.length}`;
+  const first = W.keyframes.find((k) => !k.test) || W.keyframes[0];
+  if (first) select(first, true);
+  controls.fpsMovement.moveSpeed = Math.max(1, (W.meta.zmed || 5) * 0.6);
+  for (const f of files) {
+    const mesh = new SplatMesh({ url: base + f.file });
+    world.add(mesh);
+    const rec = { ...f, mesh };
+    S.meshes.push(rec);
+    mesh.initialized.then(() => { done++; $("hudLoad").textContent = done === files.length ? `${fmt(W.splatCount)} splats` : `splats ${done}/${files.length}`; updateFar(true); })
+      .catch((e) => showErr(`Could not load ${f.file}: ${e.message || e}`));
+  }
+  W.splatCount = files.reduce((a, f) => a + f.n, 0);
+}
+
+function showErr(msg) { const e = $("err"); e.hidden = false; e.textContent = msg; }
+const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(2) + " M" : n >= 1e3 ? (n / 1e3).toFixed(0) + " k" : String(n);
+
+// far layers: only the chunk whose cell holds the camera
+function updateFar(force) {
+  if (!S) return;
+  const W = S.W;
+  const p = camera.position.clone().applyMatrix4(world.matrix.clone().invert());      // map coordinates (origin-subtracted)
+  const g = [W.axes[0][0] * p.x + W.axes[0][1] * p.y + W.axes[0][2] * p.z, W.axes[1][0] * p.x + W.axes[1][1] * p.y + W.axes[1][2] * p.z];
+  let best = -1, bd = Infinity;
+  for (const c of W.chunks) { if (!c.lo) continue; const dx = Math.max(c.lo[0] - g[0], 0, g[0] - c.hi[0]), dy = Math.max(c.lo[1] - g[1], 0, g[1] - c.hi[1]);
+    const d = Math.hypot(dx, dy); if (d < bd) { bd = d; best = c.index; } }
+  if (best !== S.ownChunk || force) {
+    S.ownChunk = best;
+    for (const m of S.meshes) m.mesh.visible = $("tSplat").checked && (m.layer === "near" || m.chunk === best);
+  }
+  $("hudPos").textContent = `chunk ${best}`;
+}
+
+// ------------------------------------------------------------------------------------------------ panel
+function renderStats(W) {
+  const m = W.meta, cnt = W.chunks.reduce((a, c) => a + Object.values(c.files).flat().reduce((s, f) => s + f.n, 0), 0);
+  const items = [[fmt(cnt), "Gaussians"], [W.chunks.length, "chunks"], [W.keyframes.length, "keyframes"],
+    [(m.image_size || []).join("×"), "train image px"], [m.build_s ? (m.build_s / 60).toFixed(1) + " min" : "-", "build time"],
+    [(W.splat_bytes / 1e6).toFixed(0) + " MB", "SPZ size"]];
+  if (m.n_extra) items.splice(3, 0, [m.n_extra, "captured frames"]);
+  $("stats").innerHTML = items.slice(0, 6).map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`).join("");
+}
+
+function renderQuality(W) {
+  const q = W.metrics || {};
+  const rows = [];
+  const add = (label, s, tag) => { if (!s || s[`psnr_${tag}`] === undefined) return;
+    rows.push(`<tr><td>${label}<div class="sub">${s.n} views</div></td><td class="num">${s[`psnr_${tag}`].toFixed(2)}</td><td class="num">${s[`ssim_${tag}`].toFixed(3)}</td><td class="num">${s[`lpips_${tag}`] != null ? s[`lpips_${tag}`].toFixed(3) : "-"}</td></tr>`); };
+  add("Held-out keyframes, aligned", q.heldout_keyframes, "aligned");
+  add("Held-out keyframes, as posed", q.heldout_keyframes, "raw");
+  add("Frames between keyframes, aligned", q.novel_frames, "aligned");
+  add("Training keyframes", q.train_keyframes, "raw");
+  $("quality").innerHTML = rows.length ? `<table><thead><tr><th>Views</th><th>PSNR</th><th>SSIM</th><th>LPIPS</th></tr></thead><tbody>${rows.join("")}</tbody></table>` : `<p class="sub">No evaluation stored with this scene.</p>`;
+}
+
+function renderStrip(W) {
+  const el = $("strip"); el.innerHTML = "";
+  for (const kf of W.keyframes) {
+    const b = document.createElement("button");
+    b.className = kf.test ? "test" : ""; b.setAttribute("aria-pressed", "false"); b.title = `keyframe ${kf.id}${kf.test ? " (held out)" : ""}`;
+    b.dataset.id = kf.id;
+    const img = document.createElement("img"); img.loading = "lazy"; img.alt = `keyframe ${kf.id}`; img.src = S.imgUrl(kf.thumb);
+    b.append(img); b.onclick = () => select(kf, true);
+    el.append(b);
+  }
+}
+
+function renderGallery(W) {
+  const el = $("gallery"); el.innerHTML = "";
+  const comps = (W.comparisons || []).filter((c) => c.set !== "train").slice(0, 8);
+  if (!comps.length) { el.innerHTML = `<p class="sub">None stored.</p>`; return; }
+  for (const c of comps) { const f = document.createElement("figure"); const img = document.createElement("img"); img.loading = "lazy"; img.src = S.imgUrl(c.img); img.alt = `${c.set} ${c.view}`;
+    const cap = document.createElement("figcaption"); cap.textContent = `${c.set === "heldout" ? "held-out keyframe" : "frame between keyframes"} ${c.view.replace("view_", "#")}`;
+    f.append(img, cap); el.append(f); }
+}
+
+function select(kf, go) {
+  selected = kf;
+  for (const b of $("strip").children) b.setAttribute("aria-pressed", String(+b.dataset.id === kf.id));
+  const btn = [...$("strip").children].find((b) => +b.dataset.id === kf.id); btn?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  $("kfImg").src = S.imgUrl(kf.thumb);
+  $("kfId").textContent = `keyframe ${kf.id}`;
+  $("kfKind").textContent = kf.test ? "held out" : "trained"; $("kfKind").className = "pill" + (kf.test ? " test" : "");
+  $("kfChunk").textContent = `chunk ${kf.chunk}`;
+  highlight(kf);
+  if (go) viewFrom(kf);
+}
+
+function viewFrom(kf) { flying = null; setPressed("bFly", false); setCamera(kfCameraMatrix(kf), kfVfov(kf)); if (compare) placeCompare(); updateFar(); }
+
+// compare: the photo in a box of its aspect, the camera's field of view matched to that box
+function placeCompare() {
+  const kf = selected, r = stage.getBoundingClientRect();
+  const a = kf.w / kf.h;
+  let bw = r.width * 0.96, bh = bw / a;
+  if (bh > r.height * 0.96) { bh = r.height * 0.96; bw = bh * a; }
+  const box = $("cmpBox"); box.style.width = bw + "px"; box.style.height = bh + "px";
+  $("cmpImg").src = S.imgUrl(kf.thumb);
+  const tanHalf = (r.height / bh) * (kf.h / (2 * kf.K[4]));
+  camera.fov = 2 * Math.atan(tanHalf) * 180 / Math.PI; camera.updateProjectionMatrix();
+  // principal point offset of the photo, as a view offset of the camera
+  const dx = (kf.K[2] - kf.w / 2) / kf.w * bw, dy = (kf.K[5] - kf.h / 2) / kf.h * bh;
+  camera.setViewOffset(r.width, r.height, dx, dy, r.width, r.height);
+  wipe();
+}
+function wipe() { const v = +$("wipe").value; $("cmpImg").style.clipPath = `inset(0 ${100 - v}% 0 0)`; $("cmpBar").style.left = v + "%"; }
+$("wipe").oninput = wipe;
+
+function setPressed(id, v) { $(id).setAttribute("aria-pressed", String(v)); }
+$("bGo").onclick = () => selected && viewFrom(selected);
+$("bCmp").onclick = () => { compare = !compare; setPressed("bCmp", compare); $("cmp").hidden = !compare;
+  if (compare && selected) { viewFrom(selected); } else { camera.clearViewOffset(); if (selected) camera.fov = kfVfov(selected); camera.updateProjectionMatrix(); } };
+$("bTop").onclick = () => {
+  if (!S) return; compare = false; setPressed("bCmp", false); $("cmp").hidden = true; camera.clearViewOffset();
+  const box = new THREE.Box3(); for (const k of S.W.keyframes) box.expandByPoint(new THREE.Vector3(k.T[3], k.T[7], k.T[11]).applyMatrix4(world.matrix));
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  const d = Math.max(s.x, s.z, 4) * 0.9;
+  camera.fov = 50; camera.updateProjectionMatrix();
+  camera.position.set(c.x, c.y + d, c.z + d * 0.35); camera.lookAt(c); flying = null; setPressed("bFly", false); updateFar();
+};
+$("bFly").onclick = () => {
+  if (flying) { flying = null; setPressed("bFly", false); return; }
+  if (!S) return; compare = false; setPressed("bCmp", false); $("cmp").hidden = true; camera.clearViewOffset();
+  const kfs = [...S.W.keyframes].sort((a, b) => (a.t ?? a.id) - (b.t ?? b.id));
+  const Ms = kfs.map((k) => kfCameraMatrix(k));
+  const P = Ms.map((M) => new THREE.Vector3().setFromMatrixPosition(M)), Q = Ms.map((M) => new THREE.Quaternion().setFromRotationMatrix(M));
+  for (let i = 1; i < Q.length; i++) if (Q[i].dot(Q[i - 1]) < 0) Q[i].set(-Q[i].x, -Q[i].y, -Q[i].z, -Q[i].w);
+  const curve = new THREE.CatmullRomCurve3(P);
+  const L = []; let acc = 0; for (let i = 0; i < P.length; i++) { if (i) acc += P[i].distanceTo(P[i - 1]); L.push(acc); }
+  camera.fov = kfVfov(kfs[0]); camera.updateProjectionMatrix();
+  flying = { curve, Q, L, total: acc, s: 0, speed: Math.max(0.6, (S.W.meta.zmed || 5) * 0.45), kfs };
+  setPressed("bFly", true);
+};
+canvas.addEventListener("pointerdown", () => { if (flying) { flying = null; setPressed("bFly", false); } });
+
+// toggles
+function applyToggles() {
+  if (!S) return; const O = S.ov;
+  O.kfLines.visible = $("tKf").checked; O.testLines.visible = $("tTest").checked; O.edges.visible = $("tEdge").checked;
+  O.path.visible = $("tPath").checked; O.cells.visible = $("tCell").checked; O.sel.visible = $("tKf").checked || $("tTest").checked;
+  updateFar(true);
+}
+for (const id of ["tSplat", "tKf", "tEdge", "tPath", "tCell", "tTest"]) $(id).onchange = applyToggles;
+
+// pick a keyframe by clicking near its camera centre
+const ray = new THREE.Raycaster(); let down = null;
+canvas.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; });
+canvas.addEventListener("pointerup", (e) => {
+  if (!S || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
+  const r = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera); ray.params.Points.threshold = S.ov.size * 1.5;
+  const hit = ray.intersectObject(S.ov.pick)[0];
+  if (hit) select(S.W.keyframes[hit.index], false);
+});
+
+// ------------------------------------------------------------------------------------------------ loop
+let last = performance.now(), farTick = 0;
+renderer.setAnimationLoop((now) => {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (flying) {
+    const f = flying; f.s += f.speed * dt;
+    if (f.s >= f.total) { flying = null; setPressed("bFly", false); }
+    else {
+      const u = f.s / f.total; camera.position.copy(f.curve.getPointAt(u));
+      let i = 0; while (i < f.L.length - 2 && f.L[i + 1] < f.s) i++;
+      const seg = Math.max(1e-6, f.L[i + 1] - f.L[i]); camera.quaternion.slerpQuaternions(f.Q[i], f.Q[i + 1], Math.min(1, (f.s - f.L[i]) / seg));
+    }
+  } else if (!compare) { controls.update(camera); }
+  if ((farTick += dt) > 0.25) { farTick = 0; updateFar(); }
+  renderer.render(scene, camera);
+});
+
+// ------------------------------------------------------------------------------------------------ scenes
+(async () => {
+  try {
+    const list = await (await fetch("scenes.json")).json();
+    const box = $("scenes");
+    list.forEach((s, i) => { const b = document.createElement("button"); b.textContent = s.title; b.setAttribute("aria-pressed", String(i === 0));
+      b.onclick = () => { for (const x of box.children) x.setAttribute("aria-pressed", String(x === b)); loadScene(s).catch((e) => showErr(e.message)); };
+      box.append(b); });
+    resize();
+    await loadScene(list[0]);
+  } catch (e) { showErr(`Could not load the scene list: ${e.message || e}`); }
+})();
+</script>

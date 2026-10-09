@@ -379,6 +379,10 @@ def evaluate(world: World, views: List[View], device="cuda", align: bool = True,
         A = _nearest_appearance(world, v, by_time)
         At = torch.from_numpy(A).float().to(device) if A is not None else None
         row = {"id": v.id, "source_index": v.source_index}
+        if v.id in world.pose_delta:              # a training view: its photometrically refined pose
+            T = T @ torch.from_numpy(world.pose_delta[v.id]).float().to(device)
+            if v.id in world.appearance:
+                At = torch.from_numpy(world.appearance[v.id]).float().to(device)
         for tag in (("raw", "aligned") if align else ("raw",)):
             Tu = T if tag == "raw" else align_pose(sp, T, K, v.width, v.height, gt, world.sh_degree, At, iters=align_iters)
             with torch.no_grad():

@@ -119,11 +119,42 @@ class SourceSequence:
     def __len__(self):
         return len(self.left)
 
+    def _bases(self):
+        n = len(self.left)
+        out = []
+        if self.times is not None and len(self.times) == n:
+            out += [self.times, self.times - self.times[0]]
+        out.append(np.arange(n) / self.fps)
+        return out
+
+    def calibrate(self, timestamps) -> None:
+        """Pick the clock the map's timestamps use.  Loaders differ: times.txt itself, times.txt relative to its first
+        entry, or frame index / fps (cross/dataloader/stereo_loader.py).  The base that matches the most timestamps
+        within a quarter frame is used for every lookup (one base per sequence: a per-timestamp choice could match
+        a drifting clock to the wrong frame)."""
+        ts = np.asarray([t for t in timestamps if t is not None], np.float64)
+        best, best_n = None, -1
+        for b in self._bases():
+            if not len(ts):
+                break
+            i = np.clip(np.searchsorted(b, ts), 1, len(b) - 1)
+            d = np.minimum(np.abs(b[i] - ts), np.abs(b[i - 1] - ts))
+            n_ok = int((d < 0.25 / self.fps).sum())
+            if n_ok > best_n:
+                best, best_n = b, n_ok
+        self._base = best
+
+    def time_of(self, i: int) -> float:
+        """Timestamp of frame i on the map's clock (after calibrate)."""
+        b = getattr(self, "_base", None)
+        return float((b if b is not None else self._bases()[0])[i])
+
     def index_of(self, timestamp: float) -> Optional[int]:
-        if self.times is None:
-            return None
-        i = int(np.argmin(np.abs(self.times - timestamp)))
-        return i if abs(self.times[i] - timestamp) < 0.25 / self.fps else None
+        b = getattr(self, "_base", None)
+        if b is None:
+            b = self._bases()[0]
+        i = int(np.argmin(np.abs(b - timestamp)))
+        return i if abs(b[i] - timestamp) < 0.25 / self.fps else None
 
     def read_image(self, i: int, size=None) -> np.ndarray:
         img = cv2.imread(str(self.left[i]), cv2.IMREAD_COLOR)[..., ::-1]
@@ -214,6 +245,8 @@ def load_map_views(map_path, source=None, *, max_side: Optional[int] = None, K: 
         w_s, h_s = int(round(src.width * s)), int(round(src.height * s))
         K_src = _resize_K(src.K, w_s / src.width, h_s / src.height)
 
+    if src is not None:
+        src.calibrate([r.get("timestamp") for r in db["keyframes"]])
     views, any_depth, any_right = [], False, False
     for rec in db["keyframes"]:
         if rec.get("temporary"):
@@ -248,6 +281,12 @@ def load_map_views(map_path, source=None, *, max_side: Optional[int] = None, K: 
                 v._right = _ref_loader(right_ref, "rgb")
         views.append(v)
 
+    if src is not None:
+        n_src = sum(v.source_index is not None for v in views)
+        if n_src < len(views):
+            import warnings
+            warnings.warn(f"{map_path}: {len(views) - n_src} of {len(views)} keyframes have no frame in {src.root}; "
+                          f"they use the stored images")
     ids = {v.id for v in views}
     edges = []
     if 0 in hd:
@@ -280,7 +319,7 @@ def source_test_views(mv: MapViews, *, every: int = 1, min_gap: int = 1, max_sid
     s = 1.0 if not max_side else min(1.0, max_side / max(src.width, src.height))
     w_s, h_s = int(round(src.width * s)), int(round(src.height * s))
     K_src = _resize_K(src.K, w_s / src.width, h_s / src.height)
-    kfs = sorted((v.source_index, v) for v in mv.views if v.source_index is not None)
+    kfs = sorted(((v.source_index, v) for v in mv.views if v.source_index is not None), key=lambda r: r[0])
     if not kfs:
         return []
     kf_idx = np.array([k for k, _ in kfs])
@@ -292,7 +331,7 @@ def source_test_views(mv: MapViews, *, every: int = 1, min_gap: int = 1, max_sid
         kv = kfs[j][1]
         T = kv.T_wc @ np.linalg.inv(src.gt[kv.source_index]) @ src.gt[i]
         v = View(id=-1 - i, T_wc=T, K=K_src, width=w_s, height=h_s,
-                 timestamp=float(src.times[i]) if src.times is not None else None, source_index=i,
+                 timestamp=src.time_of(i), source_index=i,
                  _image=(lambda q=i: src.read_image(q, (w_s, h_s))))
         if src.depth:
             v._depth = lambda q=i: src.read_depth(q, (w_s, h_s))

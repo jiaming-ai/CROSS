@@ -132,7 +132,12 @@ def cmd_export(args):
     from cross_world.world import World
     world = World.load(args.world)
     mv = _views(args) if args.map else None
-    export_world(world, Path(args.out), sh_degree=args.sh, mv=mv, thumbs=args.thumbs, max_file_mb=args.max_file_mb)
+    wdir = Path(args.world).parent
+    metrics = json.loads((wdir / "metrics.json").read_text()) if (wdir / "metrics.json").exists() else None
+    if metrics:                                   # summaries only (the per-view rows stay in metrics.json)
+        metrics = {k: (v.get("summary", v) if isinstance(v, dict) else v) for k, v in metrics.items()}
+    export_world(world, Path(args.out), sh_degree=args.sh, mv=mv, thumbs=args.thumbs, max_file_mb=args.max_file_mb,
+                 ply=args.ply, metrics=metrics, renders_dir=wdir / "renders")
 
 
 def cmd_repose(args):
@@ -176,8 +181,9 @@ def main(argv=None):
     x.add_argument("--world", required=True)
     x.add_argument("--out", required=True)
     x.add_argument("--sh", type=int, default=1, help="SH degree of the exported splats")
-    x.add_argument("--thumbs", type=int, default=320, help="keyframe thumbnail width in the viewer data (0: none)")
+    x.add_argument("--thumbs", type=int, default=640, help="keyframe thumbnail width in the viewer data (0: none)")
     x.add_argument("--max-file-mb", type=float, default=14.0)
+    x.add_argument("--ply", action="store_true", help="also write standard 3DGS PLY files per chunk")
     x.set_defaults(fn=cmd_export)
     r = sub.add_parser("repose")
     common(r)
