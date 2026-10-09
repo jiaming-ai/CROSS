@@ -56,7 +56,6 @@ class BuildConfig:
     # behind the Gaussians, no depth and no Gaussians on sky pixels.  Outdoor scenes; needs `transformers`
     sky: bool = False
     sky_model: str = ""             # folder / hub id of the OneFormer weights ("": CROSS_SKY_MODEL, else the hub default)
-    sky_erode: int = 0              # shrink the sky masks by this many pixels (their edges are a few pixels off)
     train: TrainConfig = field(default_factory=TrainConfig)
 
 
@@ -346,10 +345,6 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
         t1 = time.time()
         for v in train_views:
             skies[v.id] = seg(v.image())
-            if cfg.sky_erode > 0:
-                import cv2
-                k = np.ones((2 * cfg.sky_erode + 1,) * 2, np.uint8)
-                skies[v.id] = cv2.erode(skies[v.id].astype(np.uint8), k).astype(bool)
             if v.id in depths:                     # stereo / sensor depth on the sky is noise
                 depths[v.id] = np.where(skies[v.id], 0, depths[v.id]).astype(depths[v.id].dtype)
         del seg
