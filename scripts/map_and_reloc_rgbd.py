@@ -104,7 +104,8 @@ def make_config(args) -> SystemConfig:
     # user's --config; --set below wins
     cfg = load_config(*shipped_config_files(args), *(args.config or []))
     cfg.async_update = False
-    cfg.retrieval.top_k = args.top_k
+    if args.top_k is not None:
+        cfg.retrieval.top_k = args.top_k
     if getattr(args, "gnss", False):
         cfg.geo.enabled = True
     if getattr(args, "no_gnss", False):
@@ -311,7 +312,7 @@ def main():
     ap.add_argument("--map-end", type=int, default=None)
     ap.add_argument("--query-start", type=int, default=0)
     ap.add_argument("--query-end", type=int, default=None)
-    ap.add_argument("--top-k", type=int, default=10)
+    ap.add_argument("--top-k", type=int, default=None, help="retrieved keyframes (default: config, 10)")
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
     ap.add_argument("--online-poses", action="store_true",
                     help="map run: score the pose published at every frame (map_meta.json 'online')")
