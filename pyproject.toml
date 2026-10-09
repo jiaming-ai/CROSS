@@ -92,7 +92,6 @@ world = [
     "gsplat>=1.5.3",
     "lpips",
     "plyfile",
-    "transformers>=4.45,<5",   # sky masks (OneFormer), the stereo default
 ]
 all = [
     "cross[detection,recording,dev]",

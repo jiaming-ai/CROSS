@@ -21,7 +21,7 @@ uv pip install lpips plyfile
 
 On a new GPU generation set `TORCH_CUDA_ARCH_LIST` (e.g. `12.0` for an RTX 5090) before building.
 
-The sky model (on by default for stereo maps) needs `transformers` and OneFormer (ADE20K, Swin-T, MIT licence; fetched
+The sky model (`--set sky=true`, experimental, off by default) needs `transformers` and OneFormer (ADE20K, Swin-T, MIT licence; fetched
 from the Hugging Face hub). Its weights are published only as a pickle, which `transformers` loads with torch >= 2.6;
 with an older torch convert them once to safetensors and point `CROSS_SKY_MODEL` at the folder:
 
@@ -110,15 +110,18 @@ render is > 15 % in front of it) where the view has depth, `--sky-metric` the Ga
   is off for RGB-D maps. `cross_world.cli clean --carve` applies it once after training, with every training view. Known issue: indoor chunks with large Gaussian budgets (>= 3.6M; full-resolution 848x480
   views or many captured frames) can collapse (opacities go to zero); 512 px and <= 1.3M Gaussians train reliably
   indoors (`--max-side 512`, `--set train.cap_max=1331420`), outdoor chunks were fine at 4-6M.
-- **Sky** (`sky`, default on for stereo maps). The sky has no depth and the camera sees only a narrow band of it
-  (KITTI: 29 degrees vertically); painted by Gaussians at arbitrary distances, it floats as white and dark patches once
-  the viewpoint leaves the path. As in street-scene splatting (Street Gaussians, OmniRe, PVG), OneFormer masks the sky
-  in the training views, an equirectangular sky texture is composited behind the Gaussians, and a cross-entropy on the
-  accumulated opacity keeps the Gaussians off the sky pixels (and on the others); sky pixels give no depth. Texels no
-  view saw (the zenith) are filled from the seen ones; the export bakes the texture into a shell of splats in the far
-  layer. KITTI 07: Gaussians' opacity on sky pixels 1.00 -> 0.11-0.16, PSNR -0.03 / -0.19 / -0.11 dB (held-out /
-  between keyframes / right camera) with better SSIM and LPIPS. A chunk whose views show (almost) no sky trains without
-  it.
+- **Sky** (`sky=true`, experimental, off by default). The sky has no depth and the camera sees only a narrow band of
+  it (KITTI: 29 degrees vertically); painted by Gaussians at arbitrary distances, it floats as white and dark patches
+  once the viewpoint leaves the path. As in street-scene splatting (Street Gaussians, OmniRe, PVG), OneFormer masks the
+  sky in the training views, an equirectangular sky texture is composited behind the Gaussians, and a cross-entropy on
+  the accumulated opacity keeps the Gaussians off the sky pixels (and on the others); sky pixels give no depth. Texels
+  no view saw (the zenith) are filled from the seen ones; the export bakes the texture into a shell of splats in the far
+  layer. KITTI 07: Gaussians' opacity on sky pixels 1.00 -> 0.10-0.16 and a clean sky off the path, SSIM / LPIPS
+  better, PSNR -0.0 / -0.2 / -0.1 dB (held-out / between keyframes / right camera). Known issue, why it is off: bright
+  distant buildings against the sky (an overexposed white house 50 m away) end up translucent (opacity ~0.45; over-
+  bright translucent Gaussians reproduce a saturated wall as well as opaque ones) and the sky shows through them; a
+  stronger opacity loss off the sky, masked compositing and eroded masks did not fix it (tag
+  world-quality-sky-experiments).
 - **Captured frames** (`--capture`, frames between keyframes kept with `mapping.world_capture.between`) train each
   chunk in a second stage: after the keyframes alone, every captured frame's pose is aligned photometrically against
   the chunk (frames between keyframes carry odometry errors of up to a few degrees indoors), frames that still do not
