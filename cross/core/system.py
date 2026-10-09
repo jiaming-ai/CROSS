@@ -1733,6 +1733,17 @@ class System:
             done = self._verified_lc_optimise(ret, new_keys, window_ref)
             ap.observe(time.perf_counter() - t0, nv)
             return done
+        W = int(self.config.mapping.loop_closure.async_pgo_provisional_kf)
+        if W > 0 and ap.lag != 1 and nv > 2 * W:
+            # a fast optimisation of the latest keyframes first, so that the frames processed while the full one runs see a
+            # map that is already roughly corrected (the consistency tests compare poses across the loop error)
+            t0 = time.perf_counter()
+            hm = self.hypothesis_manager
+            ids = sorted(hm.nodes)
+            margin = int(self.config.mapping.loop_closure.pgo_window_margin)
+            info = hm.handle_loop_closure(0, apply=True, window_ref=ids[max(0, len(ids) - W + margin)])
+            ap.stats["provisional"] = ap.stats.get("provisional", 0) + int(bool(info.get("success")))
+            ap.stats["provisional_s"] = ap.stats.get("provisional_s", 0.0) + time.perf_counter() - t0
         ap.submit(new_keys, window_ref, step, loop_keys=loop_keys)
         self._last_pgo_step = step
         if ap.lag == 0:
