@@ -187,7 +187,9 @@ def _flood(cand, ncand, seed_iy, seed_ix, seed_h, step, gap):
                 ny, nx = y + dy, x + dx
                 if ny < 0 or ny >= H or nx < 0 or nx >= W or not np.isnan(g[ny, nx]):
                     continue
-                tol = step * (gu + 1) * (1.4142 if dy != 0 and dx != 0 else 1.0)
+                # constant tolerance, also after hidden cells: the floor under furniture is at floor height (a
+                # tolerance growing with the gap let the fill climb onto beds / sofas / car roofs next to a gap)
+                tol = (step + 0.005 * gu) * (1.4142 if dy != 0 and dx != 0 else 1.0)
                 best, bd = np.nan, 1e9
                 for k in range(ncand[ny, nx]):
                     dd = abs(cand[ny, nx, k] - h)
