@@ -82,7 +82,8 @@ def cmd_build(args):
                                                           limit=args.novel) if v.timestamp is not None]
         extra = load_capture_views(mv, max_side=args.max_side, exclude_times=np.array(ex))
         log(f"captured frames: {len(extra)} training views (evaluation frames excluded)")
-    world = build_world(mv, cfg, device=args.device, log=log, only_chunks=only, extra_views=extra)
+    world = build_world(mv, cfg, device=args.device, log=log, only_chunks=only, extra_views=extra,
+                        chunk_dir=out / "chunks")                # each finished chunk on disk
     world.meta.update({"commit": _commit(), "source": args.source, "max_side": args.max_side})
     world.save(out / "world.pt")
     log(f"saved {out / 'world.pt'}: {world.count()} Gaussians, build {world.meta['build_s']} s")

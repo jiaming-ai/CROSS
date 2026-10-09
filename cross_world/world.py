@@ -381,12 +381,14 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
         for vid in c.core_ids:                      # a view's refinement / appearance from the chunk that owns it
             pose_delta[vid] = res.pose_delta[vid]
             appearance[vid] = res.appearance[vid]
-        for vid in c.train_ids:
-            pose_delta.setdefault(vid, res.pose_delta[vid])
-            appearance.setdefault(vid, res.appearance[vid])
+        for vid in c.train_ids:                     # (captured views the second stage dropped have none)
+            if vid in res.pose_delta:
+                pose_delta.setdefault(vid, res.pose_delta[vid])
+                appearance.setdefault(vid, res.appearance[vid])
         if chunk_dir is not None:
-            torch.save({"chunk": cm, "pose_delta": {k: res.pose_delta[k] for k in c.train_ids},
-                        "appearance": {k: res.appearance[k] for k in c.train_ids}}, Path(chunk_dir) / f"chunk_{c.index:03d}.pt")
+            Path(chunk_dir).mkdir(parents=True, exist_ok=True)
+            torch.save({"chunk": cm, "pose_delta": dict(res.pose_delta), "appearance": dict(res.appearance)},
+                       Path(chunk_dir) / f"chunk_{c.index:03d}.pt")
         chunks.append(cm)
         del vb, res
         torch.cuda.empty_cache()
