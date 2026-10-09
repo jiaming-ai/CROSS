@@ -76,7 +76,11 @@ e.g. `--set max_views=150 train.steps_per_view=80 train.sh_degree=2`. `--chunks 
 - **Training** (gsplat): one Gaussian per voxel of back-projected depth (voxel size grows with depth; coarsened to fit
   70 % of the budget), MCMC densification with a budget per megapixel of training images, L1 + D-SSIM, L1 on inverse
   depth, per-view pose refinement (CROSS keyframe poses carry 0.2-0.6 degree errors, a few pixels) and affine colour
-  (exposure), both as sparse embeddings with lazy Adam (only the batch's views move), opacity pruning after training.
+  (exposure), both as sparse embeddings with lazy Adam (only the batch's views move), a penalty on needle-shaped
+  Gaussians (largest / middle scale > 10: right edge-on from the training rays, streaks from elsewhere), opacity
+  pruning after training. Known issue: indoor chunks with large Gaussian budgets (>= 3.6M; full-resolution 848x480
+  views or many captured frames) can collapse (opacities go to zero); 512 px and <= 1.3M Gaussians train reliably
+  indoors (`--max-side 512`, `--set train.cap_max=1331420`), outdoor chunks were fine at 4-6M.
 - **Captured frames** (`--capture`) train each chunk in a second stage: after the keyframes alone, every captured
   frame's pose is aligned photometrically against the chunk (frames between keyframes carry odometry errors of up to
   a few degrees indoors), frames that still do not fit are dropped, and training continues on all views.
@@ -96,9 +100,16 @@ KITTI 07, every frame: 0.38 GB). Each frame's pose is stored relative to its thr
 follows later optimisations of the graph. The map itself is unchanged (identical keyframe poses with the option on and
 off). `cross_world.cli build --capture` trains on these frames too; evaluation frames are never trained on.
 
+`python -m cross_world.cli clean --world W --map M --out W2` removes Gaussians fewer than two training views see
+(MCMC rarely leaves any after opacity pruning: < 0.2 % on home1-1).
+
 ## 4. Viewer
 
 `cross_world/viewer/index.html` loads `scenes.json` (`[{"title", "dir", "description"}]`) and, per scene, the export
 directory: splats (Spark 2.2 + three.js 0.180 from jsDelivr), the keyframe frusta, covisibility edges, session path and
 chunk cells of the map. Clicking a keyframe flies to its pose; "Compare with photo" overlays the keyframe photo with a
-split slider; "Fly the path" moves along the keyframes. Serve it over HTTP (`python -m http.server`).
+split slider; "Fly the path" moves along the keyframes; "Overview" looks from 35 degrees above and hides what is only
+right near the training viewpoints (the export's layers: `above` = higher than the cameras plus a margin (ceiling,
+sky floaters), `offview` = needles and large faint Gaussians, `far` = beyond the mapped region). Serve it over HTTP
+(`python -m http.server`); a host that serves only web file types can take the binary files as base64 text
+(`world.json` `"base64": true`, files `*.b64.txt`).
