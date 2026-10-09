@@ -37,7 +37,7 @@ HSSD_CFG = {
     "sky_nishita": True, "sun_light": None, "sun_energy": 1.0, "window_azimuth_deg": 0.0,
     "lamp_prop": "hssd_lamp", "torch_objects": None, "torch_energy": 40.0,
     "portal_materials": [], "portal_strength": 0.0, "lamp_lights": [], "lamp_materials": [], "fill_lights": [],
-    "exposure_base": 3.0,
+    "exposure_base": 1.0,          # SimChange HSSD used 3.0; with the room lights 3.0 saturates the auto-exposure pre-pass
     "exposure": {"morning": 0.3, "noon": 0.0, "afternoon": 0.2, "evening": -2.0, "night": 0.0, "overcast": 0.5},
 }
 
