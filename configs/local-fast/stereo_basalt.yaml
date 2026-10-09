@@ -1,0 +1,7 @@
+# Stereo + Basalt stereo-inertial VIO as external odometry: --mode stereo --odometry basalt (the sequence
+# folder's odom_vio.txt, benchmark/datasets/prepare_vio.py; --odom-file NAME for another file).
+# Folder local-fast: the mode's base, then the folder's shared settings; keys below override both.
+include:
+  - ../base/stereo.yaml
+  - ../base/stereo_fast.yaml
+  - ../base/local-fast.yaml

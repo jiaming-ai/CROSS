@@ -1,0 +1,12 @@
+# Settings shared by every mode of the cloud folder (configs/cloud/: the back end on a remote GPU server, the odometry on
+# the robot (cross-edge / --remote-server); the remote link's own defaults (--remote-max-backlog 0.3, --remote-obs-cap 0.1)
+# are command-line options of the runners and of cross-edge).
+mapping:
+  loop_closure:
+    # pose-graph optimisation adapted to the map (cross/core/async_pgo.py): an optimisation expected to take less than
+    # ~0.3 s runs in the front end as before (small maps: identical to synchronous), a longer one in a forked worker
+    # while the front end keeps processing frames.  NCLT 6.4 km (outputs/2026-10-08_async_pgo): stalls over 1 s 69-76 ->
+    # 0, map ATE 3.72 m vs 3.68 +- 0.16 m synchronous.  When a late result lands depends on the machine's speed, so the
+    # benchmark and experiment runners force the synchronous optimisation (--reproducible; benchmark/run.py passes it).
+    # Chart-aware graphs (the mono DA3 back end) always optimise synchronously.
+    async_pgo: true

@@ -1,0 +1,5 @@
+# RGB-D + Basalt stereo-inertial VIO as external odometry: --mode rgbd --odometry basalt (odom_vio.txt).
+# Folder local-fast: the mode's base, then the folder's shared settings; keys below override both.
+include:
+  - ../base/rgbd.yaml
+  - ../base/local-fast.yaml

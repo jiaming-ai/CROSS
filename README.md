@@ -65,7 +65,7 @@ cross/
 └── visualization/  # Rerun-based 3D visualization, graph plotting
 cross_world/        # 3D Gaussian-splatting reconstruction of a saved map, export, web viewer (docs/WORLD.md)
 benchmark/          # Evaluation protocol, dataset converters, system runners, results page
-configs/            # Default, stereo, outdoor, noise and mono-profile configs
+configs/            # Shipped configs: local/, local-fast/, cloud/ (one per mode), base/, overlays/, noise/, mono profiles
 docs/               # Usage guide
 scripts/            # Map-and-relocalize harnesses, dataset converters, baselines, figures
 ```
@@ -152,14 +152,24 @@ Options:
 | `--no-viz` | Disable Rerun visualization |
 | `--frames N` | Process only the first N frames |
 | `--start N` | Start from frame N |
-| `--mode {rgbd,stereo,mono}` | Sensor mode: PnP on depth (default), the stereo mode (layers `configs/stereo.yaml`), or colour only |
-| `--odometry {external,visual,vio}` | Motion source: the dataset's odometry (default), DPVO visual odometry, or (mono) DPVO with IMU scale |
+| `--mode {rgbd,stereo,mono}` | Sensor mode: PnP on depth (default), the stereo mode, or colour only |
+| `--odometry {external,basalt,visual,vio,vgio}` | Motion source: the dataset's odometry (default; wheel / INS), the sequence's Basalt VIO file (`odom_vio.txt`), DPVO visual odometry, (mono) DPVO with IMU scale, or (mono ff, stereo) VGGT-Omega + IMU |
 | `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
-| `--config A.yaml B.yaml` | Config layers on top of the defaults, merged left to right |
+| `--profile {local,local-fast,cloud}` | Folder of the shipped configuration `configs/<profile>/<mode>.yaml` (default `local`; `local-fast`: constrained compute, `cloud`: remote GPU server); `--fast` = `--profile local-fast` |
+| `--config A.yaml B.yaml` | Config layers on top of the mode's shipped file, merged left to right (e.g. `configs/overlays/outdoor.yaml`) |
+| `--reproducible` | Synchronous pose-graph optimisation (the shipped default optimises long loop closures in the background; the benchmark always passes it) |
 | `--loader {r3d,rosbag,loris,tum,posed,stereo}` | Force dataset loader (default: auto-detect) |
 | `--baseline B` | Stereo mode, SimChange sequences: which rendered stereo baseline to use |
 | `--snr FLOAT` | Signal-to-noise ratio for R3D datasets |
 | `--async` | Enable async step pipeline |
+
+**Shipped configurations.** Each run loads one file `configs/<profile>/<mode>.yaml` chosen by `--mode`, `--odometry` (and
+`--mono-estimator`) and `--profile`: eleven modes (stereo / rgbd / mono x wheel, basalt, imu, dpvo; no rgbd + imu) in
+the folders `local` (default), `local-fast` and `cloud`. A folder file includes its mode's base and the folder's shared
+settings from `configs/base/`; `--config` overlays (`configs/overlays/outdoor.yaml`, `stereo_lowband.yaml`) and `--set`
+come after it. The shipped default optimises long loop-closure pose graphs in a background worker
+(`mapping.loop_closure.async_pgo`), so results depend slightly on the machine's speed; experiments pass `--reproducible`
+(synchronous optimisation, as the benchmark harness `benchmark/run.py` always does). See [docs/USAGE.md](docs/USAGE.md#3-configuration).
 
 ### Interactive demo
 
@@ -242,14 +252,14 @@ runs at a motion-gated cadence while odometry propagates the multi-hypothesis be
 camera the scale comes from the odometry (previous observed frame) and from pairs of map keyframes.
 
 ```bash
-python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/outdoor.yaml
+python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/overlays/outdoor.yaml
 python run.py data/sim/lonemonk/map --mode stereo --baseline 0.3
 ```
 
 Programmatic use differs from the RGB-D mode only by the stereo calibration and the right image:
 
 ```python
-cfg = load_config("configs/stereo.yaml")          # pose_est.type = ff (+ observation gating)
+cfg = load_config("configs/local/stereo_wheel.yaml")   # pose_est.type = ff (+ observation gating)
 system = System(camera=camera, config=cfg, T_right_in_left=dataset.T_right_in_left)
 system.step(obs={"rgb": left, "rgb_right": right, "depth": None, "conf": None,
                  "delta_pose": odom_delta, "timestamp": t})
@@ -377,7 +387,7 @@ Place processed ROS bag directories in `data/rosbag/`.
 | `cross.core.system` | Main pipeline: motion prior, observation, GMM filtering, keyframe insertion |
 | `cross.core.hypothesis` | Multi-hypothesis GMM belief, evidence tracking, loop-closure detection |
 | `cross.core.pgo` | Pose graph construction and GTSAM optimization |
-| `cross.core.lc_engine` | Asynchronous loop-closure engine (background thread) |
+| `cross.core.async_pgo` | Background pose-graph optimisation of verified loop closures (forked worker) |
 | `cross.core.simple_topo` | Topological planning graph with proximity edges |
 | `cross.core.planner` | A\*/Dijkstra path planning over sparse graph |
 | `cross.core.mem` | Text-conditioned semantic memory search |

@@ -41,7 +41,7 @@ from cross.core.types import Camera
 from cross.db import store as map_store
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
-from cross.pipeline import add_session_args, apply_settings, mode_config_files, session_factory
+from cross.pipeline import add_session_args, apply_settings, finish_session_args, session_factory, shipped_config_files
 
 
 def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
@@ -59,11 +59,9 @@ def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
 
 
 def make_config(args) -> SystemConfig:
-    # the mode's shipped configuration files (cross.pipeline.mode_config_files: configs/stereo.yaml, + stereo_fast.yaml
-    # with --fast), then the user's --config; explicit options below win
-    configs = mode_config_files(args.mode, args.odometry, getattr(args, "fast", False) and args.estimator == "ff",
-                                mono_estimator=getattr(args, "mono_estimator", None))
-    configs += list(args.config or [])
+    # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/<--profile>/<mode>.yaml), then the
+    # user's --config; explicit options below win
+    configs = shipped_config_files(args) + list(args.config or [])
     cfg = load_config(*configs) if configs else SystemConfig()
     cfg.async_update = False
     cfg.mapping.loop_closure.intra_enabled = not getattr(args, "no_intra_lc", False)
@@ -470,7 +468,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main():
     ap = build_parser()
-    args = ap.parse_args()
+    args = finish_session_args(ap.parse_args())
     if args.snr is not None and args.snr <= 0:
         args.snr = None        # perfect odometry
     if args.mode is None:

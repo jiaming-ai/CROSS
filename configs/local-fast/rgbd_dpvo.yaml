@@ -1,0 +1,5 @@
+# RGB-D visual odometry (DPVO, metric scale from sensor depth; a reference mode): --mode rgbd --odometry visual.
+# Folder local-fast: the mode's base, then the folder's shared settings; keys below override both.
+include:
+  - ../base/rgbd.yaml
+  - ../base/local-fast.yaml

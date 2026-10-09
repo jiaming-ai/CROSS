@@ -27,6 +27,12 @@ The full tier contains the quick tier. The entries are `dev_openloris`, `dev_sim
 [configs/datasets.yaml](configs/datasets.yaml) (`dev: true`). They read the prepared folders of `openloris`,
 `simchange` and `kitti` (`data:`), so no data is duplicated. Only the map sequences get a T1 result.
 
+Like the benchmark, the dev runs go through `benchmark/run.py`, which passes `--reproducible` to every CROSS run:
+synchronous pose-graph optimisation (the shipped configurations optimise long loop closures in the background, at
+machine-dependent times), so a dev comparison is not disturbed by timing. `--reproducible` wins over `--args "--set
+..."`: the background optimisation itself is tested with the runners (`scripts/map_and_reloc*.py` without
+`--reproducible`; `mapping.loop_closure.async_pgo_lag_steps=1` is bit-identical to synchronous).
+
 One CROSS mode takes about 7 minutes for the quick tier and 14 minutes for the full tier on an RTX 5090
 (stereo mode, alone on the GPU).
 

@@ -1,0 +1,9 @@
+# Mono + IMU base (--mode mono --mono-estimator ff --odometry vgio): the feed-forward back end and the VGGT-inertial
+# odometry with learned depth (DA3, or the scale head of a vggt_ft checkpoint) as the metric-scale prior.
+include: mono_ff.yaml
+# ImuConfig of the frontend (cross/imu/scale_filter.py), applied before --mono-args '--imu-config ...'
+imu:
+  # the frontend measures on passes of its own, not on the back end's: those carry map references, and measured on them
+  # alone the indoor scale came out 6 % short (development maps, 5090: office 0.11 -> 0.06 m, KITTI 07 2.76 -> 1.79,
+  # home 0.46 -> 0.36, cafe 0.24 -> 0.17)
+  vgio_align: false

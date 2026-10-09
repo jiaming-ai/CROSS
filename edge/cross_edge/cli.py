@@ -39,13 +39,16 @@ def build_parser():
     r.add_argument("--basalt-wait", type=float, default=5.0, help="seconds to wait for a frame's VIO state")
     r.add_argument("--load-map", default=None, help="map file on the server to relocalize in")
     r.add_argument("--save-map", default=None, help="map file on the server to store at the end")
+    r.add_argument("--profile", choices=["local", "local-fast", "cloud"], default="cloud",
+                   help="folder of the server's shipped configuration (configs/<profile>/stereo_<odometry>.yaml)")
     r.add_argument("--config-file", nargs="*", default=[], help="configuration files of the server's configs/ folder "
-                   "layered on the mode's (e.g. outdoor.yaml)")
+                   "layered on the mode's (e.g. overlays/outdoor.yaml)")
     r.add_argument("--set", nargs="*", action="extend", default=[], help="server configuration overrides key=value")
     r.add_argument("--obs-cap", type=float, default=0.1, help="rate cap (s; 0: off), as the CROSS runners' default; "
                    "with --realtime only (it models the server's queue on the frames' timestamps)")
     r.add_argument("--max-backlog", type=float, default=0.3, help="server overload policy (s; 0: off)")
-    r.add_argument("--jpeg", type=int, default=90, help="JPEG quality of the uploads (0: lossless PNG)")
+    r.add_argument("--jpeg", type=int, default=0, help="JPEG quality of the uploads (0: lossless PNG; JPEG 90 cost the "
+                   "stereo mode relocalization: office1-7 T2 0.86 -> 0.56)")
     r.add_argument("--realtime", action="store_true", help="feed the frames at their timestamps")
     r.add_argument("--lockstep", action="store_true", help="wait for each frame's reply before the next")
     r.add_argument("--extra-delay", type=float, default=0.0, help="emulated extra round trip (s)")
@@ -62,7 +65,10 @@ def open_session(args, src):
     open_msg = {"protocol": PROTOCOL_VERSION, "edge_version": __version__, "mode": "stereo", "odometry": "external",
                 "camera": {"K": src.K, "width": src.width, "height": src.height},
                 "T_right_in_left": src.T_right_in_left, "config_files": list(args.config_file), "set": list(args.set),
-                "max_backlog": args.max_backlog}
+                "max_backlog": args.max_backlog, "profile": args.profile,
+                # the server's shipped configuration of the named odometry (Basalt live or its pose file odom_vio.txt;
+                # another pose file: the wheel / INS mode's)
+                "odometry_name": "basalt" if args.odometry == "basalt" or args.odom_file == "odom_vio.txt" else "external"}
     link = GrpcLink(args.server, open_msg, jpeg=args.jpeg, extra_delay=args.extra_delay, realtime=args.realtime)
     opened = link.opened
     if int(opened.get("protocol", -1)) != PROTOCOL_VERSION:

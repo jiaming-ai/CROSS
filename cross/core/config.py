@@ -669,7 +669,7 @@ class FeedForwardConfig:
     # right images of the references: use_curr_anchor, n_ref_anchors); "left": the back end observes on the left image
     # alone, with the metric scale from the previous observation and the odometry between them (use_odom_anchor) and
     # from pairs of map references (use_map_anchors), set by cross.pipeline.apply_right_image; the right image is not
-    # stored and, in remote sessions, not sent.  The opt-in profile configs/stereo_lowband.yaml sets it (with trusted
+    # stored and, in remote sessions, not sent.  The opt-in overlay configs/overlays/stereo_lowband.yaml sets it (with trusted
     # external odometry: half the uplink on the development split) - not the default: with the left image no
     # translation is metric without the odometry, and the odometry scale guard cannot see an odometry failure (ROVER
     # night with a VIO runaway: map ATE 36-38 m vs 11 m with the pair; outputs/2026-10-07_remote_cadence)
@@ -954,6 +954,29 @@ def _to_dict(obj) -> dict:
 # Public API
 # ---------------------------------------------------------------------------
 
+def load_yaml_layers(*yaml_paths: Union[str, Path]) -> dict:
+    """Deep-merge YAML files left to right into one dict.  A file may name others under the top-level key `include`
+    (a path or a list, relative to the file): they are merged first, in order, and the file's own keys on top (the
+    folder configs include a mode base and a folder base, configs/base/)."""
+    merged: dict = {}
+    for path in yaml_paths:
+        merged = _deep_merge(merged, _load_yaml(Path(path)))
+    return merged
+
+
+def _load_yaml(path: Path, _parents: tuple = ()) -> dict:
+    path = path.resolve()
+    if path in _parents:
+        raise ValueError(f"{path}: include cycle")
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    includes = data.pop("include", None) or []
+    merged: dict = {}
+    for inc in [includes] if isinstance(includes, str) else includes:
+        merged = _deep_merge(merged, _load_yaml(path.parent / inc, _parents + (path,)))
+    return _deep_merge(merged, data)
+
+
 def load_config(*yaml_paths: Union[str, Path], **overrides) -> SystemConfig:
     """Load and deep-merge one or more YAML files into a :class:`SystemConfig`.
 
@@ -961,7 +984,10 @@ def load_config(*yaml_paths: Union[str, Path], **overrides) -> SystemConfig:
     ----------
     *yaml_paths
         Zero or more paths to YAML config files.  Files are merged left to
-        right (later files override earlier ones).
+        right (later files override earlier ones), each after the files it
+        includes (`include`, see load_yaml_layers).  Sections that are not
+        SystemConfig fields (`imu`: the VGGT-inertial frontend's ImuConfig,
+        read by cross.pipeline) are ignored here.
     **overrides
         Top-level section overrides as dicts, e.g.
         ``pose_est={"obs_max_interval_steps": 2}``.  Merged last (highest
@@ -978,13 +1004,7 @@ def load_config(*yaml_paths: Union[str, Path], **overrides) -> SystemConfig:
     >>> cfg = load_config("configs/local/rgbd_wheel.yaml", "configs/overlays/outdoor.yaml",
     ...                   pose_est={"obs_max_interval_steps": 2})
     """
-    merged: dict = {}
-
-    for path in yaml_paths:
-        path = Path(path)
-        with open(path) as f:
-            data = yaml.safe_load(f) or {}
-        merged = _deep_merge(merged, data)
+    merged = load_yaml_layers(*yaml_paths)
 
     # Apply keyword overrides (each key is a top-level section name or scalar)
     if overrides:

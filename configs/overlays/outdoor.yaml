@@ -1,3 +1,4 @@
+# Outdoor overlay (--config configs/overlays/outdoor.yaml; the benchmark adds it on outdoor datasets).
 # Driving-scale scenes (1 m per frame): proposals may drift further from the tracked belief between
 # observations, so cluster/alignment radii are relaxed (indoor default 1.0 m).
 mapping:

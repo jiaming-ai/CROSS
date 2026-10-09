@@ -25,7 +25,7 @@ On a new GPU generation set `TORCH_CUDA_ARCH_LIST` (e.g. `12.0` for an RTX 5090)
 
 ```bash
 # 1. a map (any mode), optionally keeping extra full-resolution frames for the reconstruction (section 3)
-python scripts/map_and_reloc.py --map $SEQ --query $SEQ --out runs/k07 --config configs/outdoor.yaml --skip-reloc \
+python scripts/map_and_reloc.py --map $SEQ --query $SEQ --out runs/k07 --config configs/overlays/outdoor.yaml --skip-reloc \
     --set mapping.world_capture.enabled=true
 
 # 2. the reconstruction: train, evaluate on held-out keyframes (+ source frames between keyframes)

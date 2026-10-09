@@ -58,7 +58,7 @@ from cross.core.system import System  # noqa: E402
 from cross.core.types import Camera  # noqa: E402
 from cross.db import store as map_store  # noqa: E402
 from cross.dataloader.posed_rgbd import PosedRGBDLoader  # noqa: E402
-from cross.pipeline import add_session_args, mode_config_files, session_factory  # noqa: E402
+from cross.pipeline import add_session_args, finish_session_args, session_factory, shipped_config_files  # noqa: E402
 from reloc_metrics import (build_trials, drop_unlocalized, is_localized, map_relative_errors, summarize_errors,  # noqa: E402
                            summarize_trials)
 
@@ -100,13 +100,9 @@ def pose_to_mat(p) -> np.ndarray:
 
 
 def make_config(args) -> SystemConfig:
-    # the mono mode's shipped configuration files (cross.pipeline.mode_config_files: configs/mono_ff.yaml with the
-    # feed-forward estimator), then the user's --config; --set below wins.  The other modes of this runner keep their
-    # presets in code (unchanged)
-    configs = mode_config_files("mono", args.odometry, mono_estimator=getattr(args, "mono_estimator", None)) \
-        if args.mode == "mono" else []
-    configs += list(args.config or [])
-    cfg = load_config(*configs) if configs else SystemConfig()
+    # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/<--profile>/<mode>.yaml), then the
+    # user's --config; --set below wins
+    cfg = load_config(*shipped_config_files(args), *(args.config or []))
     cfg.async_update = False
     cfg.retrieval.top_k = args.top_k
     if getattr(args, "gnss", False):
@@ -324,7 +320,7 @@ def main():
     ap.add_argument("--dump-steps", action="store_true", help="per-step diagnostics (keyframe quality, retrieved keyframes): "
                     "steps_map.json of the map run, 'diag' in every query row")
     add_session_args(ap)
-    args = ap.parse_args()
+    args = finish_session_args(ap.parse_args())
     if args.snr is not None and args.snr <= 0:
         args.snr = None
     args.mode = args.mode or "rgbd"

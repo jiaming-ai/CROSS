@@ -1,0 +1,5 @@
+# Mono visual odometry (DPVO + DA3 learned depth, the DA3 back end): --mode mono --odometry visual.
+# Folder local: the mode's base, then the folder's shared settings; keys below override both.
+include:
+  - ../base/mono_da3.yaml
+  - ../base/local.yaml

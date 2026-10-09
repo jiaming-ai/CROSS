@@ -378,7 +378,7 @@ def main():
     ap.add_argument("--ff-meas-std", type=float, nargs=6, default=None, help="base measurement std [tx ty tz rx ry rz] of the FF estimator")
     ap.add_argument("--seed", type=int, default=None, help="seed of the odometry noise (reproducible runs)")
     ap.add_argument("--legacy-lc", action="store_true", help="ablation: old loop-closure test (no evidence validity / weight gate / verification)")
-    ap.add_argument("--config", nargs="*", default=[], help="YAML config file(s) applied before the command-line overrides (e.g. configs/outdoor.yaml)")
+    ap.add_argument("--config", nargs="*", default=[], help="YAML config file(s) applied before the command-line overrides (e.g. configs/overlays/outdoor.yaml)")
     ap.add_argument("--lc-mode", choices=["verified", "heuristic"], default=None, help="loop-closure mode (default: config, 'verified')")
     ap.add_argument("--lc-confidence", type=float, default=None, help="chi-square confidence of the verified loop closure (default 0.999)")
     ap.add_argument("--noise-config", default=None, help="YAML from scripts/lc/calibrate_noise.py (calibrated noise model)")

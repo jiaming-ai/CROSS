@@ -111,7 +111,12 @@ class MonocularSystem(Pipeline):
         overrides = self.config.cross_overrides
         odometry = odometry or ("external" if external_odometry else "visual")
         if odometry in ("external", "vio"):
-            # dataset odometry: the back end's default odometry noise (as in the rgbd / stereo modes), not the DPVO one
+            # dataset odometry (external) or DPVO with the IMU's metric scale (vio): the back end's default odometry noise
+            # (as in the rgbd / stereo modes), not the DPVO one.  The --cross-config lines that set odometry noise
+            # (mapping.loop_closure.noise.odom_*, tracking.*) are dropped here, the profile's (fitted for DPVO at 20 Hz
+            # indoors) and the user's --mono-args alike; the other --cross-config lines apply.  The tracking odometry stds are
+            # reset to the defaults below whatever the SystemConfig says; mapping.loop_closure.noise.odom_* of these
+            # sessions come from --set / --config.
             defaults = SystemConfig()
             cfg.tracking.odom_std_per_meter = defaults.tracking.odom_std_per_meter
             cfg.tracking.odom_std_per_radian = defaults.tracking.odom_std_per_radian

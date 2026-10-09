@@ -5,9 +5,11 @@ Two independent choices define a run:
   mode      rgbd | stereo | mono     what the back end observes.  rgbd: RGB + depth, PnP relative poses; stereo: stereo
                                      pairs, feed-forward multi-view relative poses with stereo scale; mono: RGB only,
                                      learned metric depth and monocular two-view / feed-forward relative poses
-  odometry  external | visual | vio | vgio
+  odometry  external | basalt | visual | vio | vgio
                                      where the motion between frames comes from.  external: the dataset's odometry
-                                     (wheel, VIO, simulated); visual: DPVO visual odometry whose metric scale comes
+                                     (wheel, VIO, simulated); basalt: external odometry from the Basalt stereo-inertial
+                                     VIO file of the sequence (odom_vio.txt, a named mode of its own: the shipped
+                                     configuration may differ from wheel odometry's); visual: DPVO visual odometry whose metric scale comes
                                      from the mode's depth (sensor depth, stereo depth, or learned metric depth);
                                      vio (mono mode): DPVO with its metric scale from the IMU (cross/imu), learned depth
                                      as an optional weak prior; vgio (mono mode with the ff back end, or the stereo
@@ -25,6 +27,11 @@ them) and from the map (pairs of retrieved keyframes with known relative pose) i
 Every motion source feeds the same channel of the back end: a relative pose (and optionally its covariance) per frame,
 accumulated into the odometry chain of the pose graph.  With external odometry in the rgbd and stereo modes the
 frames go to System.step unchanged (the behaviour before the pipeline existed).
+
+Shipped configurations: configs/<profile>/<mode>.yaml, one per mode in each profile folder (local: a normal local run;
+local-fast: constrained compute; cloud: the back end on a remote GPU server), selected by mode_config_files from the
+mode, the named odometry, the mono estimator and --profile.  They include a mode base and a folder base
+(configs/base/); opt-in overlays (configs/overlays/) and the user's --config / --set come after them.
 """
 
 from __future__ import annotations
@@ -38,6 +45,11 @@ MODES = ("rgbd", "stereo", "mono")
 ODOMETRY = ("external", "visual", "vio", "vgio")
 INERTIAL = ("vio", "vgio")
 MONO_ESTIMATORS = ("da3", "ff")
+# --odometry also takes the named external odometry "basalt": the sequence folder's Basalt VIO file (--odom-file
+# overrides the name; the loaders fall back to odom_left.txt when it is absent, as with --odom-file)
+NAMED_ODOMETRY = ("external", "basalt", "visual", "vio", "vgio")
+BASALT_ODOM_FILE = "odom_vio.txt"
+PROFILES = ("local", "local-fast", "cloud")
 
 
 def _inverse(T):
@@ -305,42 +317,50 @@ def visual_odometry_config(dpvo_checkpoint, seed=0, mask_people=False):
                       seed=seed, mask_people=mask_people, mask_interval=3, scale=scale)
 
 
-def mono_ff_config(cfg):
-    """The stereo mode's feed-forward estimator for the mono mode (in place): no stereo anchors; the metric scale of a
-    forward pass comes from the previous observation with the odometry between them and from pairs of references with
-    their relative pose in the map.  Observation cadence of the stereo mode (configs/stereo.yaml, the benchmark's
-    cross_stereo arguments)."""
-    from cross.core.config import PoseEstType
-    cfg.pose_est.type = PoseEstType.FF
-    ff = cfg.pose_est.ff
-    ff.use_curr_anchor = False
-    ff.n_ref_anchors = 0
-    ff.use_odom_anchor = True
-    ff.use_map_anchors = True
-    cfg.pose_est.obs_min_translation = 0.3
-    cfg.pose_est.obs_min_rotation = 0.15
-    cfg.pose_est.obs_max_interval_steps = 3
-    return cfg
+def mode_file_name(mode: str, odometry: str, mono_estimator: str = None) -> str:
+    """The name of a mode's file in a profile folder (configs/<profile>/<name>.yaml).  odometry: the named odometry
+    (external = wheel, basalt, visual = dpvo, vgio = imu).  Combinations without a file of their own (reference systems)
+    use the file of their back end: the mono DA3 back end any odometry -> mono_dpvo (its presets are the mono profile's
+    and MonocularSystem's), the feed-forward back end with DPVO -> mono_wheel, with DPVO + IMU (vio) -> mono_imu."""
+    if mode == "mono":
+        if (mono_estimator or "da3") == "da3":
+            return "mono_dpvo"
+        return {"basalt": "mono_basalt", "vgio": "mono_imu", "vio": "mono_imu"}.get(odometry, "mono_wheel")
+    names = {"external": "wheel", "basalt": "basalt", "visual": "dpvo"} | ({"vgio": "imu"} if mode == "stereo" else {})
+    if mode not in MODES or odometry not in names:
+        raise ValueError(f"No shipped configuration for --mode {mode} --odometry {odometry}")
+    return f"{mode}_{names[odometry]}"
 
 
-def mode_config_files(mode: str, odometry: str, fast: bool = False, mono_estimator: str = None) -> list:
-    """The configuration files shipped for a mode and odometry (layered in this order, before the user's --config):
-    the stereo mode configs/stereo.yaml (+ configs/stereo_fast.yaml with --fast); the mono mode with the feed-forward
-    estimator configs/mono_ff.yaml (its other presets are in code: mono_ff_config, mono profiles).  Other modes: none.  Opt-in profiles go in --config (configs/stereo_lowband.yaml: left
-    image, half the rate; not a default because it blinds the odometry scale guard)."""
-    files = []
-    if mode == "stereo":
-        files.append(os.path.join(CONFIG_DIR, "stereo.yaml"))
-        if fast:
-            files.append(FAST_STEREO_PRESET)
-    elif mode == "mono" and mono_estimator == "ff":
-        files.append(os.path.join(CONFIG_DIR, "mono_ff.yaml"))
-    return files
+def mode_config_files(mode: str, odometry: str, profile: str = "local", mono_estimator: str = None) -> list:
+    """The configuration file shipped for a mode in a profile folder (layered before the user's --config):
+    configs/<profile>/<mode_file_name>.yaml.  Opt-in overlays go in --config (configs/overlays/stereo_lowband.yaml:
+    left image, half the rate; not a default because it blinds the odometry scale guard)."""
+    if profile not in PROFILES:
+        raise ValueError(f"profile: one of {PROFILES}, not {profile}")
+    return [os.path.join(CONFIG_DIR, profile, mode_file_name(mode, odometry, mono_estimator) + ".yaml")]
+
+
+def shipped_config_files(args) -> list:
+    """mode_config_files for a runner's parsed session arguments (add_session_args; finish_session_args)."""
+    mono_estimator = getattr(args, "mono_estimator", None) if args.mode == "mono" else None
+    profile = "local-fast" if getattr(args, "fast", False) else getattr(args, "profile", "local")
+    return mode_config_files(args.mode, getattr(args, "odometry_name", args.odometry), profile, mono_estimator)
+
+
+def config_imu_items(files) -> list:
+    """The `imu` section of configuration files (ImuConfig of the VGGT-inertial / DPVO-inertial frontend) as
+    cross.mono.run --imu-config arguments."""
+    import json
+    from cross.core.config import load_yaml_layers
+    imu = (load_yaml_layers(*files).get("imu") or {}) if files else {}
+    return [a for k, v in imu.items() for a in ("--imu-config", f"{k}={json.dumps(v)}")]
 
 
 def apply_right_image(cfg):
     """(In place) pose_est.ff.right_image "left": no stereo anchors; the scale from the odometry anchor and pairs of
-    map references (the mono mode's feed-forward estimator, mono_ff_config, without its cadence)."""
+    map references (the anchors of the mono mode's feed-forward estimator, configs/base/mono_ff.yaml).  In code, not in
+    the overlay: a structural consequence of observing without the right image."""
     ff = cfg.pose_est.ff
     if ff.right_image not in ("left", "pair"):
         raise ValueError(f"pose_est.ff.right_image: left | pair, not {ff.right_image}")
@@ -360,7 +380,12 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
     camera: cross.core.types.Camera of the input images; system_config: SystemConfig (copied); mono_config: MonoConfig
     of the mono mode (mono_config_from_profile; with odometry vio, its imu.enabled is set); vo_config: MonoConfig of
     the visual odometry of the rgbd / stereo modes (visual_odometry_config); mono_estimator: the mono mode's back end
-    (da3 | ff; ff needs system_config prepared by mono_ff_config)."""
+    (da3 | ff).  system_config should come from the mode's shipped file (mode_config_files: the feed-forward back end's
+    anchors and cadence, the stereo VGGT-inertial odometry's guard setting, ...); mono_config's imu section from its
+    `imu` section (config_imu_items).
+    The mono profile's --cross-config lines (MonoConfig.cross_overrides) configure the DA3 back end only
+    (MonocularSystem): the feed-forward back end and the stereo mode's VGGT-inertial odometry do not apply them
+    (session_factory refuses a --cross-config in --mono-args there)."""
     from cross.core.system import System
     from cross.core.types import Camera
     if mode not in MODES or odometry not in ODOMETRY or mono_estimator not in MONO_ESTIMATORS:
@@ -405,10 +430,6 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
         return pipeline
 
     if mode in ("rgbd", "stereo"):
-        if odometry == "vgio":
-            # the odometry scale guard keeps its sample filter but does not rescale this odometry (LoopClosureConfig.
-            # odom_guard_rescale): it is metric itself, and the back end's passes collapse with the frontend's (KITTI 01)
-            cfg.mapping.loop_closure.odom_guard_rescale = False
         system = System(visualize=visualize, debug=False, camera=Camera(K.copy(), *size), config=cfg,
                         T_right_in_left=T_right_in_left)
         if odometry == "external":
@@ -454,10 +475,8 @@ def build_session(mode: str, odometry: str, camera, system_config, *, T_right_in
 
 def _vgio_config(mc, mode, T_right_in_left=None):
     """(In place) the stereo mode's VGGT-inertial odometry takes the metric scale from the stereo pair: no learned
-    depth and no bias state for it; it measures on the back end's passes (imu.vgio_align: None = on in the stereo mode,
-    off in the mono mode, where the passes' map references cost scale accuracy)."""
-    if mc.imu.vgio_align is None:
-        mc.imu.vgio_align = mode == "stereo"
+    depth and no bias state for it (structural, whatever the imu section says).  Its other per-mode settings are in the
+    mode files (configs/base/stereo_imu.yaml, mono_imu.yaml: imu.vgio_align)."""
     if mode == "stereo":
         if T_right_in_left is None:
             raise ValueError("The stereo mode's VGGT-inertial odometry needs the stereo calibration (T_right_in_left)")
@@ -552,8 +571,9 @@ def server_session(open_msg, device="cuda"):
     """The server of a remote session from the edge's open message: (MapServer, factory of a new pass service for a new
     session of the edge's odometry, information for the edge).  The CROSS runners' edge (edge_session) sends its
     resolved configurations; a standalone edge (the cross-edge package) sends none: the server builds the mode's
-    shipped configuration (mode_config_files) + the named files of its configs/ folder ("config_files") + overrides
-    ("set"), and returns the cadence settings the edge copies (cross_edge.cadence)."""
+    shipped configuration (mode_config_files: the "profile" folder, default local; "odometry_name" names the external
+    odometry, e.g. basalt) + the named files of its configs/ folder ("config_files", e.g. overlays/outdoor.yaml) +
+    overrides ("set"), and returns the cadence settings the edge copies (cross_edge.cadence)."""
     from cross.core.config import SystemConfig, _from_dict, load_config
     from cross.core.types import Camera
     from cross.mono.config import MonoConfig
@@ -571,9 +591,12 @@ def server_session(open_msg, device="cuda"):
         cfg = _from_dict(SystemConfig, open_msg["system_config"])
     else:
         names = [str(n) for n in open_msg.get("config_files") or []]
-        if any(os.path.basename(n) != n or not n.endswith(".yaml") for n in names):
-            raise ValueError(f"config_files: names of {CONFIG_DIR} only, not {names}")
-        files = mode_config_files(mode, odometry, bool(open_msg.get("fast")), open_msg.get("mono_estimator", "da3")) \
+        if any(os.path.normpath(n) != n or n.startswith(("/", "..")) or not n.endswith(".yaml") for n in names):
+            raise ValueError(f"config_files: files of {CONFIG_DIR} only, not {names}")
+        # (protocol 1 edges sent "fast" for the local-fast folder)
+        profile = open_msg.get("profile") or ("local-fast" if open_msg.get("fast") else "local")
+        files = mode_config_files(mode, open_msg.get("odometry_name") or odometry, profile,
+                                  open_msg.get("mono_estimator", "da3") if mode == "mono" else None) \
             + [os.path.join(CONFIG_DIR, n) for n in names]
         cfg = apply_settings(load_config(*files) if files else SystemConfig(), open_msg.get("set"))
         cfg.async_update = False
@@ -595,8 +618,10 @@ def add_session_args(ap):
     import os
     ap.add_argument("--mode", choices=MODES, default=None,
                     help="sensor mode (default: the runner's own: rgbd for posed RGB-D, stereo / rgbd for --estimator ff / pnp)")
-    ap.add_argument("--odometry", choices=ODOMETRY, default="external",
-                    help="external: the dataset's odometry; visual: DPVO visual odometry scaled by the mode's depth; "
+    ap.add_argument("--odometry", choices=NAMED_ODOMETRY, default="external",
+                    help="external: the dataset's odometry (wheel, INS); basalt: external odometry from the sequence's "
+                         f"Basalt stereo-inertial VIO file ({BASALT_ODOM_FILE}, or --odom-file); "
+                         "visual: DPVO visual odometry scaled by the mode's depth; "
                          "vio (mono mode): DPVO scaled by the IMU (imu.txt / imu.json next to the images); "
                          "vgio (mono mode with --mono-estimator ff, or stereo mode): IMU odometry corrected by "
                          "VGGT-Omega relative poses in a local pose graph (stereo: metric scale from the stereo pair)")
@@ -612,9 +637,14 @@ def add_session_args(ap):
                          "string), e.g. '--cross-config mapping.loop_closure.noise.odom_k_t=0.06' or "
                          "'--imu-config vgio_stereo_std=0.03'")
     ap.add_argument("--vo-mask-people", action="store_true", help="visual odometry: exclude detected people from DPVO patches")
-    ap.add_argument("--fast", action="store_true",
-                    help="stereo mode: faster preset (configs/stereo_fast.yaml: 6 images per pass instead of 10, ~35 %% "
-                         "less time per observation; relocalization within noise on OpenLORIS, maps slightly less accurate)")
+    ap.add_argument("--profile", choices=PROFILES, default="local",
+                    help="folder of the shipped configuration (configs/<profile>/<mode>.yaml): local (a normal local run), "
+                         "local-fast (constrained compute: 6-image stereo passes), cloud (remote GPU server)")
+    ap.add_argument("--fast", action="store_true", help="deprecated: --profile local-fast")
+    ap.add_argument("--reproducible", action="store_true",
+                    help="synchronous pose-graph optimisation whatever the configuration says (mapping.loop_closure."
+                         "async_pgo false; the shipped default runs long optimisations in the background, whose results "
+                         "land at machine-dependent times).  The benchmark harness always passes it")
     g = ap.add_argument_group("remote session (cross/remote): the back end and the GPU work on a server, the odometry "
                               "on the edge, behind a simulated network on the dataset's clock")
     g.add_argument("--remote", action="store_true",
@@ -656,21 +686,45 @@ def add_session_args(ap):
 
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs")
-FAST_STEREO_PRESET = os.path.join(CONFIG_DIR, "stereo_fast.yaml")
+
+
+def finish_session_args(args):
+    """(In place) the runners' session arguments after parsing: --odometry basalt is external odometry from the
+    Basalt VIO file (args.odom_file, default BASALT_ODOM_FILE; args.odometry_name keeps the name for the shipped
+    configuration); --fast is --profile local-fast."""
+    args.odometry_name = args.odometry
+    if args.odometry == "basalt":
+        args.odometry = "external"
+        if getattr(args, "odom_file", None) is None:
+            args.odom_file = BASALT_ODOM_FILE
+    if getattr(args, "fast", False):
+        if args.profile not in ("local", "local-fast"):
+            raise ValueError(f"--fast is --profile local-fast, not {args.profile}")
+        args.profile, args.fast = "local-fast", False
+    return args
 
 
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):
     """A callable building fresh sessions for the runner's --mode / --odometry (one per map run or query trial)."""
-    mode, odometry = args.mode, args.odometry
+    mode, odometry = args.mode, ("external" if args.odometry == "basalt" else args.odometry)
     mono_estimator = getattr(args, "mono_estimator", "da3") if mode == "mono" else "da3"
     cfg = copy.deepcopy(system_config)
-    if mono_estimator == "ff":
-        mono_ff_config(cfg)
+    if getattr(args, "reproducible", False):
+        # experiments: synchronous PGO for reproducibility (the shipped default is the background optimisation,
+        # configs/base/local.yaml; benchmark/run.py passes --reproducible)
+        cfg.mapping.loop_closure.async_pgo = False
     mono_config = vo_config = None
     if mode == "mono" or odometry == "vgio":
         # the mono mode's configuration; for the stereo mode's VGGT-inertial odometry only its imu section is used
         import shlex
-        extra = shlex.split(args.mono_args or "") + ["--seed", str(seed)] + (["--imu"] if odometry in INERTIAL else [])
+        user = shlex.split(args.mono_args or "")
+        if "--cross-config" in user and (mono_estimator == "ff" or mode == "stereo"):
+            raise ValueError("--mono-args --cross-config configures the mono DA3 back end only; the feed-forward back "
+                             "end and the stereo mode take the SystemConfig from --config / --set")
+        # the imu section of the shipped file and the user's --config files, before the user's --imu-config
+        imu = config_imu_items(shipped_config_files(args) + list(getattr(args, "config", None) or [])) \
+            if odometry in INERTIAL else []
+        extra = imu + user + ["--seed", str(seed)] + (["--imu"] if odometry in INERTIAL else [])
         mono_config = mono_config_from_profile(args.mono_profile,
                                                args.dpvo_checkpoint if odometry in ("visual",) + INERTIAL else None, extra)
     elif odometry == "visual":

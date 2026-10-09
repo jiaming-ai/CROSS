@@ -1,0 +1,5 @@
+# Stereo + IMU (VGGT-inertial odometry): --mode stereo --odometry vgio.
+# Folder local: the mode's base, then the folder's shared settings; keys below override both.
+include:
+  - ../base/stereo_imu.yaml
+  - ../base/local.yaml

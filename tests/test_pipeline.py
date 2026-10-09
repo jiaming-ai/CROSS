@@ -133,14 +133,17 @@ def test_odometry_frontend_composes_dataset_motion():
 
 def test_mode_config_files_and_left_image():
     """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry; the
-    opt-in low-bandwidth profile observes on the left image (no stereo anchors) at half the rate; --fast keeps the pair."""
+    opt-in low-bandwidth overlay observes on the left image (no stereo anchors) at half the rate; local-fast keeps the
+    pair."""
     import os
     from cross.core.config import load_config
     from cross.pipeline import CONFIG_DIR, apply_right_image, mode_config_files
-    lowband = os.path.join(CONFIG_DIR, "stereo_lowband.yaml")
-    assert mode_config_files("rgbd", "external") == [] and mode_config_files("mono", "external") == []
-    assert [p.rsplit("/", 1)[-1] for p in mode_config_files("stereo", "external", fast=True)] == ["stereo.yaml", "stereo_fast.yaml"]
-    for odometry in ("external", "vgio", "visual"):
+    lowband = os.path.join(CONFIG_DIR, "overlays", "stereo_lowband.yaml")
+    rel = lambda files: [os.path.relpath(f, CONFIG_DIR) for f in files]          # noqa: E731
+    assert rel(mode_config_files("rgbd", "external")) == ["local/rgbd_wheel.yaml"]
+    assert rel(mode_config_files("stereo", "basalt", "cloud")) == ["cloud/stereo_basalt.yaml"]
+    assert rel(mode_config_files("stereo", "external", "local-fast")) == ["local-fast/stereo_wheel.yaml"]
+    for odometry in ("external", "basalt", "vgio", "visual"):
         pe = apply_right_image(load_config(*mode_config_files("stereo", odometry))).pose_est
         assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
         assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 2
@@ -148,10 +151,49 @@ def test_mode_config_files_and_left_image():
     assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.6, 0.3, 6)
     assert pe.ff.right_image == "left" and not pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
     assert pe.ff.use_odom_anchor and pe.ff.use_map_anchors and pe.ff.n_ref_anchors == 0
-    # the fast preset keeps the pair (its only scale anchor) and the stereo.yaml cadence
-    pe = apply_right_image(load_config(*mode_config_files("stereo", "external", fast=True))).pose_est
+    # the fast passes keep the pair (its only scale anchor) and the stereo cadence
+    pe = apply_right_image(load_config(*mode_config_files("stereo", "external", "local-fast"))).pose_est
     assert (pe.obs_min_translation, pe.obs_max_interval_steps, pe.ff.right_image, pe.ff.max_refs) == (0.3, 3, "pair", 4)
     assert pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
+
+
+def test_profile_folders():
+    """Every profile folder has one file per mode; the folders differ from each other only where they should (phase 1:
+    local-fast = the fast stereo passes), and every mode file differs from its mode's base by the folder's settings."""
+    import dataclasses
+    import os
+    from cross.core.config import load_config, load_yaml_layers
+    from cross.pipeline import CONFIG_DIR, PROFILES
+    modes = sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, "local")) if f.endswith(".yaml"))
+    assert len(modes) == 11
+    for profile in PROFILES:
+        assert sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, profile)) if f.endswith(".yaml")) == modes
+        for m in modes:
+            cfg = load_config(os.path.join(CONFIG_DIR, profile, m))
+            assert cfg.mapping.loop_closure.async_pgo
+            local = load_config(os.path.join(CONFIG_DIR, "local", m))
+            if profile != "local-fast" or not m.startswith("stereo"):
+                assert dataclasses.asdict(cfg) == dataclasses.asdict(local)
+    assert load_yaml_layers(os.path.join(CONFIG_DIR, "local", "stereo_imu.yaml"))["imu"] == {"vgio_align": True}
+    assert load_yaml_layers(os.path.join(CONFIG_DIR, "cloud", "mono_imu.yaml"))["imu"] == {"vgio_align": False}
+    assert not load_config(os.path.join(CONFIG_DIR, "local", "stereo_imu.yaml")).mapping.loop_closure.odom_guard_rescale
+
+
+def test_named_odometry_and_profile_arguments():
+    import argparse
+    from cross.pipeline import BASALT_ODOM_FILE, add_session_args, finish_session_args, shipped_config_files
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--odom-file", default=None)
+    add_session_args(ap)
+    args = finish_session_args(ap.parse_args(["--mode", "stereo", "--odometry", "basalt"]))
+    assert args.odometry == "external" and args.odometry_name == "basalt" and args.odom_file == BASALT_ODOM_FILE
+    assert shipped_config_files(args)[0].endswith("local/stereo_basalt.yaml")
+    args = finish_session_args(ap.parse_args(["--mode", "rgbd", "--odometry", "basalt", "--odom-file", "x.txt"]))
+    assert args.odom_file == "x.txt"
+    args = finish_session_args(ap.parse_args(["--mode", "stereo", "--fast"]))      # deprecated alias
+    assert args.profile == "local-fast" and shipped_config_files(args)[0].endswith("local-fast/stereo_wheel.yaml")
+    args = finish_session_args(ap.parse_args(["--mode", "mono", "--mono-estimator", "ff", "--odometry", "vio"]))
+    assert shipped_config_files(args)[0].endswith("local/mono_imu.yaml")
 
 
 def test_left_image_session_drops_the_right_image():
@@ -164,15 +206,12 @@ def test_left_image_session_drops_the_right_image():
     assert f["rgb_right"] is not None      # the loader's frame is not modified
 
 
-def test_vgio_align_by_mode():
+def test_vgio_stereo_structural_settings():
     from cross.mono.config import MonoConfig
     from cross.pipeline import _vgio_config
     stereo = _vgio_config(MonoConfig(), "stereo", np.eye(4))
-    mono = _vgio_config(MonoConfig(), "mono")
-    assert stereo.imu.vgio_align is True and mono.imu.vgio_align is False
-    explicit = MonoConfig()
-    explicit.imu.vgio_align = False
-    assert _vgio_config(explicit, "stereo", np.eye(4)).imu.vgio_align is False
+    assert not stereo.imu.depth_prior and not stereo.imu.vgio_depth_bias
+    assert _vgio_config(MonoConfig(), "mono").imu.depth_prior
 
 
 def test_mono_ff_shipped_defaults():
@@ -180,16 +219,19 @@ def test_mono_ff_shipped_defaults():
     from cross.core.config import load_config
     from cross.pipeline import mode_config_files
     files = mode_config_files("mono", "visual", mono_estimator="ff")
-    assert [os.path.basename(f) for f in files] == ["mono_ff.yaml"]
-    assert mode_config_files("mono", "visual", mono_estimator="da3") == []
-    assert [os.path.basename(f) for f in mode_config_files("stereo", "external")] == ["stereo.yaml"]
+    assert [os.path.basename(f) for f in files] == ["mono_wheel.yaml"]
+    assert [os.path.basename(f) for f in mode_config_files("mono", "visual", mono_estimator="da3")] == ["mono_dpvo.yaml"]
+    assert [os.path.basename(f) for f in mode_config_files("stereo", "external")] == ["stereo_wheel.yaml"]
     cfg = load_config(*files)
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
     assert cfg.mapping.hypothesis.strong_pass_frames == 3
+    ff = cfg.pose_est.ff         # the feed-forward back end without a stereo pair
+    assert cfg.pose_est.type.value == "ff" and not ff.use_curr_anchor and ff.n_ref_anchors == 0
+    assert ff.use_odom_anchor and ff.use_map_anchors and cfg.pose_est.obs_max_interval_steps == 3
 
 
 def test_map_and_reloc_mono_loads_shipped_defaults():
-    """scripts/map_and_reloc.py (the stereo-image datasets' runner, also in mono mode) loads configs/mono_ff.yaml for
+    """scripts/map_and_reloc.py (the stereo-image datasets' runner, also in mono mode) loads the mono files for
     the mono mode's feed-forward estimator (it ignored it until 2026-10-09: KITTI / SimChange mono runs had no pair filter)."""
     import importlib.util
     from pathlib import Path
@@ -202,3 +244,7 @@ def test_map_and_reloc_mono_loads_shipped_defaults():
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15 and cfg.mapping.hypothesis.strong_pass_frames == 3
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo"]))
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.0
+    # explicit options of the runner win over the mode's file (they used to be overwritten by the mono presets)
+    cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "mono", "--mono-estimator", "ff",
+                                                                 "--obs-max-interval", "5"]))
+    assert cfg.pose_est.obs_max_interval_steps == 5
