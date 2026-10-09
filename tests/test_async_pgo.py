@@ -330,3 +330,29 @@ def test_a_result_applied_at_the_start_of_the_next_step_is_the_synchronous_one(t
     assert all(np.array_equal(p1[k], p2[k]) for k in p1)
     assert [(a, b) for (a, b, f) in s1._lc_verifier.quarantine] == [(a, b) for (a, b, f) in s2._lc_verifier.quarantine]
     assert s2._apgo.stats["stale_steps"] == 0
+
+
+def test_catch_up_pulls_the_tail_toward_its_loop_edges_to_optimised_keyframes():
+    res = {}
+    for catch in (False, True):
+        s = make_system(False, False, async_lag=2)
+        hm = s.hypothesis_manager
+        if not catch:
+            hm.smooth_tail = lambda first_free_id: {"n_free": 0, "moved_t": 0.0, "affected": set()}      # the rigid transport alone
+        hm.dist = (pp.SE3(hm.nodes[239].pose_mu.tensor().clone()), pp.se3(torch.zeros(3, 6)), torch.tensor([1.0, 0.0, 0.0]))
+        keys, ref = s.new_keys, min(a for a, b in s.new_keys)
+        s._submit_async_pgo({}, list(keys), ref, list(keys))
+        add_tail(hm, 4)
+        # a loop edge from the tail's last keyframe to keyframe 60, 0.3 m off the (uncorrected) geometry
+        m = rel(hm, 60, 243) @ np.array(gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(0.3, 0.0, 0.0)).matrix())
+        f = VisualEdge(_lie(gtsam.Pose3(m)), pp.se3(torch.full((6,), 0.05)), EdgeType.VISUAL, 0, 0)
+        f.noise_scale, f.noise_scale_along, f.noise_scale_rot, f.informative = 1.0, 1.5, None, True
+        hm.hypotheses[0].visual_edges.setdefault((60, 243), []).append(f)
+        hm.hypotheses[0].visual_adjacency.setdefault(60, set()).add(243)
+        hm.hypotheses[0].visual_adjacency.setdefault(243, set()).add(60)
+        s._processed_frame_num += 2
+        assert s._poll_async_pgo({}) is True
+        err = np.linalg.norm((np.linalg.inv(rel(hm, 60, 243)) @ m)[:3, 3])         # residual of that edge after the application
+        res[catch] = (err, poses(hm)[243])
+    assert res[True][0] < res[False][0]            # (a robust visual edge against four odometry edges: a small pull)
+    assert not np.array_equal(res[True][1], res[False][1])
