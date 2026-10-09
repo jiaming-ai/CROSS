@@ -30,36 +30,51 @@ CFG = dict(step=0.05, h_lo=0.10, h_hi=1.80, wall_cover=0.75, wall_near=0.6, hole
            floor_band=(-0.5, 0.5), seed_tol=0.03, seed_wall_dist=0.4, margin=6)
 
 try:
-    from cross_nav.labels import _flood                    # numba flood fill of the accumulated labels
-except Exception:                                          # noqa: BLE001 (stand-alone use without vggt_ft)
-    _flood = None
+    from numba import njit
+except ImportError:                                        # pure-Python fallback (slow on large scenes)
+    def njit(*a, **k):
+        return (lambda f: f) if not (a and callable(a[0])) else a[0]
 
 
-def _flood_py(cand, ncand, sy, sx, sh, step, gap):
-    """Pure-numpy multi-source BFS (fallback; same rule as cross_nav.labels._flood with gap = 0)."""
-    from collections import deque
+@njit(cache=True)
+def _flood(cand, ncand, seed_iy, seed_ix, seed_h, step, gap):
+    """Multi-source BFS over the cell grid: a neighbour (8-connected) joins with its candidate height closest to the
+    current cell's, if within `step` (x sqrt 2 diagonally).  Same rule as cross_nav.labels._flood with gap = 0 (copied
+    here because cross_nav.labels imports torch, which the Blender environment does not have).  `gap` is unused."""
     H, W, K = cand.shape
     g = np.full((H, W), np.nan, np.float32)
-    dq = deque()
-    for y, x, h in zip(sy, sx, sh):
+    qn = H * W + len(seed_iy) + 1
+    qy = np.empty(qn, np.int32)
+    qx = np.empty(qn, np.int32)
+    head, tail = 0, 0
+    for s in range(len(seed_iy)):
+        y, x = seed_iy[s], seed_ix[s]
         if np.isnan(g[y, x]):
-            g[y, x] = h
-            dq.append((y, x))
-    while dq:
-        y, x = dq.popleft()
+            g[y, x] = seed_h[s]
+            qy[tail], qx[tail] = y, x
+            tail += 1
+    while head < tail:
+        y, x = qy[head], qx[head]
+        head += 1
         h = g[y, x]
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
+        for dy in range(-1, 2):
+            for dx in range(-1, 2):
+                if dy == 0 and dx == 0:
+                    continue
                 ny, nx = y + dy, x + dx
-                if (dy or dx) and 0 <= ny < H and 0 <= nx < W and np.isnan(g[ny, nx]) and ncand[ny, nx]:
-                    tol = step * (1.4142 if dy and dx else 1.0)
-                    c = cand[ny, nx, :ncand[ny, nx]]
-                    d = np.abs(c - h)
-                    k = int(np.argmin(d))
-                    if d[k] <= tol:
-                        g[ny, nx] = c[k]
-                        dq.append((ny, nx))
-    return g, np.isfinite(g)
+                if ny < 0 or ny >= H or nx < 0 or nx >= W or not np.isnan(g[ny, nx]):
+                    continue
+                tol = step * (1.4142 if dy != 0 and dx != 0 else 1.0)
+                best, bd = np.nan, 1e9
+                for k in range(ncand[ny, nx]):
+                    dd = abs(cand[ny, nx, k] - h)
+                    if dd <= tol and dd < bd:
+                        best, bd = cand[ny, nx, k], dd
+                if not np.isnan(best):
+                    g[ny, nx] = best
+                    qy[tail], qx[tail] = ny, nx
+                    tail += 1
+    return g, ~np.isnan(g)
 
 
 def floor_candidates(vox_h: np.ndarray, ix0: int, iy0: int, H: int, W: int, zres: float, K: int):
@@ -158,8 +173,7 @@ def build_mesh_bev(geom: dict, seeds_xyz=None, seeds_h=None, regions=None, cfg: 
     if seeds_xyz is None:                        # no seeds in wall interiors / closed cabinets: away from walls
         keep &= (ndimage.distance_transform_edt(~wall) * res)[sy, sx] >= c["seed_wall_dist"]
     sy, sx, sh = sy[keep], sx[keep], sh[keep]
-    flood = _flood if _flood is not None else _flood_py
-    ground, _ = flood(cand, ncand_f, sy, sx, sh, np.float32(c["step"]), 0)
+    ground, _ = _flood(cand, ncand_f, sy, sx, sh, np.float32(c["step"]), 0)
     reached = np.isfinite(ground)
     dist, (ny, nx) = ndimage.distance_transform_edt(~reached, return_indices=True)
     g_int = ground[ny, nx]
@@ -174,13 +188,14 @@ def build_mesh_bev(geom: dict, seeds_xyz=None, seeds_h=None, regions=None, cfg: 
     d_free = ndimage.distance_transform_edt(~free) * res
     shell = free | (occ_band & (d_free <= c["wall_near"]))
     foot = ndimage.binary_fill_holes(shell)
-    holes = foot & ~shell
+    holes = foot & ~free & ~occ_band                              # enclosed, no geometry in the band, not free floor
     d_hole = ndimage.distance_transform_edt(holes) * res          # distance to the hole's border
+    deep = holes & (d_hole > c["hole_occ"])
     bev = np.zeros((H, W), np.uint8)
     bev[foot] = OCC
-    bev[holes & (d_hole > c["hole_occ"])] = UNKNOWN
+    bev[deep] = UNKNOWN
     bev[free] = FREE
-    stats = dict(H=H, W=W, free=int(free.sum()), occ=int((bev == OCC).sum()), unknown_holes=int((holes & (d_hole > c["hole_occ"])).sum()),
+    stats = dict(H=H, W=W, free=int(free.sum()), occ=int((bev == OCC).sum()), unknown_holes=int(deep.sum()),
                  floor_h=round(h0, 3), seeds=int(len(sy)), ground_cells=int(reached.sum()), wall_cells=int(wall.sum()))
     out = {"bev": bev, "ground": np.where(reached, ground, np.nan).astype(np.float16), "origin": origin,
            "res": np.float32(res), "R_g": np.eye(3), "up_check": np.float32(0.0),

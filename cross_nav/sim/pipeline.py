@@ -34,6 +34,7 @@ BEV = Path(os.environ.get("NAV_BEV", "/mnt/datasets-livsyn/jz/nav/bev"))
 BPY = os.environ.get("BPY_PYTHON", "/mnt/datasets-livsyn/jz/envs/bpy/bin/python")
 SIMCHANGE = os.environ.get("SIMCHANGE_ROOT", "/mnt/datasets-livsyn/jz/code/SimChange")
 DATASET = os.environ.get("NAV_DATASET", "hssd_nav")
+NO_ROUTE = ("outdoor", "driveway", "swimming pool")         # HSSD region names the camera routes avoid
 
 
 def sh(cmd, log: Path, env=None, timeout=None):
@@ -82,6 +83,12 @@ def stage_prep(scene: str, log: Path, n_traj=None, seed=None):
     regions = layout_regions(blend)
     out, stats, aux = build_mesh_bev(geom, regions=regions)
     free_m2 = stats["free"] * float(out["res"]) ** 2
+    # routes stay inside the rooms (outdoor yards / driveways / pools are labelled but not driven through)
+    from cross_nav.sim.mesh_bev import region_mask
+    plan_regions = [r for r in regions if not any(w in (r.get("name") or "").lower() for w in NO_ROUTE)]
+    if plan_regions:
+        H, W = out["bev"].shape
+        aux["rmask"] = region_mask(plan_regions, out["origin"], float(out["res"]), H, W)
     if n_traj is None:
         n_traj = 2 if free_m2 < 40 else (3 if free_m2 < 120 else 4)
     if seed is None:                                             # deterministic per scene
