@@ -457,6 +457,53 @@ def _second_stage(res, kf_views, ex_views, depths, cfg: "BuildConfig", scene_sca
     return TrainResult(res2.splats, pd, res2.appearance, st)
 
 
+@torch.no_grad()
+def clean_world(world: World, views: List[View], min_views: int = 2, needle_ratio: float = 30.0,
+                needle_size: float = 0.02, device="cuda", log=print) -> dict:
+    """Remove Gaussians no training view constrains: those that project into fewer than `min_views` of the chunk's
+    training views (outside every frustum or seen once: the photometric loss never checked them from a second
+    direction), and needles (largest / smallest scale > needle_ratio, largest scale > needle_size x the median depth),
+    which are right edge-on from the training rays and streaks from anywhere else.  Views far from the training
+    trajectory (an overhead overview) show both as clutter; the training and test views barely change."""
+    by = {v.id: v for v in views}
+    zmed = float(world.meta.get("zmed", 1.0))
+    stats = {}
+    for c in world.chunks:
+        ids = [i for i in world.partition.chunks[c.index].train_ids if i in by] if c.index < len(world.partition.chunks) else []
+        Ts, Ks, sizes = [], [], []
+        for i in ids:
+            v = by[i]
+            T = v.T_wc @ world.pose_delta[i] if i in world.pose_delta else v.T_wc
+            Ts.append(T)
+            Ks.append(v.K)
+            sizes.append((v.width, v.height))
+        for l, sp in c.layers.items():
+            n = len(sp["means"])
+            if n == 0 or not ids:
+                continue
+            g = {k: v.to(device) for k, v in sp.items()}
+            count = torch.zeros(n, device=device, dtype=torch.int32)
+            for T, K, (w, h) in zip(Ts, Ks, sizes):
+                _, _, _, info = render(g, torch.from_numpy(T).float().to(device)[None], torch.from_numpy(K).float().to(device)[None],
+                                       w, h, 0, render_mode="RGB")
+                r = info["radii"][0]
+                vis = (r > 0).all(-1) if r.dim() == 2 else r > 0
+                count += vis.int()
+            keep = count >= min_views
+            if l == "near" and needle_ratio > 0:
+                sc = torch.exp(g["scales"])
+                smax, smin = sc.max(1).values, sc.min(1).values.clamp(min=1e-9)
+                keep &= ~((smax / smin > needle_ratio) & (smax > needle_size * zmed))
+            keep = keep.cpu()
+            c.layers[l] = {k: v[keep] for k, v in sp.items()}
+            c.anchor_ids[l] = c.anchor_ids[l][keep]
+            c.anchor_w[l] = c.anchor_w[l][keep]
+            stats[f"c{c.index}_{l}"] = [n, int(keep.sum())]
+    log("clean: " + ", ".join(f"{k} {a} -> {b}" for k, (a, b) in stats.items()))
+    world.meta["cleaned"] = {"min_views": min_views, "needle_ratio": needle_ratio, "needle_size": needle_size}
+    return stats
+
+
 def _backproject_np(depth, K, T_wc, stride=4):
     d = depth[::stride, ::stride]
     ys, xs = np.nonzero(d > 0)

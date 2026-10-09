@@ -114,9 +114,21 @@ def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: i
     origin = part.origin
     sh_degree = min(sh_degree, world.sh_degree)
     chunks_meta, total = [], 0
+    # indoors, the Gaussians above the cameras (upper walls, ceiling) go to an "above" layer that the viewer's overview
+    # hides (a dollhouse cut: from above, the ceiling hides the rooms)
+    cam_h = np.array([(T[:3, 3] - origin) @ part.up for T in world.kf_poses.values()])
+    zmed = float(world.meta.get("zmed", 1.0))
+    cut = float(cam_h.max() + max(0.3, 0.25 * zmed)) if zmed < 5.0 and len(cam_h) else None
     for c in world.chunks:
         files = {}
-        for layer, sp in c.layers.items():
+        layers = dict(c.layers)
+        if cut is not None and "near" in layers:
+            nsp = layers["near"]
+            hh = (nsp["means"].float().numpy() - origin) @ part.up
+            hi = torch.from_numpy(hh > cut)
+            layers["near"] = {k: v[~hi] for k, v in nsp.items()}
+            layers["above"] = {k: v[hi] for k, v in nsp.items()}
+        for layer, sp in layers.items():
             sp = _prune({k: v.float() for k, v in sp.items()}, min_opacity)
             if len(sp["means"]) == 0:
                 continue
@@ -173,7 +185,7 @@ def export_world(world: World, out: Path, sh_degree: int = 1, mv=None, thumbs: i
     R = view_rotation(part.up, part.axes)
     manifest = {"version": 1, "origin": origin.tolist(), "view_rotation": R.tolist(), "up": part.up.tolist(),
                 "axes": part.axes.tolist(), "region": [part.region_lo.tolist(), part.region_hi.tolist()],
-                "sh_degree": sh_degree, "chunks": chunks_meta, "keyframes": kfs, "edges": edges, "path": traj,
+                "sh_degree": sh_degree, "chunks": chunks_meta, "above_cut": cut, "keyframes": kfs, "edges": edges, "path": traj,
                 "comparisons": comps, "meta": {k: v for k, v in world.meta.items() if k not in ("train_ids", "test_ids")},
                 "metrics": metrics or {}, "splat_bytes": total}
     (out / "world.json").write_text(json.dumps(manifest, default=float))

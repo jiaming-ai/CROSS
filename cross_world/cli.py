@@ -140,6 +140,17 @@ def cmd_export(args):
                  ply=args.ply, metrics=metrics, renders_dir=wdir / "renders")
 
 
+def cmd_clean(args):
+    from cross_world.world import World, clean_world
+    world = World.load(args.world)
+    mv = _views(args)
+    clean_world(world, mv.views, min_views=args.min_views, needle_ratio=args.needle_ratio, device=args.device)
+    world.save(args.out)
+    if args.eval:
+        res = run_eval(world, mv, args, Path(args.out).parent / "eval_clean", print)
+        (Path(args.out).parent / "metrics_clean.json").write_text(json.dumps(res, indent=1, default=float))
+
+
 def cmd_repose(args):
     from cross_world.map_views import load_map_views
     from cross_world.world import World
@@ -185,6 +196,14 @@ def main(argv=None):
     x.add_argument("--max-file-mb", type=float, default=14.0)
     x.add_argument("--ply", action="store_true", help="also write standard 3DGS PLY files per chunk")
     x.set_defaults(fn=cmd_export)
+    cl = sub.add_parser("clean", help="remove Gaussians no training view constrains (see world.clean_world)")
+    common(cl)
+    cl.add_argument("--world", required=True)
+    cl.add_argument("--out", required=True)
+    cl.add_argument("--min-views", type=int, default=2)
+    cl.add_argument("--needle-ratio", type=float, default=30.0)
+    cl.add_argument("--eval", action="store_true")
+    cl.set_defaults(fn=cmd_clean)
     r = sub.add_parser("repose")
     common(r)
     r.add_argument("--world", required=True)

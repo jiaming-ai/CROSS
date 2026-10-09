@@ -118,7 +118,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
         <button id="bGo">View from keyframe</button>
         <button id="bCmp" aria-pressed="false">Compare with photo</button>
         <button id="bFly" aria-pressed="false">Fly the path</button>
-        <button id="bTop">Overview</button>
+        <button id="bTop" aria-pressed="false" title="A view from above with the ceiling and the sky removed">Overview</button>
       </div>
       <label class="sub" for="wipe">Photo / reconstruction split</label>
       <input type="range" id="wipe" min="0" max="100" value="50">
@@ -156,7 +156,7 @@ const world = new THREE.Group();          // map frame (origin-subtracted) -> vi
 scene.add(world);
 
 let S = null;          // current scene state
-let flying = null, compare = false, selected = null;
+let flying = null, compare = false, selected = null, overview = false;
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 function resize() {
@@ -262,7 +262,7 @@ async function loadScene(entry) {
   applyToggles();
   renderStrip(W); renderGallery(W);
   const files = [];
-  for (const c of W.chunks) for (const layer of ["near", "far"]) for (const f of (c.files[layer] || [])) files.push({ chunk: c.index, layer, file: f.file, n: f.n });
+  for (const c of W.chunks) for (const layer of ["near", "above", "far"]) for (const f of (c.files[layer] || [])) files.push({ chunk: c.index, layer, file: f.file, n: f.n });
   const startChunk = (W.keyframes.find((k) => !k.test) || W.keyframes[0] || {}).chunk;
   files.sort((a, b) => (a.chunk !== startChunk) - (b.chunk !== startChunk) || (a.layer === "far") - (b.layer === "far"));
   W.splatCount = files.reduce((a, f) => a + f.n, 0);
@@ -308,7 +308,9 @@ function updateFar(force) {
   for (const k of W.keyframes) { const d = (k.T[3] - p.x) ** 2 + (k.T[7] - p.y) ** 2 + (k.T[11] - p.z) ** 2; if (d < bd) { bd = d; best = k.chunk; } }
   if (best !== S.ownChunk || force) {
     S.ownChunk = best;
-    for (const m of S.meshes) m.mesh.visible = $("tSplat").checked && (m.layer === "near" || m.chunk === best);
+    // overview: no ceiling ("above") and no far layer (the sky shell would hide the map); otherwise the camera's chunk's far layer
+    for (const m of S.meshes) m.mesh.visible = $("tSplat").checked &&
+      (m.layer === "near" || (m.layer === "above" && !overview) || (m.layer === "far" && !overview && m.chunk === best));
   }
   $("hudPos").textContent = `chunk ${best}`;
 }
@@ -371,7 +373,8 @@ function select(kf, go) {
 // the map graph is hidden while the camera stands at a keyframe pose or flies the path (it would cut across the
 // view at eye level); it comes back on Overview or when the viewer starts moving
 function showGraph(v) { if (S) S.ov.group.visible = v; }
-function viewFrom(kf) { flying = null; setPressed("bFly", false); setCamera(kfCameraMatrix(kf), kfVfov(kf)); showGraph(false); if (compare) placeCompare(); updateFar(); }
+function setOverview(v) { overview = v; setPressed("bTop", v); updateFar(true); }
+function viewFrom(kf) { flying = null; setPressed("bFly", false); setOverview(false); setCamera(kfCameraMatrix(kf), kfVfov(kf)); showGraph(false); if (compare) placeCompare(); updateFar(); }
 
 // compare: the photo in a box of its aspect, the camera's field of view matched to that box
 function placeCompare() {
@@ -399,13 +402,16 @@ $("bTop").onclick = () => {
   if (!S) return; compare = false; setPressed("bCmp", false); $("cmp").hidden = true; camera.clearViewOffset();
   const box = new THREE.Box3(); for (const k of S.W.keyframes) box.expandByPoint(new THREE.Vector3(k.T[3], k.T[7], k.T[11]).applyMatrix4(world.matrix));
   const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
-  const d = Math.max(s.x, s.z, 4) * 0.9;
+  // a 3/4 view at 35 degrees elevation that fits the keyframes (a view straight down is the farthest from the
+  // training views, which all look roughly horizontally)
+  const d = Math.max(s.x, s.z, 4) * 0.95, el = 35 * Math.PI / 180;
   camera.fov = 50; camera.updateProjectionMatrix();
-  camera.position.set(c.x, c.y + d, c.z + d * 0.35); camera.lookAt(c); flying = null; setPressed("bFly", false); showGraph(true); updateFar();
+  camera.position.set(c.x, c.y + d * Math.sin(el), c.z + d * Math.cos(el)); camera.lookAt(c);
+  flying = null; setPressed("bFly", false); showGraph(true); setOverview(true);
 };
 $("bFly").onclick = () => {
   if (flying) { flying = null; setPressed("bFly", false); return; }
-  if (!S) return; compare = false; setPressed("bCmp", false); $("cmp").hidden = true; camera.clearViewOffset();
+  if (!S) return; compare = false; setPressed("bCmp", false); $("cmp").hidden = true; camera.clearViewOffset(); setOverview(false);
   const kfs = [...S.W.keyframes].sort((a, b) => (a.t ?? a.id) - (b.t ?? b.id));
   const Ms = kfs.map((k) => kfCameraMatrix(k));
   const P = Ms.map((M) => new THREE.Vector3().setFromMatrixPosition(M)), Q = Ms.map((M) => new THREE.Quaternion().setFromRotationMatrix(M));
