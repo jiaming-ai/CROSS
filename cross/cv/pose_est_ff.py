@@ -677,6 +677,8 @@ class PoseEstFeedForward:
         out["up_cam"] = R.T @ up_model                       # gravity in the camera
         out["R_bev_from_cam"] = bev_axes_np(up_model) @ R    # BEV axes (right, forward, up) from camera coordinates
         out["gravity_source"] = "given" if self._gravity_cam is not None else "head"
+        uh = out.pop("up_head").float().cpu().numpy().astype(np.float64)
+        out["gravity_head_deg"] = float(np.degrees(np.arccos(np.clip(uh @ up_model, -1.0, 1.0))))
         self._gravity_cam = None
         return out
 

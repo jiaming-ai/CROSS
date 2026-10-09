@@ -193,6 +193,11 @@ class Pipeline:
                 depth = cv2.resize(depth, (rgb.shape[1], rgb.shape[0]))
             if not self._left_only():
                 right = frame.get("rgb_right")
+        # the cross_nav BEV head of the back end's pass takes gravity from the IMU frontend when it has one
+        pose_est = getattr(self.mapper, "pose_est", None)
+        if map_now and getattr(getattr(pose_est, "backend", None), "nav", None) is not None \
+                and hasattr(frontend, "gravity_up_cam"):
+            pose_est.set_gravity(frontend.gravity_up_cam())
         # Every input increment is accumulated; image retrieval / filtering runs every mapping_interval frames.
         self.mapper.step({
             "rgb": rgb if map_now else None,

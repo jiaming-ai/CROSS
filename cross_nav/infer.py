@@ -54,13 +54,14 @@ class BEVPredictor:
         ext, intr = encoding_to_camera(pose_enc.float(), (H, W))
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             up = self.grav(tl, pts).float()
+        up_head = up[0].clone()
         if up_cam is not None:
             up = torch.nn.functional.normalize(torch.as_tensor(up_cam, dtype=torch.float32, device=self.device)[None],
                                                dim=-1)
         ls = torch.tensor([float(log_scale)], device=self.device)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             logits = self.bev(tl, pts, patch_hw, dino, d, c, ext, intr, ls, up, None, lift).float()
-        return {"prob": torch.sigmoid(logits[0]), "up_cam": up[0], "log_scale": float(log_scale),
+        return {"prob": torch.sigmoid(logits[0]), "up_cam": up[0], "up_head": up_head, "log_scale": float(log_scale),
                 "res": self.res, "size": self.size}
 
     @staticmethod
