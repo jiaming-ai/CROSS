@@ -81,13 +81,10 @@ class TrainConfig:
     carve_views: int = 16
     carve_tol: float = 0.15
     # sky model (cross_world/sky.py; on when the build computes sky masks, BuildConfig.sky): binary cross-entropy of
-    # the accumulated opacity against the masks (0 on sky, 1 elsewhere), and the texture's resolution / learning rate
+    # the accumulated opacity against the masks (0 on sky, 1 elsewhere), and the texture's resolution / learning rate.
+    # Tested without benefit on KITTI 07 (tag world-quality-sky-options): the cross-entropy on sky pixels only, far
+    # points on sky pixels, the view's affine colour on the sky too (-0.25 dB: the saturated sky pulls the exposure fit)
     sky_lambda: float = 0.05
-    sky_fg: bool = True                 # the cross-entropy also on the other pixels (opacity -> 1); False: sky pixels only
-    # the view's affine colour on the Gaussians only (True: on the sky too; KITTI 07 -0.25 dB between keyframes: the
-    # saturated sky pulls the exposure fit of the whole view)
-    sky_app: bool = False
-    sky_far: bool = False               # far points also on sky pixels
     sky_res: int = 256
     sky_lr: float = 1e-2
 
@@ -206,7 +203,7 @@ def init_gaussians(vb: ViewBatch, cfg: TrainConfig, masks: Optional[List[torch.T
         foot.append(z / vb.Ks[i, 0, 0])
         if cfg.far_points > 0:
             nd = (vb.depths[i] <= 0)
-            if vb.sky is not None and not cfg.sky_far:    # the sky model draws the sky
+            if vb.sky is not None:               # the sky model draws the sky
                 nd &= ~vb.sky[i]
             yy, xx = torch.nonzero(nd[::4, ::4], as_tuple=True)
             if len(yy):
@@ -295,14 +292,11 @@ def apply_appearance(rgb: torch.Tensor, A: torch.Tensor) -> torch.Tensor:
 
 def finish(rgb: torch.Tensor, alpha: torch.Tensor, A: Optional[torch.Tensor] = None, sky=None,
            dirs: Optional[torch.Tensor] = None, frozen: bool = False) -> torch.Tensor:
-    """Pixel colour: the Gaussians (premultiplied colour, alpha) over the sky (a SkyModel along `dirs`), with the view's
-    affine colour A on both (or, sky.app False, on the Gaussians only)."""
-    on_both = sky is None or getattr(sky, "app", True)
-    if sky is not None and on_both:
-        rgb = rgb + (1 - alpha) * sky(dirs, frozen=frozen)
+    """Pixel colour: the Gaussians (premultiplied colour, alpha) with the view's affine colour A, over the sky (a
+    SkyModel along `dirs`)."""
     if A is not None:
         rgb = apply_appearance(rgb, A)
-    if sky is not None and not on_both:
+    if sky is not None:
         rgb = rgb + (1 - alpha) * sky(dirs, frozen=frozen)
     return rgb
 
@@ -463,8 +457,7 @@ def train_chunk(vb: ViewBatch, splats: Dict[str, torch.Tensor], cfg: TrainConfig
         if sky is not None and cfg.sky_lambda > 0:
             s_ = vb.sky[idx].float()[..., None]
             a_ = alpha.clamp(1e-4, 1 - 1e-4)
-            ce = s_ * torch.log(1 - a_) + ((1 - s_) * torch.log(a_) if cfg.sky_fg else 0)
-            loss = loss + cfg.sky_lambda * -ce.mean()
+            loss = loss + cfg.sky_lambda * -(s_ * torch.log(1 - a_) + (1 - s_) * torch.log(a_)).mean()
         if cfg.strategy == "mcmc":
             loss = loss + cfg.opacity_reg * torch.sigmoid(params["opacities"]).mean() \
                 + cfg.scale_reg * torch.exp(params["scales"]).mean()

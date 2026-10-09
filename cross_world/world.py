@@ -400,7 +400,7 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
             from cross_world.sky import SkyModel, sky_frame
             px = vb.images[vb.sky][::97].float() / 255.0
             init_rgb = tuple(px.median(0).values.tolist()) if len(px) else (0.7, 0.8, 0.9)
-            sky = SkyModel(sky_frame(mv.up()), cfg.train.sky_res, init_rgb, app=cfg.train.sky_app).to(device)
+            sky = SkyModel(sky_frame(mv.up()), cfg.train.sky_res, init_rgb).to(device)
             del px
         res = train_chunk(vb, init, cfg.train, local_scale, log=log, sky=sky)
         if ex_views:
@@ -424,7 +424,7 @@ def build_world(mv: MapViews, cfg: BuildConfig, device="cuda", log=print, only_c
             f"of {res.stats['n_final']}")
         sky_state = None
         if res.sky is not None:
-            sky_state = {"tex": res.sky.colours().half().cpu(), "R": res.sky.R.cpu().clone(), "app": res.sky.app}
+            sky_state = {"tex": res.sky.colours().half().cpu(), "R": res.sky.R.cpu().clone()}
             st["sky_seen"] = float((res.sky.seen > 0).float().mean())
         cm = ChunkModel(c.index, layers, aids, aws, st, sky_state)
         for vid in c.core_ids:                      # a view's refinement / appearance from the chunk that owns it
