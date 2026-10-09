@@ -173,7 +173,6 @@ def get_memory_usage(system, detailed: bool = True) -> Dict:
     models_memory = {
         "total": 0,
         "pose_estimation": 0,
-        "depth_prediction": 0,
     }
     
     # Pose estimation model
@@ -190,16 +189,7 @@ def get_memory_usage(system, detailed: bool = True) -> Dict:
                 for param in system.pose_est.kp_matcher.extractor.parameters():
                     models_memory["pose_estimation"] += get_tensor_memory(param)
     
-    # Depth prediction model
-    if system.use_depth_pred and hasattr(system, 'depth_pred'):
-        if hasattr(system.depth_pred, 'model'):
-            for param in system.depth_pred.model.parameters():
-                models_memory["depth_prediction"] += get_tensor_memory(param)
-    
-    models_memory["total"] = (
-        models_memory["pose_estimation"] + 
-        models_memory["depth_prediction"]
-    )
+    models_memory["total"] = models_memory["pose_estimation"]
     
     memory_stats["models"] = models_memory
     
@@ -302,7 +292,6 @@ def print_memory_usage(system, detailed: bool = True):
         logger.info("\n--- MODELS ---")
         models = memory_stats["models"]
         logger.info(f"  Pose Estimation: {models['pose_estimation']:.2f} MB")
-        logger.info(f"  Depth Pred:      {models['depth_prediction']:.2f} MB")
         logger.info(f"  Total:           {models['total']:.2f} MB")
 
     

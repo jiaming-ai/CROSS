@@ -105,8 +105,7 @@ class _PatchEmbedCache(torch.nn.Module):
 
 class _VGGTOmegaBackend(_Backend):
     def __init__(self, checkpoint: str, device: str, half_weights: bool = True, token_cache: int = 0,
-                 compile_blocks: bool = False, dense_head_bf16: bool = False,
-                 compile_mode: str = "default", cuda_graphs: bool = False):
+                 compile_blocks: bool = False, dense_head_bf16: bool = False, cuda_graphs: bool = False):
         from vggt_omega.models import VGGTOmega
         from vggt_omega.utils.pose_enc import encoding_to_camera
         self._decode = encoding_to_camera
@@ -151,12 +150,14 @@ class _VGGTOmegaBackend(_Backend):
         self._compiled = []
         if compile_blocks:
             # torch.compile of every transformer block (frame, global and DINO blocks share one graph); dynamic shapes
-            # cover any number of views.  The kernels are tuned once and cached on disk (TORCHINDUCTOR_CACHE_DIR).
+            # cover any number of views.  The kernels are tuned once and cached on disk (TORCHINDUCTOR_CACHE_DIR).  The
+            # default mode is deterministic (two runs give identical results); "max-autotune-no-cudagraphs" was ~4 % faster
+            # but picks kernels by timing them, so runs differed in rounding.
             agg = self.model.aggregator
             embed = self.token_cache.embed if self.token_cache is not None else agg.patch_embed
             self._compiled = list(agg.frame_blocks) + list(agg.inter_frame_blocks) + list(getattr(embed, "blocks", []))
             for block in self._compiled:
-                block.compile(dynamic=True, mode=None if compile_mode == "default" else compile_mode)
+                block.compile(dynamic=True)
 
     def warmup(self, resolution: int):
         """Load / tune the compiled kernels now (a few seconds) rather than in the first observation.  The kernels
@@ -615,8 +616,7 @@ class PoseEstFeedForward:
         if config.backend == FFBackend.VGGT_OMEGA:
             self.backend = _VGGTOmegaBackend(config.checkpoint, device, half_weights=config.half_precision_weights,
                                              token_cache=config.token_cache, compile_blocks=config.compile,
-                                             dense_head_bf16=config.dense_head_bf16, compile_mode=config.compile_mode,
-                                             cuda_graphs=config.cuda_graphs)
+                                             dense_head_bf16=config.dense_head_bf16, cuda_graphs=config.cuda_graphs)
             self.backend.warmup(config.image_resolution)
         elif config.backend == FFBackend.DA3:
             self.backend = _DA3Backend(config.checkpoint, device, process_res=config.da3_process_res)
@@ -642,10 +642,6 @@ class PoseEstFeedForward:
         images = torch.stack([v.to(self.device) for v in views], dim=0).float()
         if images.max() > 1.5:
             images = images / 255.0
-        if self.config.quantize_input:
-            # the 8-bit grid keyframes are stored on (cross.db.db.to_uint8_image): a keyframe made from this image then
-            # comes back as a reference with the same pixels, and its tokens are found in the token cache
-            images = (images.clamp(0, 1) * 255.0).round() / 255.0
         return images
 
     @torch.inference_mode()
@@ -666,10 +662,9 @@ class PoseEstFeedForward:
         logger.info(f"token cache: {cache.misses - n0} map images embedded in {time.perf_counter() - t0:.1f}s")
 
     def set_camera(self, K: np.ndarray, width: int, height: int):
-        """Intrinsics of the images given to the model (after its crop / resize): the principal-point correction."""
-        if not getattr(self.config, "principal_point_correction", True):
-            self._R_model_to_cam = None
-            return
+        """Intrinsics of the images given to the model (after its crop / resize): the principal-point correction.  The
+        model predicts cameras with the principal point at the image centre; the relative poses are rotated into the
+        calibrated camera frame (KITTI: 13 px off centre = 1.06 deg of yaw in every measured translation direction)."""
         R = principal_point_rotation(K, width, height)
         M = np.eye(4)
         M[:3, :3] = R.T            # c2w_cam = c2w_model @ [R^T 0; 0 1]
@@ -794,7 +789,7 @@ class PoseEstFeedForward:
         scale_est = estimate_scale(
             pred.c2w, anchors, method=cfg.scale_method,
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
-            weight_by_baseline=cfg.anchor_weight_by_baseline,
+            weight_by_baseline=True,          # anchors weighted by their predicted baseline (precision of the ratio)
         )
         src = getattr(cfg, "scale_source", "anchors")
         if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
@@ -824,10 +819,6 @@ class PoseEstFeedForward:
             covis = np.asarray(pred.covis[0, ref_idx], dtype=np.float64)
         else:
             covis = covisibility_scores(pred, ref_idx, 0, grid=cfg.covis_grid, rel_depth_tol=cfg.covis_depth_tol)
-            if cfg.covis_symmetric:
-                covis_back = np.asarray([covisibility_scores(pred, [0], r, grid=cfg.covis_grid,
-                                                             rel_depth_tol=cfg.covis_depth_tol)[0] for r in ref_idx])
-                covis = np.minimum(covis, covis_back)
             if source == "min":
                 covis = np.minimum(covis, np.asarray(pred.covis[0, ref_idx], dtype=np.float64))
 

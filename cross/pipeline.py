@@ -347,7 +347,6 @@ def apply_right_image(cfg):
     if ff.right_image == "left":
         ff.use_curr_anchor = False
         ff.n_ref_anchors = 0
-        ff.store_right_images = False
         ff.use_odom_anchor = True
         ff.use_map_anchors = True
     return cfg

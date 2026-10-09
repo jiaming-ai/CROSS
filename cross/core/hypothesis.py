@@ -192,8 +192,6 @@ class HypothesisManager:
             raise ValueError('Schmidt map geometry requires conditional sources and coordinate charts')
         if self.chart_aware and not cfg.session_recovery:
             raise ValueError("Chart-aware mapping requires historical-support recovery")
-        if self.chart_aware and cfg.no_pgo_for_lc:
-            raise ValueError("Chart-aware commitment requires graph optimization")
         self.component_charts = torch.zeros(n_components, dtype=torch.long, device=self.device)
         self.component_generations = [0] * n_components
         self.next_chart_id = 0
@@ -208,7 +206,6 @@ class HypothesisManager:
         self.llr_hist_length = cfg.llr_hist_length
         self.llr_bias = cfg.llr_bias
         self.filter_process_std = cfg.filter_process_std
-        self.motion_std_accumulation = cfg.motion_std_accumulation
         self.h0_informative_only = cfg.h0_informative_only
         self.reset_evidence_on_slot_reuse = cfg.reset_evidence_on_slot_reuse
         self.unmatched_evidence = cfg.unmatched_evidence
@@ -275,9 +272,6 @@ class HypothesisManager:
         self.self_lc_cooldown_steps = cfg.self_lc_cooldown_steps
         self.self_lc_min_kf_id_gap = cfg.self_lc_min_kf_id_gap
 
-        # no pgo for lc (used for testing only)
-        self.no_pgo_for_lc = cfg.no_pgo_for_lc
-
         # ========== comp 0 keep-alive (observability) ==========
         self.comp0_keepalive_score = cfg.comp0_keepalive_score
         self.comp0_sigma_inflation_factor = cfg.comp0_sigma_inflation_factor
@@ -322,13 +316,6 @@ class HypothesisManager:
         """
         topo_map = getattr(self.system, "topo_map", None)
         return topo_map.proximity_adjacency if topo_map is not None else {}
-
-    def latest_kf_id_before(self, step: int):
-        """Id of the newest permanent keyframe created before processing step `step` (None if there is none)."""
-        # NOTE: keyframes record their creation step in `step_created`; the previous fallback compared keyframe *ids*
-        # with step counts, which made RetrievalConfig.recent_window_steps inert after the first ~200 steps.
-        ids = [kf.id for kf in self.nodes.values() if not kf.temporary and getattr(kf, "step_created", kf.id) < step]
-        return max(ids) if ids else None
 
     def get_active_dist(self):
         """
@@ -887,10 +874,7 @@ class HypothesisManager:
         # Update all active components by weight threshold so priors evolve with motion
         active_mask = last_gmm_weights > self.tracking_active_threshold
         last_gmm_mu[active_mask] = normalize_SE3(last_gmm_mu[active_mask] @ delta_pose.unsqueeze(0))
-        if self.motion_std_accumulation == "variance":
-            last_gmm_sigma[active_mask] = pp.se3((last_gmm_sigma[active_mask].tensor() ** 2 + delta_std.tensor().unsqueeze(0) ** 2) ** 0.5)
-        else:
-            last_gmm_sigma[active_mask] = last_gmm_sigma[active_mask] + delta_std.unsqueeze(0)
+        last_gmm_sigma[active_mask] = last_gmm_sigma[active_mask] + delta_std.unsqueeze(0)
 
         self.dist = (last_gmm_mu, last_gmm_sigma, last_gmm_weights)
 
@@ -1727,12 +1711,6 @@ class HypothesisManager:
             "message": None,
         }
         assert hypo_id in self.hypotheses, f"Hypothesis {hypo_id} does not exist"
-
-        if self.no_pgo_for_lc and hypo_id != 0:
-            # instead of merging, we just change the hypothesis 0 to the new hypothesis
-            # this is only for test
-            self.change_hypo_to_first(hypo_id)
-            return result
 
         # Use the latest keyframe as target if not specified
         if target_node_id is None:

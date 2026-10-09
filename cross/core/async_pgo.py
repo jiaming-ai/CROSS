@@ -236,8 +236,7 @@ def verified_pgo(hm, verifier, lc_cfg, new_keys, window_ref) -> dict:
     t0 = time.perf_counter()
     max_id = max(hm.nodes.keys())
     use_post = bool(lc_cfg.use_posterior)
-    remove = getattr(lc_cfg, "posterior_action", "remove") == "remove"
-    defer = bool(lc_cfg.test_before_apply) and use_post and remove
+    defer = bool(lc_cfg.test_before_apply) and use_post
     out = {"success": False, "applied": False, "max_id": max_id, "outliers": [], "message": None, "stats": {}}
     info = hm.handle_loop_closure(0, apply=False, window_ref=window_ref)
     if not info.get("success"):
@@ -255,28 +254,27 @@ def verified_pgo(hm, verifier, lc_cfg, new_keys, window_ref) -> dict:
         outliers = verifier.posterior_outliers(pg, only_keys=set(new_keys))
         if outliers:
             stats["posterior_flagged"] = len(outliers)
-            if remove:
-                refs = []
-                bucket_of = hm.hypotheses[0].visual_edges
+            refs = []
+            bucket_of = hm.hypotheses[0].visual_edges
+            for (a, b, f, c2) in outliers:
+                idx = next((k for k, g in enumerate(bucket_of[(a, b)]) if g is f), None)
+                refs.append((a, b, idx, np.array(f.mean_np, dtype=np.float64), float(c2)))
+            out["outliers"] = refs
+            if defer and len(outliers) == len(new_keys):
+                applied = False                          # every new edge was an outlier: the graph stays as it is
+            else:
                 for (a, b, f, c2) in outliers:
-                    idx = next((k for k, g in enumerate(bucket_of[(a, b)]) if g is f), None)
-                    refs.append((a, b, idx, np.array(f.mean_np, dtype=np.float64), float(c2)))
-                out["outliers"] = refs
-                if defer and len(outliers) == len(new_keys):
-                    applied = False                          # every new edge was an outlier: the graph stays as it is
-                else:
-                    for (a, b, f, c2) in outliers:
-                        verifier.remove_edge(a, b, f)
-                    if not defer:
-                        hm._write_poses(opt)                 # the first solution was applied before its test
-                    info2 = hm.handle_loop_closure(0, apply=False, window_ref=window_ref)
-                    if info2.get("success"):
-                        # an applied first solution moved its keyframes even where the second graph dropped them
-                        opt = {**opt, **info2["optimized_poses"]} if not defer else info2["optimized_poses"]
-                        pg = info2["pose_graph"]
-                        out["second"] = {"cost": info2.get("cost"), "vertices": len(getattr(pg, "vertices", []))}
-                    elif defer:
-                        opt = {}                              # the re-solve failed and the first solution was never applied
+                    verifier.remove_edge(a, b, f)
+                if not defer:
+                    hm._write_poses(opt)                 # the first solution was applied before its test
+                info2 = hm.handle_loop_closure(0, apply=False, window_ref=window_ref)
+                if info2.get("success"):
+                    # an applied first solution moved its keyframes even where the second graph dropped them
+                    opt = {**opt, **info2["optimized_poses"]} if not defer else info2["optimized_poses"]
+                    pg = info2["pose_graph"]
+                    out["second"] = {"cost": info2.get("cost"), "vertices": len(getattr(pg, "vertices", []))}
+                elif defer:
+                    opt = {}                              # the re-solve failed and the first solution was never applied
     if applied and opt:
         _package(out, hm, opt, fork_rows)
     out["stats"] = stats

@@ -716,45 +716,6 @@ class PoseGraph:
             raise ValueError("Graph does not connect to its proposed reference chart")
         self.preferred_fixed_node = min(anchors)
 
-    def construct_for_local_smoothing(
-        self,
-        target_node_id: int,
-        window_kfs: int = 30,
-        k_hop: int = 1,
-    ) -> None:
-        """
-        Construct a local pose graph within hypothesis 0 around recent keyframes.
-        Expands odometry nodes within a window and includes visual edges up to k-hop.
-        """
-        # Step 1: Expand odometry nodes around target
-        odom_node_ids, _odom_nodes = self._expand_odom_nodes(
-            target_node_id, hypothesis_id=0, depth=window_kfs, with_vertices=False
-        )
-
-        # Step 2: Expand visual edges based on these nodes
-        hypothesis_0 = self.hypothesis_manager.hypotheses[0]
-        visual_node_ids, visual_edges, nodes = self._expand_visual_edges(
-            target_node_ids=odom_node_ids,
-            k_hop=k_hop,
-            hypothesis_id=0,
-            from_hypothesis_id=0,
-            hypothesis_visual_edges=hypothesis_0.visual_edges,
-            hypothesis_visual_adjacency=hypothesis_0.visual_adjacency,
-        )
-
-        # Step 3: Collect odometry edges among the expanded node set
-        odom_edges = self._expand_odom_edges(visual_node_ids)
-
-        # Store
-        self.vertices = nodes
-        self.edges = visual_edges + odom_edges
-        self.vertex_map = {v.id: v for v in self.vertices}
-        if self.chart_aware:
-            self._retain_connected_chart_graph(target_node_id)
-        if self.hypothesis_manager.source_states is not None:
-            from cross.core.conditional_pgo import prepare
-            prepare(self,0)
-
     def validate_edge_uncertainties(
         self,
         expected_ranges: Optional[Dict[EdgeType, Tuple[float, float]]] = None,

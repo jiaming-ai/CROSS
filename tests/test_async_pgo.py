@@ -77,7 +77,6 @@ def make_system(test_before_apply=False, outlier=True, async_lag=None, n=240, se
     sys_.state_device = "cpu"
     sys_._processed_frame_num = 100
     sys_._last_pgo_step = -1
-    sys_.use_odometry = True
     v = LoopClosureVerifier(sys_, sys_.config.mapping.loop_closure)
     v.stats["pgo_time"] = 0.0
     sys_._lc_verifier = v

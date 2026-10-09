@@ -4,55 +4,6 @@ import numpy as np
 from torchvision import transforms
 from cross.core.types import Camera
 
-def get_transforms_vggt(
-    camera: Camera,
-    target_size: int = 518,
-):
-    height, width = camera.frame_height, camera.frame_width
-    new_height = round(height * (target_size / width) / 14) * 14
-    # Create transform pipeline for crop mode
-    transform_list = [
-        transforms.Resize((new_height, target_size), interpolation=transforms.InterpolationMode.BICUBIC),
-    ]
-
-    # Add center crop if height is larger than target_size
-    if new_height > target_size:
-        transform_list.insert(-1, transforms.CenterCrop((target_size, target_size)))
-
-    rgb_transform = transforms.Compose([transforms.ToTensor()] + transform_list)
-    depth_transform = transforms.Compose(transform_list)
-
-    # --- Update the camera parameters ---
-    
-    # Account for resizing
-    scale_w = target_size / width
-    scale_h = new_height / height
-
-    camera.fx *= scale_w
-    camera.fy *= scale_h
-    camera.px *= scale_w
-    camera.py *= scale_h
-
-    # Account for center cropping if it occurs
-    if new_height > target_size:
-        # The crop removes pixels from the top and bottom.
-        # The principal point's y-coordinate needs to be adjusted.
-        crop_top = (new_height - target_size) / 2.0
-        camera.py -= crop_top
-
-    # Update the camera's K matrix and frame dimensions
-    camera.K[0, 0] = camera.fx
-    camera.K[1, 1] = camera.fy
-    camera.K[0, 2] = camera.px
-    camera.K[1, 2] = camera.py
-    
-    final_height = target_size if new_height > target_size else new_height
-    camera.frame_width = int(target_size)
-    camera.frame_height = int(final_height)
-
-
-    return rgb_transform, depth_transform
-
 def get_transforms_target_max(
     camera: Camera,
     resize_target_short_side = 400,

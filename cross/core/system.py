@@ -13,7 +13,7 @@ from cross.core.types import Camera, Keyframe, EdgeType
 from cross.core.simple_topo import SimpleTopo, SimpleTopoConfig
 from cross.core.config import (
     SystemConfig, load_config, config_to_dict,
-    PoseEstType, FilterMode,
+    PoseEstType,
 )
 import torch
 import threading
@@ -37,7 +37,6 @@ from pathlib import Path
 import pickle
 
 import os
-import queue
 
 logger.remove()
 logger.add(os.environ.get("CROSS_LOG_FILE", "logs/system.log"), level="DEBUG", mode="w")  
@@ -140,12 +139,7 @@ class System:
         self.state_device = torch.device(self.config.state_device or device)
         self.visualize = visualize
         self.debug = debug
-        self.use_depth_pred = self.config.depth_pred.use_depth_pred
-        if self.use_depth_pred:
-            from cross.cv.depth_pred_uni import DepthPredUni
-            self.depth_pred = DepthPredUni(device=self.device)
 
-        
         ################ keyframe quality filter ################
         self._kf_quality = None
         self._frame_quality = None
@@ -163,9 +157,7 @@ class System:
 
         ########### tracking ###########
         self._cur_obs_queue = deque(maxlen=10)
-        self._prev_obs = None
         self._odometry_readings = []
-        self.use_odometry = self.config.tracking.use_odometry
         self.new_kf_after_n_unsuccessful_steps = self.config.tracking.new_kf_after_n_unsuccessful_steps
         self.base_measurement_std_diag = torch.tensor([0.2, 0.2, 0.3, 0.2, 0.2, 0.2])
         if self.config.pose_est.type == PoseEstType.FF and self.config.pose_est.ff.base_measurement_std:
@@ -180,26 +172,20 @@ class System:
         self.odom_min_std_translation = self.config.tracking.odom_min_std_translation
         self.odom_min_std_rotation = self.config.tracking.odom_min_std_rotation
 
-        if self.use_odometry:
-            self.odom_accumulator = OdomAccumulator(
-                std_per_meter=self.odom_std_per_meter,
-                std_per_radian=self.odom_std_per_radian,
-                min_std_translation=self.odom_min_std_translation,
-                min_std_rotation=self.odom_min_std_rotation,
-                device=self.state_device,
-            )
-            self.odom_accumulator.register_item("since_last_step")
-            self.odom_accumulator.register_item("since_last_add_kf")
-            self.odom_accumulator.register_item("since_last_retrieval")
-            self.odom_accumulator.register_item("since_last_obs")
+        self.odom_accumulator = OdomAccumulator(
+            std_per_meter=self.odom_std_per_meter,
+            std_per_radian=self.odom_std_per_radian,
+            min_std_translation=self.odom_min_std_translation,
+            min_std_rotation=self.odom_min_std_rotation,
+            device=self.state_device,
+        )
+        self.odom_accumulator.register_item("since_last_step")
+        self.odom_accumulator.register_item("since_last_add_kf")
+        self.odom_accumulator.register_item("since_last_retrieval")
+        self.odom_accumulator.register_item("since_last_obs")
 
-        self.use_VO = self.config.tracking.use_VO
-        # right images are only stored when stored keyframe pairs are used as scale anchors (storage option)
-        self._store_right_images = self.config.pose_est.type == PoseEstType.FF and (
-            self.config.pose_est.ff.n_ref_anchors > 0 or self.config.pose_est.ff.store_right_images)
-        # Retrieval filtering mode configuration
-        self.filter_mode = self.config.tracking.filter_mode
-        self.adaptive_filter_cfg = self.config.tracking.adaptive_filter
+        # right images are only stored when stored keyframe pairs are used as scale anchors
+        self._store_right_images = self.config.pose_est.type == PoseEstType.FF and self.config.pose_est.ff.n_ref_anchors > 0
 
         self._unsuccessful_retrieval_steps = 0
 
@@ -231,9 +217,6 @@ class System:
         elif self.pose_est_type == PoseEstType.PNP:
             from cross.cv.pose_est_pnp import PoseEstPnP
             self.pose_est = PoseEstPnP(self.device, self.config.pose_est, camera)
-        elif self.pose_est_type == PoseEstType.VGGT:
-            from cross.cv.pose_est_vggt import PoseEstVGGT
-            self.pose_est = PoseEstVGGT(self.device)
         elif self.pose_est_type == PoseEstType.FF:
             from cross.cv.pose_est_ff import PoseEstFeedForward
             self.pose_est = PoseEstFeedForward(self.device, self.config.pose_est.ff, T_right_in_left)
@@ -312,15 +295,6 @@ class System:
             if float(getattr(lc_cfg.noise, "visual_scale", 1.0) or 1.0) != 1.0 and hasattr(self, "pose_est"):
                 self.pose_est.metric_scale_correction = float(lc_cfg.noise.visual_scale)
                 logger.info(f"Feed-forward metric scale correction: translations divided by {lc_cfg.noise.visual_scale:.3f}")
-            if self.config.tracking.odom_std_from_noise_model and self.use_odometry:
-                nz = lc_cfg.noise
-                acc = self.odom_accumulator
-                acc.std_per_meter, acc.std_per_radian = float(nz.odom_k_t), float(nz.odom_k_r)
-                acc.min_std_translation, acc.min_std_rotation = float(nz.odom_floor_t), float(nz.odom_floor_r)
-                self.odom_std_per_meter, self.odom_std_per_radian = acc.std_per_meter, acc.std_per_radian
-                self.odom_min_std_translation, self.odom_min_std_rotation = acc.min_std_translation, acc.min_std_rotation
-                logger.info(f"Tracking odometry std from the noise model: {nz.odom_k_t:.4f} per m, {nz.odom_k_r:.4f} per rad, "
-                            f"floors {nz.odom_floor_t:.4f} m / {nz.odom_floor_r:.4f} rad per step")
         self._last_pgo_step = -10**9
         # verified loop closure optimised in a forked process while the front end goes on (cross/core/async_pgo.py)
         self._apgo = None
@@ -330,30 +304,10 @@ class System:
             logger.info("Pose-graph optimisation: " + (
                 "adaptive (short ones in the front end, long ones in a background worker)" if self._apgo.lag < 0 else
                 f"background, result applied {self._apgo.lag} steps after the trigger"))
-        # Initialize async loop-closure engine (latest-wins), if enabled
-        self._pgo_apply_queue: 'queue.Queue' = queue.Queue(maxsize=lc_cfg.queue_size)
-        self._lc_engine = None
-        if lc_cfg.async_:
-            from cross.core.lc_engine import LoopClosureEngine
-            self._lc_engine = LoopClosureEngine(
-                hypothesis_manager=self.hypothesis_manager,
-                apply_queue=self._pgo_apply_queue,
-                device=self.state_device,
-                depth=1000,
-                k_hop=2,
-                queue_size=lc_cfg.queue_size,
-            )
-            self._lc_engine.start()
-
-        # Local smoothing tracking
-        self._last_smoothing_step = 0
 
         ################ camera ################
         original_camera = copy.deepcopy(camera)
-        if self.pose_est_type == PoseEstType.VGGT:
-            from cross.utils.camera import get_transforms_vggt
-            self.rgb_transform, self.depth_transform = get_transforms_vggt(camera)
-        elif self.pose_est_type == PoseEstType.FF:
+        if self.pose_est_type == PoseEstType.FF:
             from cross.utils.camera import get_transforms_ff
             self.rgb_transform, self.depth_transform = get_transforms_ff(
                 camera, image_resolution=self.config.pose_est.ff.image_resolution)
@@ -439,12 +393,6 @@ class System:
             time.sleep(1)  # grace period for the visualizer to finish
         if getattr(self, "_apgo", None) is not None:
             self._cancel_async_pgo()
-        # Stop LC engine first
-        if hasattr(self, "_lc_engine") and self._lc_engine is not None:
-            try:
-                self._lc_engine.stop()
-            except Exception:
-                pass
         if hasattr(self, "local_update_thread") and self.local_update_thread is not None:
             self.local_update_thread_running.clear()
             self.local_update_thread.join(timeout=1)
@@ -691,7 +639,7 @@ class System:
                 t_final = time.perf_counter()
                 try:
                     v = self._lc_verifier
-                    res = self.hypothesis_manager.handle_loop_closure(0, global_opt=bool(self.config.mapping.loop_closure.global_final_opt))
+                    res = self.hypothesis_manager.handle_loop_closure(0)
                     v.stats["pgo"] = v.stats.get("pgo", 0) + 1
                     n_rej = 0
                     pg0 = res.get("pose_graph")
@@ -714,8 +662,7 @@ class System:
                     # posterior test over every informative measurement: the ones the robust optimisation cannot
                     # reconcile are quarantined and the map re-optimised (at most three rounds)
                     for _ in range(3):
-                        if not (res.get("success") and self.config.mapping.loop_closure.use_posterior
-                                and getattr(self.config.mapping.loop_closure, "posterior_action", "remove") == "remove"):
+                        if not (res.get("success") and self.config.mapping.loop_closure.use_posterior):
                             break
                         outliers = v.posterior_outliers(res["pose_graph"], informative_only=True)
                         if not outliers:
@@ -750,7 +697,7 @@ class System:
                         logger.info(f"Final optimisation diagnostics: cost after write-back {c_after_apply[0]:.1f} {c_after_apply[1]} worst {c_after_apply[2]}; "
                                     f"bucket sizes of removed {sizes}; cost after removal {c_after_remove[0]:.1f} {c_after_remove[1]} worst {c_after_remove[2]}")
                         n_rej += len(outliers)
-                        res = self.hypothesis_manager.handle_loop_closure(0, global_opt=bool(self.config.mapping.loop_closure.global_final_opt))
+                        res = self.hypothesis_manager.handle_loop_closure(0)
                         v.stats["pgo"] = v.stats.get("pgo", 0) + 1
                         pgk = res.get("pose_graph")
                         logger.info(f"Final optimisation round: {len(outliers)} rejected (chi2 max {max(o[3] for o in outliers):.0f}, e.g. {[(o[0], o[1]) for o in outliers][:4]}); "
@@ -1059,12 +1006,11 @@ class System:
 
 
         # first accumulate the odometry (translations rescaled by the odometry scale guard when it has fired)
-        if self.use_odometry:
-            v = getattr(self, "_lc_verifier", None)       # absent in test stubs built without __init__
-            if v is not None and v.odom_scale != 1.0 and obs.get("delta_pose") is not None:
-                obs = dict(obs, delta_pose=_scale_translation(obs["delta_pose"], v.odom_scale))
-            self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"),
-                                              source_factor=obs.get('motion_source_factor'))
+        v = getattr(self, "_lc_verifier", None)       # absent in test stubs built without __init__
+        if v is not None and v.odom_scale != 1.0 and obs.get("delta_pose") is not None:
+            obs = dict(obs, delta_pose=_scale_translation(obs["delta_pose"], v.odom_scale))
+        self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"),
+                                          source_factor=obs.get('motion_source_factor'))
         
         # a remote session (cross.remote) steps every frame the edge maps, but sends the image only of the frames it
         # expects the back end to observe (remote_frame without rgb: the step without an observation)
@@ -1149,7 +1095,6 @@ class System:
         rgb_image = last_obs["rgb"]
         self._frontend_anchor = last_obs.get("frontend_anchor")
         depth_image = last_obs.get("depth", None)
-        confidence_map = last_obs.get("conf", None)
         rgb_right = last_obs.get("rgb_right", None)
         timestamp = last_obs.get("timestamp", None)
         self._current_metric_source = last_obs.get("metric_source")
@@ -1165,14 +1110,6 @@ class System:
         ############ preprocess the image ############
         if rgb_image is None and (self._processed_frame_num == 1 or self.hypothesis_manager.dist is None):
             raise ValueError("A remote session must send the image of its first mapped frame")
-        if self.use_depth_pred and rgb_image is not None:
-            pred_depth, confidence, output_dict = self.depth_pred.predict(rgb_image)
-            depth_image = pred_depth.cpu().numpy()
-
-            # add for visualization
-            if 'data' in kwargs:
-                kwargs['data']['depth'] = depth_image
-        
         if rgb_image is not None:
             rgb_image = self.rgb_transform(rgb_image) # (3, H, W)
         if rgb_right is not None:
@@ -1203,33 +1140,8 @@ class System:
         ret = self._construct_motion_dist()
         ret.update(bg_ret)
 
-        if rgb_image is not None:
-            self._prev_obs = (rgb_image, depth_image, confidence_map)
-
-        #################################
-        # Build pose update mask based on filter mode
-        # By default, update all components with retrieval filtering
-        #################################
+        # every component takes the pose update of the retrieval measurements (hypothesis 0 may be exempted below)
         pose_update_mask = torch.ones(self.kf_gmm_n_components, dtype=torch.bool, device=self.state_device)
-        if self.filter_mode == FilterMode.SKIP_ACTIVE:
-            # Skip retrieval-based filtering for component 0 (active world)
-            pose_update_mask[0] = False
-        elif self.filter_mode == FilterMode.ADAPTIVE:
-            # Dynamically decide for component 0 based on odometry uncertainty
-            allow_filter_active = True
-            delta_std = ret.get("delta_std", None)
-            if delta_std is not None:
-                std_t = delta_std.tensor()[:3]
-                std_r = delta_std.tensor()[3:]
-                tmax = torch.max(std_t).item()
-                rmax = torch.max(std_r).item()
-                t_thresh = self.adaptive_filter_cfg.trans_thresh
-                r_thresh = self.adaptive_filter_cfg.rot_thresh
-                allow_filter_active = (tmax >= t_thresh) or (rmax >= r_thresh)
-            else:
-                # If no motion std (kidnapped/missing), treat as high uncertainty -> allow filtering
-                allow_filter_active = True
-            pose_update_mask[0] = allow_filter_active
 
         ################################
         # first update motion prior 
@@ -1305,10 +1217,9 @@ class System:
 
         # temporal anchor for the feed-forward estimator: previous observed frame + odometry
         odom_anchor = None
-        if self.use_odometry:
-            T_prev_curr, _ = self.odom_accumulator.get_since_last_reading("since_last_obs", reset=True, return_std=False)
-            if self._last_obs_rgb is not None and T_prev_curr is not None:
-                odom_anchor = {"image": self._last_obs_rgb, "T_prev_curr": T_prev_curr.matrix().cpu().numpy()}
+        T_prev_curr, _ = self.odom_accumulator.get_since_last_reading("since_last_obs", reset=True, return_std=False)
+        if self._last_obs_rgb is not None and T_prev_curr is not None:
+            odom_anchor = {"image": self._last_obs_rgb, "T_prev_curr": T_prev_curr.matrix().cpu().numpy()}
         fa = getattr(self, "_frontend_anchor", None)
         if fa is not None:
             # the frontend's anchor (vgio): its last measured frame and its motion since then replace the previous
@@ -1398,7 +1309,7 @@ class System:
         if self.config.mapping.hypothesis.h0_informative_only and self.hypothesis_manager.comp0_informative is False:
             pose_update_mask[0] = False
             ret["h0_pose_update_skipped"] = True
-            if getattr(self.config.mapping.hypothesis, "h0_skip_keeps_variance", False) and self._session_start_kf_id == 0:
+            if self._session_start_kf_id == 0:
                 variance_update_mask = torch.zeros_like(pose_update_mask)
                 variance_update_mask[0] = True
 
@@ -1440,28 +1351,19 @@ class System:
             )
             self.note_anchor("loop_closure")
             self._last_merge_step = self._processed_frame_num
-            if self._lc_engine is not None:
-                self._lc_engine.submit(lc_result["loop_closure_hypo_id"])
-                ret["loop_closure_submitted"] = True
+            self._drain_async_pgo()
+            pgo_info = self.hypothesis_manager.handle_loop_closure(
+                lc_result["loop_closure_hypo_id"]
+            )
+            if pgo_info.get("success"):
+                ret["loop_closure_pgo"] = pgo_info
+                self.last_step_diagnostics["loop_closure_applied"] = True
             else:
-                # Fallback to synchronous handling
-                self._drain_async_pgo()
-                pgo_info = self.hypothesis_manager.handle_loop_closure(
-                    lc_result["loop_closure_hypo_id"]
-                )
-                if pgo_info.get("success"):
-                    ret["loop_closure_pgo"] = pgo_info
-                    self.last_step_diagnostics["loop_closure_applied"] = True
-                else:
-                    message = pgo_info.get("message", "Loop closure handling failed without message")
-                    logger.warning(message)
+                message = pgo_info.get("message", "Loop closure handling failed without message")
+                logger.warning(message)
 
-        # Apply any pending PGO results from the async engine and optionally force smoothing
-        applied = self._apply_pending_pgo_results(ret)
-        # Periodic local smoothing
-        self._maybe_local_smoothing(force=applied)
         # a realized hypothesis that has taken over the belief for long without a loop closure becomes hypothesis 0
-        if not lc_result["loop_closure"] and not ret.get("loop_closure_submitted", False):
+        if not lc_result["loop_closure"]:
             if self._lc_verifier is not None:
                 done = self._maybe_verified_loop_closure(ret, new_kf, edge_mapping)
             else:
@@ -1526,7 +1428,7 @@ class System:
         v = self._lc_verifier
         lc_cfg = self.config.mapping.loop_closure
         h0_ok = None
-        if lc_cfg.use_prior and self.use_odometry and self.last_added_kf_id is not None:
+        if lc_cfg.use_prior and self.last_added_kf_id is not None:
             try:
                 T_since, _ = self.odom_accumulator.get_since_last_reading("since_last_add_kf", reset=False, return_std=False)
                 last_kf = self.hypothesis_manager.nodes.get(self.last_added_kf_id)
@@ -1676,11 +1578,9 @@ class System:
         of the new edges, the loop edges that are inconsistent with the graph) or None.  (Marks the corroborated loop
         candidates informative.)"""
         v = self._lc_verifier
-        if v is None or new_kf is None or ret is None or not self.use_odometry:
+        if v is None or new_kf is None or ret is None:
             return None
         hm = self.hypothesis_manager
-        if getattr(hm, "no_pgo_for_lc", False):
-            return None
         new_keys, loop_keys = [], []
         loop_flags = ret.get("h0_loop")
         lc_cfg = self.config.mapping.loop_closure
@@ -1697,18 +1597,14 @@ class System:
             # current pose.  Until then the edge stays in the graph as non-informative (skipped by the optimisation).
             is_loop = loop_flags is not None and i < len(loop_flags) and bool(loop_flags[i])
             is_map_ref = kf.id < self._session_start_kf_id
-            # loop candidates of this session, and (with map_edges_trigger) edges to the stored map, need corroboration
-            # from another observation before they may constrain / optimise the graph
-            if lc_cfg.corroborate_window > 0 and ((is_loop and not is_map_ref) or (is_map_ref and lc_cfg.map_edges_trigger)):
+            # loop candidates of this session need corroboration from another observation before they may constrain /
+            # optimise the graph
+            if lc_cfg.corroborate_window > 0 and is_loop and not is_map_ref:
                 if not self._corroborate_loop(kf.id, new_kf, bucket[-1]):
                     continue
             # only loop-closure candidates (measurement more informative than the graph's prediction) can trigger
-            # an optimisation; the scatter of the measurements to the keyframes just behind the robot cannot.  An edge to
-            # a keyframe of a previous session (fixed map) can, when map_edges_trigger is set: its residual against the
-            # session graph measures the session's drift relative to the map (the verifier's session anchor makes it
-            # look predictable, but the anchor is itself only an earlier map edge plus odometry)
-            is_map_edge = self.config.mapping.loop_closure.map_edges_trigger and kf.id < self._session_start_kf_id
-            if loop_flags is not None and i < len(loop_flags) and not loop_flags[i] and not is_map_edge:
+            # an optimisation; the scatter of the measurements to the keyframes just behind the robot cannot
+            if loop_flags is not None and i < len(loop_flags) and not loop_flags[i]:
                 continue
             c2 = v.graph_residual_chi2(kf.id, new_kf.id, bucket[-1])
             if c2 is not None and c2 > v.thr:
@@ -1727,8 +1623,7 @@ class System:
         # test-before-apply: the candidate solution is only written back when its new edges pass the posterior test;
         # otherwise the outliers are quarantined and the graph is re-solved from the *unmodified* poses (re-solving from
         # a solution already distorted by a wrong loop edge left the map in a bad minimum: jumps of 5-11 m on long surveys)
-        defer = bool(self.config.mapping.loop_closure.test_before_apply) and self.config.mapping.loop_closure.use_posterior \
-            and getattr(self.config.mapping.loop_closure, "posterior_action", "remove") == "remove"
+        defer = bool(self.config.mapping.loop_closure.test_before_apply) and self.config.mapping.loop_closure.use_posterior
         pgo_info = hm.handle_loop_closure(0, apply=not defer, window_ref=window_ref)
         if not pgo_info.get("success"):
             logger.warning(pgo_info.get("message", "verified loop-closure PGO failed without message"))
@@ -1741,19 +1636,15 @@ class System:
             outliers = v.posterior_outliers(pgo_info["pose_graph"], only_keys=set(new_keys))
             if outliers:
                 v.stats["posterior_flagged"] = v.stats.get("posterior_flagged", 0) + len(outliers)
-                if getattr(self.config.mapping.loop_closure, "posterior_action", "remove") == "remove":
-                    for (a, b, f, c2) in outliers:
-                        v.remove_edge(a, b, f)
-                    logger.info(f"Verified loop closure at step {step}: {len(outliers)} of {len(new_keys)} new edges rejected after the "
-                                f"optimisation (chi2 {[round(o[3], 1) for o in outliers][:6]}, edges {[(o[0], o[1]) for o in outliers][:6]}) -> re-optimising")
-                    if defer and len(outliers) == len(new_keys):
-                        # every new edge was an outlier: the graph is unchanged, nothing to re-solve or apply
-                        return False
-                    pgo_info = hm.handle_loop_closure(0, window_ref=window_ref)
-                    applied = True
-                else:
-                    logger.info(f"Verified loop closure at step {step}: {len(outliers)} of {len(new_keys)} new edges remain outliers after the "
-                                f"optimisation (chi2 {[round(o[3], 1) for o in outliers][:6]}); kept (robust optimisation)")
+                for (a, b, f, c2) in outliers:
+                    v.remove_edge(a, b, f)
+                logger.info(f"Verified loop closure at step {step}: {len(outliers)} of {len(new_keys)} new edges rejected after the "
+                            f"optimisation (chi2 {[round(o[3], 1) for o in outliers][:6]}, edges {[(o[0], o[1]) for o in outliers][:6]}) -> re-optimising")
+                if defer and len(outliers) == len(new_keys):
+                    # every new edge was an outlier: the graph is unchanged, nothing to re-solve or apply
+                    return False
+                pgo_info = hm.handle_loop_closure(0, window_ref=window_ref)
+                applied = True
         if not applied:
             hm.apply_pgo_result({"success": True, "pose_graph": pgo_info.get("pose_graph"),
                                  "optimized_poses": pgo_info.get("optimized_poses", {}), "other_hypothesis_id": 0})
@@ -1995,18 +1886,15 @@ class System:
         """Pose-graph optimisation of hypothesis 0 triggered by long-range visual edges.
 
         Counts the visual edges of the keyframe added this step that connect hypothesis 0 to keyframes of the
-        current session created before the retrieval recency window (`RetrievalConfig.recent_window_steps`),
-        i.e. edges that close a loop inside the tracked hypothesis.  When enough of them accumulate within
+        current session created at least `intra_min_loop_steps` steps earlier, i.e. edges that close a loop inside the tracked hypothesis.  When enough of them accumulate within
         `intra_window_steps`, the whole hypothesis-0 graph is optimised (`HypothesisManager.handle_loop_closure(0)`:
         odometry chain + visual edges, earliest keyframe fixed, map keyframes fixed after a map load) and the
         tracking distribution is re-aligned to the optimised keyframe.  Returns True when a PGO was run.
         """
         cfg = self.config.mapping.loop_closure
-        if not cfg.intra_enabled or new_kf is None or ret is None or not self.use_odometry:
+        if not cfg.intra_enabled or new_kf is None or ret is None:
             return False
         hm = self.hypothesis_manager
-        if getattr(hm, "no_pgo_for_lc", False):
-            return False
         step = self._processed_frame_num
         if step - getattr(self, "_last_merge_step", -10**9) < cfg.intra_after_merge_cooldown_steps:
             return False
@@ -2067,7 +1955,7 @@ class System:
     def _should_skip_observation(self) -> bool:
         """Observation cadence (pose_est.obs_*): skip retrieval + relative pose estimation at this step?"""
         cfg = self.config.pose_est
-        if not self.use_odometry or (cfg.obs_min_translation <= 0 and cfg.obs_min_rotation <= 0 and cfg.obs_max_interval_steps <= 1):
+        if cfg.obs_min_translation <= 0 and cfg.obs_min_rotation <= 0 and cfg.obs_max_interval_steps <= 1:
             return False
         self._steps_since_obs += 1
         if self._processed_frame_num - self._session_start_frame <= cfg.obs_warmup_steps:
@@ -2093,105 +1981,17 @@ class System:
         """Construct the motion distribution.
         """
         ret = {"kidnapped": False}
-        if self.use_odometry:
-            ret['motion_source_factor'] = self.odom_accumulator.source_since_last_reading('since_last_step')
-            delta_pose, std = self.odom_accumulator.get_since_last_reading("since_last_step")
-            ret["delta_pose"] = delta_pose
-            ret["delta_std"] = std
-            
-        elif self.use_VO:
-            ret["delta_pose"] = ret["vo_delta_pose"]
-            ret["delta_std"] = ret["vo_delta_std"]
-        else:
-            raise ValueError("No odometry or VO provided")
-        
+        ret['motion_source_factor'] = self.odom_accumulator.source_since_last_reading('since_last_step')
+        delta_pose, std = self.odom_accumulator.get_since_last_reading("since_last_step")
+        ret["delta_pose"] = delta_pose
+        ret["delta_std"] = std
+
         # handle kidnapped event
         if delta_pose is None:
             ret["kidnapped"] = True
         
         return ret
 
-    def _apply_pending_pgo_results(self, ret: dict = None) -> bool:
-        """Apply any pending PGO results from the async LC engine.
-        Returns True if something was applied.
-        """
-        applied = False
-        latest = None
-        # Drain queue; latest-wins
-        while True:
-            try:
-                item = self._pgo_apply_queue.get_nowait()
-                latest = item
-            except Exception:
-                break
-        if latest is None:
-            return False
-
-        pgo_info = self.hypothesis_manager.apply_pgo_result(latest)
-        applied = pgo_info.get("success", False)
-        if applied:
-            if ret is not None:
-                ret["loop_closure_pgo"] = pgo_info
-        return applied
-
-    def _maybe_local_smoothing(self, force: bool = False) -> bool:
-        """Run a small local PGO over the last window keyframes (k_hop=1) on the frontend.
-        Returns True if smoothing applied.
-        """
-        ls_cfg = self.config.mapping.local_smoothing
-        period = ls_cfg.period_steps
-        if not (ls_cfg.enabled and (self._processed_frame_num - self._last_smoothing_step) < period) \
-            and not force:
-            return False
-
-        target_node_id = self.last_added_kf_id if self.last_added_kf_id is not None else max(self.hypothesis_manager.nodes.keys())
-        window_kfs = ls_cfg.window_kfs
-        k_hop = ls_cfg.k_hop
-
-        # Build graph inside lock for a consistent snapshot
-        with self.hypothesis_manager.graph_lock:
-            pg = PoseGraph(self.hypothesis_manager, depth=window_kfs, k_hop=k_hop, device=self.state_device)
-            pg.construct_for_local_smoothing(target_node_id=target_node_id, window_kfs=window_kfs, k_hop=k_hop)
-
-        if not pg.vertices or not pg.edges:
-            return False
-
-        # Fix earliest original KF in window
-        original_kf_ids = [v.id for v in pg.vertices if v.id in self.hypothesis_manager.nodes]
-        if not original_kf_ids:
-            return False
-        fixed_node_id = pg.preferred_fixed_node if self.hypothesis_manager.chart_aware else min(original_kf_ids)
-        optim_node_ids = set([v.id for v in pg.vertices]) - {fixed_node_id}
-
-        pg.solve(optim_node_ids=optim_node_ids, fixed_node_ids={fixed_node_id})
-
-        if self.hypothesis_manager.source_states is not None:
-            applied = self.hypothesis_manager.apply_pgo_result(dict(pose_graph=pg,optimized_poses=pg.optimized_poses,
-                                                                   other_hypothesis_id=0))
-            self._last_smoothing_step = self._processed_frame_num
-            return applied['success']
-
-        # Apply smoothing updates to hypothesis 0
-        std_reduction = self.config.pgo.std_reduction_factor
-        self.hypothesis_manager.pose_epoch += 1
-        with self.hypothesis_manager.graph_lock:
-            for node_id, optimized_pose in pg.optimized_poses.items():
-                if node_id in self.hypothesis_manager.nodes:
-                    kf = self.hypothesis_manager.nodes[node_id]
-                    kf.pose_mu[0] = optimized_pose
-                    kf.pose_std[0] = kf.pose_std[0] * std_reduction
-                    kf.last_pgo_step = int(self.hypothesis_manager.step_counter)
-
-            # realign tracking dist to the latest KF after smoothing
-            if self.last_added_kf_id is not None and self.last_added_kf_id in self.hypothesis_manager.nodes:
-                last_kf = self.hypothesis_manager.nodes[self.last_added_kf_id]
-                self.hypothesis_manager.dist[0][0] = last_kf.pose_mu[0]
-                self.hypothesis_manager.dist[1][0] = last_kf.pose_std[0]
-                self.hypothesis_manager.dist[2][0] = 1
-
-        self._last_smoothing_step = self._processed_frame_num
-        return True
-    
     @timeit
     def _add_new_kf(
         self,
@@ -2314,9 +2114,7 @@ class System:
                           "noise_scale_rot": self._lc_verifier.scale_rot_for(kf_i.id) if self._lc_verifier is not None else None,
                           # information criterion: the measurement constrains the graph only if the odometry chain
                           # did not already know the relative pose better (loop candidates, session->map edges)
-                          "informative": (bool(loop_flags[i]) if (loop_flags is not None and i < len(loop_flags)) else True)
-                                         or (self.config.mapping.hypothesis.map_refs_informative not in (False, "off", None)
-                                             and kf_i.id < self._session_start_kf_id),
+                          "informative": bool(loop_flags[i]) if (loop_flags is not None and i < len(loop_flags)) else True,
                           "scale_corr": float(self._lc_verifier.metric_correction) if self._lc_verifier is not None else 1.0},
                 )
                 # a map edge anchors the session to the map (prior test of later references) when it passed the prior
@@ -2405,7 +2203,7 @@ class System:
         n_kf = geo.n_kf
         if not geo.should_optimize(hm.nodes, n_kf):
             return
-        if getattr(hm, "no_pgo_for_lc", False) or 0 not in hm.hypotheses:
+        if 0 not in hm.hypotheses:
             return
         ap = self._apgo
         use_ap = ap is not None and ap.usable()
@@ -2696,9 +2494,6 @@ class System:
                     dtype=std.dtype,
                 )
                 std = torch.maximum(std, floors)
-                if cluster_std_cfg.floor_by_member_std:
-                    member_min = torch.min(torch.as_tensor(flat_stds[cluster_indices]).reshape(len(cluster_indices), 6), dim=0).values
-                    std = torch.maximum(std, member_min.to(std.device, std.dtype))
                 representative_std = pp.se3(std.unsqueeze(0)).squeeze(0)
 
                 logger.debug(
@@ -2729,24 +2524,6 @@ class System:
             else:
                 bs = valid_indices_tuple[0][cluster_indices].tolist()
                 informative = any((int(b) >= len(loops)) or loops[int(b)] is not False for b in bs)
-            # keyframes of previous sessions are fixed and independent of this session's odometry drift: a measurement
-            # to them is informative about hypothesis 0 even when the verifier's session anchor predicts it (the anchor is
-            # itself only the previous map measurement plus odometry); without this, a relocalized session drifted away
-            # from the map with its odometry (0.06 m after relocalization -> 0.7 m in a real-data session)
-            mri = self.config.mapping.hypothesis.map_refs_informative
-            if not informative and mri and mri != "off":
-                srcs = [int(x) for x in cluster_sources[:, 0].tolist()]
-                if any(k < self._session_start_kf_id for k in srcs):
-                    if mri == "belief":
-                        # informative when hypothesis 0 is less certain (translation) than this measurement: fused map
-                        # measurements shrink the belief, so correlated follow-ups are skipped until the odometry has
-                        # grown the uncertainty again (bounds the drift without re-applying one bias every frame)
-                        prior_var_t = float((self.hypothesis_manager.dist[1][0].tensor()[:3] ** 2).sum())
-                        meas_var_t = float((torch.as_tensor(representative_std.tensor() if hasattr(representative_std, "tensor") else representative_std)[:3] ** 2).sum())
-                        informative = prior_var_t > meas_var_t
-                    else:
-                        informative = True
-
             # references of the cluster with a high pose-estimator confidence (covisibility): a multi-view check of the
             # proposal (HypothesisConfig.strong_pass_frames)
             hc = self.config.mapping.hypothesis
@@ -2867,16 +2644,15 @@ class System:
         sampson error. This helps when camera not moving but scene changes a lot.
         """
         retrieve = True
-        if self.use_odometry:
-            delta_pose, _ = self.odom_accumulator.get_since_last_reading("since_last_retrieval", reset=False, return_std=False)
-            if rotation_angle_from_quat(delta_pose.tensor()[3:]) < 0.15 and \
-                torch.norm(delta_pose.tensor()[:3]) < 0.2 and \
-                self._last_retrieved_results is not None and \
-                len(self._last_retrieved_results["scores"]) > 0:
+        delta_pose, _ = self.odom_accumulator.get_since_last_reading("since_last_retrieval", reset=False, return_std=False)
+        if rotation_angle_from_quat(delta_pose.tensor()[3:]) < 0.15 and \
+            torch.norm(delta_pose.tensor()[:3]) < 0.2 and \
+            self._last_retrieved_results is not None and \
+            len(self._last_retrieved_results["scores"]) > 0:
 
-                # TODO: max score < threshold should be considered, and last retrieval results
-                logger.debug(f"Skipping retrieval... (delta pose: {delta_pose})")
-                retrieve = False
+            # TODO: max score < threshold should be considered, and last retrieval results
+            logger.debug(f"Skipping retrieval... (delta pose: {delta_pose})")
+            retrieve = False
 
         if retrieve:
             if self.config.retrieval.historical_slots > 0:
@@ -2897,31 +2673,8 @@ class System:
                     map_list = self._locality_merge(rgb_image, list(zip(map_res["scores"], map_res["keyframes"])),
                                                     max_kf_id=self._session_start_kf_id)
                     map_list = self._geo_focus(rgb_image, map_list, n_map)
-                    guided = self._pose_guided_map_keyframes(rgb_image)
-                    if guided:
-                        ids = {kf.id for _, kf in guided}
-                        map_list = guided + [(sc, kf) for sc, kf in map_list if kf.id not in ids]
                     merged = map_list[:n_map] + own
                     results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
-                elif self.config.retrieval.recent_window_steps > 0 and self._processed_frame_num > self.config.retrieval.recent_window_steps:
-                    # mapping: recency-aware split so that revisited places (loop closures) get retrieval budget
-                    cut = self.hypothesis_manager.latest_kf_id_before(self._processed_frame_num - self.config.retrieval.recent_window_steps)
-                    if cut is not None:
-                        rcfg = self.config.retrieval
-                        recent_slots = max(rcfg.own_session_slots, rcfg.recent_split_recent_slots)
-                        old_res = self.db.query(rgb_image, max_kf_id=cut, score_threshold=rcfg.map_score_threshold)
-                        recent = [(sc, kf) for sc, kf in zip(results["scores"], results["keyframes"]) if kf.id > cut][:recent_slots]
-                        best = max([float(sc) for sc in results["scores"]] + [0.0])
-                        # old keyframes only when they really look like the query: rank-only admission handed the pose
-                        # estimator aliased places (repeated arcades / rooms) and spawned false hypotheses
-                        min_score = max(rcfg.recent_split_min_score, rcfg.recent_split_rel_score * best)
-                        old = [(sc, kf) for sc, kf in zip(old_res["scores"], old_res["keyframes"]) if float(sc) >= min_score]
-                        n_old = max(self.db.top_k - len(recent), 0)
-                        merged = old[:n_old] + recent
-                        if merged:
-                            results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
-                        logger.debug(f"retrieval(map): old kfs {[(kf.id, round(sc, 3)) for sc, kf in zip(old_res['scores'], old_res['keyframes'])][:6]}, "
-                                     f"recent {[(kf.id, round(sc, 3)) for sc, kf in recent]}")
             if self._session_start_kf_id == 0 and self.config.retrieval.locality.enabled:
                 merged = self._locality_merge(rgb_image, list(zip(results["scores"], results["keyframes"])))[:self.db.top_k]
                 results = {"scores": [m[0] for m in merged], "keyframes": [m[1] for m in merged]}
@@ -2931,34 +2684,6 @@ class System:
         else:
             return self._last_retrieved_results
     
-    def _pose_guided_map_keyframes(self, rgb_image):
-        """Map keyframes whose viewed region overlaps the current one, predicted from the tracked belief (see
-        RetrievalConfig.pose_guided_*).  Only in a relocalization session that is anchored to the map."""
-        rc = self.config.retrieval
-        v = self._lc_verifier
-        if rc.pose_guided_k <= 0 or self._session_start_kf_id <= 0 or v is None or v.anchor is None:
-            return []
-        cache = getattr(self, "_pg_cache", None)
-        if cache is None or cache["session"] != self._session_start_kf_id:
-            kfs = [kf for kf in self.db.get_all_keyframes() if kf.id < self._session_start_kf_id]
-            if not kfs:
-                return []
-            M = np.stack([pp.SE3(kf.pose_mu[0]).matrix().detach().cpu().numpy() for kf in kfs]).astype(np.float64)
-            cache = {"session": self._session_start_kf_id, "kfs": kfs, "p": M[:, :3, 3] + rc.pose_guided_depth * M[:, :3, 2], "z": M[:, :3, 2]}
-            self._pg_cache = cache
-        Mc = pp.SE3(self.hypothesis_manager.dist[0][0]).matrix().detach().cpu().numpy().astype(np.float64)
-        pc = Mc[:3, 3] + rc.pose_guided_depth * Mc[:3, 2]
-        d = np.linalg.norm(cache["p"] - pc[None], axis=1)
-        cosang = cache["z"] @ Mc[:3, 2]
-        ok = (d < rc.pose_guided_radius) & (cosang > np.cos(np.radians(rc.pose_guided_max_angle_deg)))
-        idx = np.where(ok)[0][np.argsort(d[ok])][:rc.pose_guided_k]
-        if len(idx) == 0:
-            return []
-        kfs = [cache["kfs"][i] for i in idx]
-        sims = self.db.similarities(rgb_image, [kf.id for kf in kfs])
-        logger.debug(f"pose-guided retrieval: {[(int(kf.id), round(float(d[i]), 2)) for kf, i in zip(kfs, idx)]}")
-        return [(max(sims.get(int(kf.id), 0.3), 0.05), kf) for kf in kfs]
-
     def _get_std_diag(
         self, 
         confidences: torch.Tensor,
@@ -2977,16 +2702,6 @@ class System:
         """
         if len(confidences) == 0:
             return []
-        if self.config.pose_est.meas_std_from_noise_model and self._lc_verifier is not None and poses is not None:
-            v = self._lc_verifier
-            d = torch.norm(poses.tensor()[:, :3], dim=1).detach().cpu().numpy()
-            rows = []
-            for i in range(len(d)):
-                sc = v.scale_for(keyframes[i].id) if keyframes is not None else 1.0
-                sg = v.noise.visual(float(d[i]), scale=sc)        # gtsam order: r r r t t t
-                rows.append([sg[3], sg[4], sg[5], sg[0], sg[1], sg[2]])
-            return pp.se3(torch.tensor(rows, dtype=torch.float32))
-        
         if self.pose_est_type == PoseEstType.PNP:
             # conf is num of inliers
             conf = confidences / self.config.pose_est.kp_detector.n_keypoints
@@ -3068,11 +2783,6 @@ class System:
         ref_rgbs = [as_float_image(p.raw_rgb_image.to(self.device)) for p in keyframes]
         ref_depths = [as_float_image(p.depth_image.to(self.device)) for p in keyframes] if depth_image is not None else None
 
-        # insert VO pose est
-        if self._prev_obs is not None and self.use_VO:
-            ref_rgbs = [self._prev_obs[0]] + ref_rgbs
-            ref_depths = [self._prev_obs[1]] + ref_depths
-
         ref_rgbs = torch.stack(ref_rgbs)
         ref_depths = torch.cat(ref_depths, dim=0) if ref_depths is not None else None
 
@@ -3106,9 +2816,7 @@ class System:
         # Record even failed geometry. Previously the early return erased
         # retrieved IDs whenever no pair survived verification.
         pair_audits = getattr(self.pose_est, "last_pair_audit", None)
-        offset = int(self._prev_obs is not None and self.use_VO)
-        for i, (keyframe, score) in enumerate(zip(keyframes, retrieval_scores)):
-            pair_index = i + offset
+        for pair_index, (keyframe, score) in enumerate(zip(keyframes, retrieval_scores)):
             item = dict(keyframe_id=int(keyframe.id), loaded=keyframe.id in self.loaded_node_ids,
                         retrieval_score=float(score), verified=bool(valid_masks[pair_index]))
             if pair_audits is not None and pair_index < len(pair_audits):
@@ -3174,25 +2882,6 @@ class System:
             if supplied_stds.shape != valid_stds.shape:
                 raise ValueError("Pose estimator uncertainty does not match valid poses")
             valid_stds = pp.se3(torch.maximum(valid_stds.tensor(), supplied_stds.to(valid_stds.device)))
-
-        # extract VO pose est
-        vo_delta_pose = None
-        vo_delta_std = None
-        vo_delta_confidence = None
-        if self.use_VO and self._prev_obs is not None:
-
-            if valid_masks[0]:
-                # retrieve the VO pose est
-                vo_delta_pose = valid_poses[0]
-                vo_delta_std = valid_stds[0]
-                vo_delta_confidence = confidences[0]
-
-                # update the valid poses, stds, match counts, valid masks, and var scales
-                valid_poses = valid_poses[1:]
-                valid_stds = valid_stds[1:]
-                confidences = confidences[1:]
-                
-            valid_masks = valid_masks[1:]
 
         valid_poses = valid_poses.to(self.state_device)
         valid_stds = valid_stds.to(self.state_device)
@@ -3262,10 +2951,6 @@ class System:
             # GMM
             "convolved_mus": convolved_mus,
             "convolved_stds": convolved_stds,
-            # VO pose est
-            "vo_delta_pose": vo_delta_pose,
-            "vo_delta_std": vo_delta_std,
-            "vo_delta_confidence": vo_delta_confidence,
             # verified loop closure: prior verdicts / chi2 / loop-candidate flags per valid keyframe (steer the proposal
             # alignment, the PGO trigger and which measurements constrain the graph)
             "h0_ok": h0_ok,

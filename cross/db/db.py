@@ -444,24 +444,6 @@ class KeyframeDatabase:
             self.index = self._new_index(self.index.projection)
         self.index.set_rows(codes, [int(kf.id) for kf in self._row_kf])
 
-    @timeit
-    def similarities(self, img: torch.Tensor, kf_ids) -> dict:
-        """VPR cosine similarity of the query image to the given keyframes (by id), {kf_id: score}."""
-        want = {int(k) for k in kf_ids}
-        if not want or self._current_size == 0:
-            return {}
-        q_full = self.vpr_model.get_embedding(img)
-        q = self.index.encode(q_full)
-        out = {}
-        rows = sorted(self._id_to_row[k] for k in want if k in self._id_to_row)
-        if self.index.projection is not None and rows:
-            sc = self.index.query_scores(q_full, torch.tensor(rows, device=self.device), shortlist=len(rows))
-            return {int(self._row_kf[bi].id): float(v) for bi, v in zip(rows, sc.tolist())}
-        for bi in rows:
-            kid = int(self._row_kf[bi].id)
-            out[kid] = float(self._embedding_buffer[bi] @ q)
-        return out
-
     def _reserved_rows(self, reserved_keyframe_ids) -> torch.Tensor:
         """Boolean mask over the descriptor rows of the given keyframe ids (cached for the same id collection)."""
         c = getattr(self, "_reserved_cache", None)

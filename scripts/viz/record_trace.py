@@ -306,8 +306,6 @@ def make_config(args) -> SystemConfig:
     for name in ("inpass", "prior", "posterior"):
         if getattr(args, f"no_{name}", False):
             setattr(lc, f"use_{name}", False)
-    if getattr(args, "recent_window", None) is not None:
-        cfg.retrieval.recent_window_steps = args.recent_window
     if getattr(args, "legacy_lc", False):
         h = cfg.mapping.hypothesis
         h.detect_min_frames, h.detect_min_weight, h.verify_max_outlier_frac = 0, 0.0, 1.01
@@ -379,7 +377,6 @@ def main():
     ap.add_argument("--no-intra-lc", action="store_true", help="ablation: disable the intra-hypothesis loop closure (PGO of hypothesis 0)")
     ap.add_argument("--ff-meas-std", type=float, nargs=6, default=None, help="base measurement std [tx ty tz rx ry rz] of the FF estimator")
     ap.add_argument("--seed", type=int, default=None, help="seed of the odometry noise (reproducible runs)")
-    ap.add_argument("--recent-window", type=int, default=None, help="RetrievalConfig.recent_window_steps override (0 = split off)")
     ap.add_argument("--legacy-lc", action="store_true", help="ablation: old loop-closure test (no evidence validity / weight gate / verification)")
     ap.add_argument("--config", nargs="*", default=[], help="YAML config file(s) applied before the command-line overrides (e.g. configs/outdoor.yaml)")
     ap.add_argument("--lc-mode", choices=["verified", "heuristic"], default=None, help="loop-closure mode (default: config, 'verified')")

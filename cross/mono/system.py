@@ -53,7 +53,7 @@ class MonocularSystem(Pipeline):
                  pose_estimator=None, mono_defaults=None, external_odometry=False, odometry=None):
         if frontend is None and getattr(config, "frontend", None) in {"streaming_pnp", "streaming_dpvo"}:
             raise ValueError("Use StreamingMonocularSystem for a streaming frontend")
-        from cross.core.config import FilterMode, PoseEstType, SystemConfig
+        from cross.core.config import PoseEstType, SystemConfig
         from cross.core.system import System
         from cross.core.types import Camera
         from .retrieval import DA3RelativePose, MetricRelativePose
@@ -75,9 +75,6 @@ class MonocularSystem(Pipeline):
         cfg = system_config or SystemConfig()
         if cfg.async_update:
             raise ValueError("MonocularSystem currently requires synchronous mapping updates")
-        cfg.tracking.use_odometry = True  # internal visual increments, never input odometry
-        cfg.tracking.use_VO = False
-        cfg.depth_pred.use_depth_pred = False
         cfg.pose_est.type = PoseEstType.DA3 if self.config.retrieval_pose == "da3" else PoseEstType.METRIC_PNP
         # CROSS-mono ran with these two core behaviours always on (flag-gated in the merged core)
         cfg.mapping.hypothesis.reset_evidence_on_slot_reuse = True
@@ -112,7 +109,6 @@ class MonocularSystem(Pipeline):
         if mono_defaults is None:
             mono_defaults = system_config is None
         if mono_defaults:
-            cfg.tracking.filter_mode = FilterMode(self.config.filter_mode)
             cfg.tracking.odom_min_std_translation = 0.005
             cfg.tracking.odom_min_std_rotation = 0.01
             cfg.tracking.odom_std_per_meter = 0.1
