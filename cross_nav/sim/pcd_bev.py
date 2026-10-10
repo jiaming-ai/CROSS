@@ -146,7 +146,10 @@ def world_frames(scene_dir: Path):
     from vggt_ft.dataio.scene import load_scene
     sc = load_scene(scene_dir)
     meta = json.load(open(scene_dir / "scene.json"))
-    return sc, [(q, sc.seq(q).E.astype(np.float64), float(meta["robot_height"][q])) for q in sc.sequences]
+    rh = meta.get("robot_height", {})
+    # quadruped trajectories have no robot_height in their metadata: NaN (not used as seeds)
+    return sc, [(q, sc.seq(q).E.astype(np.float64), float(rh[q]) if rh.get(q) is not None else float("nan"))
+                for q in sc.sequences]
 
 
 def build_pcd_bev(P: np.ndarray, cams: np.ndarray, cam_hs: np.ndarray, cfg: dict):
@@ -171,7 +174,12 @@ def build_pcd_bev(P: np.ndarray, cams: np.ndarray, cam_hs: np.ndarray, cfg: dict
     cand, ncand = floor_candidates(vox, ix0, iy0, H, W, zres, c["kcand"])
     # ---- seeds: the candidate nearest to z - robot_height under each camera
     sy, sx, sh = [], [], []
+    if not np.isfinite(cam_hs).any():           # no robot heights at all: assume 0.6 m with a wide tolerance
+        cam_hs = np.full(len(cams), 0.6)
+        c = {**c, "seed_tol_h": 0.5}
     for p, h in zip(cams, cam_hs):
+        if not np.isfinite(h):
+            continue
         cx, cy = int(math.floor((p[0] - origin[0]) / res)), int(math.floor((p[1] - origin[1]) / res))
         if not (0 <= cy < H and 0 <= cx < W) or ncand[cy, cx] == 0:
             continue
@@ -286,7 +294,8 @@ def build_world(env: str, raw: Path, scene_dir: Path, cfg: dict, seg_rgbs: Path 
                             aux["g_int"], out["origin"], float(out["res"]))
         ch[~np.isfinite(ch) | (ch < 0.08) | (ch > 2.6)] = np.nan
         out[f"cam_h/{sc.dir.name}/{q}"] = ch.astype(np.float32)
-        stats.setdefault("cam_h_err", {})[q] = round(float(np.nanmedian(ch) - h), 3) if np.isfinite(ch).any() else None
+        stats.setdefault("cam_h_err", {})[q] = (round(float(np.nanmedian(ch) - h), 3)
+                                                if np.isfinite(ch).any() and np.isfinite(h) else None)
         stats.setdefault("cam_h_ok", {})[q] = round(float(np.isfinite(ch).mean()), 3)
     stats["sec"] = round(time.time() - t0, 1)
     out["stats"] = json.dumps(stats)
