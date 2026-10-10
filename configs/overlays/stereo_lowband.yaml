@@ -11,6 +11,9 @@
 #   VIO (a runaway): map ATE 38.2 m with this overlay, 36.3 m with the left image at the stereo cadence, 13.2 m
 #   with the pair at half the rate, 11.2 m with the default (the guard fired twice; with the left image never).
 #   The fast passes (--fast, configs/overlays/fast/) with this overlay lost T3 28 -> 24: do not combine them.
+#   Both caveats are checked when a session starts (cross.pipeline.config_risks: this overlay with --odometry basalt /
+#   visual / vio or a *vio* odometry file, or with --fast): a warning and a [y/N] prompt; without a terminal the run
+#   aborts unless --accept-config-risk is given (the benchmark harness passes nothing).
 pose_est:
   obs_min_translation: 0.6
   obs_min_rotation: 0.3

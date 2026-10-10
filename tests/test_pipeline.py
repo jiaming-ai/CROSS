@@ -254,3 +254,49 @@ def test_map_and_reloc_mono_loads_shipped_defaults():
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "mono", "--mono-estimator", "ff",
                                                                  "--obs-max-interval", "5"]))
     assert cfg.pose_est.obs_max_interval_steps == 5
+
+
+def test_config_risks_of_the_left_image():
+    """The left-image overlay warns with odometry that can run away and with the fast passes, not with trusted
+    external odometry (the low-bandwidth use) or with the stereo pair."""
+    import os
+    from cross.core.config import load_config
+    from cross.pipeline import CONFIG_DIR, config_risks, mode_config_files
+    lowband = os.path.join(CONFIG_DIR, "overlays", "stereo_lowband.yaml")
+    left = load_config(*mode_config_files("stereo", "external"), lowband)
+    assert config_risks(left, "stereo", "external") == []
+    assert config_risks(left, "stereo", "external", "odom_left.txt") == []
+    for odometry, odom_file in (("basalt", "odom_vio.txt"), ("visual", None), ("external", "odom_vio.txt")):
+        (risk,) = config_risks(left, "stereo", odometry, odom_file)
+        assert "run away" in risk and "38.2 m" in risk
+    assert config_risks(left, "stereo", "vgio") == []          # valid: the frontend keeps the pair
+    fast_left = load_config(*mode_config_files("stereo", "external", fast=True), lowband)
+    (risk,) = config_risks(fast_left, "stereo", "external")
+    assert "fast passes" in risk and "28 -> 24" in risk
+    assert len(config_risks(fast_left, "stereo", "basalt")) == 2
+    assert config_risks(load_config(*mode_config_files("stereo", "basalt", fast=True)), "stereo", "basalt") == []
+    assert config_risks(load_config(*mode_config_files("mono", "basalt", mono_estimator="ff"), lowband), "mono", "basalt") == []
+
+
+def test_confirm_config_risks(monkeypatch):
+    """No terminal: abort unless --accept-config-risk; at a terminal: the answer decides; asked once per process."""
+    import io
+    import pytest
+    import cross.pipeline as P
+    monkeypatch.setattr(P, "_ACCEPTED_RISKS", set())
+    P.confirm_config_risks([])                                 # nothing to confirm
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))          # not a terminal
+    with pytest.raises(SystemExit):
+        P.confirm_config_risks(["risk a"])
+    P.confirm_config_risks(["risk a"], accept=True)
+    P.confirm_config_risks(["risk a"])                         # accepted before: not asked again
+
+    class Tty(io.StringIO):
+        def isatty(self):
+            return True
+    monkeypatch.setattr("sys.stdin", Tty())
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    with pytest.raises(SystemExit):
+        P.confirm_config_risks(["risk b"])
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    P.confirm_config_risks(["risk b"])

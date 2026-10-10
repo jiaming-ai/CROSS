@@ -278,3 +278,10 @@ def test_no_torch():
             "print('ok')")
     r = subprocess.run([sys.executable, "-c", code], cwd=str(EDGE), capture_output=True, text=True)
     assert r.returncode == 0 and r.stdout.strip() == "ok", r.stderr
+
+
+def test_confirm_risks_needs_the_flag_or_a_yes(monkeypatch):
+    import io
+    from cross_edge.cli import confirm_risks
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))          # not a terminal
+    assert not confirm_risks(["left image with a VIO"]) and confirm_risks(["left image with a VIO"], accept=True)

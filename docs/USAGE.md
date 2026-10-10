@@ -140,6 +140,17 @@ Override one value with `--set section.key=value` (the `scripts/` runners; `run.
 YAML file and pass it with `--config`. Some options (charts, session recovery, historical retrieval slots, ...) are off by default and are
 enabled by the mono profiles.
 
+**Configuration caveats.** The left-image overlay (`pose_est.ff.right_image: left`) has two documented costs, checked
+on the fully resolved configuration when a session starts (`cross.pipeline.config_risks`; `run.py`, the
+`scripts/map_and_reloc*.py` runners, and the remote server, whose warning the `cross-edge` CLI shows): with odometry
+that can run away (`--odometry basalt`, `visual`, `vio`, or an odometry file named `*vio*`) the odometry scale guard
+cannot see a runaway (ROVER night with Basalt: map ATE 38.2 m vs 11.2 m with the pair), and with the fast passes
+(`--fast`) relocalization drops (development split T3 28 -> 24 of 33). The run prints a warning naming the caveat and
+the safer alternative and asks `[y/N]`; without a terminal it aborts unless `--accept-config-risk` is given (the
+benchmark harness passes nothing, so a risky experiment must opt in with `--args "--accept-config-risk"`). The left
+image with trusted external odometry, the overlay's purpose, and with `--odometry vgio` (the frontend keeps the pair for
+its stereo depth) runs without a question.
+
 **Reproducible runs.** The shipped files of every folder optimise long loop-closure pose graphs in a background worker
 (`mapping.loop_closure.async_pgo`, below), whose results land at machine-dependent times. For experiments pass
 `--reproducible` (synchronous optimisation whatever the configuration says); the benchmark harness (`benchmark/run.py`,

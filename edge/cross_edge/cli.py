@@ -50,6 +50,8 @@ def build_parser():
     r.add_argument("--max-backlog", type=float, default=0.3, help="server overload policy (s; 0: off)")
     r.add_argument("--jpeg", type=int, default=0, help="JPEG quality of the uploads (0: lossless PNG; JPEG 90 cost the "
                    "stereo mode relocalization: office1-7 T2 0.86 -> 0.56)")
+    r.add_argument("--accept-config-risk", action="store_true", help="run a server configuration that hits a "
+                   "documented caveat (e.g. the left-image overlay with a VIO) without asking")
     r.add_argument("--realtime", action="store_true", help="feed the frames at their timestamps")
     r.add_argument("--lockstep", action="store_true", help="wait for each frame's reply before the next")
     r.add_argument("--extra-delay", type=float, default=0.0, help="emulated extra round trip (s)")
@@ -69,7 +71,7 @@ def open_session(args, src):
                 "max_backlog": args.max_backlog, "profile": args.profile, "fast": args.fast,
                 # the server's shipped configuration of the named odometry (Basalt live or its pose file odom_vio.txt;
                 # another pose file: the wheel / INS mode's)
-                "odometry_name": "basalt" if args.odometry == "basalt" or args.odom_file == "odom_vio.txt" else "external"}
+                "odometry_name": "basalt" if args.odometry == "basalt" or "vio" in args.odom_file.lower() else "external"}
     link = GrpcLink(args.server, open_msg, jpeg=args.jpeg, extra_delay=args.extra_delay, realtime=args.realtime)
     opened = link.opened
     if int(opened.get("protocol", -1)) != PROTOCOL_VERSION:
@@ -79,6 +81,17 @@ def open_session(args, src):
     session = EdgeSession(link, ObservationCadence(cadence_config(opened["cadence"])), mode="stereo",
                           odometry="external", obs_cap=obs_cap, send_right=opened.get("right_image") != "left")
     return session, opened
+
+
+def confirm_risks(risks, accept=False) -> bool:
+    """The server's caveats of the resolved configuration (cross.pipeline.config_risks): printed; accepted with
+    --accept-config-risk or "y" at the prompt when stdin is a terminal."""
+    import sys
+    for r in risks:
+        print(f"WARNING: configuration caveat: {r}", file=sys.stderr, flush=True)
+    if accept:
+        return True
+    return sys.stdin.isatty() and input("Run with this configuration anyway? [y/N] ").strip().lower() in ("y", "yes")
 
 
 def run(args):
@@ -98,6 +111,11 @@ def run(args):
         odom = BasaltOdometry(src, binary=args.basalt, config=args.basalt_config, threads=args.basalt_threads,
                               wait=args.basalt_wait, log=None if out_dir is None else out_dir / "basalt_live.log")
     session, opened = open_session(args, src)
+    if opened.get("config_risks") and not confirm_risks(opened["config_risks"], args.accept_config_risk):
+        session.release()
+        odom.close()
+        raise SystemExit("aborted: the server's configuration hits a documented caveat (see the warning); pass "
+                         "--accept-config-risk to run it anyway")
     log = (lambda *a: None) if args.quiet else (lambda *a: print(*a, flush=True))
     log(f"cross-edge {__version__}: session opened on {args.server} ({opened.get('gpu')}), cadence {opened['cadence']}, "
         f"right image {'sent' if session.send_right else 'not sent'}")

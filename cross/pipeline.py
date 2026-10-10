@@ -613,8 +613,10 @@ def server_session(open_msg, device="cuda"):
     factory = (lambda: p.frontend_factory().service) if p.frontend_factory is not None else None
     import torch
     pe = p.mapper.config.pose_est
+    # the caveats of the resolved configuration: the edge, which has the user, confirms them (cross_edge.cli)
+    risks = config_risks(p.mapper.config, mode, open_msg.get("odometry_name") or odometry)
     info = {"gpu": torch.cuda.get_device_name() if torch.cuda.is_available() else "cpu", "protocol": PROTOCOL_VERSION,
-            "cadence": cadence_params(pe), "right_image": pe.ff.right_image}
+            "cadence": cadence_params(pe), "right_image": pe.ff.right_image, "config_risks": risks}
     return MapServer(p.mapper, service, keep_lie=False), factory, info
 
 
@@ -654,6 +656,9 @@ def add_session_args(ap):
                     help="synchronous pose-graph optimisation whatever the configuration says (mapping.loop_closure."
                          "async_pgo false; the shipped default runs long optimisations in the background, whose results "
                          "land at machine-dependent times).  The benchmark harness always passes it")
+    ap.add_argument("--accept-config-risk", action="store_true",
+                    help="run a configuration that hits a documented caveat (cross.pipeline.config_risks, e.g. the "
+                         "left-image overlay with a VIO) without asking; without a terminal such a run aborts otherwise")
     g = ap.add_argument_group("remote session (cross/remote): the back end and the GPU work on a server, the odometry "
                               "on the edge, behind a simulated network on the dataset's clock")
     g.add_argument("--remote", action="store_true",
@@ -695,6 +700,51 @@ def add_session_args(ap):
 
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs")
+# odometry that can run away (a VIO, DPVO): with the left image alone the odometry scale guard cannot see it
+RUNAWAY_ODOMETRY = ("basalt", "visual", "vio")
+
+
+def config_risks(cfg, mode: str, odometry: str, odom_file: str = None) -> list:
+    """The documented caveats a fully resolved session configuration hits (messages naming the caveat, its measured
+    cost and the safer alternative): the stereo mode's back end on the left image (pose_est.ff.right_image left,
+    configs/overlays/stereo_lowband.yaml) (1) with odometry that can run away, (2) with the fast passes.  (The left image
+    with --odometry vgio is valid: the frontend keeps the pair for its stereo depth and PnP, and a remote edge sends it.)"""
+    ff = cfg.pose_est.ff
+    if mode != "stereo" or ff.right_image != "left":
+        return []
+    out = []
+    if odometry in RUNAWAY_ODOMETRY or "vio" in os.path.basename(odom_file or "").lower():
+        out.append(f"left image (pose_est.ff.right_image: left) with odometry that can run away ({odometry}"
+                   f"{f', {odom_file}' if odom_file else ''}): without the right image no translation is metric, so the "
+                   "odometry scale guard cannot see a runaway (ROVER campus_large night, Basalt VIO: map ATE 38.2 m vs "
+                   "11.2 m with the pair).  Safer: keep the stereo pair (no configs/overlays/stereo_lowband.yaml)")
+    if ff.max_refs <= 4:
+        out.append("left image with the fast passes (pose_est.ff.max_refs 4, --fast): the current pair is their only "
+                   "scale anchor (development split T3 28 -> 24 of 33; office1-7 relocalized at frame 166 instead of 49).  "
+                   "Safer: the pair with --fast, or the left image without --fast")
+    return out
+
+
+_ACCEPTED_RISKS = set()
+
+
+def confirm_config_risks(risks, accept: bool = False):
+    """Warn about each caveat (config_risks); continue only when accepted: --accept-config-risk, or "y" at the prompt
+    when stdin is a terminal.  Otherwise SystemExit.  Asked once per process (a runner builds a session per trial)."""
+    import sys
+    from loguru import logger
+    risks = [r for r in risks if r not in _ACCEPTED_RISKS]
+    if not risks:
+        return
+    for r in risks:
+        logger.warning(f"configuration caveat: {r}")
+    if not accept:
+        if not sys.stdin.isatty():
+            raise SystemExit("aborted: the configuration hits a documented caveat (see the warning); pass "
+                             "--accept-config-risk to run it anyway")
+        if input("Run with this configuration anyway? [y/N] ").strip().lower() not in ("y", "yes"):
+            raise SystemExit("aborted by the user")
+    _ACCEPTED_RISKS.update(risks)
 
 
 def finish_session_args(args):
@@ -720,6 +770,9 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
         # experiments: synchronous PGO for reproducibility (the shipped default is the background optimisation,
         # configs/base/local.yaml; benchmark/run.py passes --reproducible)
         cfg.mapping.loop_closure.async_pgo = False
+    # the documented caveats of the resolved configuration (folder file, overlays, --config, --set): warn, confirm
+    risks = config_risks(cfg, mode, getattr(args, "odometry_name", args.odometry), getattr(args, "odom_file", None))
+    confirm_config_risks(risks, accept=getattr(args, "accept_config_risk", False))
     mono_config = vo_config = None
     if mode == "mono" or odometry == "vgio":
         # the mono mode's configuration; for the stereo mode's VGGT-inertial odometry only its imu section is used
