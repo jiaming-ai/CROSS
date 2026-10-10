@@ -174,6 +174,15 @@ class Job:
         system_dir = a.system + (f"+{a.odom_source}" if a.odom_source != "external" else "") + \
             (f"@{a.variant}" if a.variant else "")
         self.run_root = Path(a.out) / a.dataset / a.scene / system_dir / a.setup / f"s{a.seed}"
+        # --map-from: the query sessions load the map of another system's run (same dataset, scene, setup, seed and
+        # odometry source; <system>[@<variant>]), e.g. a mono query in a map built in the stereo mode
+        self.map_root = None
+        if getattr(a, "map_from", ""):
+            ms, _, mv = a.map_from.partition("@")
+            if ms not in self.scfg_all:
+                sys.exit(f"--map-from: unknown system {ms}")
+            self.map_root = Path(a.out) / a.dataset / a.scene / (
+                ms + (f"+{a.odom_source}" if a.odom_source != "external" else "") + (f"@{mv}" if mv else "")) / a.setup / f"s{a.seed}"
         self.outdoor = self.dcfg["environment"] == "outdoor"
         # T1 completeness: a frame is covered within 1 s or within this distance of travelled path of a pose
         self.path_m = float(self.dcfg.get("completeness_path_m", 2.0 if self.outdoor else 1.0))
@@ -609,6 +618,8 @@ class Job:
         if not self.ready(need):
             print(f"data not ready: {[str(self.seq(n)) for n in need]}", file=sys.stderr)
             sys.exit(3)                        # the worker releases the job for a later pass
+        if self.map_root is not None and a.task != "query":
+            sys.exit("--map-from: query tasks only (the map and its T1 belong to the other system's run)")
         if a.task == "map" and not a.reeval:
             md = self.ensure_map(self.scene["map"])
             if not self.scene.get("queries") and not a.keep_maps:     # single-session scene: the map is not reused
@@ -647,9 +658,17 @@ class Job:
             m = self.scene["map"]
             if a.reeval:
                 tag = f"{m}__{a.query}".replace("/", "_")
-                do_query(self.run_root / "maps" / m, a.query, self.run_root / "t2" / tag, self.run_root / "t3" / tag)
+                do_query((self.map_root or self.run_root) / "maps" / m, a.query, self.run_root / "t2" / tag, self.run_root / "t3" / tag)
                 return
-            md = self.ensure_map(m)
+            if self.map_root is not None:         # another system's map: wait for it (exit 3: the worker retries later)
+                md = self.map_root / "maps" / m
+                while not (md / "MAP_DONE").is_file():
+                    if not a.wait_for_map:
+                        print(f"map {md} not built yet", file=sys.stderr)
+                        sys.exit(3)
+                    time.sleep(30)
+            else:
+                md = self.ensure_map(m)
             tag = f"{m}__{a.query}".replace("/", "_")
             if json.loads((md / "MAP_DONE").read_text()).get("rc", 0) != 0:     # no map to localize in
                 for track in ("t2", "t3"):
@@ -688,6 +707,10 @@ def main():
     ap.add_argument("--odom-source", choices=sorted(ODOM_FILES), default="external",
                     help="odometry of the systems that take odometry: the dataset's (external) or the stereo VIO "
                          "(vio: odom_vio.txt, wheel odometry where there is none); results go to <system>+vio")
+    ap.add_argument("--map-from", default="", metavar="SYSTEM[@VARIANT]",
+                    help="query tasks: relocalize in the map of this system's run (same dataset / scene / setup / seed / "
+                         "odometry source) instead of one built by --system, e.g. a mono query (--system "
+                         "cross_mono_ff_odom --setup stereo) in a stereo map (--map-from cross_stereo)")
     ap.add_argument("--variant", default="", help="label of an experiment: results go to <system>@<variant>")
     ap.add_argument("--args", default="", help="extra arguments of the CROSS command (e.g. \"--max-refs 4\"); a --set or "
                                                "--config here replaces one given by systems.yaml")
