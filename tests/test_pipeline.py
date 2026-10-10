@@ -186,6 +186,14 @@ def test_mono_ff_shipped_defaults():
     cfg = load_config(*files)
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
     assert cfg.mapping.hypothesis.strong_pass_frames == 3
+    assert cfg.pose_est.ff.covis_source == "auto"
+    vgio = mode_config_files("mono", "vgio", mono_estimator="ff")
+    assert [os.path.basename(f) for f in vgio] == ["mono_ff.yaml", "vgio.yaml"]
+    assert load_config(*vgio).pose_est.ff.covis_source == "geometric"
+    assert [os.path.basename(f) for f in mode_config_files("stereo", "vgio")] == ["stereo.yaml", "vgio.yaml"]
+    outdoor = os.path.join(os.path.dirname(files[0]), "outdoor.yaml")
+    assert load_config(*files, outdoor).pose_est.ff.min_covis == 0.10
+    assert load_config(*files).pose_est.ff.min_covis == 0.15
 
 
 def test_map_and_reloc_mono_loads_shipped_defaults():

@@ -118,6 +118,10 @@ class _VGGTOmegaBackend(_Backend):
             self.model = VGGTOmega().eval()
         sd = torch.load(ckpt, map_location="cpu", mmap=True, weights_only=False)
         head_cfg = sd.get("scale_head_cfg") if isinstance(sd, dict) else None
+        # covis_head_map (scripts/vggt_ft/calibrate_covis.py --map_geo): the head's probability -> the expected one-way
+        # geometric score, the scale CROSS's covisibility thresholds and fix weights were tuned on
+        cmap = sd.get("covis_head_map") if isinstance(sd, dict) else None
+        self.covis_map = None if cmap is None else (np.asarray(cmap["x"], dtype=np.float64), np.asarray(cmap["y"], dtype=np.float64))
         sd = sd["model"] if "model" in sd and isinstance(sd["model"], dict) else sd
         missing, unexpected = self.model.load_state_dict(sd, strict=False)
         if missing:
@@ -182,6 +186,11 @@ class _VGGTOmegaBackend(_Backend):
     def fingerprints(self, images: torch.Tensor) -> list:
         """Content keys of the views (the same image always gets the same key, whatever the batch)."""
         return content_keys(images.float())
+
+    def _covis_probs(self, logits: torch.Tensor) -> np.ndarray:
+        """(S, S) covisibility of the head: sigmoid of its logits, on the geometric score's scale when the checkpoint
+        has a covis_head_map."""
+        return _map_covis(torch.sigmoid(logits).cpu().numpy(), getattr(self, "covis_map", None))
 
     def _heads(self, x: torch.Tensor, tokens: list, start: int, k: int, dino: Optional[torch.Tensor] = None):
         """Camera head (all views) and depth head (first k views); the camera head runs on a side stream, concurrently
@@ -359,8 +368,13 @@ class _VGGTOmegaBackend(_Backend):
         if conf.dim() == 4:
             conf = conf[..., 0]
         return FFPrediction(c2w=c2w, K=intr[0].float().cpu().numpy(), depth=depth, depth_conf=conf, hw=hw,
-                            covis=torch.sigmoid(covis[0]).cpu().numpy() if covis.numel() else None,
+                            covis=self._covis_probs(covis[0]) if covis.numel() else None,
                             log_scale=float(log_scale[0]) if log_scale.numel() else None)
+
+
+def _map_covis(p: np.ndarray, cmap) -> np.ndarray:
+    """The head's probabilities on the geometric score's scale (covis_head_map knots), or unchanged without a map."""
+    return p if cmap is None else np.interp(p, cmap[0], cmap[1]).astype(p.dtype)
 
 
 def _load_ft_heads(sd: dict, device: str, scale_head_cfg: Optional[dict] = None):
@@ -604,6 +618,13 @@ def principal_point_rotation(K: np.ndarray, width: int, height: int) -> np.ndarr
     return np.eye(3) + Vx + Vx @ Vx * ((1 - c) / s ** 2)
 
 
+def auto_covis_source(backend) -> str:
+    """covis_source "auto": the learned head when the checkpoint has one on the geometric score's scale (a
+    covis_head_map), else the geometric score."""
+    mapped = getattr(backend, "covis_head", None) is not None and getattr(backend, "covis_map", None) is not None
+    return "head" if mapped else "geometric"
+
+
 class PoseEstFeedForward:
     """Relative pose estimation with a feed-forward geometry model and stereo scale anchors."""
 
@@ -623,10 +644,18 @@ class PoseEstFeedForward:
         else:
             raise ValueError(f"Unknown feed-forward backend {config.backend}")
         logger.info(f"Loaded {config.backend.value} from {config.checkpoint} in {time.perf_counter() - t0:.1f}s")
+        self._auto_covis = auto_covis_source(self.backend)
+        if getattr(config, "covis_source", "auto") == "auto":
+            logger.info(f"covisibility source: {self._auto_covis} (auto)")
         self.last_info: dict = {}
         self.last_scale: Optional[ScaleEstimate] = None
         self.last_frontend_obs: Optional[dict] = None   # raw output for a frontend's anchor (vgio)
         self._R_model_to_cam: Optional[np.ndarray] = None    # (4, 4) right-multiplied onto model camera poses
+
+    def _covis_source(self, cfg) -> str:
+        """The configured covisibility source, "auto" resolved for the loaded checkpoint."""
+        source = getattr(cfg, "covis_source", "auto")
+        return getattr(self, "_auto_covis", "geometric") if source == "auto" else source
 
     def set_stereo_calibration(self, T_right_in_left: np.ndarray):
         self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
@@ -765,7 +794,7 @@ class PoseEstFeedForward:
         # view; with the learned covisibility head and no frontend observation the depth head is not run at all
         if frontend_anchor and prev_idx is not None:
             n_depth = None
-        elif getattr(cfg, "covis_source", "geometric") == "head" and getattr(self.backend, "covis_head", None) is not None:
+        elif self._covis_source(cfg) == "head" and getattr(self.backend, "covis_head", None) is not None:
             n_depth = 0
         else:
             n_depth = 1 + B
@@ -789,7 +818,7 @@ class PoseEstFeedForward:
         # ---- metric scale ----
         if getattr(cfg, "map_anchor_min_pair_covis", 0.0) > 0:
             anchors = filter_map_anchors(pred, anchors, cfg.map_anchor_min_pair_covis, cfg.map_anchor_max_pairs,
-                                         source=getattr(cfg, "covis_source", "geometric"), grid=cfg.covis_grid,
+                                         source=self._covis_source(cfg), grid=cfg.covis_grid,
                                          rel_depth_tol=cfg.covis_depth_tol)
         scale_est = estimate_scale(
             pred.c2w, anchors, method=cfg.scale_method,
@@ -816,7 +845,7 @@ class PoseEstFeedForward:
 
         # ---- per-reference confidence (covisibility / geometric consistency) ----
         ref_idx = list(range(1, 1 + B))
-        source = getattr(cfg, "covis_source", "geometric")
+        source = self._covis_source(cfg)
         if source != "geometric" and pred.covis is None:
             raise ValueError(f"covis_source={source} needs a checkpoint with a covisibility head (vggt_ft)")
         if source == "head":

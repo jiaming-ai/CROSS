@@ -820,8 +820,11 @@ class FeedForwardConfig:
     covis_symmetric: bool = False
     min_covis: float = 0.15              # validity threshold on the covisibility confidence
     # covisibility of the current view with each reference: "geometric" (reprojection consistency of the predicted
-    # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint) or "min" of the two
-    covis_source: str = "geometric"
+    # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint), "min" of the two, or "auto": the head
+    # when the checkpoint has a covisibility head with a covis_head_map (calibrate_covis.py --map_geo; the head on the
+    # geometric score's scale), else geometric. Full benchmark v6 (outputs/2026-10-09_covis_head_gap): the mapped head
+    # relocalizes more on ROVER than the geometric gate (stereo +75/-26 trials) and is neutral elsewhere.
+    covis_source: str = "auto"
     # metric scale of a pass: "anchors" (stereo / odometry anchors), "head" (scale head of a vggt_ft checkpoint) or
     # "head_fallback" (the head only when no anchor is valid, e.g. monocular passes without odometry)
     scale_source: str = "anchors"
