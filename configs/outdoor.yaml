@@ -12,4 +12,3 @@ mapping:
 pose_est:
   ff:
     min_covis: 0.10
-
