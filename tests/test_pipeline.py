@@ -191,6 +191,9 @@ def test_mono_ff_shipped_defaults():
     assert [os.path.basename(f) for f in vgio] == ["mono_ff.yaml", "vgio.yaml"]
     assert load_config(*vgio).pose_est.ff.covis_source == "geometric"
     assert [os.path.basename(f) for f in mode_config_files("stereo", "vgio")] == ["stereo.yaml", "vgio.yaml"]
+    outdoor = os.path.join(os.path.dirname(files[0]), "outdoor.yaml")
+    assert load_config(*files, outdoor).pose_est.ff.min_covis == 0.10
+    assert load_config(*files).pose_est.ff.min_covis == 0.15
 
 
 def test_map_and_reloc_mono_loads_shipped_defaults():
