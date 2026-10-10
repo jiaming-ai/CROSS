@@ -19,10 +19,15 @@ packet's own time (motion compensation and accumulation in one step), then into 
 z-buffered at the stored resolution, points showing through gaps of nearer surfaces dropped (drop_see_through).
 Frames are kept when the camera moved >= --min-dist m or turned >= --min-deg degrees since the last kept one.
 
-Worlds: all sessions share the NCLT local frame, but the campus (~450 x 850 m) is too large for one 5 cm label grid,
-so it is cut into square tiles of --tile m (default 200 m, origin --tile-origin): world `t<ix>_<iy>` = tile column
-ix (north, x) / row iy (east, y).  Each frame belongs to the tile of its camera centre.  One scene per (session, tile)
-`<session>_<world>`, one sequence per contiguous run of frames inside the tile (`r<k>`, >= --min-run frames).
+Scenes: all sessions share the NCLT local frame, but the campus (~450 x 850 m) is too large for one 5 cm label grid,
+so it is cut into square tiles of --tile m (default 200 m, origin --tile-origin): tile `t<ix>_<iy>` = column ix
+(north, x) / row iy (east, y).  Each frame belongs to the tile of its camera centre.  One scene per (session, tile)
+`<session>_<tile>`, one sequence per contiguous run of frames inside the tile (`r<k>`, >= --min-run frames).
+World (= label grid of cross_nav.labels), --world-mode: `session` (default) = the scene, i.e. one session's frames of a
+tile; `tile` = all sessions of the tile.  The sessions span 15 months (parked cars, snow, foliage, furniture change):
+with `tile`, 6.5-7.4 % of the cells of a frame's 20 x 20 m window that the session itself saw as free ground came out
+occupied (other sessions' objects), and the occupied share doubled, for 16-23 % more known cells (3 sessions, tiles
+t1_2 / t2_2, 2026-10-10).
 
 python -m vggt_ft.prep.nclt fetch <vel_root> --sessions 2012-08-04 ...
 python -m vggt_ft.prep.nclt convert --prepared <prepared> --vel <vel_root> --root <cache root> --sessions ... [--workers N]
@@ -414,9 +419,9 @@ def main():
         c.add_argument("--tile", type=float, default=200.0)
         c.add_argument("--tile-origin", type=float, nargs=2, default=[-350.0, -730.0])
         c.add_argument("--min-run", type=int, default=8)
-        c.add_argument("--world-mode", choices=["tile", "session"], default="tile",
+        c.add_argument("--world-mode", choices=["tile", "session"], default="session",
                        help="world (label grid) = the tile (all sessions accumulated) or the (session, tile) scene")
-        c.add_argument("--window", type=float, default=0.2, help="s of Velodyne packets on each side of the image")
+        c.add_argument("--window", type=float, default=0.35, help="s of Velodyne packets on each side of the image")
         c.add_argument("--near", type=float, default=0.5)
         c.add_argument("--max-depth", type=float, default=80.0)
         c.add_argument("--min-points", type=int, default=500)
