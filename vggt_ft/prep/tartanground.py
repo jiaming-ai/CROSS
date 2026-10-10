@@ -39,12 +39,13 @@ K = np.array([[320.0, 0, 319.5], [0, 320.0, 319.5], [0, 0, 1]])
 R_BODY_CAM = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]], np.float64)   # columns: camera x, y, z in NED body axes
 SKY = 400.0                                                             # depth beyond this = sky / far background
 ROBOT = {"Data_omni": "omni", "Data_diff": "diff", "Data_anymal": "anymal"}
-# kind per environment (TartanGround metadata sheet categories, checked on the images / sky fraction)
+# kind per environment (TartanGround metadata sheet categories, checked on the label previews / sky fraction; an
+# "indoor" environment with >= 2.5 % sky pixels becomes "mixed"; FactoryWeather is an outdoor street block)
 KIND = {
     # large indoor (halls, wards, classrooms, hangars, factory floors)
     "Hospital": "indoor_large", "Office": "indoor_large", "AbandonedSchool": "indoor_large",
     "IndustrialHangar": "indoor_large", "AbandonedFactory": "indoor_large", "AbandonedFactory2": "indoor_large",
-    "FactoryWeather": "indoor_large", "Prison": "indoor_large", "Restaurant": "indoor_large", "Slaughter": "indoor_large",
+    "Prison": "indoor_large", "Restaurant": "indoor_large", "Slaughter": "indoor_large",
     "Supermarket": "indoor_large", "CarWelding": "indoor_large",
     # tunnels
     "CoalMine": "underground", "Sewerage": "underground",
@@ -76,7 +77,7 @@ def subsample(poses: np.ndarray, spacing: float, rot_deg: float) -> list[int]:
 def env_kind(env: str, sky_frac: float) -> str:
     k = KIND.get(env)
     if k is not None:
-        return k if sky_frac < 0.02 else "mixed"
+        return k if sky_frac < 0.025 else "mixed"          # windows: ~1-2 % sky in the indoor scenes
     return "outdoor_nature" if env in NATURE else "outdoor"
 
 
