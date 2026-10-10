@@ -35,7 +35,7 @@ data:
     pandaset:    {weight: 0.04, stride: [1, 3], p_cross: 0.0, p_neg: 0.1}
     tartanground: {weight: 0.16, stride: [1, 4], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 45, p_neg: 0.1,
                    label_dataset: tartanground_mix}   # sim ground robots, large indoor + outdoor; complete point-cloud labels
-    # added when ready: nclt (real Segway, campus halls / outdoor)
+    nclt:        {weight: 0.12, stride: [1, 3], p_cross: 0.0, p_neg: 0.1}   # real Segway campus (outdoor + halls), LiDAR labels
 train:
   steps: 8000
   lr: 1.5e-4
