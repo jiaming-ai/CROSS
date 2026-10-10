@@ -57,16 +57,16 @@ DATASET_CFG = {
     "scannetpp": dict(max_range=8.0),         # depth rendered from the laser-scan mesh
     "hypersim": dict(max_range=15.0),         # synthetic
     "tartanair2": dict(max_range=15.0, frame_step=2),
-    "grandtour": dict(max_range=15.0),        # LiDAR
+    "grandtour": dict(max_range=15.0, pix_step=1),   # LiDAR projected into the image: sparse, use every pixel
     "oxford_spires": dict(max_range=15.0),
     "simchange": dict(max_range=10.0),
     "openloris": dict(max_range=4.0),         # D435i
     "7scenes": dict(max_range=4.0),           # Kinect v1
     "hiroom": dict(max_range=10.0),           # synthetic
     "nrgbd": dict(max_range=8.0),             # synthetic
-    "hssd_nav": dict(max_range=10.0),
-    "waymo": dict(max_range=25.0, max_frames=3000),     # LiDAR; moving cars / people removed by the free-space carving
-    "pandaset": dict(max_range=25.0, max_frames=3000),         # simulated (cross_nav/sim); its own labels come from the meshes
+    "hssd_nav": dict(max_range=10.0),         # simulated (cross_nav/sim); its own labels come from the meshes
+    "waymo": dict(max_range=25.0, max_frames=3000, pix_step=1),     # LiDAR (sparse: every pixel); moving cars / people
+    "pandaset": dict(max_range=25.0, max_frames=3000, pix_step=1),  # are removed by the free-space carving
 }
 DEFAULT = dict(max_range=8.0, pix_step=4, frame_step=1, max_frames=4000, res=0.05, zres=0.02,
                normal_up_deg=25.0, step=0.05, gap=8, h_lo=0.10, h_hi=1.80, occ_min=4, free_max=1,
