@@ -588,11 +588,17 @@ class KeyframeQualityConfig:
 
 @dataclass
 class WorldCaptureConfig:
-    """Input frames kept for a later 3D reconstruction of the map (cross/core/world_capture.py, cross_world): every
-    `min_translation` m / `min_rotation_deg` deg, at the input resolution and uncropped, posed relative to their nearest
-    permanent keyframes, saved next to the map (map.pkl.capture/), not in its database.  Off by default: it only
-    costs disk (KITTI 07 stereo, every frame: 0.38 GB of JPEG) and a synchronous image encode per captured frame."""
+    """Input frames kept for a later 3D reconstruction of the map (cross/core/world_capture.py, cross_world): the frame
+    of every new permanent keyframe at the input resolution and uncropped (stereo maps store <= 512 px centre crops:
+    KITTI 07 +2.4 dB held-out with the uncropped frames), posed relative to their nearest permanent keyframes, saved
+    next to the map (map.pkl.capture/), not in its database.  Off by default: it costs disk and a synchronous image
+    encode per captured frame."""
     enabled: bool = False
+    # also frames between keyframes, every min_translation m / min_rotation_deg deg (0 / 0: every frame), for
+    # `cross_world build --capture`.  KITTI 07 against keyframes only with the same Gaussian budget and steps: +1.2 dB
+    # at held-out keyframes (2.3 m from the nearest training keyframe), +0.15 dB between keyframes but blurrier (LPIPS
+    # 0.262 vs 0.225); no gain on home1-1; 3.5x the training time, 0.38 GB for every KITTI 07 frame
+    between: bool = False
     min_translation: float = 0.25
     min_rotation_deg: float = 5.0
     max_side: int = 0                   # downscale the longer side to this (0: input resolution)
@@ -697,8 +703,11 @@ class FeedForwardConfig:
     covis_depth_tol: float = 0.15
     min_covis: float = 0.15              # validity threshold on the covisibility confidence
     # covisibility of the current view with each reference: "geometric" (reprojection consistency of the predicted
-    # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint) or "min" of the two
-    covis_source: str = "geometric"
+    # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint), "min" of the two, or "auto": the head
+    # when the checkpoint has a covisibility head with a covis_head_map (calibrate_covis.py --map_geo; the head on the
+    # geometric score's scale), else geometric. Full benchmark v6 (outputs/2026-10-09_covis_head_gap): the mapped head
+    # relocalizes more on ROVER than the geometric gate (stereo +75/-26 trials) and is neutral elsewhere.
+    covis_source: str = "auto"
     # metric scale of a pass: "anchors" (stereo / odometry anchors), "head" (scale head of a vggt_ft checkpoint) or
     # "head_fallback" (the head only when no anchor is valid, e.g. monocular passes without odometry)
     scale_source: str = "anchors"

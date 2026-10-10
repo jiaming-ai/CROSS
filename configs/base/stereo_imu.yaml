@@ -2,6 +2,13 @@
 # metric scale comes from the stereo pair (the frontend's learned depth and its bias state are off in this mode by
 # construction: cross.pipeline._vgio_config).
 include: stereo.yaml
+# The geometric covisibility score with the VGGT-inertial odometry instead of the learned head (covis_source "auto"
+# elsewhere).  Full benchmark v6 (2026-10-09), mono + IMU on ROVER, two runs each: with vfin2's mapped head
+# relocalization was about equal (T3 985 / 983 vs 967 / 962 of 1159, n.s.) but positioning less precise (T2@3 0.70 /
+# 0.69 vs 0.74 / 0.77) and maps worse (T1 median x1.045), at ~35 % more FPS.  Stereo + IMU was not tested with the head.
+pose_est:
+  ff:
+    covis_source: geometric
 mapping:
   loop_closure:
     # the odometry scale guard keeps its sample filter but does not rescale this odometry: it is metric itself, and the

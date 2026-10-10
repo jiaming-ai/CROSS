@@ -118,7 +118,7 @@ and `--profile`, with `--fast` the mode's fast overlay, then the user's `--confi
 | `mono_dpvo` | `mono` / `visual` (the DA3 back end) |
 
 Reference combinations without a file of their own use their back end's file: mono DA3 with any odometry `mono_dpvo`,
-mono `ff` with DPVO `mono_wheel`, with DPVO + IMU (`vio`) `mono_imu`. A folder file includes its mode's base and the
+mono `ff` with DPVO or DPVO + IMU (`vio`) `mono_wheel`. A folder file includes its mode's base and the
 folder's shared settings (`configs/base/`, key `include:`, paths relative to the file); keys below the include override
 them. A file may also carry an `imu:` section (fields of `ImuConfig`, applied to the inertial frontends before
 `--mono-args "--imu-config ..."`). The mono DA3 back end takes its settings from the mono profile (below) and
@@ -391,8 +391,9 @@ session published at every frame (`map_meta.json` `online`), the number latency 
 ## 7. 3D reconstruction of a map
 
 `cross_world/` trains a Gaussian-splatting scene from a saved map (novel views, web viewer), see
-[WORLD.md](WORLD.md). `--set mapping.world_capture.enabled=true` on a mapping run also keeps input frames at full
-resolution, uncropped, next to the map (`map.pkl.capture/`; the map itself is unchanged) for a later reconstruction.
+[WORLD.md](WORLD.md). `--set mapping.world_capture.enabled=true` on a mapping run also keeps the keyframes' input
+frames at full resolution, uncropped, next to the map (`map.pkl.capture/`; the map itself is unchanged) for a later
+reconstruction without the dataset folder.
 
 ```bash
 python -m cross_world.cli build --map runs/k07/map.pkl --source $SEQ --out worlds/k07 --novel 150

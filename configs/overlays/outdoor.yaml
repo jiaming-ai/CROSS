@@ -5,3 +5,11 @@ mapping:
   cluster_eps: 3.0
   hypothesis:
     alignment_threshold: 3.0
+
+# Wide baselines and appearance change outdoors: a looser per-reference covisibility gate (indoor default 0.15).
+# Full benchmark 2026-10-09/10 (outputs/2026-10-09_covis_head_gap), ROVER T3 at 0.10 vs 0.15: stereo +35/-15 and stereo
+# fast +42/-11 (vfin2's mapped head), stereo + IMU +58/-26 and mono + IMU +82/-24 (geometric score); KITTI maps equal.
+# Indoors 0.10 admitted some wrong references (OpenLORIS / SimChange recall), so it is not the default there.
+pose_est:
+  ff:
+    min_covis: 0.10

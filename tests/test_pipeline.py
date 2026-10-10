@@ -199,7 +199,7 @@ def test_named_odometry_and_profile_arguments():
     args = finish_session_args(ap.parse_args(["--mode", "stereo", "--profile", "local-fast"]))   # deprecated alias
     assert args.profile == "local" and args.fast and shipped_config_files(args)[1].endswith("overlays/fast/stereo_wheel.yaml")
     args = finish_session_args(ap.parse_args(["--mode", "mono", "--mono-estimator", "ff", "--odometry", "vio"]))
-    assert shipped_config_files(args)[0].endswith("local/mono_imu.yaml")
+    assert shipped_config_files(args)[0].endswith("local/mono_wheel.yaml")
 
 
 def test_left_image_session_drops_the_right_image():
@@ -234,6 +234,16 @@ def test_mono_ff_shipped_defaults():
     ff = cfg.pose_est.ff         # the feed-forward back end without a stereo pair
     assert cfg.pose_est.type.value == "ff" and not ff.use_curr_anchor and ff.n_ref_anchors == 0
     assert ff.use_odom_anchor and ff.use_map_anchors and cfg.pose_est.obs_max_interval_steps == 3
+    assert ff.covis_source == "auto"
+    vgio = mode_config_files("mono", "vgio", mono_estimator="ff")
+    assert [os.path.basename(f) for f in vgio] == ["mono_imu.yaml"]
+    assert load_config(*vgio).pose_est.ff.covis_source == "geometric"
+    assert load_config(*mode_config_files("stereo", "vgio")).pose_est.ff.covis_source == "geometric"
+    # DPVO + IMU (vio) keeps the feed-forward back end's file: the head (auto), as before the profile folders
+    assert [os.path.basename(f) for f in mode_config_files("mono", "vio", mono_estimator="ff")] == ["mono_wheel.yaml"]
+    outdoor = os.path.join(os.path.dirname(os.path.dirname(files[0])), "overlays", "outdoor.yaml")
+    assert load_config(*files, outdoor).pose_est.ff.min_covis == 0.10
+    assert load_config(*files).pose_est.ff.min_covis == 0.15
 
 
 def test_map_and_reloc_mono_loads_shipped_defaults():
