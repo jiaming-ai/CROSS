@@ -10,7 +10,9 @@ few places the point clouds miss (areas left out of a cloud, water, very sparse 
 
 Per world: bev = primary where known, else the secondary label at the cell centre (nearest cell, mapped through the
 two frames' R_g: both are gravity frames, so the mapping is a rotation about z plus a shift; heights are not needed);
-cam_h/<scene>/<seq> = primary where finite, else secondary; ground = primary's; other keys from the primary.
+cam_h/<scene>/<seq> = primary where finite, else secondary; ground = primary's; other keys from the primary.  Cells are
+not filled when the two gravity directions differ by more than 2 deg (the depth-accumulated labels estimate gravity from
+the surface normals, which slopes bias: 3 - 9 deg in hilly TartanGround scenes).
 """
 from __future__ import annotations
 
@@ -27,7 +29,7 @@ from cross_nav.sim.mesh_bev import preview
 UNKNOWN = 0
 
 
-def merge(p: dict, s: dict):
+def merge(p: dict, s: dict, max_tilt: float = 2.0):
     bev_p, bev_s = p["bev"], s["bev"]
     res_p, res_s = float(p["res"]), float(s["res"])
     H, W = bev_p.shape
@@ -41,6 +43,9 @@ def merge(p: dict, s: dict):
     jx = np.floor((xs - s["origin"][0]) / res_s).astype(np.int64)
     jy = np.floor((ys - s["origin"][1]) / res_s).astype(np.int64)
     ok = (jx >= 0) & (jx < bev_s.shape[1]) & (jy >= 0) & (jy < bev_s.shape[0])
+    tilt = float(np.degrees(np.arccos(np.clip(M[2, 2], -1, 1))))
+    if tilt > max_tilt:          # the frames' gravity disagree (secondary's estimate biased by slopes): no cell fill
+        ok[:] = False
     out = dict(p)
     bev = bev_p.copy().reshape(-1)
     bev[unk[ok]] = bev_s[jy[ok], jx[ok]]
@@ -54,7 +59,6 @@ def merge(p: dict, s: dict):
             out[k] = a
             n_cam += a.size
             n_fill += int(fill.sum())
-    tilt = float(np.degrees(np.arccos(np.clip(M[2, 2], -1, 1))))
     stats = dict(known_primary=int((bev_p > 0).sum()), known=int((out["bev"] > 0).sum()),
                  filled=int((out["bev"] > 0).sum() - (bev_p > 0).sum()), cam_h_filled=n_fill, cam_h_n=n_cam,
                  tilt_deg=round(tilt, 2))
