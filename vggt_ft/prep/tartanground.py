@@ -45,7 +45,8 @@ KIND = {
     # large indoor (halls, wards, classrooms, hangars, factory floors)
     "Hospital": "indoor_large", "Office": "indoor_large", "AbandonedSchool": "indoor_large",
     "IndustrialHangar": "indoor_large", "AbandonedFactory": "indoor_large", "AbandonedFactory2": "indoor_large",
-    "Prison": "mixed",                  # prison yard + buildings (sky fraction 0: near sky box) "Restaurant": "indoor_large", "Slaughter": "indoor_large",
+    "Restaurant": "indoor_large", "Slaughter": "indoor_large",
+    "Prison": "mixed",                  # prison yard + buildings (sky fraction 0: near sky box)
     "Supermarket": "indoor_large", "CarWelding": "indoor_large",
     # tunnels
     "CoalMine": "underground", "Sewerage": "underground",
