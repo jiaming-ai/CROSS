@@ -152,7 +152,7 @@ def world_frames(scene_dir: Path):
                 for q in sc.sequences]
 
 
-def build_pcd_bev(P: np.ndarray, cams: np.ndarray, cam_hs: np.ndarray, cfg: dict):
+def build_pcd_bev(P: np.ndarray, cams: np.ndarray, cam_hs: np.ndarray, cfg: dict, seq_id=None):
     """P (N,3) points and cams (M,3) camera centres in the gravity frame, cam_hs (M,) camera heights above the floor.
     Returns (out dict, stats, aux)."""
     c = cfg
@@ -172,21 +172,39 @@ def build_pcd_bev(P: np.ndarray, cams: np.ndarray, cam_hs: np.ndarray, cfg: dict
     W, H = int(vox[:, 0].max()) - ix0 + 1 + m, int(vox[:, 1].max()) - iy0 + 1 + m
     origin = np.array([ix0 * res, iy0 * res], np.float64)
     cand, ncand = floor_candidates(vox, ix0, iy0, H, W, zres, c["kcand"])
-    # ---- seeds: the candidate nearest to z - robot_height under each camera
-    sy, sx, sh = [], [], []
-    if not np.isfinite(cam_hs).any():           # no robot heights at all: assume 0.6 m with a wide tolerance
-        cam_hs = np.full(len(cams), 0.6)
-        c = {**c, "seed_tol_h": 0.5}
-    for p, h in zip(cams, cam_hs):
-        if not np.isfinite(h):
-            continue
+    # ---- seeds: the candidate nearest to z - robot_height under each camera.  robot_height is missing for quadrupeds
+    # and sometimes wrong (diff-drive trajectories 0.5 - 1 m off): a trajectory whose cameras mostly find no floor at
+    # robot_height is seeded with the highest surface 0.2 - 2.0 m below each camera instead (the robot stands on it).
+    if seq_id is None:
+        seq_id = np.zeros(len(cams), int)
+    cell = []
+    for p in cams:
         cx, cy = int(math.floor((p[0] - origin[0]) / res)), int(math.floor((p[1] - origin[1]) / res))
-        if not (0 <= cy < H and 0 <= cx < W) or ncand[cy, cx] == 0:
+        cell.append((cy, cx) if 0 <= cy < H and 0 <= cx < W and ncand[cy, cx] > 0 else None)
+    pick = np.full(len(cams), np.nan)
+    for i, (p, h) in enumerate(zip(cams, cam_hs)):
+        if cell[i] is None or not np.isfinite(h):
             continue
-        cc = cand[cy, cx, :ncand[cy, cx]]
+        cc = cand[cell[i][0], cell[i][1], :ncand[cell[i]]]
         k = int(np.argmin(np.abs(cc - (p[2] - h))))
         if abs(cc[k] - (p[2] - h)) < c["seed_tol_h"]:
-            sy.append(cy), sx.append(cx), sh.append(cc[k])
+            pick[i] = cc[k]
+    n_fallback = 0
+    for s_ in np.unique(seq_id):
+        m = seq_id == s_
+        if np.isfinite(pick[m]).mean() >= 0.5:
+            continue
+        for i in np.flatnonzero(m):
+            if cell[i] is None:
+                continue
+            cc = cand[cell[i][0], cell[i][1], :ncand[cell[i]]]
+            dz = cams[i, 2] - cc
+            ok = (dz >= 0.2) & (dz <= 2.0)
+            pick[i] = cc[ok].max() if ok.any() else np.nan
+        n_fallback += 1
+    sy, sx, sh = [], [], []
+    for i in np.flatnonzero(np.isfinite(pick)):
+        sy.append(cell[i][0]), sx.append(cell[i][1]), sh.append(pick[i])
     n_seed_cams = len(sy)
     if not sy:
         raise RuntimeError("no floor seeds")
@@ -256,7 +274,7 @@ def build_pcd_bev(P: np.ndarray, cams: np.ndarray, cam_hs: np.ndarray, cfg: dict
     stats = dict(H=H, W=W, free=int(free.sum()), occ=int((bev == OCC).sum()), unknown_holes=int(deep.sum()),
                  sparse_cells=int(sparse.sum()), grown_cells=int((occ_grow & ~occ_band).sum()),
                  dens_med=round(float(np.median(dens[reached])), 2) if reached.any() else 0.0,
-                 seeds=int(keep.sum()), seed_cams=n_seed_cams, ground_cells=int(reached.sum()),
+                 seeds=int(keep.sum()), seed_cams=n_seed_cams, fallback_seqs=n_fallback, ground_cells=int(reached.sum()),
                  wall_cells=int(wall.sum()), vox=int(len(vox)))
     return out, stats, {"g_int": g_int, "occ_band": occ_band, "occ_grow": occ_grow, "sparse": sparse, "holes": holes,
                         "dens": dens.astype(np.float32), "reached": reached, "wall": wall}
@@ -267,6 +285,7 @@ def build_world(env: str, raw: Path, scene_dir: Path, cfg: dict, seg_rgbs: Path 
     sc, seqs = world_frames(scene_dir)
     Es = np.concatenate([E for _, E, _ in seqs])
     hs = np.concatenate([np.full(len(E), h) for _, E, h in seqs])
+    sid = np.concatenate([np.full(len(E), k) for k, (_, E, _) in enumerate(seqs)])
     C = -np.einsum("nji,nj->ni", Es[:, :3, :3], Es[:, :3, 3]) @ R_G.T
     lo, hi = C.min(0), C.max(0)
     zf = zipfile.ZipFile(raw / env / f"{env}_sem_pcd.zip")
@@ -286,7 +305,7 @@ def build_world(env: str, raw: Path, scene_dir: Path, cfg: dict, seg_rgbs: Path 
     P = P[keep]
     del col, keep
     sel = np.arange(0, len(C), cfg["seed_every"])
-    out, stats, aux = build_pcd_bev(P, C[sel], hs[sel], cfg)
+    out, stats, aux = build_pcd_bev(P, C[sel], hs[sel], cfg, sid[sel])
     # density of the floor: points per ground cell near the cameras (low density = holes in the flood fill)
     stats["points"], stats["points_all"], stats["sky_removed"] = int(len(P)), int(n_all), n_sky
     for q, E, h in seqs:
