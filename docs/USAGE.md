@@ -229,6 +229,16 @@ only maps. Another query in the same scene is another call with the same `--out`
 `System.save_map(path)` / `System.load_map(path)`; `examples/multi_session.py` runs several sequences through one
 `System`, and `examples/planner.py` loads a map and plans paths on it.
 
+**A mono session in a stereo map.** A map built in the stereo mode can be used later by a robot with one camera (the
+map's left camera): run the query in the mono mode with the feed-forward back end (`--mode mono --mono-estimator ff`,
+any odometry: wheel / `basalt` / `vgio`), with the normal mono configuration files. The stereo map stores the right
+image of every keyframe (also with `--fast`), and a session without a stereo pair takes the map's stereo rig when it
+loads the map: the stored right images of up to `pose_est.ff.n_ref_anchors` (2) references per pass anchor the metric
+scale, as the current pair does in the stereo mode. Loading checks the map's camera (stored image size and intrinsics
+after the mode's resize / crop) against the session's and fails with a clear message on another camera or, in a
+stereo session, another stereo rig. With the benchmark harness: `benchmark/run.py --system cross_mono_ff_odom --setup
+stereo --task query --map-from cross_stereo ...` (the query relocalizes in `cross_stereo`'s map of the same run).
+
 **Map files.** A map is `map.pkl` (the graph: keyframe poses, edges, metadata) plus the directory `map.pkl.store/`
 next to it (keyframe images and retrieval descriptors); copy or move both together. Keyframe images of a loaded map
 are read from disk when they are used, so a large map does not have to fit in memory. The `storage` config section

@@ -260,7 +260,8 @@ class Job:
         a = self.a
         out = {}
         for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
-                                ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
+                                # (a dataset without trials, e.g. dev_kitti, has T2 only: --only t2)
+                                ("t3", t3, ["--trial-len", self.dcfg.get("trial_len"), "--trial-stride", self.dcfg.get("trial_stride"),
                                             "--r-d", self.scene.get("r_d", self.dcfg["r_d"])])):
             if a.only and track not in a.only:
                 continue
@@ -438,7 +439,8 @@ class Job:
         a = self.a
         out = {}
         for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
-                                ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
+                                # (a dataset without trials, e.g. dev_kitti, has T2 only: --only t2)
+                                ("t3", t3, ["--trial-len", self.dcfg.get("trial_len"), "--trial-stride", self.dcfg.get("trial_stride"),
                                             "--r-d", self.scene.get("r_d", self.dcfg["r_d"])])):
             if a.reeval:              # re-score stored pose files with the current metrics
                 if not (d / "query_poses_t0.txt").is_file():
@@ -503,7 +505,8 @@ class Job:
         a = self.a
         out = {}
         for track, d, extra in (("t2", t2, ["--trial-len", "0"]),
-                                ("t3", t3, ["--trial-len", self.dcfg["trial_len"], "--trial-stride", self.dcfg["trial_stride"],
+                                # (a dataset without trials, e.g. dev_kitti, has T2 only: --only t2)
+                                ("t3", t3, ["--trial-len", self.dcfg.get("trial_len"), "--trial-stride", self.dcfg.get("trial_stride"),
                                             "--r-d", self.scene.get("r_d", self.dcfg["r_d"]), "--max-trials", a.concat_max_trials])):
             if a.reeval:              # re-score from the stored per-frame rows (no system run)
                 if (d / "reloc_rows.json").is_file() and (d / "reloc_summary.json").is_file() and (d / "result.json").is_file():
