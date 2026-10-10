@@ -303,6 +303,53 @@ def test_translation_gate():
     assert fe._translation_gate(0, 1, 0.0, np.array([0.0, 0.0, 0.1]), 100.0) is None
 
 
+def test_translation_tests_of_a_runaway_scale():
+    """A pass inheriting a log scale that ran away in the graph (ROVER campus_large night_2024-09-24_3, T3 trial 82:
+    lam 371 after passes pointing against the IMU's motion; the speed, 1e160 m/s, overflowed its square and crashed the
+    session) or one beyond the exponential's range: no test raises, and none accepts the speed (inf <= inf accepted it);
+    the gate's other rules stay (an IMU inconsistent with the passes outvotes nothing; beyond the maximum gap the pass
+    is accepted whatever it says), and a pass at the right scale is accepted as before."""
+    import types
+    from cross.mono.config import MonoConfig
+    from cross.mono.vggt_imu_frontend import VggtImuFrontend
+    fe = VggtImuFrontend(np.eye(3), MonoConfig(), device="cpu")
+    fe.graph = types.SimpleNamespace(cfg=GraphConfig(), R={0: np.eye(3), 1: np.eye(3)},
+                                     p={0: np.zeros(3), 1: np.zeros(3)})
+    fe.scale_filter = types.SimpleNamespace(initialized=True, lam_std=0.2523)
+    dt = 0.29983
+
+    def gate(lam, last_ok=99.7, rot_ok=True, t=100.0):
+        fe.m = {"timestamp": t - dt}
+        fe._last_trans_ok = last_ok
+        fe._rot_checks = [True] * 4 + [rot_ok]
+        fe.graph.p[1] = np.array([0.0, 0.0, 1.5948 * dt])            # the IMU: 1.59 m/s
+        return fe._translation_gate(0, 1, lam, np.array([0.0, 0.0, 0.013574]), t)
+
+    out = gate(371.356)                                              # the logged values (OverflowError before)
+    assert not out["ok"] and out["tol"] == np.inf
+    assert not gate(800.0)["ok"]                                     # exp(lam) = inf
+    assert not gate(np.nan)["ok"]
+    assert fe.stats["trans_nonfinite"] == 3
+    assert gate(371.356, rot_ok=False)["ok"]
+    assert gate(800.0, last_ok=80.0)["ok"]
+    assert gate(np.log(1.6 * dt / 0.013574))["ok"]                  # 1.6 m/s
+
+    fe = VggtImuFrontend(np.eye(3), MonoConfig(), device="cpu", T_right_in_left=np.eye(4))
+    fe.graph = types.SimpleNamespace(cfg=GraphConfig(), R={0: np.eye(3), 1: np.eye(3)},
+                                     p={0: np.zeros(3), 1: np.zeros(3)}, t={0: 100.0 - dt, 1: 100.0}, v_std=0.1)
+    fe.scale_filter = types.SimpleNamespace(initialized=True, lam_std=0.03)
+    fe.m = {"timestamp": 100.0 - dt}
+    fe._rot_checks = [True] * 5
+    fe.graph.p[1] = np.array([0.0, 0.0, 1.5948 * dt])
+    pnp = (np.eye(3), np.array([0.0, 0.0, 1.6 * dt]), np.eye(6) * 0.02 ** 2)
+    for lam in (371.356, 800.0):
+        fe._last_trans_ok = 99.7
+        ok, pnp_ok, _ = fe._stereo_gate(0, 1, lam, np.array([0.0, 0.0, 0.013574]), True, pnp, 100.0)
+        assert (ok, pnp_ok) == (False, True)
+        assert not fe._stereo_pair_ok(0, 1, lam, np.array([0.0, 0.0, 0.013574]))
+    assert fe._stereo_pair_ok(0, 1, np.log(1.6 * dt / 0.013574), np.array([0.0, 0.0, 0.013574]))
+
+
 def test_imu_dropout_inflates_the_factor():
     """A 1.2 s hole in the IMU stream inside an interval: the factor's covariance grows with the hole (the bridged
     rotation and velocity are guesses), an interval without a hole keeps the sensor noise."""
