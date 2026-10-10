@@ -16,6 +16,15 @@ spec = importlib.util.spec_from_file_location("ev", str(Path(__file__).with_name
 ev = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ev)
 from nav_viz_export import C_FN, C_FP, C_FREE, C_OCC  # noqa: E402
+from cross_nav.plan import evaluate_planning, summarize  # noqa: E402
+
+
+def norm(p, W, H, step=3):
+    """Path cells -> [x, y] in [0, 1] of the y-up image (None stays None)."""
+    if p is None:
+        return None
+    q = p[::step] + ([p[-1]] if (len(p) - 1) % step else [])
+    return [[round(c / W, 4), round(1 - r / H, 4)] for r, c in q]
 
 
 def main():
@@ -70,11 +79,24 @@ def main():
     cv2.imwrite(str(out / f"{a.name}_pred.jpg"), flip(pred), [cv2.IMWRITE_JPEG_QUALITY, 85])
     cv2.imwrite(str(out / f"{a.name}_gt.png"), flip(gimg), [cv2.IMWRITE_PNG_COMPRESSION, 9])
     cv2.imwrite(str(out / f"{a.name}_err.png"), flip(err), [cv2.IMWRITE_PNG_COMPRESSION, 9])
+    # planning on the fused map: starts at keyframes (every 10th), goals 5-20 m away; unobserved cells blocked for a
+    # learned map (prob 255), geometric maps both ways (undecided free = optimistic, occupied = pessimistic)
+    kc = np.floor((kq[:, :2] - org) / res).astype(int)
+    starts = [(int(c[1]), int(c[0])) for c in kc[::10] if 0 <= c[1] < H and 0 <= c[0] < W]
+    maps = {"map": ~obs | po, "map_free_unknown": obs & po}
+    recs = evaluate_planning(gt, maps, res, n_goals=4, dist_range=(5.0, 20.0), starts=starts, seed=0)
+    plan = {"summary": {m: summarize(recs, m) for m in maps},
+            "goals": [[r["goal"][1] / W, 1 - r["goal"][0] / H] for r in recs[:12]],
+            "starts": [[r["start"][1] / W, 1 - r["start"][0] / H] for r in recs[:12]],
+            "status": [r["methods"]["map"]["status"] for r in recs[:12]],
+            "paths": [norm(r["methods"]["map"]["path"], W, H) for r in recs[:12]],
+            "gt": [norm(r["gt_path"], W, H) for r in recs[:12]]}
     kp = ((kq[:, :2] - org) / res)
     traj = [[round(float(x) / W, 4), round(float(1 - y / H), 4)] for x, y in kp]
     js = json.load(open(Path(a.navmap).with_name("eval.json"))) if Path(a.navmap).with_name("eval.json").exists() else {}
-    json.dump({"name": a.name, "size": [W, H], "res": res, "traj": traj, "eval": js}, open(out / f"{a.name}.json", "w"))
-    print(a.name, js.get("<2m"), js.get("all"))
+    json.dump({"name": a.name, "size": [W, H], "res": res, "traj": traj, "eval": js, "plan": plan},
+              open(out / f"{a.name}.json", "w"))
+    print(a.name, js.get("<2m"), js.get("all"), plan["summary"])
 
 
 if __name__ == "__main__":

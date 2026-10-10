@@ -94,3 +94,22 @@ def test_direct_head_shapes():
                torch.tensor([[0.0, -1.0, 0.0]] * B), torch.tensor([[True, True, False]] * B))
     assert out.shape == (B, 64, 64)
     out.sum().backward()
+
+
+def test_planning_on_a_corridor():
+    from cross_nav.plan import evaluate_planning, summarize
+    gt = np.ones((80, 80), np.uint8)                 # free room 4 x 4 m
+    gt[:, 38:42] = 2                                 # wall with a door
+    gt[30:40, 38:42] = 1
+    start = (60, 20)
+    perfect = gt == 2
+    blind = np.zeros_like(perfect)                   # sees no wall: straight paths collide
+    closed = perfect.copy()
+    closed[30:40, 38:42] = True                      # misses the door: no path to the far side
+    recs = evaluate_planning(gt, {"perfect": perfect, "blind": blind, "closed": closed}, 0.05, start, n_goals=20,
+                             dist_range=(1.0, 4.0), seed=1)
+    assert recs
+    sp, sb, sc = summarize(recs, "perfect"), summarize(recs, "blind"), summarize(recs, "closed")
+    assert sp["success"] == 1.0
+    assert sb["collision"] > 0 and sb["success"] < 1.0
+    assert sc["no_path"] > 0
