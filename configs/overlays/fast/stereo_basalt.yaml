@@ -1,0 +1,3 @@
+# Fast overlay of the stereo_basalt mode (--fast; layered on configs/<profile>/stereo_basalt.yaml, local or cloud):
+# 6-image stereo passes (configs/base/stereo_fast.yaml).
+include: ../../base/stereo_fast.yaml

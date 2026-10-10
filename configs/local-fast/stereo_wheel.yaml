@@ -1,6 +1,0 @@
-# Stereo + external odometry (wheel, INS): --mode stereo --odometry external.
-# Folder local-fast: the mode's base, then the folder's shared settings; keys below override both.
-include:
-  - ../base/stereo.yaml
-  - ../base/stereo_fast.yaml
-  - ../base/local-fast.yaml

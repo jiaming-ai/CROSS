@@ -65,7 +65,7 @@ cross/
 └── visualization/  # Rerun-based 3D visualization, graph plotting
 cross_world/        # 3D Gaussian-splatting reconstruction of a saved map, export, web viewer (docs/WORLD.md)
 benchmark/          # Evaluation protocol, dataset converters, system runners, results page
-configs/            # Shipped configs: local/, local-fast/, cloud/ (one per mode), base/, overlays/, noise/, mono profiles
+configs/            # Shipped configs: local/, cloud/ (one per mode), base/, overlays/ (fast/, outdoor, lowband), noise/, mono profiles
 docs/               # Usage guide
 scripts/            # Map-and-relocalize harnesses, dataset converters, baselines, figures
 ```
@@ -155,7 +155,8 @@ Options:
 | `--mode {rgbd,stereo,mono}` | Sensor mode: PnP on depth (default), the stereo mode, or colour only |
 | `--odometry {external,basalt,visual,vio,vgio}` | Motion source: the dataset's odometry (default; wheel / INS), the sequence's Basalt VIO file (`odom_vio.txt`), DPVO visual odometry, (mono) DPVO with IMU scale, or (mono ff, stereo) VGGT-Omega + IMU |
 | `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
-| `--profile {local,local-fast,cloud}` | Folder of the shipped configuration `configs/<profile>/<mode>.yaml` (default `local`; `local-fast`: constrained compute, `cloud`: remote GPU server); `--fast` = `--profile local-fast` |
+| `--profile {local,cloud}` | Deployment folder of the shipped configuration `configs/<profile>/<mode>.yaml` (default `local`; `cloud`: remote GPU server; `local-fast` = `local --fast`, deprecated) |
+| `--fast` | Constrained compute: the mode's fast overlay `configs/overlays/fast/<mode>.yaml` on top (stereo: 6-image passes) |
 | `--config A.yaml B.yaml` | Config layers on top of the mode's shipped file, merged left to right (e.g. `configs/overlays/outdoor.yaml`) |
 | `--reproducible` | Synchronous pose-graph optimisation (the shipped default optimises long loop closures in the background; the benchmark always passes it) |
 | `--loader {r3d,rosbag,loris,tum,posed,stereo}` | Force dataset loader (default: auto-detect) |
@@ -165,7 +166,8 @@ Options:
 
 **Shipped configurations.** Each run loads one file `configs/<profile>/<mode>.yaml` chosen by `--mode`, `--odometry` (and
 `--mono-estimator`) and `--profile`: eleven modes (stereo / rgbd / mono x wheel, basalt, imu, dpvo; no rgbd + imu) in
-the folders `local` (default), `local-fast` and `cloud`. A folder file includes its mode's base and the folder's shared
+the deployment folders `local` (default) and `cloud`; `--fast` adds the mode's overlay `configs/overlays/fast/<mode>.yaml`
+(constrained compute) on either. A folder file includes its mode's base and the folder's shared
 settings from `configs/base/`; `--config` overlays (`configs/overlays/outdoor.yaml`, `stereo_lowband.yaml`) and `--set`
 come after it. The shipped default optimises long loop-closure pose graphs in a background worker
 (`mapping.loop_closure.async_pgo`), so results depend slightly on the machine's speed; experiments pass `--reproducible`

@@ -1,5 +1,0 @@
-# Mono + IMU (VGGT-inertial odometry): --mode mono --mono-estimator ff --odometry vgio.
-# Folder local-fast: the mode's base, then the folder's shared settings; keys below override both.
-include:
-  - ../base/mono_imu.yaml
-  - ../base/local-fast.yaml

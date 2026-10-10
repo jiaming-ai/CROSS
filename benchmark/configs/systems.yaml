@@ -61,12 +61,12 @@ cross_stereo_vgio:
 cross_stereo_fast:
   label: CROSS (VGGT-Omega fast, external odometry)
   runner: cross_ff
-  # --profile local-fast: configs/local-fast/stereo_*.yaml, 6 images per pass (current pair + 4 references) instead of 10; on the full
+  # --fast: configs/overlays/fast/stereo_*.yaml on configs/local/, 6 images per pass (current pair + 4 references) instead of 10; on the full
   # benchmark (c12b2d0) the same accuracy as cross_stereo at 1.31x its frame rate
   setups: [stereo]
   uses_odometry: true
   map_reuse: save/load
-  args: [--estimator, ff, --profile, local-fast]
+  args: [--estimator, ff, --fast]
   outdoor_config: [configs/overlays/outdoor.yaml]
 
 cross_stereo_vo_fast:
@@ -76,7 +76,7 @@ cross_stereo_vo_fast:
   setups: [stereo]
   uses_odometry: false
   map_reuse: save/load
-  args: [--estimator, ff, --odometry, visual, --profile, local-fast]
+  args: [--estimator, ff, --odometry, visual, --fast]
   outdoor_config: [configs/overlays/outdoor.yaml]
 
 cross_mono_odom:

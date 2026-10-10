@@ -62,7 +62,7 @@ Notes.
 | **mono** | colour only (+ odometry) | monocular mode (in development) |
 
 CROSS runs with the shipped configuration of its mode in the `local` folder (`configs/local/<mode>.yaml`; the
-`--profile local-fast` systems use `configs/local-fast/`), with one exception: the pose-graph optimisation is
+`--fast` systems add `configs/overlays/fast/<mode>.yaml`), with one exception: the pose-graph optimisation is
 synchronous. The shipped default optimises long loop closures in a background worker whose results land at
 machine-dependent times; `benchmark/run.py` passes `--reproducible` (`mapping.loop_closure.async_pgo` false) to every CROSS
 run so that runs are reproducible and comparable across machines.

@@ -28,10 +28,11 @@ Every motion source feeds the same channel of the back end: a relative pose (and
 accumulated into the odometry chain of the pose graph.  With external odometry in the rgbd and stereo modes the
 frames go to System.step unchanged (the behaviour before the pipeline existed).
 
-Shipped configurations: configs/<profile>/<mode>.yaml, one per mode in each profile folder (local: a normal local run;
-local-fast: constrained compute; cloud: the back end on a remote GPU server), selected by mode_config_files from the
-mode, the named odometry, the mono estimator and --profile.  They include a mode base and a folder base
-(configs/base/); opt-in overlays (configs/overlays/) and the user's --config / --set come after them.
+Shipped configurations: configs/<profile>/<mode>.yaml, one per mode in each deployment folder (local: a normal local
+run; cloud: the back end on a remote GPU server), selected by mode_config_files from the mode, the named odometry, the
+mono estimator and --profile; with --fast (constrained compute) the mode's fast overlay configs/overlays/fast/<mode>.yaml
+on top.  The folder files include a mode base and a folder base (configs/base/); opt-in overlays (configs/overlays/) and
+the user's --config / --set come after them.
 """
 
 from __future__ import annotations
@@ -49,7 +50,8 @@ MONO_ESTIMATORS = ("da3", "ff")
 # overrides the name; the loaders fall back to odom_left.txt when it is absent, as with --odom-file)
 NAMED_ODOMETRY = ("external", "basalt", "visual", "vio", "vgio")
 BASALT_ODOM_FILE = "odom_vio.txt"
-PROFILES = ("local", "local-fast", "cloud")
+PROFILES = ("local", "cloud")
+# deprecated profile name: --profile local-fast = --profile local --fast
 
 
 def _inverse(T):
@@ -332,20 +334,25 @@ def mode_file_name(mode: str, odometry: str, mono_estimator: str = None) -> str:
     return f"{mode}_{names[odometry]}"
 
 
-def mode_config_files(mode: str, odometry: str, profile: str = "local", mono_estimator: str = None) -> list:
-    """The configuration file shipped for a mode in a profile folder (layered before the user's --config):
-    configs/<profile>/<mode_file_name>.yaml.  Opt-in overlays go in --config (configs/overlays/stereo_lowband.yaml:
+def mode_config_files(mode: str, odometry: str, profile: str = "local", mono_estimator: str = None,
+                      fast: bool = False) -> list:
+    """The configuration files shipped for a mode (layered in this order, before the user's --config): the deployment
+    folder's configs/<profile>/<mode_file_name>.yaml, then with `fast` (constrained compute) the mode's fast overlay
+    configs/overlays/fast/<mode_file_name>.yaml.  Opt-in overlays go in --config (configs/overlays/stereo_lowband.yaml:
     left image, half the rate; not a default because it blinds the odometry scale guard)."""
+    if profile == "local-fast":
+        profile, fast = "local", True
     if profile not in PROFILES:
         raise ValueError(f"profile: one of {PROFILES}, not {profile}")
-    return [os.path.join(CONFIG_DIR, profile, mode_file_name(mode, odometry, mono_estimator) + ".yaml")]
+    name = mode_file_name(mode, odometry, mono_estimator) + ".yaml"
+    return [os.path.join(CONFIG_DIR, profile, name)] + ([os.path.join(CONFIG_DIR, "overlays", "fast", name)] if fast else [])
 
 
 def shipped_config_files(args) -> list:
     """mode_config_files for a runner's parsed session arguments (add_session_args; finish_session_args)."""
     mono_estimator = getattr(args, "mono_estimator", None) if args.mode == "mono" else None
-    profile = "local-fast" if getattr(args, "fast", False) else getattr(args, "profile", "local")
-    return mode_config_files(args.mode, getattr(args, "odometry_name", args.odometry), profile, mono_estimator)
+    return mode_config_files(args.mode, getattr(args, "odometry_name", args.odometry), getattr(args, "profile", "local"),
+                             mono_estimator, fast=getattr(args, "fast", False))
 
 
 def config_imu_items(files) -> list:
@@ -571,8 +578,8 @@ def server_session(open_msg, device="cuda"):
     """The server of a remote session from the edge's open message: (MapServer, factory of a new pass service for a new
     session of the edge's odometry, information for the edge).  The CROSS runners' edge (edge_session) sends its
     resolved configurations; a standalone edge (the cross-edge package) sends none: the server builds the mode's
-    shipped configuration (mode_config_files: the "profile" folder, default local; "odometry_name" names the external
-    odometry, e.g. basalt) + the named files of its configs/ folder ("config_files", e.g. overlays/outdoor.yaml) +
+    shipped configuration (mode_config_files: the "profile" folder, default local, + the fast overlay with "fast";
+    "odometry_name" names the external odometry, e.g. basalt) + the named files of its configs/ folder ("config_files", e.g. overlays/outdoor.yaml) +
     overrides ("set"), and returns the cadence settings the edge copies (cross_edge.cadence)."""
     from cross.core.config import SystemConfig, _from_dict, load_config
     from cross.core.types import Camera
@@ -593,10 +600,9 @@ def server_session(open_msg, device="cuda"):
         names = [str(n) for n in open_msg.get("config_files") or []]
         if any(os.path.normpath(n) != n or n.startswith(("/", "..")) or not n.endswith(".yaml") for n in names):
             raise ValueError(f"config_files: files of {CONFIG_DIR} only, not {names}")
-        # (protocol 1 edges sent "fast" for the local-fast folder)
-        profile = open_msg.get("profile") or ("local-fast" if open_msg.get("fast") else "local")
-        files = mode_config_files(mode, open_msg.get("odometry_name") or odometry, profile,
-                                  open_msg.get("mono_estimator", "da3") if mode == "mono" else None) \
+        files = mode_config_files(mode, open_msg.get("odometry_name") or odometry, open_msg.get("profile") or "local",
+                                  open_msg.get("mono_estimator", "da3") if mode == "mono" else None,
+                                  fast=bool(open_msg.get("fast"))) \
             + [os.path.join(CONFIG_DIR, n) for n in names]
         cfg = apply_settings(load_config(*files) if files else SystemConfig(), open_msg.get("set"))
         cfg.async_update = False
@@ -637,10 +643,13 @@ def add_session_args(ap):
                          "string), e.g. '--cross-config mapping.loop_closure.noise.odom_k_t=0.06' or "
                          "'--imu-config vgio_stereo_std=0.03'")
     ap.add_argument("--vo-mask-people", action="store_true", help="visual odometry: exclude detected people from DPVO patches")
-    ap.add_argument("--profile", choices=PROFILES, default="local",
-                    help="folder of the shipped configuration (configs/<profile>/<mode>.yaml): local (a normal local run), "
-                         "local-fast (constrained compute: 6-image stereo passes), cloud (remote GPU server)")
-    ap.add_argument("--fast", action="store_true", help="deprecated: --profile local-fast")
+    ap.add_argument("--profile", choices=PROFILES + ("local-fast",), default="local",
+                    help="deployment folder of the shipped configuration (configs/<profile>/<mode>.yaml): local (a normal "
+                         "local run), cloud (remote GPU server); local-fast: deprecated, = local --fast")
+    ap.add_argument("--fast", action="store_true",
+                    help="constrained compute: the mode's fast overlay on the folder file (configs/overlays/fast/<mode>.yaml; "
+                         "stereo: 6 images per pass instead of 10, ~35 %% less time per observation, relocalization within "
+                         "noise on OpenLORIS, maps slightly less accurate)")
     ap.add_argument("--reproducible", action="store_true",
                     help="synchronous pose-graph optimisation whatever the configuration says (mapping.loop_closure."
                          "async_pgo false; the shipped default runs long optimisations in the background, whose results "
@@ -691,16 +700,14 @@ CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file
 def finish_session_args(args):
     """(In place) the runners' session arguments after parsing: --odometry basalt is external odometry from the
     Basalt VIO file (args.odom_file, default BASALT_ODOM_FILE; args.odometry_name keeps the name for the shipped
-    configuration); --fast is --profile local-fast."""
+    configuration); the deprecated --profile local-fast is --profile local --fast."""
     args.odometry_name = args.odometry
     if args.odometry == "basalt":
         args.odometry = "external"
         if getattr(args, "odom_file", None) is None:
             args.odom_file = BASALT_ODOM_FILE
-    if getattr(args, "fast", False):
-        if args.profile not in ("local", "local-fast"):
-            raise ValueError(f"--fast is --profile local-fast, not {args.profile}")
-        args.profile, args.fast = "local-fast", False
+    if getattr(args, "profile", "local") == "local-fast":
+        args.profile, args.fast = "local", True
     return args
 
 

@@ -1,4 +1,4 @@
-# Fast stereo passes (the local-fast folder's stereo modes; --fast / --profile local-fast): 6 images per forward pass
+# Fast stereo passes (the fast overlay of the stereo modes, configs/overlays/fast/stereo_*.yaml; --fast): 6 images per forward pass
 # instead of 10 (the current pair and 4 retrieved references, no reference right images).  An observation takes ~35 %
 # less time (RTX 5090: 73 ms vs 116 ms per observation step).  On all OpenLORIS office / home / cafe queries
 # relocalization success was within the run-to-run noise of the 10-image passes (86/90 vs 84-87/90 trials at 1 m), maps

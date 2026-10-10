@@ -101,13 +101,14 @@ are in `scripts/datasets/` and `benchmark/datasets/`.
 ## 3. Configuration
 
 Every run loads one shipped file, `configs/<profile>/<mode>.yaml`, chosen by `--mode`, `--odometry`, `--mono-estimator`
-and `--profile`, then the user's `--config` files (merged left to right) and `--set` overrides:
+and `--profile`, with `--fast` the mode's fast overlay, then the user's `--config` files (merged left to right) and
+`--set` overrides:
 
 | `--profile` | folder | for |
 |---|---|---|
 | `local` (default) | `configs/local/` | a normal local run on a desktop GPU |
-| `local-fast` | `configs/local-fast/` | constrained compute (RTX 4000 Ada): the stereo modes observe with 6-image passes instead of 10 (~35 % less time per observation, relocalization within noise on OpenLORIS, maps 1-2 cm less accurate); `--fast` is an alias |
 | `cloud` | `configs/cloud/` | the back end on a remote GPU server (`--remote-server`, `cross-edge`; the link's own options stay command-line options) |
+| `--fast` (with either) | + `configs/overlays/fast/<mode>.yaml` | constrained compute (RTX 4000 Ada): the stereo modes observe with 6-image passes instead of 10 (~35 % less time per observation, relocalization within noise on OpenLORIS, maps 1-2 cm less accurate); empty for the other modes so far. `--profile local-fast` is a deprecated alias of `--profile local --fast` |
 
 | mode file | `--mode` / `--odometry` (/ `--mono-estimator`) |
 |---|---|
@@ -124,14 +125,14 @@ them. A file may also carry an `imu:` section (fields of `ImuConfig`, applied to
 `cross/mono/system.py`.
 
 ```bash
-python run.py <seq> --mode stereo --profile local-fast --config configs/overlays/outdoor.yaml configs/noise/my_robot.yaml
+python run.py <seq> --mode stereo --fast --config configs/overlays/outdoor.yaml configs/noise/my_robot.yaml
 python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=configs/noise/my_robot.yaml  pose_est.obs_max_interval_steps=2
 ```
 
 | file | use |
 |---|---|
 | `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius); the benchmark adds it on outdoor datasets |
-| `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away), not with `local-fast` |
+| `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away), not with `--fast` |
 | `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
 | `configs/mono_*.json` | mono profiles: the arguments of `python -m cross.mono.run`. `mono_benchmark_10hz.json` for offline runs at 10 Hz, `mono_streaming_dpvo_v2_20hz.json` for real time; select with `--mono-profile`, extra arguments with `--mono-args`. Their `--cross-config` lines configure the DA3 back end only (the `ff` back end and the stereo mode refuse `--cross-config` in `--mono-args`; use `--set`); with external odometry or `vio` the DA3 back end drops the odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
 

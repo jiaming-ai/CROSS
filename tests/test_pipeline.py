@@ -133,8 +133,8 @@ def test_odometry_frontend_composes_dataset_motion():
 
 def test_mode_config_files_and_left_image():
     """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry; the
-    opt-in low-bandwidth overlay observes on the left image (no stereo anchors) at half the rate; local-fast keeps the
-    pair."""
+    opt-in low-bandwidth overlay observes on the left image (no stereo anchors) at half the rate; the fast overlay keeps
+    the pair."""
     import os
     from cross.core.config import load_config
     from cross.pipeline import CONFIG_DIR, apply_right_image, mode_config_files
@@ -142,7 +142,9 @@ def test_mode_config_files_and_left_image():
     rel = lambda files: [os.path.relpath(f, CONFIG_DIR) for f in files]          # noqa: E731
     assert rel(mode_config_files("rgbd", "external")) == ["local/rgbd_wheel.yaml"]
     assert rel(mode_config_files("stereo", "basalt", "cloud")) == ["cloud/stereo_basalt.yaml"]
-    assert rel(mode_config_files("stereo", "external", "local-fast")) == ["local-fast/stereo_wheel.yaml"]
+    assert rel(mode_config_files("stereo", "external", "cloud", fast=True)) == ["cloud/stereo_wheel.yaml",
+                                                                                "overlays/fast/stereo_wheel.yaml"]
+    assert mode_config_files("stereo", "external", "local-fast") == mode_config_files("stereo", "external", fast=True)
     for odometry in ("external", "basalt", "vgio", "visual"):
         pe = apply_right_image(load_config(*mode_config_files("stereo", odometry))).pose_est
         assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
@@ -152,28 +154,29 @@ def test_mode_config_files_and_left_image():
     assert pe.ff.right_image == "left" and not pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
     assert pe.ff.use_odom_anchor and pe.ff.use_map_anchors and pe.ff.n_ref_anchors == 0
     # the fast passes keep the pair (its only scale anchor) and the stereo cadence
-    pe = apply_right_image(load_config(*mode_config_files("stereo", "external", "local-fast"))).pose_est
+    pe = apply_right_image(load_config(*mode_config_files("stereo", "external", fast=True))).pose_est
     assert (pe.obs_min_translation, pe.obs_max_interval_steps, pe.ff.right_image, pe.ff.max_refs) == (0.3, 3, "pair", 4)
     assert pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
 
 
 def test_profile_folders():
-    """Every profile folder has one file per mode; the folders differ from each other only where they should (phase 1:
-    local-fast = the fast stereo passes), and every mode file differs from its mode's base by the folder's settings."""
+    """Every deployment folder and the fast overlay have one file per mode; the folders differ from each other only
+    where they should (phase 1: nowhere), the fast overlay only for the stereo modes; the cloud keeps the stereo pair."""
     import dataclasses
     import os
     from cross.core.config import load_config, load_yaml_layers
     from cross.pipeline import CONFIG_DIR, PROFILES
     modes = sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, "local")) if f.endswith(".yaml"))
-    assert len(modes) == 11
-    for profile in PROFILES:
-        assert sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, profile)) if f.endswith(".yaml")) == modes
-        for m in modes:
-            cfg = load_config(os.path.join(CONFIG_DIR, profile, m))
-            assert cfg.mapping.loop_closure.async_pgo
-            local = load_config(os.path.join(CONFIG_DIR, "local", m))
-            if profile != "local-fast" or not m.startswith("stereo"):
-                assert dataclasses.asdict(cfg) == dataclasses.asdict(local)
+    assert len(modes) == 11 and PROFILES == ("local", "cloud")
+    for folder in PROFILES + ("overlays/fast",):
+        assert sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, folder)) if f.endswith(".yaml")) == modes
+    for m in modes:
+        local = dataclasses.asdict(load_config(os.path.join(CONFIG_DIR, "local", m)))
+        cloud = load_config(os.path.join(CONFIG_DIR, "cloud", m))
+        assert local["mapping"]["loop_closure"]["async_pgo"] and dataclasses.asdict(cloud) == local
+        assert cloud.pose_est.ff.right_image == "pair"
+        fast = dataclasses.asdict(load_config(os.path.join(CONFIG_DIR, "local", m), os.path.join(CONFIG_DIR, "overlays/fast", m)))
+        assert (fast != local) == m.startswith("stereo")
     assert load_yaml_layers(os.path.join(CONFIG_DIR, "local", "stereo_imu.yaml"))["imu"] == {"vgio_align": True}
     assert load_yaml_layers(os.path.join(CONFIG_DIR, "cloud", "mono_imu.yaml"))["imu"] == {"vgio_align": False}
     assert not load_config(os.path.join(CONFIG_DIR, "local", "stereo_imu.yaml")).mapping.loop_closure.odom_guard_rescale
@@ -190,8 +193,11 @@ def test_named_odometry_and_profile_arguments():
     assert shipped_config_files(args)[0].endswith("local/stereo_basalt.yaml")
     args = finish_session_args(ap.parse_args(["--mode", "rgbd", "--odometry", "basalt", "--odom-file", "x.txt"]))
     assert args.odom_file == "x.txt"
-    args = finish_session_args(ap.parse_args(["--mode", "stereo", "--fast"]))      # deprecated alias
-    assert args.profile == "local-fast" and shipped_config_files(args)[0].endswith("local-fast/stereo_wheel.yaml")
+    args = finish_session_args(ap.parse_args(["--mode", "stereo", "--profile", "cloud", "--fast"]))
+    files = shipped_config_files(args)
+    assert files[0].endswith("cloud/stereo_wheel.yaml") and files[1].endswith("overlays/fast/stereo_wheel.yaml")
+    args = finish_session_args(ap.parse_args(["--mode", "stereo", "--profile", "local-fast"]))   # deprecated alias
+    assert args.profile == "local" and args.fast and shipped_config_files(args)[1].endswith("overlays/fast/stereo_wheel.yaml")
     args = finish_session_args(ap.parse_args(["--mode", "mono", "--mono-estimator", "ff", "--odometry", "vio"]))
     assert shipped_config_files(args)[0].endswith("local/mono_imu.yaml")
 

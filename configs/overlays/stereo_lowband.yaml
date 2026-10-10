@@ -10,7 +10,7 @@
 #   guard (mapping.loop_closure.odom_guard_*) cannot see an odometry failure.  ROVER campus_large night with the Basalt
 #   VIO (a runaway): map ATE 38.2 m with this overlay, 36.3 m with the left image at the stereo cadence, 13.2 m
 #   with the pair at half the rate, 11.2 m with the default (the guard fired twice; with the left image never).
-#   The fast passes (the local-fast folder) with this overlay lost T3 28 -> 24: do not combine them.
+#   The fast passes (--fast, configs/overlays/fast/) with this overlay lost T3 28 -> 24: do not combine them.
 pose_est:
   obs_min_translation: 0.6
   obs_min_rotation: 0.3
