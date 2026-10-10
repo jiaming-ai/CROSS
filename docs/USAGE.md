@@ -350,8 +350,9 @@ session published at every frame (`map_meta.json` `online`), the number latency 
 ## 7. 3D reconstruction of a map
 
 `cross_world/` trains a Gaussian-splatting scene from a saved map (novel views, web viewer), see
-[WORLD.md](WORLD.md). `--set mapping.world_capture.enabled=true` on a mapping run also keeps input frames at full
-resolution, uncropped, next to the map (`map.pkl.capture/`; the map itself is unchanged) for a later reconstruction.
+[WORLD.md](WORLD.md). `--set mapping.world_capture.enabled=true` on a mapping run also keeps the keyframes' input
+frames at full resolution, uncropped, next to the map (`map.pkl.capture/`; the map itself is unchanged) for a later
+reconstruction without the dataset folder.
 
 ```bash
 python -m cross_world.cli build --map runs/k07/map.pkl --source $SEQ --out worlds/k07 --novel 150
