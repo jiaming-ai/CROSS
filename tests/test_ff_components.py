@@ -106,3 +106,51 @@ def test_covis_source_auto():
         assert est._covis_source(SimpleNamespace(covis_source="geometric")) == "geometric"
         assert est._covis_source(SimpleNamespace(covis_source="min")) == "min"
     assert auto_covis_source(SimpleNamespace()) == "geometric"           # e.g. the DA3 backend
+
+
+def test_set_camera_registers_calibrated_focal_and_principal_point():
+    """set_camera gives the backend the calibrated focal (canonical-camera scale heads) and sets the principal-point
+    correction (one definition: a second `def set_camera` once silently dropped the focal part)."""
+    from types import SimpleNamespace
+    from cross.core.config import FeedForwardConfig
+    from cross.cv.pose_est_ff import PoseEstFeedForward, principal_point_rotation
+    K = np.array([[300.0, 0, 270.0], [0, 300.0, 180.0], [0, 0, 1]])
+    for scale_focal, ppc in (("calibrated", True), ("predicted", True), ("calibrated", False)):
+        est = PoseEstFeedForward.__new__(PoseEstFeedForward)        # no model: only the camera bookkeeping
+        est.config = FeedForwardConfig(scale_focal=scale_focal, principal_point_correction=ppc)
+        est.backend = SimpleNamespace()
+        est._R_model_to_cam = None
+        est.set_camera(K, 518, 350)
+        assert est._focal_norm == 300.0 / 518
+        assert getattr(est.backend, "calib_focal", None) == (300.0 / 518 if scale_focal == "calibrated" else None)
+        if ppc:
+            assert np.allclose(est._R_model_to_cam[:3, :3], principal_point_rotation(K, 518, 350).T)
+        else:
+            assert est._R_model_to_cam is None
+
+
+def test_no_duplicate_method_definitions():
+    """A second `def` of a name in one class / module body silently replaces the first."""
+    import ast
+    import pathlib
+    import warnings
+    root = pathlib.Path(__file__).resolve().parents[1]
+    dups = []
+    for path in [*(root / "cross").rglob("*.py"), *(root / "vggt_ft").rglob("*.py")]:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            warnings.simplefilter("ignore", DeprecationWarning)
+            tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Module, ast.ClassDef)):
+                continue
+            seen = set()
+            for b in node.body:
+                if not isinstance(b, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if any(k in ast.unparse(d) for d in b.decorator_list for k in ("setter", "deleter", "overload", "register")):
+                    continue
+                if b.name in seen:
+                    dups.append(f"{path.relative_to(root)}:{b.lineno} {getattr(node, 'name', '<module>')}.{b.name}")
+                seen.add(b.name)
+    assert not dups, dups
