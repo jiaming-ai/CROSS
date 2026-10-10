@@ -68,6 +68,7 @@ DATASET_CFG = {
     "hssd_nav": dict(max_range=10.0),         # simulated (cross_nav/sim); its own labels come from the meshes
     "waymo": dict(max_range=25.0, max_frames=3000, pix_step=1),     # LiDAR (sparse: every pixel); moving cars / people
     "pandaset": dict(max_range=25.0, max_frames=3000, pix_step=1),  # are removed by the free-space carving
+    "nclt": dict(max_range=20.0, pix_step=1),  # Velodyne HDL-32E in the forward camera: sparse, use every point
 }
 DEFAULT = dict(max_range=8.0, pix_step=4, frame_step=1, max_frames=4000, res=0.05, zres=0.02,
                normal_up_deg=25.0, step=0.05, gap=8, h_lo=0.10, h_hi=1.80, occ_min=4, free_max=1,

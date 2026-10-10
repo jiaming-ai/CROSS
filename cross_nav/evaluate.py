@@ -49,9 +49,16 @@ def make_windows(cfg, out, per_dataset, split, root=None, bev_root=None, dataset
     if bev_root:
         dc["bev_root"] = bev_root
     if datasets:
+        # "name" or "name=label_folder" (labels under another folder name, e.g. tartanground=tartanground_mix)
         base = next(iter(dc["datasets"].values()))
-        dc["datasets"] = {d: dc["datasets"].get(d, {**base, "weight": 1.0, "p_cross": 0.3, "stride": [1, 4]})
-                          for d in datasets}
+        sel = {}
+        for d in datasets:
+            name, _, lab = d.partition("=")
+            c = dict(dc["datasets"].get(name, {**base, "weight": 1.0, "p_cross": 0.3, "stride": [1, 4]}))
+            if lab:
+                c["label_dataset"] = lab
+            sel[name] = c
+        dc["datasets"] = sel
     if split == "test":
         dc["val_mod"] = 0
     st = NavStream(dc, seed=seed, split="val" if split == "val" else "train")
