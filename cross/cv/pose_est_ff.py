@@ -628,9 +628,8 @@ class PoseEstFeedForward:
         self.last_frontend_obs: Optional[dict] = None   # raw output for a frontend's anchor (vgio)
         self._R_model_to_cam: Optional[np.ndarray] = None    # (4, 4) right-multiplied onto model camera poses
 
-    def set_stereo_calibration(self, T_right_in_left: Optional[np.ndarray]):
-        """The rig of the right images (None: no stereo anchors)."""
-        self.T_right_in_left = None if T_right_in_left is None else np.asarray(T_right_in_left, dtype=np.float64)
+    def set_stereo_calibration(self, T_right_in_left: np.ndarray):
+        self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
 
     def set_camera(self, K: np.ndarray, width: int, height: int):
         """Calibrated intrinsics at the model's input resolution (the system calls this after its transforms):

@@ -184,10 +184,8 @@ class System:
         self.odom_accumulator.register_item("since_last_retrieval")
         self.odom_accumulator.register_item("since_last_obs")
 
-        # the feed-forward estimator stores the right image of every stereo keyframe (the stereo mode with the pair; the
-        # fast preset too, whose passes do not use them): the stored pairs anchor the metric scale of later sessions'
-        # passes in the map, also of a mono session (load_map: the map's rig), and give cross_world stereo depth
-        self._store_right_images = self.config.pose_est.type == PoseEstType.FF
+        # right images are only stored when stored keyframe pairs are used as scale anchors
+        self._store_right_images = self.config.pose_est.type == PoseEstType.FF and self.config.pose_est.ff.n_ref_anchors > 0
 
         self._unsuccessful_retrieval_steps = 0
 
@@ -739,7 +737,7 @@ class System:
             "current_atlas_id": self.current_atlas.id if hasattr(self, 'current_atlas') else None,
             # intrinsics of the stored keyframe images (after the mode's resize / crop) and the stereo rig: what a
             # reader of the map needs to use its images geometrically (cross_world); load_map checks it against the
-            # session's camera and gives a session without a rig the map's (_use_map_camera)
+            # session's camera (_use_map_camera)
             "camera": self._camera_record(),
         }
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
@@ -826,44 +824,35 @@ class System:
         camera at the same size: the session's images go through the same resize / crop as the map's, so a camera
         recorded at another resolution with the same field of view passes, a different camera fails here.  A stereo
         session must have the map's rig (stored right images are scale anchors with the session's calibration).  A
-        session without a rig (mono) takes the map's: the right images stored with the map's keyframes anchor the
-        metric scale of its passes in the map (pose_est.ff.n_ref_anchors of them per pass).  Maps saved before the
-        record existed are not checked."""
-        rig = None
-        if record is not None and getattr(self, "camera", None) is not None:
-            K = np.asarray(record["K"], dtype=np.float64)
-            size = (int(record["width"]), int(record["height"]))
-            mine = (int(self.camera.frame_width), int(self.camera.frame_height))
-            Ks = np.asarray(self.camera.K, dtype=np.float64)
-            # focal and principal point relative to the image width: 1 % is ~5 px at 512 px
-            dev = float(np.max(np.abs(Ks[[0, 1, 0, 1], [0, 1, 2, 2]] - K[[0, 1, 0, 1], [0, 1, 2, 2]]))) / max(1, size[0])
-            if size != mine or dev > 0.01:
-                raise ValueError(
-                    f"The map was built with another camera: its images are {size[0]}x{size[1]} px with fx {K[0, 0]:.1f}, "
-                    f"fy {K[1, 1]:.1f}, cx {K[0, 2]:.1f}, cy {K[1, 2]:.1f}; this session's are {mine[0]}x{mine[1]} px with "
-                    f"fx {Ks[0, 0]:.1f}, fy {Ks[1, 1]:.1f}, cx {Ks[0, 2]:.1f}, cy {Ks[1, 2]:.1f} (after the mode's resize / "
-                    f"crop).  Relocalize with the camera the map was built with (for a stereo map: its left camera) and "
-                    f"the same pose_est.ff.image_resolution")
-            if record.get("T_right_in_left") is not None:
-                rig = np.asarray(record["T_right_in_left"], dtype=np.float64)
-            if rig is not None and self.T_right_in_left is not None:
-                T = np.asarray(self.T_right_in_left, dtype=np.float64)
-                d_t = float(np.linalg.norm(T[:3, 3] - rig[:3, 3])) / max(1e-9, float(np.linalg.norm(rig[:3, 3])))
-                d_r = float(np.degrees(np.arccos(np.clip((np.trace(T[:3, :3].T @ rig[:3, :3]) - 1) / 2, -1, 1))))
-                if d_t > 0.01 or d_r > 0.5:
-                    raise ValueError(
-                        f"The map was built with another stereo rig (baseline {np.linalg.norm(rig[:3, 3]):.4f} m vs this "
-                        f"session's {np.linalg.norm(T[:3, 3]):.4f} m, {d_r:.2f} deg apart): its stored right images would "
-                        f"anchor the scale with the wrong calibration")
-        if self.pose_est_type != PoseEstType.FF or self.T_right_in_left is not None:
+        mono session in a stereo map (its left camera) needs nothing more: pairs of map references with their relative
+        pose anchor the metric scale (pose_est.ff.use_map_anchors).  Maps saved before the record existed are not
+        checked."""
+        if record is None or getattr(self, "camera", None) is None:
             return
-        # a session without a rig: the map's for its stored right images (none, or a map without them: no stereo anchor)
-        has_right = rig is not None and self.config.pose_est.ff.n_ref_anchors > 0 and any(
-            k.has_image("raw_rgb_right") for k in self.db.get_all_keyframes())
-        self.pose_est.set_stereo_calibration(rig if has_right else None)
-        if has_right:
-            logger.info(f"Stereo map in a session without a stereo pair: up to {self.config.pose_est.ff.n_ref_anchors} "
-                        f"stored right images per pass anchor the metric scale (baseline {np.linalg.norm(rig[:3, 3]):.3f} m)")
+        K = np.asarray(record["K"], dtype=np.float64)
+        size = (int(record["width"]), int(record["height"]))
+        mine = (int(self.camera.frame_width), int(self.camera.frame_height))
+        Ks = np.asarray(self.camera.K, dtype=np.float64)
+        # focal and principal point relative to the image width: 1 % is ~5 px at 512 px
+        dev = float(np.max(np.abs(Ks[[0, 1, 0, 1], [0, 1, 2, 2]] - K[[0, 1, 0, 1], [0, 1, 2, 2]]))) / max(1, size[0])
+        if size != mine or dev > 0.01:
+            raise ValueError(
+                f"The map was built with another camera: its images are {size[0]}x{size[1]} px with fx {K[0, 0]:.1f}, "
+                f"fy {K[1, 1]:.1f}, cx {K[0, 2]:.1f}, cy {K[1, 2]:.1f}; this session's are {mine[0]}x{mine[1]} px with "
+                f"fx {Ks[0, 0]:.1f}, fy {Ks[1, 1]:.1f}, cx {Ks[0, 2]:.1f}, cy {Ks[1, 2]:.1f} (after the mode's resize / "
+                f"crop).  Relocalize with the camera the map was built with (for a stereo map: its left camera) and "
+                f"the same pose_est.ff.image_resolution")
+        rig = record.get("T_right_in_left")
+        if rig is not None and self.T_right_in_left is not None:
+            rig = np.asarray(rig, dtype=np.float64)
+            T = np.asarray(self.T_right_in_left, dtype=np.float64)
+            d_t = float(np.linalg.norm(T[:3, 3] - rig[:3, 3])) / max(1e-9, float(np.linalg.norm(rig[:3, 3])))
+            d_r = float(np.degrees(np.arccos(np.clip((np.trace(T[:3, :3].T @ rig[:3, :3]) - 1) / 2, -1, 1))))
+            if d_t > 0.01 or d_r > 0.5:
+                raise ValueError(
+                    f"The map was built with another stereo rig (baseline {np.linalg.norm(rig[:3, 3]):.4f} m vs this "
+                    f"session's {np.linalg.norm(T[:3, 3]):.4f} m, {d_r:.2f} deg apart): its stored right images would "
+                    f"anchor the scale with the wrong calibration")
 
     def session_localized(self) -> bool:
         """Whether hypothesis 0 is expressed in the frame of the stored map.

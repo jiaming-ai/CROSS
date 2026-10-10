@@ -1,8 +1,7 @@
 # Mono mode with the feed-forward estimator (--mode mono --mono-estimator ff; the mono_wheel / mono_basalt / mono_imu
-# files): the stereo mode's VGGT-Omega estimator on the single image.  No current stereo pair: the metric scale of a pass
-# comes from the previous observation with the odometry between them, from pairs of references with their relative pose
-# in the map and, in a map built in the stereo mode, from the right images stored with its keyframes (n_ref_anchors).
-# Observation cadence of the stereo mode.
+# files): the stereo mode's VGGT-Omega estimator on the single image.  No stereo anchors: the metric scale of a pass
+# comes from the previous observation with the odometry between them and from pairs of references with their relative
+# pose in the map.  Observation cadence of the stereo mode.
 pose_est:
   type: ff
   obs_min_translation: 0.3
@@ -10,9 +9,7 @@ pose_est:
   obs_max_interval_steps: 3
   ff:
     use_curr_anchor: false
-    # in a map with stored right images (built in the stereo mode; System._use_map_camera takes the map's rig) the right
-    # images of up to this many references per pass are scale anchors, as in the stereo mode; no effect in a mono map
-    n_ref_anchors: 2
+    n_ref_anchors: 0
     use_odom_anchor: true
     use_map_anchors: true
     # Full benchmark 2026-10-09 (final fine-tuned VGGT-Omega, mono + odometry and mono + IMU): this option and

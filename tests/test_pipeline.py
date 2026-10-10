@@ -231,8 +231,8 @@ def test_mono_ff_shipped_defaults():
     cfg = load_config(*files)
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
     assert cfg.mapping.hypothesis.strong_pass_frames == 3
-    ff = cfg.pose_est.ff         # the feed-forward back end without a stereo pair (reference pairs of a stereo map)
-    assert cfg.pose_est.type.value == "ff" and not ff.use_curr_anchor and ff.n_ref_anchors == 2
+    ff = cfg.pose_est.ff         # the feed-forward back end without a stereo pair
+    assert cfg.pose_est.type.value == "ff" and not ff.use_curr_anchor and ff.n_ref_anchors == 0
     assert ff.use_odom_anchor and ff.use_map_anchors and cfg.pose_est.obs_max_interval_steps == 3
 
 
