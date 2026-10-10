@@ -57,6 +57,7 @@ DATASET_CFG = {
     "scannetpp": dict(max_range=8.0),         # depth rendered from the laser-scan mesh
     "hypersim": dict(max_range=15.0),         # synthetic
     "tartanair2": dict(max_range=15.0, frame_step=2),
+    "tartanground": dict(max_range=15.0, max_frames=12000),  # synthetic ground robots (frames ~0.25 m apart): all frames
     "grandtour": dict(max_range=15.0, pix_step=1),   # LiDAR projected into the image: sparse, use every pixel
     "oxford_spires": dict(max_range=15.0),
     "simchange": dict(max_range=10.0),
