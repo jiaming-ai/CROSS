@@ -65,6 +65,7 @@ DATASET_CFG = {
     "hiroom": dict(max_range=10.0),           # synthetic
     "nrgbd": dict(max_range=8.0),             # synthetic
     "hssd_nav": dict(max_range=10.0),         # simulated (cross_nav/sim); its own labels come from the meshes
+    "nclt": dict(max_range=20.0),             # Velodyne HDL-32E projected into the forward Ladybug3 camera
 }
 DEFAULT = dict(max_range=8.0, pix_step=4, frame_step=1, max_frames=4000, res=0.05, zres=0.02,
                normal_up_deg=25.0, step=0.05, gap=8, h_lo=0.10, h_hi=1.80, occ_min=4, free_max=1,
