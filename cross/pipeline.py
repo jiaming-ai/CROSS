@@ -34,6 +34,8 @@ import os
 
 import numpy as np
 
+from cross.core.config import apply_settings  # noqa: F401  (configuration overrides of the runners' --set)
+
 MODES = ("rgbd", "stereo", "mono")
 ODOMETRY = ("external", "visual", "vio", "vgio")
 INERTIAL = ("vio", "vgio")
@@ -326,9 +328,11 @@ def mono_ff_config(cfg):
 def mode_config_files(mode: str, odometry: str, fast: bool = False, mono_estimator: str = None) -> list:
     """The configuration files shipped for a mode and odometry (layered in this order, before the user's --config):
     the stereo mode configs/stereo.yaml (+ configs/stereo_fast.yaml with --fast); the mono mode with the feed-forward
-    estimator configs/mono_ff.yaml (its other presets are in code: mono_ff_config, mono profiles); then, with the
-    VGGT-inertial odometry, configs/vgio.yaml.  Other modes: none.  Opt-in profiles go in --config (configs/stereo_lowband.yaml: left
-    image, half the rate; not a default because it blinds the odometry scale guard)."""
+    estimator configs/mono_ff.yaml (its other presets are in code: mono_ff_config, mono profiles); for both, the
+    fine-tuned VGGT-Omega's overlay configs/vggt_finetuned.yaml (its settings apply only with a fine-tuned checkpoint:
+    cross.core.config.load_config); then, with the VGGT-inertial odometry, configs/vgio.yaml.  Other modes: none.
+    Opt-in profiles go in --config (configs/stereo_lowband.yaml: left image, half the rate; not a default because it
+    blinds the odometry scale guard)."""
     files = []
     if mode == "stereo":
         files.append(os.path.join(CONFIG_DIR, "stereo.yaml"))
@@ -336,6 +340,8 @@ def mode_config_files(mode: str, odometry: str, fast: bool = False, mono_estimat
             files.append(FAST_STEREO_PRESET)
     elif mode == "mono" and mono_estimator == "ff":
         files.append(os.path.join(CONFIG_DIR, "mono_ff.yaml"))
+    if files:
+        files.append(VGGT_FINETUNED_OVERLAY)
     if odometry == "vgio":
         files.append(os.path.join(CONFIG_DIR, "vgio.yaml"))
     return files
@@ -535,23 +541,6 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
                           obs_cap=obs_cap, send_right=cfg.pose_est.ff.right_image != "left" or odometry == "vgio")
 
 
-def apply_settings(cfg, items):
-    """(In place) configuration overrides "section.sub.key=value" (YAML-parsed values; enums by their value)."""
-    import yaml
-    for kv in items or []:
-        key, val = kv.split("=", 1)
-        obj = cfg
-        parts = key.split(".")
-        for part in parts[:-1]:
-            obj = getattr(obj, part)
-        cur = getattr(obj, parts[-1])
-        v = yaml.safe_load(val)
-        if hasattr(cur, "value") and not isinstance(v, type(cur)):   # enums
-            v = type(cur)(v)
-        setattr(obj, parts[-1], v)
-    return cfg
-
-
 def server_session(open_msg, device="cuda"):
     """The server of a remote session from the edge's open message: (MapServer, factory of a new pass service for a new
     session of the edge's odometry, information for the edge).  The CROSS runners' edge (edge_session) sends its
@@ -579,7 +568,7 @@ def server_session(open_msg, device="cuda"):
             raise ValueError(f"config_files: names of {CONFIG_DIR} only, not {names}")
         files = mode_config_files(mode, odometry, bool(open_msg.get("fast")), open_msg.get("mono_estimator", "da3")) \
             + [os.path.join(CONFIG_DIR, n) for n in names]
-        cfg = apply_settings(load_config(*files) if files else SystemConfig(), open_msg.get("set"))
+        cfg = load_config(*files, sets=open_msg.get("set"))
         cfg.async_update = False
     mc = None if open_msg.get("mono_config") is None else _from_dict(MonoConfig, open_msg["mono_config"])
     p = build_session(mode, odometry, camera, cfg, T_right_in_left=open_msg.get("T_right_in_left"),
@@ -661,6 +650,7 @@ def add_session_args(ap):
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs")
 FAST_STEREO_PRESET = os.path.join(CONFIG_DIR, "stereo_fast.yaml")
+VGGT_FINETUNED_OVERLAY = os.path.join(CONFIG_DIR, "vggt_finetuned.yaml")
 
 
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):

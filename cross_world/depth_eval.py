@@ -1,7 +1,7 @@
 """Accuracy of the depth sources against sparse ground truth (e.g. KITTI LiDAR projected into the left camera).
 
     python -m cross_world.depth_eval --map runs/k07/map.pkl --source data/kitti/07/stereo --gt kitti07_lidar.npz \
-        --methods sgbm vggt [--frames 40] [--vggt-checkpoint models/VGGT-Omega/vggt_omega_1b_512.pt]
+        --methods sgbm vggt [--frames 40] [--vggt-checkpoint auto]
 
 The ground truth file holds one (N, 3) uint16 array per source frame (`f<index>`: u, v, depth in cm).  Per method:
 AbsRel and delta < 1.25 on the ground-truth points the method gives a depth for, coverage (the share of ground-truth
@@ -54,7 +54,7 @@ def main(argv=None):
     ap.add_argument("--gt", required=True)
     ap.add_argument("--methods", nargs="+", default=["sgbm", "vggt"])
     ap.add_argument("--frames", type=int, default=40, help="evaluate this many keyframes, spread over the map")
-    ap.add_argument("--vggt-checkpoint", default="models/VGGT-Omega/vggt_omega_1b_512.pt")
+    ap.add_argument("--vggt-checkpoint", default="auto", help="auto | finetuned | released | a path")
     ap.add_argument("--fstereo-checkpoint", default=None)
     ap.add_argument("--fstereo-iters", type=int, default=32)
     ap.add_argument("--device", default="cuda")

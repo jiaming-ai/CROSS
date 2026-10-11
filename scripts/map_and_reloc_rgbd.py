@@ -106,7 +106,7 @@ def make_config(args) -> SystemConfig:
     configs = mode_config_files("mono", args.odometry, mono_estimator=getattr(args, "mono_estimator", None)) \
         if args.mode == "mono" else []
     configs += list(args.config or [])
-    cfg = load_config(*configs) if configs else SystemConfig()
+    cfg = load_config(*configs, sets=args.set)
     cfg.async_update = False
     cfg.retrieval.top_k = args.top_k
     if getattr(args, "gnss", False):

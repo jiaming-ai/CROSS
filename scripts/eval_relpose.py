@@ -35,7 +35,7 @@ def build_estimator(args, ds):
         from cross.cv.pose_est_ff import PoseEstFeedForward
         from cross.utils.camera import get_transforms_ff
         rgb_tf, depth_tf = get_transforms_ff(cam, args.resolution)
-        ckpt = args.checkpoint or ("models/VGGT-Omega/vggt_omega_1b_512.pt" if args.backend == "vggt_omega" else "models/DA3-LARGE-1.1")
+        ckpt = args.checkpoint or "auto"      # install.sh's VGGT-Omega (fine-tuned, else released) / DA3
         cfg = FeedForwardConfig(
             backend=FFBackend(args.backend), checkpoint=ckpt, image_resolution=args.resolution,
             n_ref_anchors=args.n_ref_anchors, scale_method=args.scale_method, min_covis=args.min_covis,
