@@ -53,6 +53,10 @@ the evaluation `observed-local-stop-v2`. A safe terminal waypoint counts only if
 it meets the same travel and goal-progress thresholds; collisions, unknown-space
 boundaries, and goal eligibility retain their existing rules. The default
 `observed-prefix-v1` behavior still treats an unfinished path as incomplete.
+The optional `visibility_weight` adds `weight * -log(min_footprint(P(observed)))`
+to occupancy risk. It favors routes with stronger observation support; it is a
+heuristic cost, not a calibrated probability of successful execution. Its default
+is zero. Occupancy uncertainty and input observability are distinct predictions.
 
 ```python
 from cross_nav.plan import evaluate_planning, risk_cost

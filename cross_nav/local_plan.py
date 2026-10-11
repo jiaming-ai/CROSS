@@ -8,12 +8,14 @@ import cv2
 
 class LocalWaypointPlanner:
     def __init__(self, occupancy, observability, start, res, *, threshold=.5,
-                 radius=.2, risk_weight=64., min_travel=1., min_progress=.5):
+                 radius=.2, risk_weight=64., visibility_weight=0., min_travel=1., min_progress=.5):
         p, v = np.asarray(occupancy), np.asarray(observability)
         if v.shape != p.shape or not np.isfinite(v).all() or (v < 0).any() or (v > 1).any():
             raise ValueError('observability must be a matching probability map')
         if not 0 <= threshold <= 1 or min_travel <= 0 or min_progress <= 0:
             raise ValueError('invalid visibility or progress threshold')
+        if not np.isfinite(visibility_weight) or visibility_weight < 0:
+            raise ValueError('visibility weight must be finite and nonnegative')
         self.start, self.res = tuple(start), res
         self.min_travel, self.min_progress = min_travel, min_progress
         cost = risk_cost(p, res, robot_radius=radius, weight=risk_weight)
@@ -24,6 +26,13 @@ class LocalWaypointPlanner:
         current = cv2.dilate(current, disk(int(np.ceil(radius/res))),
                              borderType=cv2.BORDER_CONSTANT, borderValue=0) > 0
         visible |= current
+        if visibility_weight:
+            confidence = np.asarray(v, np.float32).copy()
+            confidence[current] = 1.
+            least = -cv2.dilate(-confidence, disk(int(np.ceil(radius/res))))
+            # A conservative score; correlated cells do not give calibrated
+            # probabilities for complete paths or full-footprint observability.
+            cost += visibility_weight * -np.log(np.maximum(least, 1e-6))
         allowed = ~footprint_blocked(~visible, res, radius)
         self.field = Field(allowed, self.start, cost, allow_corner_cutting=False, diagonal_cost=True)
         self.coords = np.argwhere(np.isfinite(self.field.dist)) if self.field.valid else np.empty((0, 2), int)
