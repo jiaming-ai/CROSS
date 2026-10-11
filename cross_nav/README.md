@@ -45,6 +45,15 @@ the historical `vis` depth-hit mask is not a complete visibility mask. GT masks
 are used only in evaluation. Local segment success is not final-goal completion
 or a closed-loop navigation result. Keep the full-map audit as a separate diagnostic.
 
+`LocalWaypointPlanner` uses predicted observability to restrict candidate motion
+to visible footprints, then selects a low-risk waypoint making useful progress
+toward a goal outside that region. It can explicitly request a stop to re-observe.
+Pass that action to `ObservedAudit.score(..., stop_for_reobserve=True)` and label
+the evaluation `observed-local-stop-v2`. A safe terminal waypoint counts only if
+it meets the same travel and goal-progress thresholds; collisions, unknown-space
+boundaries, and goal eligibility retain their existing rules. The default
+`observed-prefix-v1` behavior still treats an unfinished path as incomplete.
+
 ```python
 from cross_nav.plan import evaluate_planning, risk_cost
 import numpy as np

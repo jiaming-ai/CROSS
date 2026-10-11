@@ -56,3 +56,16 @@ def test_a_safe_detour_with_no_goal_progress_is_not_success():
     result = audit.score([(3, 1), (2, 1), (1, 1), (0, 1)], (3, 6))
     assert result["travel"] == 2.
     assert result["status"] == "no_progress"
+
+
+def test_explicit_reobservation_stop_requires_safe_progress():
+    gt = np.ones((7, 9), np.uint8)
+    audit = ObservedAudit(gt, np.ones_like(gt, bool), (3, 1), 1., radius=0.)
+    path = [(3, 1), (3, 2), (3, 3)]
+    assert audit.score(path, (3, 7))['status'] == 'incomplete_path'
+    assert audit.score(path, (3, 7), stop_for_reobserve=True)['status'] == 'safe_to_reobserve'
+    assert audit.score(path[:1], (3, 7), stop_for_reobserve=True)['status'] == 'incomplete_path'
+    assert audit.score([(3, 1), (2, 1)], (3, 7), stop_for_reobserve=True)['status'] == 'incomplete_path'
+    gt[3, 2] = 2
+    blocked = ObservedAudit(gt, np.ones_like(gt, bool), (3, 1), 1., radius=0.)
+    assert blocked.score(path, (3, 7), stop_for_reobserve=True)['status'] == 'visible_collision'

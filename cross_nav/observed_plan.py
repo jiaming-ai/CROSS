@@ -44,7 +44,12 @@ class ObservedAudit:
         progress = distance - np.linalg.norm(q - goal, axis=1) * self.res
         return bool(np.any((travel >= self.min_travel) & (progress >= self.min_progress)))
 
-    def score(self, path, goal):
+    def score(self, path, goal, *, stop_for_reobserve=False):
+        """Audit a segment; an explicit local stop must still make useful progress.
+
+        ``stop_for_reobserve`` declares a planner action, not an inferred success
+        for every truncated path. Report its use as observed-local-stop-v2.
+        """
         if path is None:
             return {"status": "no_path", "travel": 0., "progress": 0.}
         if not len(path) or tuple(path[0]) != self.start:
@@ -78,4 +83,7 @@ class ObservedAudit:
             previous = cell
             if cell == tuple(goal):
                 return result("goal_reached")
-        return result("incomplete_path")
+        out = result("incomplete_path")
+        if stop_for_reobserve and out["travel"] >= self.min_travel and out["progress"] >= self.min_progress:
+            out["status"] = "safe_to_reobserve"
+        return out
