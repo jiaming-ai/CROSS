@@ -153,6 +153,7 @@ header p { color: var(--muted); max-width: 70ch; margin: 8px 0 0; }
       Unknown ground truth cannot establish route safety; success uses the historical 0.1 m collision check.
       Low uncertainty alone does not establish obstacle-free space.</p>
     <div class="meta" id="meta"></div><p id="run-note"></p>
+    <div id="planability-audit" class="overview tablewrap"></div>
   </header>
 
   <nav class="tabs" role="tablist">
@@ -257,6 +258,24 @@ async function boot() {
   $("#meta").innerHTML = `<span>checkpoint <b>${manifest.checkpoint}</b></span><span>backbone <b>${manifest.backbone}</b></span>
     <span>windows <b>${manifest.items.length}</b></span><span>head <b>30.0 M params, lifted multi-layer</b></span><span>planning goals <b>${planStats ? planStats.total.oracle.head.n : '–'}</b></span>`;
   $("#run-note").textContent = manifest.note || "";
+  try {
+    const audit = await readData("data/planability.json");
+    const entries = Object.entries(audit.totals);
+    const counts = entries[0]?.[1];
+    if (counts) {
+      const labels = {head: "Thresholded head", soft_risk: "Soft risk", soft_uncertainty: "Soft risk + uncertainty",
+        soft_geometry_fusion: "Soft risk + geometry", gt_known_diagnostic: "GT diagnostic ceiling"};
+      $("#planability-audit").innerHTML = `<table><caption>Exact-start planability audit · mono inputs · ${audit.radius} m robot radius.
+        ${counts.candidates} candidates: ${counts.planable} planable, ${counts.unplanable} unplanable, ${counts.unknown} unknown feasibility.
+        Start is not moved; footprint clearance and corner rules are consistent. Routes through unknown GT do not count as verified success.
+        Goal source: ${audit.goal_source === "historical" ? "the historical sampled goals" : "unfiltered candidates"}.
+        Target: more than 90% among planable goals. GT diagnostic uses labels and is not a model result.</caption>
+        <thead><tr><th>method</th><th>verified success / planable</th><th>success rate</th><th>collision</th><th>unverified path</th><th>no path</th></tr></thead>
+        <tbody>${entries.map(([name, x]) => `<tr><td>${labels[name] || name}</td><td>${x.outcomes.success} / ${x.planable}</td>
+        <td>${x.success_rate === null ? "—" : (100*x.success_rate).toFixed(1)+"%"}</td><td>${x.outcomes.collision}</td>
+        <td>${x.outcomes.unknown_path}</td><td>${x.outcomes.no_path}</td></tr>`).join("")}</tbody></table>`;
+    }
+  } catch (e) { $("#planability-audit").textContent = "Exact-start planability audit not included in this export."; }
   $("#uncertainty-kind").textContent = manifest.uncertainty_kind === "attenuated"
     ? "a learned attenuation score (1 minus the occupancy loss weight), not an error probability"
     : "learned P(occupancy decision is wrong)";

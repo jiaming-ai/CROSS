@@ -103,7 +103,7 @@ def astar(ok: np.ndarray, start, goal):
 
 
 @njit(cache=True)
-def _dijkstra(ok, sr, sc, cost):
+def _dijkstra(ok, sr, sc, cost, allow_corner_cutting=True):
     """8-connected shortest-path field from (sr, sc) over ok cells: distance (cells) and parent (flat index, -1)."""
     H, W = ok.shape
     dist = np.full((H, W), np.inf)
@@ -122,6 +122,8 @@ def _dijkstra(ok, sr, sc, cost):
                 nr, nc = r + dr, c + dc
                 if nr < 0 or nr >= H or nc < 0 or nc >= W or not ok[nr, nc]:
                     continue
+                if not allow_corner_cutting and dr != 0 and dc != 0 and (not ok[r, nc] or not ok[nr, c]):
+                    continue
                 nd = d + (1.4142135623730951 if dr != 0 and dc != 0 else 1.0) * (cost[r, c] + cost[nr, nc]) * 0.5
                 if nd < dist[nr, nc]:
                     dist[nr, nc] = nd
@@ -133,7 +135,7 @@ def _dijkstra(ok, sr, sc, cost):
 class Field:
     """Shortest paths from one start to any goal (one Dijkstra run)."""
 
-    def __init__(self, ok, start, cost=None):
+    def __init__(self, ok, start, cost=None, allow_corner_cutting=True):
         if cost is None:
             cost = np.ones(ok.shape, np.float64)
         cost = np.asarray(cost, dtype=np.float64)
@@ -143,7 +145,7 @@ class Field:
         self.W = ok.shape[1]
         self.valid = bool(ok[start])
         if self.valid:
-            self.dist, self.parent = _dijkstra(ok, int(start[0]), int(start[1]), cost)
+            self.dist, self.parent = _dijkstra(ok, int(start[0]), int(start[1]), cost, allow_corner_cutting)
 
     def path(self, goal):
         if not self.valid or not np.isfinite(self.dist[goal]):

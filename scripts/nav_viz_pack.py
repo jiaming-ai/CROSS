@@ -18,6 +18,14 @@ def uri(p: Path):
 
 
 man = json.load(open(viz / "win" / "manifest.json"))
+audit = viz / "planability.json"
+if audit.exists():
+    # Keep the audit small: per-goal paths stay in the standalone JSON artifact.
+    raw = json.loads(audit.read_text())
+    json.dump({k: raw[k] for k in ("protocol", "goal_source", "radius", "totals")},
+              open(data / "planability.json", "w"))
+elif (data / "planability.json").exists():
+    (data / "planability.json").unlink()  # do not display an audit from an older pack
 packs = {}
 for it in man["items"]:
     d = viz / "win" / it["key"]

@@ -76,3 +76,28 @@ error-probability calibration metrics are omitted for this mode. The regularizer
 prevents all cells becoming uncertain, and `s >= 0` keeps the objective bounded
 below even at zero BCE. No target exists for unlabelled cells. This objective
 alone does not guarantee high uncertainty throughout unseen space.
+
+## Explicit planability audit
+
+`cross_nav.planability.evaluate_goals` evaluates a supplied, fixed candidate list
+without snapping the start. A goal is **planable** when a known-free route exists
+for the full robot footprint, **unplanable** when no route exists even treating
+unknown labels as free, and **unknown** otherwise. Eight-connected paths cannot
+cut blocked corners. The same radius is used for feasibility and route checking;
+outside-grid space is blocked. Missing labels along a predicted path produce an
+`unknown_path` outcome rather than verified success. All planable goals remain
+in the denominator, including planner abstentions. A zero denominator yields
+`None`, not 100% success. Historical scores remain unchanged.
+
+```bash
+python scripts/nav_planability_eval.py VIZ/win/arrays --out VIZ/planability.json
+python scripts/nav_viz_pack.py VIZ PAGE 'checkpoint with planability audit'
+```
+
+By default candidates are sampled uniformly in the 2–8 m annulus before reading
+GT or predictions. `--goal-source historical` instead audits the old sampled
+goals from the exact start, helping diagnose differences between protocols.
+The viewer shows feasibility counts and verified success separately from the
+historical score. The GT-known diagnostic is a label-based ceiling, not a model
+result. Sparse labels can leave few verifiably planable goals; use sufficiently
+complete held-out ground truth for conclusions, and report the denominator.
