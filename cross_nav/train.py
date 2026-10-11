@@ -32,6 +32,7 @@ from .bev import FREE, OCC
 from .data import NavStream
 from .model import NavModel
 from .uncertainty import error_loss, attenuated_bce
+from .footprint_loss import footprint_bce
 
 
 def gt_log_scale(depth_pred: torch.Tensor, depth_gt: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
@@ -206,6 +207,14 @@ def main():
         attenuated = model.bev_head.uncertainty_mode == "attenuated"
         l_bev, parts = bev_losses(logits, batch["bev"], lc.get("w_dice", 0.5), lc.get("pos_weight", 1.0),
                                  pred["error_logits"] if attenuated else None, lc.get("attenuation_beta", 0.3))
+        if lc.get("w_footprint", 0.0) > 0:
+            radius = lc.get("footprint_radius", 0.2)
+            if radius < 0:
+                raise ValueError("footprint_radius must be nonnegative")
+            cells = int(round(radius / dc.get("bev", {}).get("res", 0.05)))
+            l_fp, fraction = footprint_bce(logits, batch["bev"], cells)
+            l_bev = l_bev + lc["w_footprint"] * l_fp
+            parts.update(loss_footprint=l_fp.detach(), footprint_known_fraction=fraction)
         if pred["error_logits"] is not None and not attenuated:
             l_err = error_loss(pred["error_logits"], logits, batch["bev"])
             l_bev = l_bev + lc.get("w_error", 1.0) * l_err
