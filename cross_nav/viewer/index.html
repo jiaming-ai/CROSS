@@ -231,7 +231,7 @@ const DS_INFO = {
   val_drive: { group: "Driving (Waymo / PandaSet validation, LiDAR GT)", names: { waymo: "Waymo", pandaset: "PandaSet" } },
   val_v3: { group: "Validation scenes (held out)", names: { scannet: "ScanNet", scannetpp: "ScanNet++", arkitscenes: "ARKitScenes", hypersim: "Hypersim", tartanair2: "TartanAir2" } },
 };
-const state = { ds: null, cond: "oracle", zoom: true, seen: false };
+const state = { ds: null, cond: "mono", zoom: true, seen: false };
 let manifest = null; const cache = {};
 const $ = (s) => document.querySelector(s);
 const fmt = (v) => v == null ? "–" : v.toFixed(3);
@@ -378,11 +378,11 @@ async function render() {
       </div>
       ${tileHTML("Ground truth", "GT paths", im.gt, im.seen, bar, gtSvg(pl))}
       ${tileHTML("Prediction", "P(occ)", o ? im.po : im.pm, im.seen, bar, "")}
+      ${(o ? im.uo : im.um) ? tileHTML("Predicted uncertainty", manifest.uncertainty_kind === "attenuated" ? "1 − loss weight: 0 → 1" : "P(error): dark 0 → yellow 1", o ? im.uo : im.um, im.seen, bar, "") : `<div class="tilebox"><div class="tilehead">Predicted uncertainty</div><p class="note">Unavailable in this checkpoint/export.</p></div>`}
       ${tileHTML("Thresholded head", "planner", o ? im.pt : im.ptm, im.seen, bar, planSvg(pl, "head"))}
       ${tileHTML("Geometric", "unknown free", o ? im.geo : im.geom, im.seen, bar, planSvg(pl, "geom"))}
       ${tileHTML("Head errors", `mIoU ${fmt(m.all?.[0])}`, o ? im.err : im.errm, im.seen, bar, "")}
-      ${im.uo ? tileHTML("Uncertainty", manifest.uncertainty_kind === "attenuated" ? "1 − loss weight: 0 → 1" : "P(error): dark 0 → yellow 1", o ? im.uo : im.um, im.seen, bar, "") : ""}
-      ${im.uo ? tileHTML("Selective BEV", "unknown if uncertainty > 0.2", o ? im.uo_selective : im.um_selective, im.seen, bar, "") : ""}
+      ${(o ? im.uo_selective : im.um_selective) ? tileHTML("Selective BEV", "unknown if uncertainty > 0.2", o ? im.uo_selective : im.um_selective, im.seen, bar, "") : ""}
       ${pl?.paths?.soft_risk ? tileHTML("Soft-risk planner", "footprint risk", o ? im.po : im.pm, im.seen, bar, planSvg(pl, "soft_risk")) : ""}
       ${pl?.paths?.soft_uncertainty ? tileHTML("Uncertainty planner", "risk + uncertainty", o ? im.po : im.pm, im.seen, bar, planSvg(pl, "soft_uncertainty")) : ""}`;
     el.querySelectorAll(".tile").forEach(t => t.onclick = () => {

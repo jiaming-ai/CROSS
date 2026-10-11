@@ -1,0 +1,80 @@
+"""Build a standalone, CPU-only uncertainty inspector from saved prediction arrays.
+
+Usage: python scripts/nav_uncertainty_page.py --windows windows.json --run 'Error=/path/win' \
+    --run 'Attenuation=/other/win' --out page.html
+The first three windows per scene are selected in manifest order, before inspecting predictions.
+"""
+import argparse
+import base64
+import io
+import json
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+
+def png(a):
+    b = io.BytesIO()
+    Image.fromarray(a).save(b, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(b.getvalue()).decode()
+
+
+def main():
+    p = argparse.ArgumentParser(__doc__)
+    p.add_argument("--windows", type=Path, required=True)
+    p.add_argument("--run", action="append", required=True, help="Label=export/win")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--kind", action="append", choices=("error", "attenuated", "unavailable"), help="Explicit uncertainty kind per run if export is still running")
+    p.add_argument("--per-scene", type=int, default=3)
+    p.add_argument("--note", default="")
+    a = p.parse_args()
+    windows = json.loads(a.windows.read_text())["windows"]
+    runs = [(label, Path(path)) for label, path in (v.split("=", 1) for v in a.run)]
+    if a.kind and len(a.kind) != len(runs):
+        p.error("Supply one --kind per --run")
+    counts, rows = {}, []
+    for i, w in enumerate(windows):
+        scene, seq, frame = w["frames"][0]
+        name = Path(scene).name
+        if counts.get(name, 0) >= a.per_scene:
+            continue
+        files = [r / "arrays" / f"{a.windows.stem}_{w['dataset']}_{i}.npz" for _, r in runs]
+        if not all(f.exists() for f in files):
+            continue
+        counts[name] = counts.get(name, 0) + 1
+        predictions = []
+        gt = None
+        for (label, root), f in zip(runs, files):
+            with np.load(f) as d:
+                if gt is not None:
+                    assert np.array_equal(gt, d["gt"]), "Paired GT mismatch"
+                gt = d["gt"].copy()
+                fields = {}
+                for k in ("pm", "po", "um", "uo"):
+                    fields[k] = png(np.rint(np.clip(d[k], 0, 1) * 255).astype(np.uint8)) if k in d else None
+                predictions.append(dict(label=label, **fields))
+        refs = []
+        for sc, sq, fi in w["frames"]:
+            folder = Path(sc) / sq / "rgb"
+            candidates = [folder / f"{fi:06d}{ext}" for ext in (".jpg", ".png")]
+            existing = next((x for x in candidates if x.exists()), None)
+            if existing:
+                im = Image.open(existing).convert("RGB"); im.thumbnail((320, 240))
+                refs.append(png(np.asarray(im)))
+        rows.append(dict(id=i, scene=name, frame=frame, views=len(w["frames"]), refs=refs,
+                         gt=png(gt.astype(np.uint8)), predictions=predictions))
+    assert rows, "No paired caches available"
+    kinds = []
+    for ri, (label, root) in enumerate(runs):
+        m = json.loads((root / "manifest.json").read_text()) if (root / "manifest.json").exists() else {}
+        kinds.append(dict(label=label, kind=m.get("uncertainty_kind", a.kind[ri] if a.kind else "unavailable"), checkpoint=m.get("heads", str(root))))
+    payload = json.dumps(dict(rows=rows, runs=kinds, note=a.note, source=str(a.windows))).replace("</", "<\\/")
+    template = Path(__file__).resolve().parents[1] / "cross_nav/viewer/uncertainty.html"
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    a.out.write_text(template.read_text().replace("__PAYLOAD__", payload))
+    print(json.dumps({"output": str(a.out), "examples": len(rows), "scenes": counts, "bytes": a.out.stat().st_size}))
+
+
+if __name__ == "__main__":
+    main()
