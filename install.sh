@@ -5,8 +5,10 @@ set -euo pipefail
 #
 # Usage:
 #   bash install.sh              # Full install (CUDA 12.4), RGB-D mode
-#   bash install.sh --stereo     # + stereo mode (VGGT-Omega feed-forward estimator; weights need a Hugging Face login
-#                                #   with access to facebook/VGGT-Omega)
+#   bash install.sh --stereo     # + stereo mode (VGGT-Omega feed-forward estimator) with the fine-tuned VGGT-Omega
+#                                #   checkpoint (public: huggingface.co/Jamie-nus/VGGT-Omega-CROSS)
+#   bash install.sh --stereo --vggt=released  # the released VGGT-Omega checkpoint instead (gated: needs a Hugging Face
+#                                #   login with access to facebook/VGGT-Omega); --vggt=both downloads both
 #   bash install.sh --stereo --da3   # + the optional Depth Anything 3 backend of the stereo mode
 #   bash install.sh --mono       # + mono mode and visual odometry (DPVO built from source with the CUDA toolkit of
 #                                #   PyTorch, Depth Anything 3, LightGlue); implies --stereo --da3
@@ -18,6 +20,7 @@ CPU_ONLY=false
 STEREO=false
 DA3=false
 MONO=false
+VGGT=finetuned      # VGGT-Omega checkpoint: finetuned | released | both
 
 for arg in "$@"; do
     case "$arg" in
@@ -25,8 +28,13 @@ for arg in "$@"; do
         --stereo) STEREO=true ;;
         --da3) DA3=true; STEREO=true ;;
         --mono) MONO=true; DA3=true; STEREO=true ;;
+        --vggt=*) VGGT="${arg#--vggt=}" ;;
     esac
 done
+case "$VGGT" in
+    finetuned|released|both) ;;
+    *) echo "!! --vggt=finetuned | released | both, not '$VGGT'"; exit 1 ;;
+esac
 
 echo "==> CROSS installer"
 
@@ -98,9 +106,15 @@ if [ "$STEREO" = true ]; then
     echo "==> Installing the stereo mode (feed-forward estimator, vendored under third_party/)..."
     uv pip install -e ".[stereo]"
     uv pip install --no-deps -e third_party/vggt-omega
-    mkdir -p models/VGGT-Omega
-    if [ ! -f models/VGGT-Omega/vggt_omega_1b_512.pt ]; then
-        echo "    Downloading VGGT-Omega-1B-512 (gated: request access at https://huggingface.co/facebook/VGGT-Omega)..."
+    # CROSS uses the fine-tuned checkpoint when it is installed (with its settings, configs/vggt_finetuned.yaml), else
+    # the released one with the default settings; --set pose_est.ff.checkpoint=released picks the released one
+    if [ "$VGGT" != released ] && [ ! -f models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt ]; then
+        echo "    Downloading the fine-tuned VGGT-Omega-1B-512 (https://huggingface.co/Jamie-nus/VGGT-Omega-CROSS, 2.3 GB)..."
+        .venv/bin/python -c "from huggingface_hub import hf_hub_download; hf_hub_download('Jamie-nus/VGGT-Omega-CROSS', 'vggt_omega_cross_1b_512.pt', local_dir='models/VGGT-Omega-CROSS')" \
+            || echo "    !! download failed: place the file at models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt"
+    fi
+    if [ "$VGGT" != finetuned ] && [ ! -f models/VGGT-Omega/vggt_omega_1b_512.pt ]; then
+        echo "    Downloading the released VGGT-Omega-1B-512 (gated: request access at https://huggingface.co/facebook/VGGT-Omega)..."
         .venv/bin/python -c "from huggingface_hub import hf_hub_download; hf_hub_download('facebook/VGGT-Omega', 'vggt_omega_1b_512.pt', local_dir='models/VGGT-Omega')" \
             || echo "    !! download failed: log in (huggingface-cli login) after access is granted, or place the file at models/VGGT-Omega/vggt_omega_1b_512.pt"
     fi

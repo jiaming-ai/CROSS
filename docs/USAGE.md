@@ -108,15 +108,26 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | file | use |
 |---|---|
 | `configs/stereo.yaml` | stereo mode preset (loaded by `--mode stereo`): VGGT-Omega, observation gating |
+| `configs/vggt_finetuned.yaml` | the fine-tuned VGGT-Omega's overlay (loaded with every mode that runs VGGT-Omega; applies only with a fine-tuned checkpoint, see below): the learned covisibility head |
 | `configs/realtime.yaml` | opt-in (`--config`) for real-time operation: adaptive pose-graph optimisation, short ones synchronous (as offline), long ones in a background worker (see "Background pose-graph optimisation"); not for offline runs and benchmarks |
 | `configs/stereo_lowband.yaml` | opt-in (`--config`) for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away), not with `--fast` |
-| `configs/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius); `outdoor_noown.yaml` is its variant for the same scale |
+| `configs/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius) and, with the fine-tuned VGGT-Omega, a looser covisibility gate (0.10); `outdoor_noown.yaml` is its variant for the same scale |
 | `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
 | `configs/mono_*.json` | mono profiles: the arguments of `python -m cross.mono.run`. `mono_benchmark_10hz.json` for offline runs at 10 Hz, `mono_streaming_dpvo_v2_20hz.json` for real time; select with `--mono-profile`, extra arguments with `--mono-args` |
 
-Override one value with `--set section.key=value` (the `scripts/` runners; `run.py` has no `--set`) or put it in a small
+Override one value with `--set section.key=value` (`run.py` and the `scripts/` runners) or put it in a small
 YAML file and pass it with `--config`. Some options (charts, session recovery, historical retrieval slots, ...) are off by default and are
 enabled by the mono profiles.
+
+**VGGT-Omega checkpoint.** `pose_est.ff.checkpoint` is `auto` by default: the fine-tuned checkpoint
+(`models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt`, installed by `install.sh --stereo`) when it is there, else the
+released one (`models/VGGT-Omega/vggt_omega_1b_512.pt`, `install.sh --vggt=released`). `finetuned`, `released` or a path
+select one (`--set pose_est.ff.checkpoint=released`; `scripts/map_and_reloc.py --checkpoint released`). A config file's
+top-level `vggt_finetuned:` section holds settings for the fine-tuned model: it applies after the rest of its file when
+the checkpoint in use is fine-tuned, i.e. carries a `covis_head_map` (install.sh's default, or any `vggt_ft` checkpoint
+calibrated with `calibrate_covis.py --map_geo`). The released checkpoint runs with the settings outside these sections.
+`configs/vggt_finetuned.yaml` turns on the learned covisibility head (`covis_source: auto`; `configs/vgio.yaml` keeps the
+geometric score for the VGGT-inertial odometry); `configs/outdoor.yaml` lowers the covisibility gate to 0.10.
 
 **Keyframe quality filter** (`mapping.keyframe_quality`, `cross/core/kf_quality.py`). Views that are mostly blocked or
 empty are not stored as permanent keyframes: a person or object right in front of the camera, a wall or shelf at arm's

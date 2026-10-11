@@ -38,7 +38,7 @@ class BuildConfig:
     test_every: int = 8             # every n-th keyframe (by id) is held out for evaluation (0: none)
     depth: str = "auto"             # auto | sensor | sgbm | vggt | vggt_sgbm | fused | fstereo | none (cross_world/depth.py)
     depth_workers: int = 8
-    vggt_checkpoint: str = "models/VGGT-Omega/vggt_omega_1b_512.pt"
+    vggt_checkpoint: str = "auto"   # auto | finetuned | released | a path (cross.core.config.resolve_ff_checkpoint)
     fstereo_checkpoint: str = ""    # FoundationStereo model_best_bp2.pth (cfg.yaml next to it); FOUNDATION_STEREO_REPO
     fstereo_iters: int = 32
     max_depth: float = 0.0          # 0: no clipping

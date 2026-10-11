@@ -27,7 +27,7 @@ import time
 import numpy as np
 from loguru import logger
 
-from cross.core.config import SystemConfig, load_config
+from cross.core.config import load_config
 from cross.core.types import Camera
 from cross.pipeline import add_session_args, mode_config_files, session_factory
 from cross.utils.profile import print_timing_registry
@@ -86,6 +86,9 @@ def main():
     parser.add_argument("--snr", type=float, default=None, help="Signal-to-noise ratio for R3D datasets")
     parser.add_argument("--async", dest="async_update", action="store_true", help="Enable async step pipeline")
     parser.add_argument("--config", nargs="*", default=[], help="YAML config file(s), merged left to right")
+    parser.add_argument("--set", nargs="*", action="extend", default=[],
+                        help="config overrides section.sub.key=value (YAML-parsed), after --config; e.g. "
+                             "pose_est.ff.checkpoint=released (the released VGGT-Omega instead of the fine-tuned one)")
     add_session_args(parser)   # --mode rgbd | stereo | mono, --odometry external | visual, --dpvo-checkpoint, ...
     args = parser.parse_args()
     args.mode = args.mode or "rgbd"
@@ -112,10 +115,11 @@ def main():
 
     # Build config: layer YAML files, then apply CLI overrides
     # the mode's shipped configuration files (configs/stereo.yaml, + the --fast preset), then the user's
-    configs = mode_config_files(args.mode, args.odometry, args.fast) + list(args.config)
+    configs = mode_config_files(args.mode, args.odometry, args.fast, mono_estimator=args.mono_estimator) \
+        + list(args.config)
     if args.fast and args.mode != "stereo":
         logger.warning("--fast only has a preset for the stereo mode; ignored")
-    config = load_config(*configs) if configs else SystemConfig()
+    config = load_config(*configs, sets=args.set)
     if args.async_update:
         config.async_update = True
 

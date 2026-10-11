@@ -35,7 +35,7 @@ if "--out" in sys.argv and "CROSS_LOG_FILE" not in os.environ:
     _out.mkdir(parents=True, exist_ok=True)
     os.environ["CROSS_LOG_FILE"] = str(_out / "system.log")
 
-from cross.core.config import FFBackend, PoseEstType, SystemConfig, load_config
+from cross.core.config import PoseEstType, SystemConfig, load_config
 from cross.core.system import System
 from cross.core.types import Camera
 from cross.db import store as map_store
@@ -64,7 +64,13 @@ def make_config(args) -> SystemConfig:
     configs = mode_config_files(args.mode, args.odometry, getattr(args, "fast", False) and args.estimator == "ff",
                                 mono_estimator=getattr(args, "mono_estimator", None))
     configs += list(args.config or [])
-    cfg = load_config(*configs) if configs else SystemConfig()
+    # the feed-forward model goes in with the overrides: the fine-tuned VGGT-Omega's settings (the files' vggt_finetuned
+    # sections) follow the checkpoint in use (cross.core.config.load_config)
+    sets = list(getattr(args, "set", None) or [])
+    if args.estimator == "ff":
+        sets = [f"pose_est.ff.backend={args.backend}"] + \
+            ([f"pose_est.ff.checkpoint={args.checkpoint}"] if args.checkpoint else []) + sets
+    cfg = load_config(*configs, sets=sets)
     cfg.async_update = False
     cfg.mapping.loop_closure.intra_enabled = not getattr(args, "no_intra_lc", False)
     lc = cfg.mapping.loop_closure
@@ -75,10 +81,7 @@ def make_config(args) -> SystemConfig:
         lc.noise_file = args.noise_config
     if args.estimator == "ff":
         cfg.pose_est.type = PoseEstType.FF
-        ff = cfg.pose_est.ff
-        ff.backend = FFBackend(args.backend)
-        ff.checkpoint = args.checkpoint or (
-            "models/VGGT-Omega/vggt_omega_1b_512.pt" if args.backend == "vggt_omega" else "models/DA3-LARGE-1.1")
+        ff = cfg.pose_est.ff         # backend and checkpoint: above
         if args.max_refs is not None:
             ff.max_refs = args.max_refs
         if args.n_ref_anchors is not None:
@@ -415,7 +418,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", required=True)
     ap.add_argument("--estimator", choices=["ff", "pnp"], default="ff")
     ap.add_argument("--backend", choices=["vggt_omega", "da3"], default="vggt_omega")
-    ap.add_argument("--checkpoint", default=None)
+    ap.add_argument("--checkpoint", default=None,
+                    help="feed-forward model: a path, or finetuned / released (install.sh's VGGT-Omega checkpoints); "
+                         "default: the fine-tuned VGGT-Omega when installed, else the released one (DA3: models/DA3-LARGE-1.1)")
     ap.add_argument("--config", nargs="*", default=[])
     ap.add_argument("--depth-source", default="none", help="depth for keyframes when using ff (none|sgbm|gt)")
     ap.add_argument("--pnp-depth", default="sgbm", help="depth source for the PnP baseline (sgbm|gt)")

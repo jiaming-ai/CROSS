@@ -318,7 +318,7 @@ def make_config(args) -> SystemConfig:
     cfg.pose_est.type = PoseEstType.FF
     ff = cfg.pose_est.ff
     ff.backend = FFBackend(args.backend)
-    ff.checkpoint = args.checkpoint or ("models/VGGT-Omega/vggt_omega_1b_512.pt" if args.backend == "vggt_omega" else "models/DA3-LARGE-1.1")
+    ff.checkpoint = args.checkpoint or "auto"      # install.sh's VGGT-Omega (fine-tuned, else released) / DA3
     ff.max_refs = args.max_refs
     ff.n_ref_anchors = args.n_ref_anchors
     cfg.pose_est.obs_min_translation = args.obs_min_translation   # observation gating (generic option, set for the stereo estimator as before)

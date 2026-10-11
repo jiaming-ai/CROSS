@@ -11,4 +11,5 @@ pose_est:
   obs_max_interval_steps: 3
   ff:
     backend: vggt_omega
-    checkpoint: models/VGGT-Omega/vggt_omega_1b_512.pt
+    # checkpoint "auto" (the default): the fine-tuned VGGT-Omega when installed, else the released one; with the
+    # fine-tuned one configs/vggt_finetuned.yaml applies (cross.core.config.load_config)
