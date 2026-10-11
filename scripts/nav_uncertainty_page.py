@@ -20,6 +20,27 @@ def png(a):
     return "data:image/png;base64," + base64.b64encode(b.getvalue()).decode()
 
 
+
+def add_supplement_scores(supplement, scores):
+    """Add saved observed-prefix outcomes without changing example predictions."""
+    if scores and not supplement:
+        raise ValueError("Supplemental score updates require --supplement")
+    for value in scores:
+        label, path = value.split("=", 1)
+        raw = json.loads(Path(path).read_text())
+        if raw["protocol"] != "observed-prefix-v1" or raw["counts"]["local_opportunity"] != supplement["denominator"]:
+            raise ValueError("Supplemental protocol or denominator mismatch")
+        for method, result in raw["methods"].items():
+            name = label + " / " + {"soft_risk": "occupancy risk", "soft_uncertainty": "risk + uncertainty"}.get(method, method)
+            if sum(result["outcomes"].values()) != supplement["denominator"]:
+                raise ValueError("Supplemental outcome counts do not sum to denominator")
+            supplement["rows"] = [r for r in supplement["rows"] if r["label"] != name]
+            supplement["rows"].append(dict(label=name, outcomes=result["outcomes"]))
+        if path not in supplement["sources"]:
+            supplement["sources"].append(path)
+    return supplement
+
+
 def main():
     p = argparse.ArgumentParser(__doc__)
     p.add_argument("--windows", type=Path, required=True)
@@ -28,6 +49,7 @@ def main():
     p.add_argument("--kind", action="append", choices=("error", "attenuated", "unavailable"), help="Explicit uncertainty kind per run if export is still running")
     p.add_argument("--per-scene", type=int, default=3)
     p.add_argument("--note", default="")
+    p.add_argument("--supplement-score", action="append", default=[], help="Label=observed_plan.json; append verified outcomes to --supplement")
     p.add_argument("--supplement", type=Path, help="JSON containing supplementary scores and embedded failure figures")
     p.add_argument("--observed-root", type=Path, help="Directory of evaluation-only observed masks, named INDEX.npz")
     p.add_argument("--observed-score", action="append", default=[], help="Label=observed_plan.json")
@@ -91,7 +113,7 @@ def main():
         label, path = value.split("=", 1)
         raw = json.loads(Path(path).read_text())
         observed_scores.append(dict(label=label, source=path, **{k: v for k, v in raw.items() if k != "records"}))
-    payload = json.dumps(dict(supplement=json.loads(a.supplement.read_text()) if a.supplement else None, observed_scores=observed_scores, observed_root=str(a.observed_root) if a.observed_root else None, rows=rows, runs=kinds, scores=scores, note=a.note, source=str(a.windows), links=[dict(label=v.split("=", 1)[0], href=v.split("=", 1)[1]) for v in a.related_page])).replace("</", "<\\/")
+    payload = json.dumps(dict(supplement=add_supplement_scores(json.loads(a.supplement.read_text()) if a.supplement else None, a.supplement_score), observed_scores=observed_scores, observed_root=str(a.observed_root) if a.observed_root else None, rows=rows, runs=kinds, scores=scores, note=a.note, source=str(a.windows), links=[dict(label=v.split("=", 1)[0], href=v.split("=", 1)[1]) for v in a.related_page])).replace("</", "<\\/")
     template = Path(__file__).resolve().parents[1] / "cross_nav/viewer/uncertainty.html"
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(template.read_text().replace("__PAYLOAD__", payload))
