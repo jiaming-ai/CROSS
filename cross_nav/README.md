@@ -163,3 +163,62 @@ are not evaluation results.
 Use `nav_planability_eval.py --condition oracle` only to diagnose the effect of
 scale/gravity errors on the same candidates. The default mono condition remains
 the deployment score; oracle results are labelled separately.
+
+## Observability and local re-observation planning
+
+An optional full BEV observability head predicts which cells the input views
+observe. This differs from occupancy uncertainty: a likely occupied cell may
+still be unobserved, and an observed cell may have an uncertain occupancy label.
+Wider temporal windows can supervise occupancy during training; inference uses
+only the supplied current and past views.
+
+`BEVPredictor` can run both heads on the same cached backbone features:
+
+```python
+predictor = BEVPredictor(
+    occupancy_checkpoint, "cuda",
+    visibility_path=observability_checkpoint,
+    visibility_gravity_path=observability_gravity_checkpoint,
+)
+output = predictor(**cross_pass_tensors)
+# output: prob, uncertainty, uncertainty_kind, observability, res, ...
+```
+
+The observability checkpoint must have `task="observability"`, its BEV weights,
+training configuration, and the frozen gravity-head hash. Supply the checkpoint
+containing that exact gravity head; loading rejects a mismatch. Occupancy and
+observability retain their respective gravity predictions. Existing callers
+without observability weights receive `observability=None`; their occupancy and
+uncertainty computations are unchanged. Reproducing the evaluated policy uses
+predicted metric scale and depth for every supplied view, without GT geometry or
+an IMU override. Actual CROSS keyframe retrieval remains a separate integration
+choice from the evaluated temporal input sampling.
+
+```python
+from cross_nav.local_plan import AdaptiveVisibilityPlanner
+
+p = output["prob"].cpu().numpy()
+v = output["observability"].cpu().numpy()
+planner = AdaptiveVisibilityPlanner(
+    p, v, start=(p.shape[0] // 2, p.shape[1] // 2), res=output["res"],
+    thresholds=(.75, .625, .5, .375, .25),
+    radius=.2, risk_weight=128., visibility_weight=16.,
+)
+segment = planner.plan(goal_cell)
+```
+
+The planner chooses the highest predicted visibility threshold that supports a
+route to the goal or a local waypoint with at least 1 m displacement and 0.5 m
+goal progress. `stop_for_reobserve` explicitly marks a local waypoint; the robot
+must observe and plan again there. `path=None` means no such predicted route was
+found. Confidence costs are heuristics, not calibrated collision probabilities.
+
+`ObservedAudit` scores the executed prefix up to the first unobserved full robot
+footprint, including side cells on diagonal steps. GT visibility is used only by
+this audit. In `observed-local-stop-v2`, a local stop counts after at least 1 m
+travel and 0.5 m goal progress; missed obstacles in unobserved space are excluded
+from this primary score. Report visible collisions, stalls, and no-path outcomes,
+and separately report globally unplanable, unknown-feasibility, and insufficient
+observed-horizon goals. This is local-segment evaluation, not closed-loop final
+goal completion. Its denominator and protocol differ from full-map planability
+evaluation and historical scores.
