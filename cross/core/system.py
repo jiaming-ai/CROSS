@@ -736,7 +736,8 @@ class System:
             "class_vars": class_vars,
             "current_atlas_id": self.current_atlas.id if hasattr(self, 'current_atlas') else None,
             # intrinsics of the stored keyframe images (after the mode's resize / crop) and the stereo rig: what a
-            # reader of the map needs to use its images geometrically (cross_world); load_map does not read it
+            # reader of the map needs to use its images geometrically (cross_world); load_map checks it against the
+            # session's camera (_use_map_camera)
             "camera": self._camera_record(),
         }
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
@@ -816,6 +817,42 @@ class System:
         return {"K": np.asarray(cam.K, dtype=np.float64).tolist(), "width": int(cam.frame_width),
                 "height": int(cam.frame_height),
                 "T_right_in_left": np.asarray(T, dtype=np.float64).tolist() if T is not None else None}
+
+    def _use_map_camera(self, record):
+        """A loaded map's camera (save_map "camera": the intrinsics of its stored images and its stereo rig) against
+        the session's.  The stored keyframe images are references of the session's passes, so they must show the same
+        camera at the same size: the session's images go through the same resize / crop as the map's, so a camera
+        recorded at another resolution with the same field of view passes, a different camera fails here.  A stereo
+        session must have the map's rig (stored right images are scale anchors with the session's calibration).  A
+        mono session in a stereo map (its left camera) needs nothing more: pairs of map references with their relative
+        pose anchor the metric scale (pose_est.ff.use_map_anchors).  Maps saved before the record existed are not
+        checked."""
+        if record is None or getattr(self, "camera", None) is None:
+            return
+        K = np.asarray(record["K"], dtype=np.float64)
+        size = (int(record["width"]), int(record["height"]))
+        mine = (int(self.camera.frame_width), int(self.camera.frame_height))
+        Ks = np.asarray(self.camera.K, dtype=np.float64)
+        # focal and principal point relative to the image width: 1 % is ~5 px at 512 px
+        dev = float(np.max(np.abs(Ks[[0, 1, 0, 1], [0, 1, 2, 2]] - K[[0, 1, 0, 1], [0, 1, 2, 2]]))) / max(1, size[0])
+        if size != mine or dev > 0.01:
+            raise ValueError(
+                f"The map was built with another camera: its images are {size[0]}x{size[1]} px with fx {K[0, 0]:.1f}, "
+                f"fy {K[1, 1]:.1f}, cx {K[0, 2]:.1f}, cy {K[1, 2]:.1f}; this session's are {mine[0]}x{mine[1]} px with "
+                f"fx {Ks[0, 0]:.1f}, fy {Ks[1, 1]:.1f}, cx {Ks[0, 2]:.1f}, cy {Ks[1, 2]:.1f} (after the mode's resize / "
+                f"crop).  Relocalize with the camera the map was built with (for a stereo map: its left camera) and "
+                f"the same pose_est.ff.image_resolution")
+        rig = record.get("T_right_in_left")
+        if rig is not None and self.T_right_in_left is not None:
+            rig = np.asarray(rig, dtype=np.float64)
+            T = np.asarray(self.T_right_in_left, dtype=np.float64)
+            d_t = float(np.linalg.norm(T[:3, 3] - rig[:3, 3])) / max(1e-9, float(np.linalg.norm(rig[:3, 3])))
+            d_r = float(np.degrees(np.arccos(np.clip((np.trace(T[:3, :3].T @ rig[:3, :3]) - 1) / 2, -1, 1))))
+            if d_t > 0.01 or d_r > 0.5:
+                raise ValueError(
+                    f"The map was built with another stereo rig (baseline {np.linalg.norm(rig[:3, 3]):.4f} m vs this "
+                    f"session's {np.linalg.norm(T[:3, 3]):.4f} m, {d_r:.2f} deg apart): its stored right images would "
+                    f"anchor the scale with the wrong calibration")
 
     def session_localized(self) -> bool:
         """Whether hypothesis 0 is expressed in the frame of the stored map.
@@ -920,6 +957,7 @@ class System:
         self._contra_pending.clear()
         self._last_retrieved_results = None
 
+        self._use_map_camera(save_data.get("camera"))
         if getattr(self, "_world_capture", None) is not None:
             self._world_capture.load(load_path)
         if getattr(self, "_geo", None) is not None and save_data.get("geo"):
