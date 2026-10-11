@@ -28,6 +28,8 @@ def main():
     p.add_argument("--kind", action="append", choices=("error", "attenuated", "unavailable"), help="Explicit uncertainty kind per run if export is still running")
     p.add_argument("--per-scene", type=int, default=3)
     p.add_argument("--note", default="")
+    p.add_argument("--observed-root", type=Path, help="Directory of evaluation-only observed masks, named INDEX.npz")
+    p.add_argument("--observed-score", action="append", default=[], help="Label=observed_plan.json")
     p.add_argument("--related-page", action="append", default=[], help="Label=relative.html; related input recipe")
     p.add_argument("--score", action="append", default=[], help="Label=planability.json; full benchmark summary, separate from shown examples")
     a = p.parse_args()
@@ -64,7 +66,13 @@ def main():
             if existing:
                 im = Image.open(existing).convert("RGB"); im.thumbnail((320, 240))
                 refs.append(png(np.asarray(im)))
-        rows.append(dict(id=i, scene=name, frame=frame, views=len(w["frames"]), refs=refs,
+        support = {}
+        if a.observed_root:
+            with np.load(a.observed_root / f"{i}.npz") as d:
+                for key in ("observed", "obstacle_surface_seen"):
+                    assert d[key].shape == gt.shape
+                    support[key] = png(d[key].astype(np.uint8) * 255)
+        rows.append(dict(**support, id=i, scene=name, frame=frame, views=len(w["frames"]), refs=refs,
                          gt=png(gt.astype(np.uint8)), predictions=predictions))
     assert rows, "No paired caches available"
     kinds = []
@@ -77,7 +85,12 @@ def main():
         raw = json.loads(Path(path).read_text())
         scores.append(dict(label=label, source=path, windows=len(raw["windows"]),
                            **{k: v for k, v in raw.items() if k != "windows"}))
-    payload = json.dumps(dict(rows=rows, runs=kinds, scores=scores, note=a.note, source=str(a.windows), links=[dict(label=v.split("=", 1)[0], href=v.split("=", 1)[1]) for v in a.related_page])).replace("</", "<\\/")
+    observed_scores = []
+    for value in a.observed_score:
+        label, path = value.split("=", 1)
+        raw = json.loads(Path(path).read_text())
+        observed_scores.append(dict(label=label, source=path, **{k: v for k, v in raw.items() if k != "records"}))
+    payload = json.dumps(dict(observed_scores=observed_scores, observed_root=str(a.observed_root) if a.observed_root else None, rows=rows, runs=kinds, scores=scores, note=a.note, source=str(a.windows), links=[dict(label=v.split("=", 1)[0], href=v.split("=", 1)[1]) for v in a.related_page])).replace("</", "<\\/")
     template = Path(__file__).resolve().parents[1] / "cross_nav/viewer/uncertainty.html"
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(template.read_text().replace("__PAYLOAD__", payload))
