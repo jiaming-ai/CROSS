@@ -1,0 +1,461 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CROSS Nav BEV Atlas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+[hidden] { display: none !important; }
+/* Layout: an occupancy-grid lab bench — controls on a top rail, then a column of evaluation windows, each a row of
+   camera evidence followed by same-size BEV tiles (GT, prediction, error) that line up across rows. */
+:root {
+  --bg: #eef0f2; --panel: #f9fafb; --ink: #1d2329; --muted: #5c6670; --line: #d3d8dd;
+  --accent: #c7841a; --accent-ink: #7a4d07; --chip: #e2e6ea; --chip-on: #1d2329; --chip-on-ink: #f4f6f8;
+  --grid-a: #dfe3e7; --grid-b: #e9ecef; --free: #eef1f3; --occ: #2b2f36; --fp: #e65a3c; --fn: #2896e6;
+  --ok: #2f9e5c; --warn: #d9a21b; --nopath: #8a949e; --gtpath: #6f42c1;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --tile: 236px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #15191d; --panel: #1c2126; --ink: #e5e9ed; --muted: #95a0aa; --line: #2e353c;
+  --accent: #e3a33a; --accent-ink: #f1c27a; --chip: #262c32; --chip-on: #e5e9ed; --chip-on-ink: #15191d;
+  --grid-a: #262c32; --grid-b: #2c3339; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #15191d; --panel: #1c2126; --ink: #e5e9ed; --muted: #95a0aa; --line: #2e353c;
+  --accent: #e3a33a; --accent-ink: #f1c27a; --chip: #262c32; --chip-on: #e5e9ed; --chip-on-ink: #15191d;
+  --grid-a: #262c32; --grid-b: #2c3339; color-scheme: dark }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 64px; }
+header h1 { font-family: var(--display); font-weight: 800; font-size: clamp(26px, 4vw, 38px); letter-spacing: -0.01em;
+  margin: 0; text-wrap: balance; }
+header p { color: var(--muted); max-width: 70ch; margin: 8px 0 0; }
+.meta { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.meta b { color: var(--ink); font-weight: 500; }
+.tabs { display: flex; gap: 4px; margin: 22px 0 0; border-bottom: 1px solid var(--line); }
+.tab { font-family: var(--display); font-weight: 700; font-size: 15px; background: none; border: 0; color: var(--muted);
+  padding: 10px 14px; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab:focus-visible, .chip:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rail { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 14px 12px;
+  display: grid; gap: 10px; border-bottom: 1px solid var(--line); }
+.row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+.label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; min-width: 74px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 500 13px var(--body); background: var(--chip); color: var(--ink); border: 0; border-radius: 999px;
+  padding: 5px 12px; cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--chip-on); color: var(--chip-on-ink); }
+.chip small { font-family: var(--mono); opacity: 0.7; margin-left: 4px; }
+.group-sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -2px; margin-right: 5px;
+  border: 1px solid var(--line); }
+.sw.unk { background: repeating-conic-gradient(var(--grid-a) 0 25%, var(--grid-b) 0 50%) 0 0 / 6px 6px; }
+.summary { font-family: var(--mono); font-size: 12px; color: var(--muted); padding-top: 12px; }
+.cards { display: grid; gap: 14px; margin-top: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.cam { min-width: 0; display: grid; gap: 10px; grid-column: 1 / -1; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); }
+.planline { display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--mono); font-size: 12px; margin-top: 6px; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
+.overview { margin-top: 14px; overflow-x: auto; }
+.overview table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.overview th, .overview td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.overview th:first-child, .overview td:first-child { text-align: left; }
+.overview th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+.overview tr.cur td { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.overview .best { font-weight: 600; color: var(--ink); }
+.overview caption { text-align: left; color: var(--muted); font-size: 12.5px; padding-bottom: 6px; caption-side: top; }
+.cam .f0 { width: 100%; border-radius: 3px; display: block; }
+.refs { display: flex; gap: 4px; flex-wrap: wrap; }
+.refs img { height: 38px; border-radius: 2px; opacity: 0.9; }
+.cap { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.cap .ds { color: var(--ink); font-weight: 600; }
+.tilebox { min-width: 0; }
+.tilehead { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600;
+  display: flex; flex-wrap: wrap; gap: 3px 8px; justify-content: space-between; margin-bottom: 4px; }
+.tilehead span:last-child { font-family: var(--mono); letter-spacing: 0; text-transform: none; color: var(--ink); }
+.tile { position: relative; aspect-ratio: 1; width: 100%; max-width: 100%; overflow: hidden; border-radius: 3px;
+  background: repeating-conic-gradient(var(--grid-a) 0 25%, var(--grid-b) 0 50%) 0 0 / 10px 10px; cursor: zoom-in; }
+.tile .inner { position: absolute; inset: 0; transform-origin: 50% 50%; transition: transform .15s; }
+.zoom .tile .inner { transform: scale(2); }
+.tile img { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.tile svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.tile .seen { opacity: 0.0; }
+.showseen .tile .seen { opacity: 1; }
+.cammark { position: absolute; left: 50%; top: 50%; width: 0; height: 0; transform: translate(-50%, -60%);
+  border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 10px solid var(--accent);
+  filter: drop-shadow(0 0 1px rgba(0,0,0,.6)); pointer-events: none; }
+.scalebar { position: absolute; left: 6px; bottom: 6px; height: 3px; background: var(--accent); pointer-events: none; }
+.scalebar::after { content: attr(data-l); position: absolute; left: 0; bottom: 5px; font: 500 10px var(--mono);
+  color: var(--accent-ink); white-space: nowrap; text-shadow: 0 0 2px var(--panel); }
+.metrics { display: flex; flex-wrap: wrap; gap: 4px 12px; font-family: var(--mono); font-size: 11.5px; margin-top: 6px;
+  color: var(--muted); font-variant-numeric: tabular-nums; }
+.metrics b { color: var(--ink); font-weight: 500; }
+.loading { color: var(--muted); padding: 30px 0; }
+.maps { display: grid; gap: 22px; margin-top: 16px; }
+.mapcard { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; display: grid; gap: 10px; }
+.mapcard h3 { font-family: var(--display); font-weight: 700; margin: 0; font-size: 18px; }
+.mapgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.mapgrid figure { margin: 0; min-width: 0; }
+.mapgrid figcaption { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+.mapimg { position: relative; background: repeating-conic-gradient(var(--grid-a) 0 25%, var(--grid-b) 0 50%) 0 0 / 10px 10px;
+  border-radius: 3px; overflow: hidden; cursor: zoom-in; }
+.mapimg img { display: block; width: 100%; height: auto; }
+.mapimg svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.maptable { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.maptable th, .maptable td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.maptable th:first-child, .maptable td:first-child { text-align: left; }
+.maptable th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.tablewrap { overflow-x: auto; }
+.note { color: var(--muted); font-size: 12.5px; max-width: 80ch; }
+/* inspector */
+.insp { position: fixed; inset: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 92%, transparent);
+  display: grid; place-items: center; padding: 20px; }
+.insp-box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; width: min(760px, 100%);
+  max-height: 100%; overflow: auto; display: grid; gap: 10px; }
+.insp-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.insp-top h4 { margin: 0; font-family: var(--display); font-size: 17px; }
+.close { background: var(--chip); color: var(--ink); border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; font: 500 13px var(--body); }
+.swipe { position: relative; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 4px; touch-action: none;
+  background: repeating-conic-gradient(var(--grid-a) 0 25%, var(--grid-b) 0 50%) 0 0 / 12px 12px; }
+.swipe.mapmode { aspect-ratio: auto; }
+.swipe img { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; object-fit: contain; }
+.swipe .top { clip-path: inset(0 0 0 var(--cut, 50%)); }
+.swipe .divider { position: absolute; top: 0; bottom: 0; left: var(--cut, 50%); width: 2px; background: var(--accent); pointer-events: none; }
+.swipe .lab { position: absolute; top: 8px; font: 600 11px var(--body); text-transform: uppercase; letter-spacing: .08em;
+  background: var(--panel); color: var(--ink); padding: 2px 6px; border-radius: 3px; }
+.insp input[type=range] { width: 100%; accent-color: var(--accent); }
+@media (max-width: 900px) {
+  .card { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cam { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  .mapgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .wrap { padding-inline: 16px; }
+  .card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cam { grid-template-columns: 1fr; }
+  .label { min-width: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .tile .inner { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>CROSS Nav BEV Atlas</h1>
+    <p>Predicted and ground-truth bird's-eye views of held-out evaluation windows. Each grid is 400 × 400 cells of 5 cm
+      around the current camera (centre, arrow = viewing direction), gravity-aligned. Light = free floor, dark =
+      anything 0.1–1.8 m above it. Unknown ground truth shows the checkerboard. The thresholded prediction
+      (P &gt; 0.5) and geometric maps are compared with a soft planner using occupancy risk over the robot footprint.
+      Goals are 2–8 m away, with a 0.2 m planning radius. Uncertainty is learned P(occupancy decision is wrong):
+      black = 0, yellow = 1. The selective BEV leaves cells unknown above 0.2 predicted error.
+      Unknown ground truth cannot establish route safety; success uses the historical 0.1 m collision check.
+      Low predicted error alone does not establish obstacle-free space.</p>
+    <div class="meta" id="meta"></div><p id="run-note"></p>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-win" aria-selected="true" aria-controls="pane-win">Evaluation windows</button>
+    <button class="tab" role="tab" id="tab-map" aria-selected="false" aria-controls="pane-map">Fused maps</button>
+  </nav>
+
+  <section id="pane-win" role="tabpanel" aria-labelledby="tab-win">
+    <div class="rail">
+      <div class="row"><span class="label">Dataset</span><div class="chips" id="dschips"></div></div>
+      <div class="row">
+        <span class="label">Inputs</span>
+        <div class="chips" id="condchips">
+          <button class="chip" data-cond="oracle" aria-pressed="true">GT scale + gravity</button>
+          <button class="chip" data-cond="mono" aria-pressed="false">Mono: scale head + gravity head</button>
+        </div>
+        <span class="group-sep"></span>
+        <span class="label">View</span>
+        <div class="chips">
+          <button class="chip" id="zoombtn" aria-pressed="true">10 m crop</button>
+          <button class="chip" id="seenbtn" aria-pressed="false">Seen cells</button>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--free)"></i>free</span>
+        <span><i class="sw" style="background:var(--occ)"></i>occupied</span>
+        <span><i class="sw unk"></i>no label</span>
+        <span><i class="sw" style="background:var(--fp)"></i>predicted occupied, actually free</span>
+        <span><i class="sw" style="background:var(--fn)"></i>missed occupied</span>
+        <span><i class="sw" style="background:#28c8fa;opacity:.6"></i>seen by a window frame</span>
+      </div>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--ok)"></i>plan reaches the goal, collision-free on GT</span>
+        <span><i class="dot" style="background:var(--fp)"></i>plan collides with a GT obstacle</span>
+        <span><i class="dot" style="background:var(--warn)"></i>detour &gt; 3× the GT path</span>
+        <span><i class="dot" style="background:var(--nopath)"></i>no path on the map</span>
+        <span><i class="sw" style="background:none;border:2px dashed var(--gtpath)"></i>GT shortest path</span>
+      </div>
+    </div>
+    <div class="overview tablewrap" id="overview"></div>
+    <div class="summary" id="summary"></div>
+    <div class="cards zoom" id="cards"><div class="loading">Loading windows…</div></div>
+  </section>
+
+  <section id="pane-map" role="tabpanel" aria-labelledby="tab-map" hidden>
+    <p class="note" style="margin-top:16px">One BEV per keyframe of a CROSS stereo map, fused along the keyframe poses
+      (metric scale from the map, one gravity estimate for the whole map). The ground truth is resampled into the map's
+      grid through a rigid alignment of the keyframes to their GT poses. "Geometry only" projects VGGT's depth with no
+      learning. Red dots: keyframes. Scores are mIoU / occupied IoU over labelled cells the map observed. These maps were built with the earlier
+      nav_v4 head (heads_009000); the evaluation windows use nav_v5.</p>
+    <div class="maps" id="maps"><div class="loading">Loading maps…</div></div>
+  </section>
+</div>
+
+<div class="insp" id="insp" hidden>
+  <div class="insp-box" role="dialog" aria-modal="true" aria-labelledby="insp-title">
+    <div class="insp-top"><h4 id="insp-title"></h4><button class="close" id="insp-close">Close</button></div>
+    <div class="swipe" id="swipe">
+      <img class="bot" id="sw-bot" alt=""><img class="top" id="sw-top" alt="">
+      <div class="divider"></div>
+      <span class="lab" style="left:8px" id="sw-lbot">Ground truth</span>
+      <span class="lab" style="right:8px" id="sw-ltop">Prediction</span>
+    </div>
+    <label for="sw-range" class="note">Drag to swipe between ground truth (left) and prediction (right)</label>
+    <input type="range" id="sw-range" min="0" max="100" value="50">
+  </div>
+</div>
+
+<script>
+const DS_INFO = {
+  test_v3: { group: "Real + synthetic test sets (accumulated GT)", names: { openloris: "OpenLORIS", simchange: "SimChange", "7scenes": "7-Scenes", hiroom: "HiRoom", nrgbd: "NRGBD" } },
+  simmesh_v2: { group: "SimChange, mesh GT (complete labels)", names: { simchange_test: "SimChange mesh GT" } },
+  test_large: { group: "Large indoor + outdoor, ground level (TartanGround held-out environments)", names: { tartanground: "TartanGround" } },
+  test_nclt: { group: "Campus robot, mostly outdoor (NCLT held-out sessions, LiDAR GT)", names: { nclt: "NCLT campus" } },
+  val_drive: { group: "Driving (Waymo / PandaSet validation, LiDAR GT)", names: { waymo: "Waymo", pandaset: "PandaSet" } },
+  val_v3: { group: "Validation scenes (held out)", names: { scannet: "ScanNet", scannetpp: "ScanNet++", arkitscenes: "ARKitScenes", hypersim: "Hypersim", tartanair2: "TartanAir2" } },
+};
+const state = { ds: null, cond: "oracle", zoom: true, seen: false };
+let manifest = null; const cache = {};
+const $ = (s) => document.querySelector(s);
+const fmt = (v) => v == null ? "–" : v.toFixed(3);
+function save() { try { localStorage.setItem("bevatlas", JSON.stringify(state)); } catch (e) {} }
+function load() { try { Object.assign(state, JSON.parse(localStorage.getItem("bevatlas") || "{}")); } catch (e) {} }
+
+let embeddedData;
+async function readData(path) {
+  const node = document.getElementById("embedded-data");
+  if (node) {
+    embeddedData ||= JSON.parse(node.textContent);
+    if (!(path in embeddedData)) throw new Error(`Missing ${path}`);
+    return embeddedData[path];
+  }
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`${path}: ${response.status}`);
+  return response.json();
+}
+
+async function boot() {
+  load();
+  manifest = await readData("data/manifest.json");
+  try { planStats = await readData("data/plan_stats.json"); } catch (e) { planStats = null; }
+  $("#meta").innerHTML = `<span>checkpoint <b>${manifest.checkpoint}</b></span><span>backbone <b>${manifest.backbone}</b></span>
+    <span>windows <b>${manifest.items.length}</b></span><span>head <b>30.0 M params, lifted multi-layer</b></span><span>planning goals <b>${planStats ? planStats.total.oracle.head.n : '–'}</b></span>`;
+  $("#run-note").textContent = manifest.note || "";
+  const groups = {};
+  for (const it of manifest.items) { const k = it.set + "/" + it.dataset; (groups[k] = groups[k] || []).push(it); }
+  const chips = $("#dschips"); let first = null, prevSet = null;
+  for (const k of Object.keys(groups)) {
+    const [set, ds] = k.split("/");
+    if (prevSet && prevSet !== set) { const s = document.createElement("span"); s.className = "group-sep"; chips.append(s); }
+    prevSet = set;
+    const b = document.createElement("button"); b.className = "chip"; b.dataset.k = k;
+    b.innerHTML = `${(DS_INFO[set]?.names[ds]) || ds}<small>${groups[k].length}</small>`;
+    b.title = DS_INFO[set]?.group || set;
+    b.onclick = () => { state.ds = k; save(); render(); };
+    chips.append(b); first = first || k;
+  }
+  if (!state.ds || !groups[state.ds]) state.ds = first;
+  document.querySelectorAll("#condchips .chip").forEach(b => b.onclick = () => { state.cond = b.dataset.cond; save(); render(); });
+  $("#zoombtn").onclick = () => { state.zoom = !state.zoom; save(); render(); };
+  $("#seenbtn").onclick = () => { state.seen = !state.seen; save(); render(); };
+  $("#tab-win").onclick = () => tab("win"); $("#tab-map").onclick = () => tab("map");
+  if (location.hash === "#maps") tab("map");
+  render();
+}
+
+function tab(t) {
+  $("#tab-win").setAttribute("aria-selected", t === "win"); $("#tab-map").setAttribute("aria-selected", t === "map");
+  $("#pane-win").hidden = t !== "win"; $("#pane-map").hidden = t !== "map";
+  if (t === "map") renderMaps();
+}
+
+async function pack(k) {
+  if (!cache[k]) cache[k] = readData(`data/${k.replace("/", "__")}.json`);
+  return cache[k];
+}
+
+const ST_COL = { success: "var(--ok)", collision: "var(--fp)", detour: "var(--warn)", no_path: "var(--nopath)" };
+let planStats = null;
+const pct0 = (x) => x == null ? "–" : (x * 100).toFixed(0) + "%";
+
+function overview() {
+  if (!planStats) { $("#overview").innerHTML = ""; return; }
+  const c = state.cond, rows = [];
+  const M = [["head", "head P>0.5"], ["soft_risk", "soft footprint risk"], ["soft_uncertainty", "soft risk + uncertainty"], ["head_t40", "head P>0.4"], ["head_t30", "head P>0.3"], ["geom", "geometric, unknown free"], ["geom_pess", "geometric, unknown blocked"]]
+    .filter(([m]) => planStats.total[c][m]);
+  const line = (label, v, cls) => {
+    const best = Math.max(...M.map(([m]) => v[m]?.success ?? 0));
+    return `<tr class="${cls}"><td>${label}</td><td>${v.windows}</td><td>${v.head.n}</td>` + M.map(([m]) => {
+      const x = v[m]; if (!x) return "<td>–</td>";
+      return `<td class="${x.success === best ? "best" : ""}" title="collision ${pct0(x.collision)}, no path ${pct0(x.no_path)}, detour ${pct0(x.detour)}, fully-labelled success ${pct0(x.known_success)}, paths entering unknown GT ${pct0(x.unknown_path_rate)}">${pct0(x.success)}
+        <span style="color:var(--muted)">· ${pct0(x.collision)} col · SPL ${x.spl.toFixed(2)}</span></td>`; }).join("") + "</tr>";
+  };
+  for (const [k, v] of Object.entries(planStats.by_dataset)) {
+    const [set, ds] = k.split("/");
+    if (!v[c]) continue;
+    rows.push(line(DS_INFO[set]?.names[ds] || ds, { windows: v.windows, ...v[c] }, k === state.ds ? "cur" : ""));
+  }
+  rows.push(line("<b>all</b>", { windows: planStats.total.windows, ...planStats.total[c] }, ""));
+  $("#overview").innerHTML = `<table><caption>Planning success over all evaluation windows (the cards below are examples), ${c === "oracle" ? "GT scale + gravity" : "mono inputs"},
+    up to 10 random goals 2–8 m away per window, 0.2 m robot radius. Success = a path on the map that stays 0.1 m clear of GT obstacles and is at most 3× the GT path.
+    Each cell: historical success · collision rate · SPL. Hover for fully-labelled success, unknown-GT exposure, no-path and detour rates.</caption>
+    <thead><tr><th>dataset</th><th>windows</th><th>goals</th>${M.map(([, l]) => `<th>${l}</th>`).join("")}</tr></thead>
+    <tbody>${rows.join("")}</tbody></table>`;
+}
+
+async function render() {
+  document.querySelectorAll("#dschips .chip").forEach(b => b.setAttribute("aria-pressed", b.dataset.k === state.ds));
+  document.querySelectorAll("#condchips .chip").forEach(b => b.setAttribute("aria-pressed", b.dataset.cond === state.cond));
+  $("#zoombtn").setAttribute("aria-pressed", state.zoom); $("#zoombtn").textContent = state.zoom ? "10 m crop" : "Full 20 m";
+  $("#seenbtn").setAttribute("aria-pressed", state.seen);
+  overview();
+  const cards = $("#cards");
+  cards.classList.toggle("zoom", state.zoom); cards.classList.toggle("showseen", state.seen);
+  const items = manifest.items.filter(it => it.set + "/" + it.dataset === state.ds);
+  const avg = (sel) => { const v = items.map(it => it[state.cond][sel]?.[0]).filter(x => x != null); return v.length ? v.reduce((a, b) => a + b) / v.length : null; };
+  $("#summary").textContent = `${items.length} example windows · head mIoU ${state.cond === "oracle" ? "(GT scale + gravity)" : "(mono)"}: seen ${fmt(avg("seen"))} · unseen ${fmt(avg("unseen"))} · all ${fmt(avg("all"))}`;
+  cards.innerHTML = '<div class="loading">Loading windows…</div>';
+  const key = state.ds, data = await pack(key);
+  if (key !== state.ds) return;
+  cards.innerHTML = "";
+  const bar = state.zoom ? 20 : 10;
+  for (const it of items) {
+    const im = data[it.key], m = it[state.cond], pl = it.plan?.[state.cond];
+    const o = state.cond === "oracle";
+    const el = document.createElement("article"); el.className = "card";
+    const name = DS_INFO[it.set]?.names[it.dataset] || it.dataset;
+    const ps = (mth) => { const st = pl?.status[mth] || []; return `${st.filter(x => x === "success").length}/${st.length}`; };
+    const gm = it.geom?.[state.cond]?.all;
+    el.innerHTML = `
+      <div class="cam">
+        <img class="f0" src="${im.f0}" alt="current camera image, ${name} ${it.scene}">
+        <div>
+          <div class="refs">${(im.refs || []).map(r => `<img src="${r}" alt="reference frame">`).join("")}</div>
+          <div class="cap"><span class="ds">${name}</span><span>${it.scene}</span><span>${it.S} frame${it.S > 1 ? "s" : ""} · ${it.kind}</span>
+            <span>camera ${it.cam_h} m above floor</span><span>gravity err ${it.gravity_err_deg}°</span><span>scale-head err ${(Math.exp(it.scale_err) * 100 - 100).toFixed(0)}%</span></div>
+          <div class="metrics"><span>head mIoU seen <b>${fmt(m.seen?.[0])}</b></span><span>unseen <b>${fmt(m.unseen?.[0])}</b></span><span>all <b>${fmt(m.all?.[0])}</b></span>
+            <span>geometric mIoU <b>${fmt(gm?.[0])}</b> on its ${((it.geom?.coverage?.[state.cond] || 0) * 100).toFixed(0)}% of labelled cells</span></div>
+          <div class="planline"><span>plans succeeded: head <b>${ps("head")}</b></span><span>soft risk <b>${ps("soft_risk")}</b></span><span>risk + uncertainty <b>${ps("soft_uncertainty")}</b></span><span>geometric <b>${ps("geom")}</b> (unknown free)</span><span><b>${ps("geom_pess")}</b> (unknown blocked)</span></div>
+        </div>
+      </div>
+      ${tileHTML("Ground truth", "GT paths", im.gt, im.seen, bar, gtSvg(pl))}
+      ${tileHTML("Prediction", "P(occ)", o ? im.po : im.pm, im.seen, bar, "")}
+      ${tileHTML("Thresholded head", "planner", o ? im.pt : im.ptm, im.seen, bar, planSvg(pl, "head"))}
+      ${tileHTML("Geometric", "unknown free", o ? im.geo : im.geom, im.seen, bar, planSvg(pl, "geom"))}
+      ${tileHTML("Head errors", `mIoU ${fmt(m.all?.[0])}`, o ? im.err : im.errm, im.seen, bar, "")}
+      ${im.uo ? tileHTML("Uncertainty", "P(error): dark 0 → yellow 1", o ? im.uo : im.um, im.seen, bar, "") : ""}
+      ${im.uo ? tileHTML("Selective BEV", "unknown if P(error) > 0.2", o ? im.uo_selective : im.um_selective, im.seen, bar, "") : ""}
+      ${pl?.paths?.soft_risk ? tileHTML("Soft-risk planner", "footprint risk", o ? im.po : im.pm, im.seen, bar, planSvg(pl, "soft_risk")) : ""}
+      ${pl?.paths?.soft_uncertainty ? tileHTML("Uncertainty planner", "risk + uncertainty", o ? im.po : im.pm, im.seen, bar, planSvg(pl, "soft_uncertainty")) : ""}`;
+    el.querySelectorAll(".tile").forEach(t => t.onclick = () => {
+      inspect(it, im, 0);
+      $("#sw-top").src = t.querySelector("img").src;
+      $("#sw-ltop").textContent = t.parentElement.querySelector(".tilehead span").textContent;
+    });
+    cards.append(el);
+  }
+}
+
+function tileHTML(title, right, src, seen, bar, svg) {
+  return `<div class="tilebox"><div class="tilehead"><span>${title}</span><span>${right}</span></div>
+    <div class="tile" role="button" tabindex="0" aria-label="${title}: open the swipe comparison">
+      <div class="inner"><img src="${src}" alt="${title} BEV"><img class="seen" src="${seen}" alt="">${svg || ""}</div>
+      <span class="cammark"></span><span class="scalebar" style="width:${bar / 4}%" data-l="1 m"></span>
+    </div></div>`;
+}
+
+function svgWrap(inner) { return `<svg viewBox="0 0 100 100" preserveAspectRatio="none">${inner}</svg>`; }
+function poly(pts, col, dash, w) {
+  if (!pts || pts.length < 2) return "";
+  return `<polyline points="${pts.map(p => (p[0] * 100).toFixed(2) + "," + (p[1] * 100).toFixed(2)).join(" ")}" fill="none" stroke="${col}"
+    stroke-width="${w || 1}" ${dash ? 'stroke-dasharray="4 3"' : ""} stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>`;
+}
+function goalDot(g, col) { return `<circle cx="${g[0] * 100}" cy="${g[1] * 100}" r="1.1" fill="${col}" stroke="var(--panel)" stroke-width="0.35"/>`; }
+function gtSvg(pl) { if (!pl) return ""; return svgWrap(pl.gt.map(p => poly(p, "var(--gtpath)", true, 1.6)).join("") + pl.goals.map(g => goalDot(g, "var(--gtpath)")).join("")); }
+function planSvg(pl, mth) {
+  if (!pl) return "";
+  const st = pl.status[mth] || [];
+  return svgWrap((pl.paths[mth] || []).map((p, i) => poly(p, ST_COL[st[i]] || "var(--accent)", false, 2)).join("") +
+    pl.goals.map((g, i) => goalDot(g, ST_COL[st[i]] || "var(--accent)")).join(""));
+}
+
+function inspect(it, im, idx) {
+  const o = state.cond === "oracle";
+  const opts = [["Prediction", o ? im.po : im.pm], ["Prediction", o ? im.po : im.pm], ["Thresholded head", o ? im.pt : im.ptm],
+                ["Geometric", o ? im.geo : im.geom], ["Head errors", o ? im.err : im.errm]];
+  const [lab, src] = opts[idx || 0];
+  $("#insp-title").textContent = `${DS_INFO[it.set]?.names[it.dataset] || it.dataset} · ${it.scene} · ${o ? "GT scale + gravity" : "mono"}`;
+  const sw = $("#swipe"); sw.classList.remove("mapmode"); sw.style.aspectRatio = "";
+  $("#sw-bot").src = im.gt; $("#sw-top").src = src; $("#sw-lbot").textContent = "Ground truth"; $("#sw-ltop").textContent = lab;
+  openInsp();
+}
+function openInsp() { $("#insp").hidden = false; setCut(50); $("#sw-range").value = 50; $("#insp-close").focus(); }
+function setCut(v) { $("#swipe").style.setProperty("--cut", v + "%"); }
+$("#sw-range").oninput = (e) => setCut(e.target.value);
+$("#swipe").addEventListener("pointermove", (e) => { if (e.buttons !== 1) return; const r = e.currentTarget.getBoundingClientRect();
+  const v = Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100)); setCut(v); $("#sw-range").value = v; });
+$("#insp-close").onclick = () => $("#insp").hidden = true;
+$("#insp").onclick = (e) => { if (e.target.id === "insp") $("#insp").hidden = true; };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#insp").hidden = true;
+  if ((e.key === "Enter" || e.key === " ") && e.target.classList?.contains("tile")) { e.preventDefault(); e.target.click(); } });
+
+let mapsDone = false;
+async function renderMaps() {
+  if (mapsDone) return; mapsDone = true;
+  const maps = await readData("data/maps.json");
+  const box = $("#maps"); box.innerHTML = "";
+  if (!maps.maps.length) { box.innerHTML = '<div class="loading">The fused maps for this checkpoint are still being built. They will appear here in a later update of this page.</div>'; return; }
+  for (const m of maps.maps) {
+    const el = document.createElement("article"); el.className = "mapcard";
+    const traj = (pts) => `<svg viewBox="0 0 100 100" preserveAspectRatio="none">${pts.map(p => `<circle cx="${p[0] * 100}" cy="${p[1] * 100}" r="0.45" fill="#e0402a"/>`).join("")}</svg>`;
+    const row = (lab, e) => e ? `<tr><td>${lab}</td><td>${fmt(e["<2m"]?.miou)} / ${fmt(e["<2m"]?.iou_occ)}</td><td>${fmt(e["<4m"]?.miou)} / ${fmt(e["<4m"]?.iou_occ)}</td><td>${fmt(e.all?.miou)} / ${fmt(e.all?.iou_occ)}</td><td>${e.all ? (e.all.observed * 100).toFixed(0) + "%" : "–"}</td></tr>` : "";
+    el.innerHTML = `<h3>${m.title}</h3><div class="note">${m.note}</div>
+      <div class="mapgrid">
+        <figure><figcaption>Ground truth</figcaption><div class="mapimg" data-a="gt">${img(m.gt)}${traj(m.traj)}</div></figure>
+        <figure><figcaption>Head, fused + routes</figcaption><div class="mapimg" data-a="head">${img(m.head)}${traj(m.traj)}${mapPlanSvg(m.plan_head)}</div></figure>
+        <figure><figcaption>Head errors</figcaption><div class="mapimg" data-a="head_err">${img(m.head_err)}</div></figure>
+        <figure><figcaption>Geometry only, fused + routes</figcaption><div class="mapimg" data-a="geom">${img(m.geom)}${traj(m.traj)}${mapPlanSvg(m.plan_geom)}</div></figure>
+      </div>
+      <div class="tablewrap"><table class="maptable"><thead><tr><th>map</th><th>within 2 m</th><th>within 4 m</th><th>all labelled</th><th>observed</th></tr></thead>
+      <tbody>${row("Head (this checkpoint)", m.eval_head)}${row("Geometry only", m.eval_geom)}</tbody></table></div>
+      <div class="tablewrap"><table class="maptable"><thead><tr><th>planning: keyframe starts, goals 5–20 m</th><th>goals</th><th>success</th><th>SPL</th><th>collision</th><th>no path</th></tr></thead>
+      <tbody>${prow("Head, unobserved blocked", m.plan_head?.summary?.map)}${prow("Geometry, unknown blocked", m.plan_geom?.summary?.map)}${prow("Geometry, unknown free", m.plan_geom?.summary?.map_free_unknown)}</tbody></table></div>`;
+    el.querySelectorAll(".mapimg").forEach(d => d.onclick = () => {
+      const other = d.dataset.a === "geom" ? m.geom : m.head;
+      $("#insp-title").textContent = `${m.title} · ground truth vs ${d.dataset.a === "geom" ? "geometry only" : "head"}`;
+      const sw = $("#swipe"); sw.classList.add("mapmode"); sw.style.aspectRatio = `${m.size[0]} / ${m.size[1]}`;
+      $("#sw-bot").src = m.gt; $("#sw-top").src = other; $("#sw-lbot").textContent = "Ground truth";
+      $("#sw-ltop").textContent = d.dataset.a === "geom" ? "Geometry" : "Head"; openInsp();
+    });
+    box.append(el);
+  }
+}
+const img = (s) => `<img src="${s}" alt="">`;
+const pctx = (x) => x == null ? "–" : (x * 100).toFixed(0) + "%";
+const prow = (lab, p) => p && p.n ? `<tr><td>${lab}</td><td>${p.n}</td><td>${pctx(p.success)}</td><td>${p.spl.toFixed(2)}</td><td>${pctx(p.collision)}</td><td>${pctx(p.no_path)}</td></tr>` : "";
+function mapPlanSvg(pl) {
+  if (!pl) return "";
+  const lines = pl.gt.map(p => poly(p, "var(--gtpath)", true, 1.2)).join("") + pl.paths.map((p, i) => poly(p, ST_COL[pl.status[i]] || "var(--accent)", false, 2)).join("");
+  const dots = pl.goals.map((g, i) => `<circle cx="${g[0] * 100}" cy="${g[1] * 100}" r="0.9" fill="${ST_COL[pl.status[i]] || "var(--accent)"}"/>`).join("") +
+    pl.starts.map(g => `<rect x="${g[0] * 100 - 0.7}" y="${g[1] * 100 - 0.7}" width="1.4" height="1.4" fill="var(--accent)"/>`).join("");
+  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none">${lines}${dots}</svg>`;
+}
+
+boot().catch(e => { $("#cards").innerHTML = `<div class="loading">Could not load the data files (${e.message}).</div>`; });
+</script>

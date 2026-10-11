@@ -41,6 +41,30 @@ def inflate(occ: np.ndarray, r: int) -> np.ndarray:
     return cv2.dilate(occ.astype(np.uint8), disk(r)) > 0 if r > 0 else occ.astype(bool)
 
 
+def risk_cost(prob, res, robot_radius=0.20, weight=4.0, uncertainty=None, uncertainty_weight=0.0):
+    """Soft footprint risk: 1 + weight * -log(1 - max_footprint P(occ)).
+
+    Max pooling is a conservative local score, not a calibrated probability of
+    footprint/path collision (neighbouring cells are strongly correlated).
+    Optional predicted decision error adds an independent exploration penalty.
+    All cells remain traversable; use a separate obstacle map for hard constraints.
+    """
+    p = np.asarray(prob, np.float32)
+    if p.ndim != 2 or not np.isfinite(p).all() or (p < 0).any() or (p > 1).any():
+        raise ValueError("prob must be a finite 2D probability map")
+    if res <= 0 or robot_radius < 0 or weight < 0 or uncertainty_weight < 0:
+        raise ValueError("invalid resolution, radius or risk weight")
+    r = int(round(robot_radius / res))
+    pooled = cv2.dilate(p, disk(r)) if r else p
+    cost = 1.0 + weight * -np.log1p(-np.minimum(pooled, 1 - 1e-6))
+    if uncertainty is not None:
+        u = np.asarray(uncertainty, np.float32)
+        if u.shape != p.shape or not np.isfinite(u).all() or (u < 0).any() or (u > 1).any():
+            raise ValueError("uncertainty must be a matching probability map")
+        cost += uncertainty_weight * (cv2.dilate(u, disk(r)) if r else u)
+    return cost
+
+
 def astar(ok: np.ndarray, start, goal):
     """Shortest 8-connected path over cells where ok is True (list of (row, col)) or None."""
     H, W = ok.shape
@@ -79,7 +103,7 @@ def astar(ok: np.ndarray, start, goal):
 
 
 @njit(cache=True)
-def _dijkstra(ok, sr, sc):
+def _dijkstra(ok, sr, sc, cost):
     """8-connected shortest-path field from (sr, sc) over ok cells: distance (cells) and parent (flat index, -1)."""
     H, W = ok.shape
     dist = np.full((H, W), np.inf)
@@ -98,7 +122,7 @@ def _dijkstra(ok, sr, sc):
                 nr, nc = r + dr, c + dc
                 if nr < 0 or nr >= H or nc < 0 or nc >= W or not ok[nr, nc]:
                     continue
-                nd = d + (1.4142135623730951 if dr != 0 and dc != 0 else 1.0)
+                nd = d + (1.4142135623730951 if dr != 0 and dc != 0 else 1.0) * (cost[r, c] + cost[nr, nc]) * 0.5
                 if nd < dist[nr, nc]:
                     dist[nr, nc] = nd
                     parent[nr, nc] = k
@@ -109,12 +133,17 @@ def _dijkstra(ok, sr, sc):
 class Field:
     """Shortest paths from one start to any goal (one Dijkstra run)."""
 
-    def __init__(self, ok, start):
+    def __init__(self, ok, start, cost=None):
+        if cost is None:
+            cost = np.ones(ok.shape, np.float64)
+        cost = np.asarray(cost, dtype=np.float64)
+        if cost.shape != ok.shape or not np.isfinite(cost).all() or (cost < 1).any():
+            raise ValueError("cost must match map, be finite, and >= 1")
         self.ok = ok
         self.W = ok.shape[1]
         self.valid = bool(ok[start])
         if self.valid:
-            self.dist, self.parent = _dijkstra(ok, int(start[0]), int(start[1]))
+            self.dist, self.parent = _dijkstra(ok, int(start[0]), int(start[1]), cost)
 
     def path(self, goal):
         if not self.valid or not np.isfinite(self.dist[goal]):
@@ -164,10 +193,14 @@ def snap(ok: np.ndarray, cell, max_cells):
 
 
 def evaluate_planning(gt: np.ndarray, maps: dict, res: float, start=None, n_goals=5, dist_range=(2.0, 8.0),
-                      robot_radius=0.20, check_radius=0.10, max_detour=3.0, seed=0, starts=None):
+                      robot_radius=0.20, check_radius=0.10, max_detour=3.0, seed=0, starts=None, costs=None):
     """gt: label (0 unknown, 1 free, 2 occupied); maps: {method: occupied bool (H, W)} (unknown cells of a method's
     map must already be resolved to occupied or free).  Returns one record per goal: start, goal, gt_path, gt_len and
-    per method status / spl / len / path."""
+    per method status / spl / len / path. costs optionally maps method names to finite
+    traversal costs >= 1 (already footprint-aware; no second cost inflation)."""
+    costs = costs or {}
+    if set(costs) - set(maps):
+        raise ValueError("every cost field needs a corresponding obstacle map")
     rng = np.random.default_rng(seed)
     r_cells = max(0, int(round(robot_radius / res)))
     gt_occ_infl = inflate(gt == OCC, r_cells)
@@ -186,7 +219,7 @@ def evaluate_planning(gt: np.ndarray, maps: dict, res: float, start=None, n_goal
 
     def field(key, ok, s_):
         if (key, s_) not in fields:
-            fields[(key, s_)] = Field(ok, s_)
+            fields[(key, s_)] = Field(ok, s_, costs.get(key))
         return fields[(key, s_)]
 
     method_ok = {}
@@ -203,7 +236,7 @@ def evaluate_planning(gt: np.ndarray, maps: dict, res: float, start=None, n_goal
             if not ok[s_] and not occ[s_]:        # the robot's own cell is blocked only if the map marks it occupied
                 ok = ok.copy()
                 ok[s_] = True
-                p = Field(ok, s_).path(gl) if ok[gl] else None
+                p = Field(ok, s_, costs.get(m)).path(gl) if ok[gl] else None
             else:
                 p = field(m, ok, s_).path(gl) if ok[gl] else None
             if p is None:
@@ -218,7 +251,8 @@ def evaluate_planning(gt: np.ndarray, maps: dict, res: float, start=None, n_goal
             else:
                 st = "success"
             rec["methods"][m] = {"status": st, "spl": (gl_len / max(gl_len, pl)) if st == "success" else 0.0,
-                                 "len": round(pl, 2), "path": p}
+                                 "len": round(pl, 2), "path": p,
+                                 "unknown_fraction": float((gt[pr[:, 0], pr[:, 1]] == 0).mean())}
         records.append(rec)
     return records
 
@@ -230,5 +264,10 @@ def summarize(records: list[dict], method: str) -> dict:
         return {"n": 0}
     c = {k: sum(r["status"] == k for r in results) / n for k in ("success", "no_path", "collision", "detour")}
     c["spl"] = float(np.mean([r["spl"] for r in results]))
+    # Preserve the historical collision metric, but expose paths whose safety
+    # cannot be checked because they leave the labelled region.
+    c["unknown_path_rate"] = sum(r.get("unknown_fraction", 0) > 0 for r in results) / n
+    c["known_success"] = sum(r["status"] == "success" and r.get("unknown_fraction", 0) == 0
+                             for r in results) / n
     c["n"] = n
     return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in c.items()}

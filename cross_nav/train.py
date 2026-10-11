@@ -31,6 +31,7 @@ from vggt_ft.train import apply_overrides, lr_factor
 from .bev import FREE, OCC
 from .data import NavStream
 from .model import NavModel
+from .uncertainty import error_loss
 
 
 def gt_log_scale(depth_pred: torch.Tensor, depth_gt: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
@@ -121,6 +122,12 @@ def main():
     torch.manual_seed(seed)                # identical head initialisation on every rank
     model = NavModel(cfg["backbone"], cfg.get("bev_head"), cfg.get("gravity_head")).cuda()
     torch.manual_seed(seed + rank)
+    if tc.get("error_only", False):
+        if not model.bev_head.uncertainty:
+            raise ValueError("error_only requires bev_head.uncertainty")
+        model.bev_head.requires_grad_(False)
+        model.gravity_head.requires_grad_(False)
+        model.bev_head.error_head.requires_grad_(True)
     trainable = [p for n, p in model.named_parameters() if p.requires_grad]
     n_bev = sum(p.numel() for p in model.bev_head.parameters())
     n_g = sum(p.numel() for p in model.gravity_head.parameters())
@@ -143,7 +150,9 @@ def main():
         del ck
     elif cfg.get("init"):
         ck = torch.load(cfg["init"], map_location="cpu", weights_only=False)
-        model.bev_head.load_state_dict(ck["bev_head"])
+        missing, unexpected = model.bev_head.load_state_dict(ck["bev_head"], strict=False)
+        if unexpected or any(not k.startswith("error_head.") for k in missing):
+            raise RuntimeError(f"incompatible warm start: {missing=}, {unexpected=}")
         model.gravity_head.load_state_dict(ck["gravity_head"])
     ema_decay = tc.get("ema", 0.0)
     ema = None
@@ -188,8 +197,13 @@ def main():
         use_g = torch.rand(B, device=up_gt.device) < lc.get("p_gravity_pred", 0.3)
         up_in = torch.where(use_g[:, None], up_pred.detach(), up_in)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            logits = model.heads(bb, ls_in, up_in)
+            pred = model.heads(bb, ls_in, up_in, return_aux=True)
+            logits = pred["logits"]
         l_bev, parts = bev_losses(logits, batch["bev"], lc.get("w_dice", 0.5), lc.get("pos_weight", 1.0))
+        if pred["error_logits"] is not None:
+            l_err = error_loss(pred["error_logits"], logits, batch["bev"])
+            l_bev = l_bev + lc.get("w_error", 1.0) * l_err
+            parts["loss_error"] = l_err.detach()
         l_g = (1 - (up_pred * up_gt).sum(-1)).mean()
         loss = l_bev + lc.get("w_gravity", 1.0) * l_g
         if not torch.isfinite(loss):
@@ -249,7 +263,9 @@ def main():
             if step % tc.get("keep_every", 1000) == 0 or step == steps:
                 torch.save({**sdh, **meta_ck}, out_dir / f"heads_{step:06d}.pt")
                 if ema is not None:
-                    e = {k: v for k, v in ema.items()}
+                    e = {n: p.detach() for n, p in model.named_parameters()
+                         if n.startswith(("bev_head.", "gravity_head."))}
+                    e.update(ema)
                     torch.save({"bev_head": {k[len("bev_head."):]: v for k, v in e.items() if k.startswith("bev_head.")},
                                 "gravity_head": {k[len("gravity_head."):]: v for k, v in e.items()
                                                  if k.startswith("gravity_head.")}, **meta_ck},

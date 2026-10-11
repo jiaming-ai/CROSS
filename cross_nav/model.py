@@ -70,9 +70,9 @@ class NavModel(nn.Module):
                 out["log_scale_head"] = m.scale_head(tl32[-1], pts)
         return out
 
-    def heads(self, bb: dict, log_scale: torch.Tensor, up_cam: torch.Tensor, frame_valid=None):
+    def heads(self, bb: dict, log_scale: torch.Tensor, up_cam: torch.Tensor, frame_valid=None, return_aux=False):
         logits = self.bev_head(bb["tokens_list"], bb["pts"], bb["patch_hw"], bb["dino"], bb["depth"],
-                               bb["depth_conf"], bb["extrinsics"], bb["intrinsics"], log_scale, up_cam, frame_valid)
+                               bb["depth_conf"], bb["extrinsics"], bb["intrinsics"], log_scale, up_cam, frame_valid, return_aux=return_aux)
         return logits
 
     def gravity(self, bb: dict) -> torch.Tensor:

@@ -20,8 +20,9 @@ from cross_nav.bev import FREE, OCC, BEVSpec, bev_axes
 from cross_nav.data import NavStream, WorldBEVs
 from cross_nav.evaluate import geom_baseline, lift_np, load_window
 from cross_nav.model import NavModel
-from cross_nav.plan import evaluate_planning, summarize
+from cross_nav.plan import evaluate_planning, summarize, risk_cost
 from cross_nav.train import gt_log_scale
+from cross_nav.uncertainty import error_metrics
 
 SKIP = {"tartanair2"}           # drone trajectories: not ground navigation (user, 2026-10-10)
 
@@ -107,6 +108,8 @@ def miou(pred_occ, gt, sel):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--heads", required=True)
+    ap.add_argument("--backbone", help="Override checkpoint backbone location")
+    ap.add_argument("--save-arrays", action="store_true", help="Cache float probabilities and GT for CPU planner sweeps")
     ap.add_argument("--out", required=True)
     ap.add_argument("--per-dataset", type=int, default=6, help="0 = all windows")
     ap.add_argument("--no-images", action="store_true", help="planning statistics only")
@@ -114,7 +117,7 @@ def main():
     ap.add_argument("windows", nargs="+")
     a = ap.parse_args()
     ck = torch.load(a.heads, map_location="cpu", weights_only=False)
-    model = NavModel(ck["backbone"], ck.get("bev_cfg"), ck.get("gravity_cfg")).cuda().eval()
+    model = NavModel(a.backbone or ck["backbone"], ck.get("bev_cfg"), ck.get("gravity_cfg")).cuda().eval()
     model.bev_head.load_state_dict(ck["bev_head"])
     model.gravity_head.load_state_dict(ck["gravity_head"])
     out = Path(a.out)
@@ -156,8 +159,14 @@ def main():
                 up_gt = it["up_cam"][None].cuda()
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     up_pred = model.gravity(bb).float()
-                    lo = model.heads(bb, ls_gt, up_gt).float()[0].cpu().numpy()
-                    lm = model.heads(bb, bb["log_scale_head"].float(), up_pred).float()[0].cpu().numpy()
+                    pred_o = model.heads(bb, ls_gt, up_gt, return_aux=True)
+                    pred_m = model.heads(bb, bb["log_scale_head"].float(), up_pred, return_aux=True)
+                    lo = pred_o["logits"].float()[0].cpu().numpy()
+                    lm = pred_m["logits"].float()[0].cpu().numpy()
+                    uo = (pred_o["error_logits"][0].float().sigmoid().cpu().numpy()
+                          if pred_o["error_logits"] is not None else None)
+                    um = (pred_m["error_logits"][0].float().sigmoid().cpu().numpy()
+                          if pred_m["error_logits"] is not None else None)
                 po, pm = 1 / (1 + np.exp(-lo)), 1 / (1 + np.exp(-lm))
                 gt, vis = it["bev"].numpy(), it["vis"].numpy()
                 S = imgs.shape[1]
@@ -165,16 +174,27 @@ def main():
                 go = geom_map(bb, ls_gt[0], up_gt, N, res, float(it["cam_h"]))
                 gm = geom_map(bb, bb["log_scale_head"][0], up_pred, N, res, None)
                 # planning: thresholded head maps; geometric maps with undecided cells free (optimistic) and occupied
+                if a.save_arrays:
+                    arrays = out / "arrays"
+                    arrays.mkdir(exist_ok=True)
+                    extra = {"uo": uo, "um": um} if uo is not None else {}
+                    np.savez_compressed(arrays / (key + ".npz"), po=po, pm=pm, gt=gt, vis=vis,
+                                        go=go, gm=gm, res=res, seed=j, **extra)
                 plans = {}
-                for cond, ph, gg in (("oracle", po, go), ("mono", pm, gm)):
+                for cond, ph, gg, uu in (("oracle", po, go, uo), ("mono", pm, gm, um)):
                     maps = {"head": ph > 0.5, "head_t40": ph > 0.4, "head_t30": ph > 0.3, "geom": gg == 2,
                             "geom_pess": gg != 1}
-                    recs = evaluate_planning(gt, maps, res, (N // 2, N // 2), n_goals=a.goals, seed=j)
+                    maps["soft_risk"] = np.zeros_like(gt, dtype=bool)
+                    costs = {"soft_risk": risk_cost(ph, res)}
+                    if uu is not None:
+                        maps["soft_uncertainty"] = np.zeros_like(gt, dtype=bool)
+                        costs["soft_uncertainty"] = risk_cost(ph, res, uncertainty=uu, uncertainty_weight=4.0)
+                    recs = evaluate_planning(gt, maps, res, (N // 2, N // 2), n_goals=a.goals, seed=j, costs=costs)
                     plans[cond] = {"summary": {m: summarize(recs, m) for m in maps},
                                    "goals": [[round(r["goal"][1] / N, 4), round(r["goal"][0] / N, 4)] for r in recs],
                                    "gt": [path_pts(r["gt_path"], N) for r in recs],
                                    "status": {m: [r["methods"][m]["status"] for r in recs] for m in maps},
-                                   "paths": {m: [path_pts(r["methods"][m]["path"], N) for r in recs] for m in ("head", "geom")}}
+                                   "paths": {m: [path_pts(r["methods"][m]["path"], N) for r in recs] for m in maps}}
                 if a.no_images:
                     items.append({"key": key, "set": setname, "dataset": ds, "S": S,
                                   "plan": {c: plans[c]["summary"] for c in plans},
@@ -186,6 +206,13 @@ def main():
                     wdt = 360 if s == 0 else 120
                     im = cv2.resize(im, (wdt, int(im.shape[0] * wdt / im.shape[1])), interpolation=cv2.INTER_AREA)
                     cv2.imwrite(str(d / (f"f0.jpg" if s == 0 else f"r{s}.jpg")), im, [cv2.IMWRITE_JPEG_QUALITY, 82])
+                if uo is not None:
+                    for name, uu, ph in (("uo", uo, po), ("um", um, pm)):
+                        # Fixed scale: black = zero predicted error, yellow = one.
+                        heat = cv2.applyColorMap(np.uint8(np.clip(uu, 0, 1) * 255), cv2.COLORMAP_INFERNO)
+                        cv2.imwrite(str(d / (name + ".png")), heat)
+                        selective = np.where(uu <= 0.2, np.where(ph > 0.5, 2, 1), 0)
+                        cv2.imwrite(str(d / (name + "_selective.png")), lab_png(selective))
                 cv2.imwrite(str(d / "gt.png"), gt_png(gt), [cv2.IMWRITE_PNG_COMPRESSION, 9])
                 cv2.imwrite(str(d / "po.jpg"), prob_jpg(po), [cv2.IMWRITE_JPEG_QUALITY, 85])
                 cv2.imwrite(str(d / "pm.jpg"), prob_jpg(pm), [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -213,6 +240,9 @@ def main():
                                        "mono": {k: miou(gm == 2, gt, sel & (gm > 0)) for k, sel in (("all", np.ones_like(seen)),)},
                                        "coverage": {"oracle": round(float(((go > 0) & (gt > 0)).sum() / max((gt > 0).sum(), 1)), 3),
                                                     "mono": round(float(((gm > 0) & (gt > 0)).sum() / max((gt > 0).sum(), 1)), 3)}},
+                              "uncertainty": ({"oracle": error_metrics(po, uo, gt, seen),
+                                               "mono": error_metrics(pm, um, gt, seen)} if uo is not None else None),
+                              "occupancy_fraction": float((gt == OCC).sum() / max((gt > 0).sum(), 1)),
                               "plan": plans})
                 print(key, mo["all"], flush=True)
     json.dump({"heads": a.heads, "items": items}, open(out / "manifest.json", "w"))

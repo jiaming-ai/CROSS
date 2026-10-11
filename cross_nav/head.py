@@ -73,7 +73,7 @@ class BEVHead(nn.Module):
     def __init__(self, size: int = 400, res: float = 0.05, layers=(-1, 4, 11, 17, 23), dim_agg: int = 2048,
                  dim_dino: int = 1024, feat: int = 256, dim: int = 384, depth: int = 8, heads: int = 8,
                  hbins=(-2.6, 1.0, 24), ctx_grid: int = 4, ctx_layers=(11, 23), num_special: int = 17,
-                 dropout: float = 0.0, max_frames: int = 32):
+                 dropout: float = 0.0, max_frames: int = 32, uncertainty: bool = False):
         super().__init__()
         assert size % 8 == 0
         self.size, self.res, self.layers = size, res, list(layers)
@@ -117,6 +117,13 @@ class BEVHead(nn.Module):
         self.out = nn.Conv2d(48, 1, 1)
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
+        # Predict the probability that the occupancy decision is wrong. Detached
+        # decoder features prevent this auxiliary objective changing occupancy.
+        self.uncertainty = uncertainty
+        if uncertainty:
+            self.error_head = nn.Sequential(ConvBlock(48, 32), nn.Conv2d(32, 1, 1))
+            nn.init.zeros_(self.error_head[-1].weight)
+            nn.init.zeros_(self.error_head[-1].bias)
 
     # ------------------------------------------------------------------------------------------------ lifting
     def lift(self, depth, conf, extrinsics, intrinsics, log_scale, up_cam):
@@ -170,7 +177,7 @@ class BEVHead(nn.Module):
 
     # ------------------------------------------------------------------------------------------------ forward
     def forward(self, tokens_list, patch_token_start, patch_hw, dino, depth, conf, extrinsics, intrinsics,
-                log_scale, up_cam, frame_valid=None, lift_valid=None):
+                log_scale, up_cam, frame_valid=None, lift_valid=None, return_aux=False):
         """tokens_list: aggregator outputs (index = layer); dino (B,S,P,1024); depth / conf (B,S,H,W) predicted;
         extrinsics (B,S,3,4) / intrinsics (B,S,3,3) predicted (image resolution); log_scale (B,); up_cam (B,3) unit;
         frame_valid (B,S) bool (padding); lift_valid (B,S) bool: frames whose depth is lifted (default frame_valid; a
@@ -251,7 +258,11 @@ class BEVHead(nn.Module):
         y = self.up2(torch.cat([y, s1], 1))
         y = F.interpolate(y, scale_factor=2, mode="bilinear", align_corners=False)
         y = self.up3(torch.cat([y, s0], 1))
-        return self.out(y)[:, 0]
+        logits = self.out(y)[:, 0]
+        if return_aux:
+            error_logits = self.error_head(y.detach())[:, 0] if self.uncertainty else None
+            return {"logits": logits, "error_logits": error_logits}
+        return logits
 
 
 class DirectBEVHead(nn.Module):
@@ -263,7 +274,7 @@ class DirectBEVHead(nn.Module):
 
     def __init__(self, size: int = 400, res: float = 0.05, layers=(-1, 4, 11, 17, 23), dim_agg: int = 2048,
                  dim_dino: int = 1024, feat: int = 256, dim: int = 384, depth: int = 10, heads: int = 8,
-                 num_special: int = 17, dropout: float = 0.0, arch: str = "direct", **_):
+                 num_special: int = 17, dropout: float = 0.0, arch: str = "direct", uncertainty: bool = False, **_):
         super().__init__()
         assert size % 8 == 0
         self.size, self.res, self.layers, self.dim = size, res, list(layers), dim
@@ -287,6 +298,13 @@ class DirectBEVHead(nn.Module):
         self.out = nn.Conv2d(48, 1, 1)
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
+        # Predict the probability that the occupancy decision is wrong. Detached
+        # decoder features prevent this auxiliary objective changing occupancy.
+        self.uncertainty = uncertainty
+        if uncertainty:
+            self.error_head = nn.Sequential(ConvBlock(48, 32), nn.Conv2d(32, 1, 1))
+            nn.init.zeros_(self.error_head[-1].weight)
+            nn.init.zeros_(self.error_head[-1].bias)
 
     def _pos2d(self, h, w, device):
         """(h*w, dim) sine position of each patch (normalised image coordinates)."""
@@ -298,7 +316,7 @@ class DirectBEVHead(nn.Module):
         return torch.cat([ax.sin(), ax.cos(), ay.sin(), ay.cos()], -1)
 
     def forward(self, tokens_list, patch_token_start, patch_hw, dino, depth, conf, extrinsics, intrinsics,
-                log_scale, up_cam, frame_valid=None, lift_valid=None):
+                log_scale, up_cam, frame_valid=None, lift_valid=None, return_aux=False):
         h, w = patch_hw
         B, S = tokens_list[-1].shape[:2]
         dev = tokens_list[-1].device
@@ -324,7 +342,11 @@ class DirectBEVHead(nn.Module):
         y = self.up1(F.interpolate(y, scale_factor=2, mode="bilinear", align_corners=False))
         y = self.up2(F.interpolate(y, scale_factor=2, mode="bilinear", align_corners=False))
         y = self.up3(F.interpolate(y, scale_factor=2, mode="bilinear", align_corners=False))
-        return self.out(y)[:, 0]
+        logits = self.out(y)[:, 0]
+        if return_aux:
+            error_logits = self.error_head(y.detach())[:, 0] if self.uncertainty else None
+            return {"logits": logits, "error_logits": error_logits}
+        return logits
 
 
 def build_bev_head(cfg: dict | None):

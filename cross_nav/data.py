@@ -115,10 +115,14 @@ class NavStream(IterableDataset):
                         "split": self.split}
                 pool = DatasetPool(self.cfg["root"], n, {**base, **c}, self.seed)
             except (RuntimeError, FileNotFoundError) as e:
+                if self.cfg.get("require_all_datasets", False):
+                    raise RuntimeError(f"required dataset {n} unavailable: {e}") from e
                 print(f"[data] skip dataset {n}: {e}", flush=True)
                 continue
             lds = c.get("label_dataset", c.get("dataset", n))
             if not labelled_pool(pool, self.bevs, lds):
+                if self.cfg.get("require_all_datasets", False):
+                    raise RuntimeError(f"required dataset {n} has no usable BEV labels")
                 print(f"[data] skip dataset {n}: no BEV labels under {self.cfg['bev_root']}/{lds}", flush=True)
                 continue
             self.label_ds[pool.name] = lds

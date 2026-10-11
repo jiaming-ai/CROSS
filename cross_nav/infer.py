@@ -3,6 +3,7 @@
     pred = BEVPredictor("heads_012000_ema.pt", "cuda")
     out = pred(tokens, pts, patch_hw, dino, depth, conf, pose_enc, hw, log_scale, up_cam=None)
     out["prob"]   (N, N) P(occupied) in frame 0's BEV frame (cross_nav/bev.py); out["up_cam"] gravity used
+    out["uncertainty"] learned P(occupancy decision error), or None for an old checkpoint
 
 tokens: {layer: (1, S, T, 2048)} of the cached aggregator layers (4, 11, 17, 23); dino (S, P, 1024) or (1, S, P, 1024);
 depth / conf (k, H, W) of the first k views (k <= S: the others give context but are not lifted); pose_enc (1, S, 9);
@@ -60,8 +61,11 @@ class BEVPredictor:
                                                dim=-1)
         ls = torch.tensor([float(log_scale)], device=self.device)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            logits = self.bev(tl, pts, patch_hw, dino, d, c, ext, intr, ls, up, None, lift).float()
-        return {"prob": torch.sigmoid(logits[0]), "up_cam": up[0], "up_head": up_head, "log_scale": float(log_scale),
+            pred = self.bev(tl, pts, patch_hw, dino, d, c, ext, intr, ls, up, None, lift, return_aux=True)
+            logits = pred["logits"].float()
+        return {"prob": torch.sigmoid(logits[0]),
+                "uncertainty": (torch.sigmoid(pred["error_logits"][0].float())
+                                if pred["error_logits"] is not None else None), "up_cam": up[0], "up_head": up_head, "log_scale": float(log_scale),
                 "res": self.res, "size": self.size}
 
     @staticmethod
