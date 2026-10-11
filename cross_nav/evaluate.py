@@ -37,6 +37,7 @@ from vggt_ft.dataio.transforms import target_shape
 from .bev import FREE, OCC, BEVSpec, bev_axes
 from .data import NavStream
 from .model import NavModel
+from .geometry import lift_np
 
 RANGES = ((0.0, 3.0), (3.0, 6.0), (6.0, 1e9))
 
@@ -120,17 +121,6 @@ def geom_baseline(pts, w, spec: BEVSpec, cam_h, band=(0.10, 1.80), floor_tol=0.1
     out[(f > 0) & (a < min_occ)] = FREE
     out[a >= min_occ] = OCC
     return out.reshape(N, N)
-
-
-def lift_np(depth, K, E_c_from_0, A):
-    """depth (H,W) -> BEV-frame points of a frame with camera-from-frame-0 E (3x4 or 4x4) and BEV-from-frame-0 A."""
-    H, W = depth.shape
-    ys, xs = np.mgrid[0:H:2, 0:W:2]
-    d = depth[ys, xs]
-    ok = d > 0
-    P = np.stack([(xs[ok] + 0.5 - K[0, 2]) / K[0, 0] * d[ok], (ys[ok] + 0.5 - K[1, 2]) / K[1, 1] * d[ok], d[ok]], -1)
-    P0 = (P - E_c_from_0[:3, 3]) @ E_c_from_0[:3, :3]
-    return P0 @ A.T, ok
 
 
 # ---------------------------------------------------------------------------------------------------------- metrics
@@ -249,11 +239,12 @@ def run(windows_path, heads_path, out, figs=None, n_figs=6, backbone=None, condi
             A = bev_axes(up_gt)[0].cpu().numpy()
             ext = bb["extrinsics"][0].cpu().numpy()
             intr = bb["intrinsics"][0].cpu().numpy()
-            dp = bb["depth"][0].float().cpu().numpy() * math.exp(float(ls_gt[0]))
+            dp = bb["depth"][0].float().cpu().numpy()
+            metric_scale = math.exp(float(ls_gt[0]))
             conf = bb["depth_conf"][0].float().cpu().numpy()
             P, Wt = [], []
             for s in range(S):
-                pts, ok = lift_np(dp[s], intr[s], ext[s], A)
+                pts, ok = lift_np(dp[s], intr[s], ext[s], A, scale=metric_scale)
                 P.append(pts)
                 Wt.append(np.clip((conf[s][::2, ::2][ok] - 1) / 20, 0, 1) + 0.05)
             bg = geom_baseline(np.concatenate(P), np.concatenate(Wt), spec, cam_h)

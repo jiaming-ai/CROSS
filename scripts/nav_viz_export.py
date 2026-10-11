@@ -56,11 +56,12 @@ def geom_map(bb, ls, up, N, res, cam_h=None):
     A = bev_axes(up)[0].cpu().numpy()
     ext = bb["extrinsics"][0].float().cpu().numpy()
     intr = bb["intrinsics"][0].float().cpu().numpy()
-    dp = bb["depth"][0].float().cpu().numpy() * math.exp(float(ls))
+    dp = bb["depth"][0].float().cpu().numpy()
+    metric_scale = math.exp(float(ls))
     conf = bb["depth_conf"][0].float().cpu().numpy()
     P, Wt = [], []
     for s in range(dp.shape[0]):
-        pts, ok = lift_np(dp[s], intr[s], ext[s], A)
+        pts, ok = lift_np(dp[s], intr[s], ext[s], A, scale=metric_scale)
         P.append(pts)
         Wt.append(np.clip((conf[s][::2, ::2][ok] - 1) / 20, 0, 1) + 0.05)
     P, Wt = np.concatenate(P), np.concatenate(Wt)
