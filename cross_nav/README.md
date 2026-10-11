@@ -107,3 +107,7 @@ For queued GPU jobs, export cached predictions with `--save-arrays --no-images
 This releases the GPU for the next training run while path searches continue.
 The export manifest records `planning_skipped: true`; its empty planning fields
 are not evaluation results.
+
+Use `nav_planability_eval.py --condition oracle` only to diagnose the effect of
+scale/gravity errors on the same candidates. The default mono condition remains
+the deployment score; oracle results are labelled separately.

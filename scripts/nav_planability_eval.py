@@ -19,11 +19,14 @@ def main():
     ap.add_argument('--goal-source', choices=['unfiltered', 'historical'], default='unfiltered')
     ap.add_argument('--radius', type=float, default=.2)
     ap.add_argument('--risk-weight', type=float, default=4.)
+    ap.add_argument('--condition', choices=['mono', 'oracle'], default='mono',
+                    help='Oracle scale/gravity is diagnostic only; mono is the deployment condition')
     args = ap.parse_args()
     rows = []
     for file in sorted(args.arrays.glob('*.npz')):
         with np.load(file) as z:
-            gt, res, p = z['gt'], float(z['res']), z['pm']
+            pk, uk, gk = ('pm', 'um', 'gm') if args.condition == 'mono' else ('po', 'uo', 'go')
+            gt, res, p = z['gt'], float(z['res']), z[pk]
             start = (gt.shape[0]//2, gt.shape[1]//2)
             if args.goal_source == 'historical':
                 old = evaluate_planning(gt, {}, res, start, n_goals=10, seed=int(z['seed']))
@@ -37,12 +40,12 @@ def main():
             maps = {'head': p > .5, 'soft_risk': np.zeros_like(gt, bool),
                     'gt_known_diagnostic': gt != 1}
             costs = {'soft_risk': risk_cost(p, res, robot_radius=args.radius, weight=args.risk_weight)}
-            if 'um' in z:
+            if uk in z:
                 maps['soft_uncertainty'] = np.zeros_like(gt, bool)
                 costs['soft_uncertainty'] = risk_cost(p, res, robot_radius=args.radius, weight=args.risk_weight,
-                                                      uncertainty=z['um'], uncertainty_weight=4)
-            if 'gm' in z:
-                fused = np.maximum(p, np.where(z['gm'] == 2, .9, 0))
+                                                      uncertainty=z[uk], uncertainty_weight=4)
+            if gk in z:
+                fused = np.maximum(p, np.where(z[gk] == 2, .9, 0))
                 maps['soft_geometry_fusion'] = np.zeros_like(gt, bool)
                 costs['soft_geometry_fusion'] = risk_cost(fused, res, robot_radius=args.radius, weight=args.risk_weight)
             recs = evaluate_goals(gt, maps, start, goals, res, robot_radius=args.radius, costs=costs)
@@ -60,7 +63,8 @@ def main():
             total['success_rate'] = total['outcomes']['success']/total['planable'] if total['planable'] else None
             totals[m] = total
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps({'protocol': 'exact-start-known-footprint-v1', 'goal_source': args.goal_source,
+    args.out.write_text(json.dumps({'protocol': 'exact-start-known-footprint-v1', 'condition': args.condition,
+                                    'goal_source': args.goal_source,
                                     'radius': args.radius, 'totals': totals, 'windows': rows}))
     print(json.dumps(totals, indent=2))
 
