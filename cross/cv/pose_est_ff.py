@@ -660,13 +660,6 @@ class PoseEstFeedForward:
     def set_stereo_calibration(self, T_right_in_left: np.ndarray):
         self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
 
-    def set_camera(self, K: np.ndarray, width: int, height: int):
-        """Calibrated intrinsics at the model's input resolution (the system calls this after its transforms):
-        the focal of a canonical-camera scale head (config.scale_focal = "calibrated")."""
-        self._focal_norm = float(np.asarray(K)[0, 0]) / max(1, int(width))
-        if getattr(self.config, "scale_focal", "calibrated") == "calibrated":
-            self.backend.calib_focal = self._focal_norm      # also for passes made outside estimate_pose
-
     def _as_model_input(self, views: List[torch.Tensor]) -> torch.Tensor:
         images = torch.stack([v.to(self.device) for v in views], dim=0).float()
         if images.max() > 1.5:
@@ -691,9 +684,14 @@ class PoseEstFeedForward:
         logger.info(f"token cache: {cache.misses - n0} map images embedded in {time.perf_counter() - t0:.1f}s")
 
     def set_camera(self, K: np.ndarray, width: int, height: int):
-        """Intrinsics of the images given to the model (after its crop / resize): the principal-point correction.  The
-        model predicts cameras with the principal point at the image centre; the relative poses are rotated into the
-        calibrated camera frame (KITTI: 13 px off centre = 1.06 deg of yaw in every measured translation direction)."""
+        """Calibrated intrinsics of the images given to the model (after its crop / resize; the system calls this after
+        its transforms): the focal of a canonical-camera scale head (config.scale_focal = "calibrated") and the
+        principal-point correction.  The model predicts cameras with the principal point at the image centre; the
+        relative poses are rotated into the calibrated camera frame (KITTI: 13 px off centre = 1.06 deg of yaw in every
+        measured translation direction)."""
+        self._focal_norm = float(np.asarray(K)[0, 0]) / max(1, int(width))
+        if getattr(self.config, "scale_focal", "calibrated") == "calibrated":
+            self.backend.calib_focal = self._focal_norm      # also for passes made outside estimate_pose
         R = principal_point_rotation(K, width, height)
         M = np.eye(4)
         M[:3, :3] = R.T            # c2w_cam = c2w_model @ [R^T 0; 0 1]

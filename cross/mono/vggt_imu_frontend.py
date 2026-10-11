@@ -941,12 +941,16 @@ class VggtImuFrontend:
             # weight of 10 tests); accepted where the first is the likelier, never beyond 4 sigma
             h = self._cue_tests[cue]
             side = -1 if e < 0.0 else 1
+            if not self._speeds_finite(e * e, 16.0 * st * st):         # the test below at its widest
+                h.append(side)
+                return False
             p_in = (sum(1 for x in h if x == 0) + 9.0) / (len(h) + 10.0)
             p_out = (sum(1 for x in h if x == side) + 0.5) / (len(h) + 10.0)
             h.append(0 if abs(e) <= 4.0 * st else side)
             k2 = 2.0 * np.log(p_in * (v_pred + 4.0 * st) / (p_out * st * np.sqrt(2.0 * np.pi)))
             return bool(e * e <= min(16.0, max(k2, 0.0)) * st * st)
-        v_pass = float(np.exp(lam_j) * np.linalg.norm(t_pass)) / dt
+        with np.errstate(over="ignore"):
+            v_pass = float(np.exp(lam_j) * np.linalg.norm(t_pass)) / dt
         s_pass = float(np.sqrt(G.cfg.trans_rel ** 2 + min(lam_std, 1.0) ** 2)) * v_pass
         info = {"v_imu": round(v_pred, 3), "tol_imu": round(4.0 * s_imu, 3), "v_pass": round(v_pass, 3),
                 "imu_consistent": imu_consistent}
@@ -964,7 +968,7 @@ class VggtImuFrontend:
             pnp_ok = agree(v_pnp, s_pnp, "pnp")
             info.update(v_pnp=round(v_pnp, 3))
             if not trusted:
-                both = abs(v_pass - v_pnp) <= 4.0 * np.hypot(s_pass, s_pnp)
+                both = bool(np.isfinite(s_pass)) and abs(v_pass - v_pnp) <= 4.0 * np.hypot(s_pass, s_pnp)
                 pnp_ok = pnp_ok or (pass_ok and both)
         if not trusted:
             pass_t = pass_ok
@@ -980,12 +984,13 @@ class VggtImuFrontend:
         G = self.graph
         dt = max(G.t[b] - G.t[a], 1e-3)
         v_pred = float(np.linalg.norm(G.R[a].T @ (G.p[b] - G.p[a]))) / dt
-        v = float(np.exp(lam) * np.linalg.norm(t_ab)) / dt
         lam_std = self.scale_filter.lam_std if np.isfinite(self.scale_filter.lam_std) else 1.0
         v_std = float(G.v_std) if np.isfinite(G.v_std) else 1e3
-        s = float(np.linalg.norm([np.sqrt(G.cfg.trans_rel ** 2 + min(lam_std, 1.0) ** 2) * v,
-                                  0.05 + G.cfg.accel_bias_std * dt, v_std]))
-        return bool(abs(v - v_pred) <= 4.0 * s)
+        with np.errstate(over="ignore"):
+            v = float(np.exp(lam) * np.linalg.norm(t_ab)) / dt
+            s = float(np.linalg.norm([np.sqrt(G.cfg.trans_rel ** 2 + min(lam_std, 1.0) ** 2) * v,
+                                      0.05 + G.cfg.accel_bias_std * dt, v_std]))
+        return bool(self._speeds_finite(v, s) and abs(v - v_pred) <= 4.0 * s)
 
     def _translation_gate(self, m_node, j, lam_j, t_pass, timestamp):
         """Test of a pass's translation against the IMU's prediction (the counterpart of the gyro test of its rotation):
@@ -997,23 +1002,44 @@ class VggtImuFrontend:
         by more than 4 sigma, sigma combining the pass's relative noise, the scale's uncertainty and the IMU velocity's,
         which grows with the time since the last accepted translation (accelerometer bias std x time).  After
         vgio_trans_gate_max_gap s without an accepted translation the pass is accepted whatever it says.  Before the
-        scale is known no test.  Returns None (no test) or {"ok", "log_ratio", "dv", "tol"}."""
+        scale is known no test.  A speed (or its tolerance) that is not a finite number agrees with no prediction: the
+        log scale the pass inherits from the last measured node can run away in the graph (see _speeds_finite), and
+        its speed then overflows.  Returns None (no test) or {"ok", "log_ratio", "dv", "tol"}."""
         g = float(self.config.imu.vgio_trans_gate)
         G = self.graph
         if g <= 1.0 or not self.scale_filter.initialized:
             return None
         dt, v_pred, gap, imu_consistent = self._imu_prediction(m_node, j, timestamp)
-        v_meas = float(np.exp(lam_j) * np.linalg.norm(t_pass)) / dt
+        with np.errstate(over="ignore"):
+            v_meas = float(np.exp(lam_j) * np.linalg.norm(t_pass)) / dt
         lam_std = self.scale_filter.lam_std if np.isfinite(self.scale_filter.lam_std) else 1.0
-        sig_v = float(np.sqrt((G.cfg.trans_rel ** 2 + lam_std ** 2) * v_meas ** 2
-                              + (0.05 + G.cfg.accel_bias_std * gap) ** 2))
+        try:
+            sig_v = float(np.sqrt((G.cfg.trans_rel ** 2 + lam_std ** 2) * v_meas ** 2
+                                  + (0.05 + G.cfg.accel_bias_std * gap) ** 2))
+        except OverflowError:                    # a finite speed above ~1e154 m/s: its square is not a float
+            sig_v = float("inf")
         lr = float(np.log((v_meas * dt + 0.02) / (v_pred * dt + 0.02)))
-        ok = (not imu_consistent or abs(lr) <= np.log(g) or abs(v_meas - v_pred) <= 4.0 * sig_v
-              or gap > float(self.config.imu.vgio_trans_gate_max_gap))
+        agrees = self._speeds_finite(v_meas, sig_v) and (abs(lr) <= np.log(g) or abs(v_meas - v_pred) <= 4.0 * sig_v)
+        ok = not imu_consistent or agrees or gap > float(self.config.imu.vgio_trans_gate_max_gap)
         if ok:
             self._last_trans_ok = timestamp
         return {"ok": bool(ok), "log_ratio": round(lr, 3), "dv": round(v_meas - v_pred, 3), "tol": round(4.0 * sig_v, 3),
                 "imu_consistent": imu_consistent}
+
+    def _speeds_finite(self, *values):
+        """Whether the speeds and tolerances of a translation test are finite numbers; the test of one that is not
+        fails (counted in stats["trans_nonfinite"]).  A pass's speed is exp(lam) |t| / dt at the log scale lam it
+        inherits from the last measured node, and the graph can send that log scale to hundreds: when the passes of a
+        few nodes point against the motion the graph has from the IMU and nothing else observes the nodes' scales (the
+        passes before them were rejected, so no gauge link reaches the anchored nodes, and no learned-depth prior), the
+        relative-pose cost falls monotonically towards its limit (1 / trans_rel per factor) as their log scale grows,
+        and Gauss-Newton steps grow with exp(lam) (ROVER campus_large night_2024-09-24_3, T3 trial 82: passes 152-172
+        deg off the IMU's motion, +362 in one iteration to lam 371, then 1e160 m/s overflowed the squared speed).
+        Such a speed cannot be weighed against the IMU's, and an infinite tolerance would accept it."""
+        if all(np.isfinite(v) for v in values):
+            return True
+        self.stats["trans_nonfinite"] = self.stats.get("trans_nonfinite", 0) + 1
+        return False
 
     def _set_m(self, index, timestamp, node=None, corner_z=None):
         self.m_prev = self.m
