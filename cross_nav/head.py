@@ -73,7 +73,7 @@ class BEVHead(nn.Module):
     def __init__(self, size: int = 400, res: float = 0.05, layers=(-1, 4, 11, 17, 23), dim_agg: int = 2048,
                  dim_dino: int = 1024, feat: int = 256, dim: int = 384, depth: int = 8, heads: int = 8,
                  hbins=(-2.6, 1.0, 24), ctx_grid: int = 4, ctx_layers=(11, 23), num_special: int = 17,
-                 dropout: float = 0.0, max_frames: int = 32, uncertainty: bool = False):
+                 dropout: float = 0.0, max_frames: int = 32, uncertainty: bool = False, uncertainty_mode: str = "error"):
         super().__init__()
         assert size % 8 == 0
         self.size, self.res, self.layers = size, res, list(layers)
@@ -117,13 +117,16 @@ class BEVHead(nn.Module):
         self.out = nn.Conv2d(48, 1, 1)
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
-        # Predict the probability that the occupancy decision is wrong. Detached
-        # decoder features prevent this auxiliary objective changing occupancy.
+        # The auxiliary output is either error probability or a loss weight.
+        # Detached features isolate error prediction; attenuation is trained jointly.
+        if uncertainty_mode not in ("error", "attenuated"):
+            raise ValueError(f"unknown uncertainty mode: {uncertainty_mode}")
+        self.uncertainty_mode = uncertainty_mode
         self.uncertainty = uncertainty
         if uncertainty:
             self.error_head = nn.Sequential(ConvBlock(48, 32), nn.Conv2d(32, 1, 1))
             nn.init.zeros_(self.error_head[-1].weight)
-            nn.init.zeros_(self.error_head[-1].bias)
+            nn.init.constant_(self.error_head[-1].bias, -3.0 if uncertainty_mode == "attenuated" else 0.0)
 
     # ------------------------------------------------------------------------------------------------ lifting
     def lift(self, depth, conf, extrinsics, intrinsics, log_scale, up_cam):
@@ -260,7 +263,8 @@ class BEVHead(nn.Module):
         y = self.up3(torch.cat([y, s0], 1))
         logits = self.out(y)[:, 0]
         if return_aux:
-            error_logits = self.error_head(y.detach())[:, 0] if self.uncertainty else None
+            features = y.detach() if self.uncertainty_mode == "error" else y
+            error_logits = self.error_head(features)[:, 0] if self.uncertainty else None
             return {"logits": logits, "error_logits": error_logits}
         return logits
 
@@ -274,7 +278,8 @@ class DirectBEVHead(nn.Module):
 
     def __init__(self, size: int = 400, res: float = 0.05, layers=(-1, 4, 11, 17, 23), dim_agg: int = 2048,
                  dim_dino: int = 1024, feat: int = 256, dim: int = 384, depth: int = 10, heads: int = 8,
-                 num_special: int = 17, dropout: float = 0.0, arch: str = "direct", uncertainty: bool = False, **_):
+                 num_special: int = 17, dropout: float = 0.0, arch: str = "direct", uncertainty: bool = False,
+                 uncertainty_mode: str = "error", **_):
         super().__init__()
         assert size % 8 == 0
         self.size, self.res, self.layers, self.dim = size, res, list(layers), dim
@@ -298,13 +303,16 @@ class DirectBEVHead(nn.Module):
         self.out = nn.Conv2d(48, 1, 1)
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
-        # Predict the probability that the occupancy decision is wrong. Detached
-        # decoder features prevent this auxiliary objective changing occupancy.
+        # The auxiliary output is either error probability or a loss weight.
+        # Detached features isolate error prediction; attenuation is trained jointly.
+        if uncertainty_mode not in ("error", "attenuated"):
+            raise ValueError(f"unknown uncertainty mode: {uncertainty_mode}")
+        self.uncertainty_mode = uncertainty_mode
         self.uncertainty = uncertainty
         if uncertainty:
             self.error_head = nn.Sequential(ConvBlock(48, 32), nn.Conv2d(32, 1, 1))
             nn.init.zeros_(self.error_head[-1].weight)
-            nn.init.zeros_(self.error_head[-1].bias)
+            nn.init.constant_(self.error_head[-1].bias, -3.0 if uncertainty_mode == "attenuated" else 0.0)
 
     def _pos2d(self, h, w, device):
         """(h*w, dim) sine position of each patch (normalised image coordinates)."""
@@ -344,7 +352,8 @@ class DirectBEVHead(nn.Module):
         y = self.up3(F.interpolate(y, scale_factor=2, mode="bilinear", align_corners=False))
         logits = self.out(y)[:, 0]
         if return_aux:
-            error_logits = self.error_head(y.detach())[:, 0] if self.uncertainty else None
+            features = y.detach() if self.uncertainty_mode == "error" else y
+            error_logits = self.error_head(features)[:, 0] if self.uncertainty else None
             return {"logits": logits, "error_logits": error_logits}
         return logits
 

@@ -59,3 +59,20 @@ The 0.2 cutoff is illustrative, not a validated operating point. Old checkpoints
 still export without uncertainty panels. `--save-arrays` preserves floating-point
 predictions for paired CPU planner comparisons. Tune costs on validation data and
 freeze them for test evaluation. Optional `VIZ/note.txt` appears on the page.
+
+## Joint learned attenuation
+
+Set `bev_head.uncertainty_mode: attenuated` together with `uncertainty: true`.
+The auxiliary output predicts `s = softplus(raw) >= 0`; the labelled-cell BCE
+term becomes `exp(-s) * BCE + beta * s`, where `loss.attenuation_beta` defaults
+to 0.3 and must be positive. The original unweighted occupied Dice and gravity
+loss remain. Both occupancy and uncertainty receive gradients through the
+shared decoder. This is a regularized robust classification objective, not an
+exact Bernoulli likelihood or a calibrated uncertainty posterior.
+
+Here `uncertainty = 1 - exp(-s) = sigmoid(raw)` is an attenuation score, not
+P(error). Checkpoint metadata and exported manifests preserve that distinction;
+error-probability calibration metrics are omitted for this mode. The regularizer
+prevents all cells becoming uncertain, and `s >= 0` keeps the objective bounded
+below even at zero BCE. No target exists for unlabelled cells. This objective
+alone does not guarantee high uncertainty throughout unseen space.

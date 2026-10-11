@@ -22,7 +22,7 @@ from cross_nav.evaluate import geom_baseline, lift_np, load_window
 from cross_nav.model import NavModel
 from cross_nav.plan import evaluate_planning, summarize, risk_cost
 from cross_nav.train import gt_log_scale
-from cross_nav.uncertainty import error_metrics
+from cross_nav.uncertainty import error_metrics, uncertainty_score
 
 SKIP = {"tartanair2"}           # drone trajectories: not ground navigation (user, 2026-10-10)
 
@@ -163,9 +163,9 @@ def main():
                     pred_m = model.heads(bb, bb["log_scale_head"].float(), up_pred, return_aux=True)
                     lo = pred_o["logits"].float()[0].cpu().numpy()
                     lm = pred_m["logits"].float()[0].cpu().numpy()
-                    uo = (pred_o["error_logits"][0].float().sigmoid().cpu().numpy()
+                    uo = (uncertainty_score(pred_o["error_logits"][0], model.bev_head.uncertainty_mode).cpu().numpy()
                           if pred_o["error_logits"] is not None else None)
-                    um = (pred_m["error_logits"][0].float().sigmoid().cpu().numpy()
+                    um = (uncertainty_score(pred_m["error_logits"][0], model.bev_head.uncertainty_mode).cpu().numpy()
                           if pred_m["error_logits"] is not None else None)
                 po, pm = 1 / (1 + np.exp(-lo)), 1 / (1 + np.exp(-lm))
                 gt, vis = it["bev"].numpy(), it["vis"].numpy()
@@ -240,12 +240,12 @@ def main():
                                        "mono": {k: miou(gm == 2, gt, sel & (gm > 0)) for k, sel in (("all", np.ones_like(seen)),)},
                                        "coverage": {"oracle": round(float(((go > 0) & (gt > 0)).sum() / max((gt > 0).sum(), 1)), 3),
                                                     "mono": round(float(((gm > 0) & (gt > 0)).sum() / max((gt > 0).sum(), 1)), 3)}},
-                              "uncertainty": ({"oracle": error_metrics(po, uo, gt, seen),
-                                               "mono": error_metrics(pm, um, gt, seen)} if uo is not None else None),
+                              "uncertainty": ({"oracle": error_metrics(po, uo, gt, seen, model.bev_head.uncertainty_mode),
+                                               "mono": error_metrics(pm, um, gt, seen, model.bev_head.uncertainty_mode)} if uo is not None else None),
                               "occupancy_fraction": float((gt == OCC).sum() / max((gt > 0).sum(), 1)),
                               "plan": plans})
                 print(key, mo["all"], flush=True)
-    json.dump({"heads": a.heads, "items": items}, open(out / "manifest.json", "w"))
+    json.dump({"heads": a.heads, "uncertainty_kind": model.bev_head.uncertainty_mode, "items": items}, open(out / "manifest.json", "w"))
 
 
 if __name__ == "__main__":

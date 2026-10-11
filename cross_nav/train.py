@@ -31,7 +31,7 @@ from vggt_ft.train import apply_overrides, lr_factor
 from .bev import FREE, OCC
 from .data import NavStream
 from .model import NavModel
-from .uncertainty import error_loss
+from .uncertainty import error_loss, attenuated_bce
 
 
 def gt_log_scale(depth_pred: torch.Tensor, depth_gt: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
@@ -56,7 +56,7 @@ def tilt(up: torch.Tensor, deg: torch.Tensor) -> torch.Tensor:
     return F.normalize(up * th.cos() + torch.cross(a, up, dim=-1) * th.sin(), dim=-1)
 
 
-def bev_losses(logits, bev, w_dice=0.5, pos_weight=1.0):
+def bev_losses(logits, bev, w_dice=0.5, pos_weight=1.0, raw_uncertainty=None, attenuation_beta=0.3):
     lab = (bev == FREE) | (bev == OCC)
     tgt = (bev == OCC).float()
     m = lab.float()
@@ -70,7 +70,11 @@ def bev_losses(logits, bev, w_dice=0.5, pos_weight=1.0):
     dice = 1 - (2 * inter + 1) / (den + 1)
     has = (m.sum((1, 2)) > 0).float()
     l_dice = (dice * has).sum() / has.sum().clamp(min=1)
-    return l_bce + w_dice * l_dice, {"loss_bce": l_bce.detach(), "loss_dice": l_dice.detach()}
+    parts = {"loss_bce": l_bce.detach(), "loss_dice": l_dice.detach()}
+    if raw_uncertainty is not None:
+        l_bce, att_parts = attenuated_bce(logits, raw_uncertainty, bev, attenuation_beta, pos_weight)
+        parts.update(att_parts)
+    return l_bce + w_dice * l_dice, parts
 
 
 @torch.no_grad()
@@ -199,8 +203,10 @@ def main():
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             pred = model.heads(bb, ls_in, up_in, return_aux=True)
             logits = pred["logits"]
-        l_bev, parts = bev_losses(logits, batch["bev"], lc.get("w_dice", 0.5), lc.get("pos_weight", 1.0))
-        if pred["error_logits"] is not None:
+        attenuated = model.bev_head.uncertainty_mode == "attenuated"
+        l_bev, parts = bev_losses(logits, batch["bev"], lc.get("w_dice", 0.5), lc.get("pos_weight", 1.0),
+                                 pred["error_logits"] if attenuated else None, lc.get("attenuation_beta", 0.3))
+        if pred["error_logits"] is not None and not attenuated:
             l_err = error_loss(pred["error_logits"], logits, batch["bev"])
             l_bev = l_bev + lc.get("w_error", 1.0) * l_err
             parts["loss_error"] = l_err.detach()

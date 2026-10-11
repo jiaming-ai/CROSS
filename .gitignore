@@ -74,3 +74,6 @@ third_party/install
 assets/*.pdf
 .archive/
 *.safetensors
+
+# Private project documents
+/docs/

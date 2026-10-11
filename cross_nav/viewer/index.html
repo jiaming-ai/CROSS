@@ -148,10 +148,10 @@ header p { color: var(--muted); max-width: 70ch; margin: 8px 0 0; }
       around the current camera (centre, arrow = viewing direction), gravity-aligned. Light = free floor, dark =
       anything 0.1–1.8 m above it. Unknown ground truth shows the checkerboard. The thresholded prediction
       (P &gt; 0.5) and geometric maps are compared with a soft planner using occupancy risk over the robot footprint.
-      Goals are 2–8 m away, with a 0.2 m planning radius. Uncertainty is learned P(occupancy decision is wrong):
-      black = 0, yellow = 1. The selective BEV leaves cells unknown above 0.2 predicted error.
+      Goals are 2–8 m away, with a 0.2 m planning radius. Uncertainty is <span id="uncertainty-kind">learned P(occupancy decision is wrong)</span>:
+      black = 0, yellow = 1. The selective BEV leaves cells unknown above an uncertainty score of 0.2.
       Unknown ground truth cannot establish route safety; success uses the historical 0.1 m collision check.
-      Low predicted error alone does not establish obstacle-free space.</p>
+      Low uncertainty alone does not establish obstacle-free space.</p>
     <div class="meta" id="meta"></div><p id="run-note"></p>
   </header>
 
@@ -257,6 +257,9 @@ async function boot() {
   $("#meta").innerHTML = `<span>checkpoint <b>${manifest.checkpoint}</b></span><span>backbone <b>${manifest.backbone}</b></span>
     <span>windows <b>${manifest.items.length}</b></span><span>head <b>30.0 M params, lifted multi-layer</b></span><span>planning goals <b>${planStats ? planStats.total.oracle.head.n : '–'}</b></span>`;
   $("#run-note").textContent = manifest.note || "";
+  $("#uncertainty-kind").textContent = manifest.uncertainty_kind === "attenuated"
+    ? "a learned attenuation score (1 minus the occupancy loss weight), not an error probability"
+    : "learned P(occupancy decision is wrong)";
   const groups = {};
   for (const it of manifest.items) { const k = it.set + "/" + it.dataset; (groups[k] = groups[k] || []).push(it); }
   const chips = $("#dschips"); let first = null, prevSet = null;
@@ -359,8 +362,8 @@ async function render() {
       ${tileHTML("Thresholded head", "planner", o ? im.pt : im.ptm, im.seen, bar, planSvg(pl, "head"))}
       ${tileHTML("Geometric", "unknown free", o ? im.geo : im.geom, im.seen, bar, planSvg(pl, "geom"))}
       ${tileHTML("Head errors", `mIoU ${fmt(m.all?.[0])}`, o ? im.err : im.errm, im.seen, bar, "")}
-      ${im.uo ? tileHTML("Uncertainty", "P(error): dark 0 → yellow 1", o ? im.uo : im.um, im.seen, bar, "") : ""}
-      ${im.uo ? tileHTML("Selective BEV", "unknown if P(error) > 0.2", o ? im.uo_selective : im.um_selective, im.seen, bar, "") : ""}
+      ${im.uo ? tileHTML("Uncertainty", manifest.uncertainty_kind === "attenuated" ? "1 − loss weight: 0 → 1" : "P(error): dark 0 → yellow 1", o ? im.uo : im.um, im.seen, bar, "") : ""}
+      ${im.uo ? tileHTML("Selective BEV", "unknown if uncertainty > 0.2", o ? im.uo_selective : im.um_selective, im.seen, bar, "") : ""}
       ${pl?.paths?.soft_risk ? tileHTML("Soft-risk planner", "footprint risk", o ? im.po : im.pm, im.seen, bar, planSvg(pl, "soft_risk")) : ""}
       ${pl?.paths?.soft_uncertainty ? tileHTML("Uncertainty planner", "risk + uncertainty", o ? im.po : im.pm, im.seen, bar, planSvg(pl, "soft_uncertainty")) : ""}`;
     el.querySelectorAll(".tile").forEach(t => t.onclick = () => {

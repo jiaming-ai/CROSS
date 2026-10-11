@@ -31,7 +31,7 @@ for it in man["items"]:
             packs[f"{it['set']}__{it['dataset']}"][it["key"]][name] = uri(d / (name + ".png"))
 for k, v in packs.items():
     json.dump(v, open(data / f"{k}.json", "w"))
-json.dump({"checkpoint": ck, "backbone": "VGGT-Omega vdl_s1 (frozen)", "items": man["items"], "note": (viz / "note.txt").read_text() if (viz / "note.txt").exists() else ""}, open(data / "manifest.json", "w"))
+json.dump({"checkpoint": ck, "backbone": "VGGT-Omega vdl_s1 (frozen)", "items": man["items"], "uncertainty_kind": man.get("uncertainty_kind", "error"), "note": (viz / "note.txt").read_text() if (viz / "note.txt").exists() else ""}, open(data / "manifest.json", "w"))
 
 # planning statistics over all windows (stats manifest of nav_viz_export.py --no-images)
 st_path = viz / "stats" / "manifest.json"
