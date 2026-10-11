@@ -50,3 +50,28 @@ class LocalWaypointPlanner:
             return {'path':None, 'target':None, 'stop_for_reobserve':True}
         target = tuple(self.coords[eligible[np.argmin(self.costs[eligible])]])
         return {'path':self.field.path(target), 'target':target, 'stop_for_reobserve':True}
+
+
+class AdaptiveVisibilityPlanner:
+    """Prefer the highest predicted visibility threshold allowing local progress.
+
+    Threshold selection uses only predicted maps and the requested goal. Success
+    still needs an external execution audit; visibility is not calibrated safety.
+    """
+    def __init__(self, occupancy, observability, start, res, *,
+                 thresholds=(.75, .625, .5, .375, .25), **kwargs):
+        self.thresholds = tuple(thresholds)
+        if (not self.thresholds or
+                any(not np.isfinite(t) or not 0 <= t <= 1 for t in self.thresholds) or
+                any(a <= b for a, b in zip(self.thresholds, self.thresholds[1:]))):
+            raise ValueError('thresholds must be finite, strictly decreasing probabilities')
+        self.planners = [LocalWaypointPlanner(occupancy, observability, start, res,
+                                              threshold=t, **kwargs)
+                         for t in self.thresholds]
+
+    def plan(self, goal):
+        for threshold, planner in zip(self.thresholds, self.planners):
+            result = planner.plan(goal)
+            if result['path'] is not None:
+                break
+        return {**result, 'visibility_threshold': threshold}

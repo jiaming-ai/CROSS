@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from cross_nav.local_plan import LocalWaypointPlanner
+from cross_nav.local_plan import LocalWaypointPlanner, AdaptiveVisibilityPlanner
 from cross_nav.observed_plan import ObservedAudit
 
 
@@ -37,3 +37,25 @@ def test_visibility_cost_prefers_confident_route_without_mutating_input():
     np.testing.assert_array_equal(v, original)
     with pytest.raises(ValueError, match='visibility weight'):
         LocalWaypointPlanner(p, v, (3, 1), 1., visibility_weight=-1.)
+
+
+def test_adaptive_visibility_prefers_confident_local_stop_over_distant_goal():
+    p = np.zeros((7, 12), np.float32)
+    v = np.full_like(p, .4); v[:, :5] = .9
+    plan = AdaptiveVisibilityPlanner(p, v, (3, 1), 1., radius=0.).plan((3, 10))
+    assert plan['visibility_threshold'] == .75
+    assert plan['stop_for_reobserve']
+    assert all(v[cell] >= .75 for cell in plan['path'])
+
+
+def test_adaptive_visibility_relaxes_only_when_progress_is_unavailable():
+    p = np.zeros((7, 12), np.float32)
+    v = np.full_like(p, .4)
+    plan = AdaptiveVisibilityPlanner(p, v, (3, 1), 1., radius=0.).plan((3, 10))
+    assert plan['visibility_threshold'] == .375
+    assert plan['target'] == (3, 10)
+    empty = AdaptiveVisibilityPlanner(p, np.zeros_like(v), (3, 1), 1., radius=0.).plan((3, 10))
+    assert empty['path'] is None
+    for thresholds in [(), (.25, .5), (.5, .5), (float('nan'),), (1.1,)]:
+        with pytest.raises(ValueError, match='thresholds'):
+            AdaptiveVisibilityPlanner(p, v, (3, 1), 1., thresholds=thresholds)
