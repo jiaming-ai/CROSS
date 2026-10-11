@@ -101,6 +101,15 @@ leaves every cell traversable. It changes the planner, not goal feasibility or
 success criteria. The flag is opt-in to preserve earlier comparisons; the
 output records whether it was enabled.
 
+An experimental training loss, `loss.w_route` (default zero), adds positive BCE
+on labelled obstacles crossed by predicted routes. It samples up to
+`loss.route_goals` (default 32) reachable training goals, uses the diagonal-risk
+planner with `loss.route_radius` (default 0.2 m), and keeps the base occupancy
+loss. Mining uses detached predictions on the CPU; GT supplies training targets
+and feasible training goals only. Unknown cells are not obstacle targets. The
+logs report `loss_route`, `route_pixels` and `route_goals`; held-out evaluation is
+needed before adopting this loss.
+
 By default candidates are sampled uniformly in the 2–8 m annulus before reading
 GT or predictions. `--goal-source historical` instead audits the old sampled
 goals from the exact start, helping diagnose differences between protocols.
