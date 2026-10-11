@@ -23,6 +23,7 @@ from vggt_ft.dataio.transforms import target_shape
 from vggt_ft.dataio.windows import DEFAULTS, DatasetPool, WindowSampler, collate, materialise
 
 from .bev import BEVSpec, camera_bev_pose, crop_world, points_to_cells
+from .context import past_frames, validate_lags
 
 
 class WorldBEVs:
@@ -103,6 +104,11 @@ class NavStream(IterableDataset):
         self.sampler = None
         b = cfg.get("bev", {})
         self.spec = BEVSpec(b.get("size", 400), b.get("res", 0.05))
+        self.context_lags = None
+        if cfg.get("context_lags") is not None:
+            self.context_lags = validate_lags(cfg["context_lags"])
+            if list(cfg["frames"]) != [len(self.context_lags)] * 2:
+                raise ValueError("context_lags requires a fixed matching frames count")
 
     def _build(self):
         self.bevs = WorldBEVs(self.cfg["bev_root"])
@@ -142,6 +148,8 @@ class NavStream(IterableDataset):
         lds = self.label_ds[pool.name]
         order = [0] + [k for k in range(1, len(frames)) if frames[k][1] is frames[0][1]] + \
             [k for k in range(1, len(frames)) if frames[k][1] is not frames[0][1]]
+        if self.context_lags is not None:
+            order = [0]  # Swapping anchors could make some context frames future inputs.
         for k in order:
             sc, sq, i = frames[k]
             wb = self.bevs.get(lds, sc.world)
@@ -196,6 +204,11 @@ class NavStream(IterableDataset):
             while len(items) < B:
                 try:
                     pool, frames, negs, kind = self.sampler.sample(rng, S)
+                    if self.context_lags is not None:
+                        frames = past_frames(frames[0], self.context_lags)
+                        if frames is None:
+                            continue
+                        negs, kind = [], "causal"
                     it = self.make_item(rng, pool, frames, negs, kind, hw)
                 except (OSError, ValueError, KeyError) as e:
                     print(f"[data] skip window: {e!r}", flush=True)

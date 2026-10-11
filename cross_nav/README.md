@@ -14,6 +14,15 @@ Old configurations and checkpoints keep their tensor-returning interface.
 For mixture ablations, set `data.require_all_datasets: true` to fail if a requested
 dataset cannot load instead of silently changing the training mixture.
 
+Optional `data.context_lags: [0, 4, 8, 16, 32, 64, 128, 256]` with
+`data.frames: [8, 8]` trains on a fixed current frame and seven past frames.
+This is a temporal proxy for keyframes, not live CROSS retrieval. Short histories
+fill the largest temporal gaps without duplicate or future frames; anchors with
+fewer than eight available frames or invalid ground height are rejected.
+This recipe replaces cross-session and negative references with same-sequence
+past context. World-level labels remain unchanged and can include observations
+outside the input time range. Omitting `context_lags` preserves existing sampling.
+
 `NavModel.heads(..., return_aux=True)` returns `logits` and `error_logits` (the
 latter is `None` for old heads). `BEVPredictor` adds `uncertainty` to its output:
 a sigmoid error map, or `None`. Check calibration, occupied-cell errors and
