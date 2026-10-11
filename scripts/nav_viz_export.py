@@ -113,9 +113,13 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--per-dataset", type=int, default=6, help="0 = all windows")
     ap.add_argument("--no-images", action="store_true", help="planning statistics only")
+    ap.add_argument("--skip-planning", action="store_true",
+                    help="Export predictions without path searches; score saved arrays in a separate CPU job")
     ap.add_argument("--goals", type=int, default=5)
     ap.add_argument("windows", nargs="+")
     a = ap.parse_args()
+    if a.skip_planning and not (a.save_arrays and a.no_images):
+        ap.error("--skip-planning requires --save-arrays and --no-images")
     ck = torch.load(a.heads, map_location="cpu", weights_only=False)
     model = NavModel(a.backbone or ck["backbone"], ck.get("bev_cfg"), ck.get("gravity_cfg")).cuda().eval()
     model.bev_head.load_state_dict(ck["bev_head"])
@@ -189,7 +193,8 @@ def main():
                     if uu is not None:
                         maps["soft_uncertainty"] = np.zeros_like(gt, dtype=bool)
                         costs["soft_uncertainty"] = risk_cost(ph, res, uncertainty=uu, uncertainty_weight=4.0)
-                    recs = evaluate_planning(gt, maps, res, (N // 2, N // 2), n_goals=a.goals, seed=j, costs=costs)
+                    recs = ([] if a.skip_planning else
+                            evaluate_planning(gt, maps, res, (N // 2, N // 2), n_goals=a.goals, seed=j, costs=costs))
                     plans[cond] = {"summary": {m: summarize(recs, m) for m in maps},
                                    "goals": [[round(r["goal"][1] / N, 4), round(r["goal"][0] / N, 4)] for r in recs],
                                    "gt": [path_pts(r["gt_path"], N) for r in recs],
@@ -245,7 +250,7 @@ def main():
                               "occupancy_fraction": float((gt == OCC).sum() / max((gt > 0).sum(), 1)),
                               "plan": plans})
                 print(key, mo["all"], flush=True)
-    json.dump({"heads": a.heads, "uncertainty_kind": model.bev_head.uncertainty_mode, "items": items}, open(out / "manifest.json", "w"))
+    json.dump({"heads": a.heads, "uncertainty_kind": model.bev_head.uncertainty_mode, "planning_skipped": a.skip_planning, "items": items}, open(out / "manifest.json", "w"))
 
 
 if __name__ == "__main__":

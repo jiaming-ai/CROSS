@@ -101,3 +101,9 @@ The viewer shows feasibility counts and verified success separately from the
 historical score. The GT-known diagnostic is a label-based ceiling, not a model
 result. Sparse labels can leave few verifiably planable goals; use sufficiently
 complete held-out ground truth for conclusions, and report the denominator.
+
+For queued GPU jobs, export cached predictions with `--save-arrays --no-images
+--skip-planning`, then run `nav_planability_eval.py` in a separate CPU process.
+This releases the GPU for the next training run while path searches continue.
+The export manifest records `planning_skipped: true`; its empty planning fields
+are not evaluation results.
