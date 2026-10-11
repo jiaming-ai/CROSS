@@ -7,7 +7,7 @@ from cross.utils.lie_tensor import (normalize_se3, project_SE3, rotation_angle_f
                                     split_clusters_by_vertical, vertical_vector)
 from cross.utils.profile import timeit
 from cross.utils.fps import fps_monitor, start_fps_monitoring, stop_fps_monitoring
-from cross.core.hypothesis import HypothesisManager
+from cross.core.hypothesis import STRONG_PASS_MIN_COVIS, HypothesisManager
 from cross.core.odom_accum import OdomAccumulator
 from cross.core.types import Camera, Keyframe, EdgeType
 from cross.core.simple_topo import SimpleTopo, SimpleTopoConfig
@@ -2534,12 +2534,9 @@ class System:
                 bs = valid_indices_tuple[0][cluster_indices].tolist()
                 informative = any((int(b) >= len(loops)) or loops[int(b)] is not False for b in bs)
             # references of the cluster with a high pose-estimator confidence (covisibility): a multi-view check of the
-            # proposal (HypothesisConfig.strong_pass_frames)
-            hc = self.config.mapping.hypothesis
-            strong_refs = 0
-            if getattr(hc, "strong_pass_frames", 0) > 1:
-                bs_c = valid_indices_tuple[0][cluster_indices]
-                strong_refs = len({int(b) for b in bs_c.tolist() if float(confidences[int(b)]) >= hc.strong_pass_min_covis})
+            # proposal (cross.core.hypothesis.STRONG_PASS_FRAMES)
+            bs_c = valid_indices_tuple[0][cluster_indices]
+            strong_refs = len({int(b) for b in bs_c.tolist() if float(confidences[int(b)]) >= STRONG_PASS_MIN_COVIS})
 
             hypotheses.append({
                 'pose': representative_pose, # cluster representative pose

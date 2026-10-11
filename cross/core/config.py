@@ -492,14 +492,6 @@ class HypothesisConfig:
     reloc_min_verified_frames: int = 3
     reloc_realize_nats: float = 2.0
     detect_reject_cooldown_steps: int = 30   # steps a candidate is ignored after a rejected merge
-    # strong passes (0 = off): a proposal backed by at least strong_pass_min_refs references, each with covisibility
-    # >= strong_pass_min_covis, is a multi-view check by itself; such a pass counts as strong_pass_frames valid evidence
-    # frames in the frame-count gates of realization (realize_min_frames) and detection (detect_min_frames). Without
-    # it, a short real overlap after non-overlapping views (rightly rejected) gives too few frames, and the passes split
-    # over several components (OpenLORIS office1-7, mono: relocalization ~175 frames late)
-    strong_pass_frames: int = 0
-    strong_pass_min_refs: int = 2
-    strong_pass_min_covis: float = 0.3
     # geometric verification of a merge: fraction of the candidate's visual edges that remain outliers
     # (Mahalanobis norm > verify_outlier_sigma) after the loop-closure optimisation
     verify_outlier_sigma: float = 4.0

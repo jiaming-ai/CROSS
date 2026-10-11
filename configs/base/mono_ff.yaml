@@ -12,14 +12,9 @@ pose_est:
     n_ref_anchors: 0
     use_odom_anchor: true
     use_map_anchors: true
-    # Full benchmark 2026-10-09 (final fine-tuned VGGT-Omega, mono + odometry and mono + IMU): this option and
-    # strong_pass_frames below improve relocalization on OpenLORIS (T3 +9 / -1 trials with odometry) and are neutral on
-    # ROVER, SimChange and KITTI; the pair filter costs ~25-50 ms per pose call.
+    # Full benchmark 2026-10-09 (final fine-tuned VGGT-Omega, mono + odometry and mono + IMU): this option and the strong
+    # passes (now in every mode) improve relocalization on OpenLORIS (T3 +9 / -1 trials with odometry) and are neutral
+    # on ROVER, SimChange and KITTI; the pair filter costs ~25-50 ms per pose call.
     # map scale anchors only between references that overlap each other: a reference that overlaps nothing else in the
     # pass is placed arbitrarily, and every anchor through it shares that error (a wrong scale that looks certain)
     map_anchor_min_pair_covis: 0.15
-mapping:
-  hypothesis:
-    # a pass backed by >= 2 references with covisibility >= 0.3 counts as 3 frames of relocalization evidence: a short
-    # real overlap after rightly rejected views is enough to relocalize
-    strong_pass_frames: 3

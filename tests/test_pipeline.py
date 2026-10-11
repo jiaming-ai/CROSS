@@ -234,7 +234,6 @@ def test_mono_ff_shipped_defaults():
     assert [os.path.basename(f) for f in mode_config_files("stereo", "external")] == ["stereo_wheel.yaml"]
     cfg = load_config(*files)
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
-    assert cfg.mapping.hypothesis.strong_pass_frames == 3
     ff = cfg.pose_est.ff         # the feed-forward back end without a stereo pair
     assert cfg.pose_est.type.value == "ff" and not ff.use_curr_anchor and ff.n_ref_anchors == 0
     assert ff.use_odom_anchor and ff.use_map_anchors and cfg.pose_est.obs_max_interval_steps == 3
@@ -261,7 +260,7 @@ def test_map_and_reloc_mono_loads_shipped_defaults():
     spec.loader.exec_module(mod)
     base = ["--map", "m", "--query", "q", "--out", "o"]
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "mono", "--mono-estimator", "ff", "--odometry", "vgio"]))
-    assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15 and cfg.mapping.hypothesis.strong_pass_frames == 3
+    assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo"]))
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.0
     # explicit options of the runner win over the mode's file (they used to be overwritten by the mono presets)

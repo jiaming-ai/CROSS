@@ -20,6 +20,19 @@ from cross.core.pgo import (
     as_se3,
 )
 from cross.core.config import HypothesisConfig
+
+# Strong passes: a proposal backed by at least STRONG_PASS_MIN_REFS references, each with covisibility >=
+# STRONG_PASS_MIN_COVIS, is a multi-view check by itself; such a pass counts as STRONG_PASS_FRAMES valid evidence frames
+# in the frame-count gates of realization (realize_min_frames) and detection (detect_min_frames).  Without it, a short
+# real overlap after non-overlapping views (rightly rejected) gives too few frames, and the passes split over several
+# components (OpenLORIS office1-7, mono: relocalization ~175 frames late).  Mono feed-forward: OpenLORIS T3 +9 / -1
+# (2026-10-09); neutral in every other mode on the full benchmark (2026-10-11, outputs/2026-10-09_config_profiles H2:
+# stereo, + Basalt, + IMU, RGB-D, mono DA3), so on everywhere (the option: tag opt-strong-pass-frames).
+STRONG_PASS_FRAMES = 3
+STRONG_PASS_MIN_REFS = 2
+STRONG_PASS_MIN_COVIS = 0.3
+
+
 @dataclass
 class Hypothesis:
     """
@@ -247,9 +260,6 @@ class HypothesisManager:
         if self.reloc_association_evidence and not (cfg.session_recovery and cfg.chart_aware):
             raise ValueError("Association evidence requires session_recovery with chart_aware")
         self.detect_reject_cooldown_steps = cfg.detect_reject_cooldown_steps
-        self.strong_pass_frames = int(getattr(cfg, "strong_pass_frames", 0))
-        self.strong_pass_min_refs = int(getattr(cfg, "strong_pass_min_refs", 2))
-        self.strong_pass_min_covis = float(getattr(cfg, "strong_pass_min_covis", 0.3))
         self.verify_outlier_sigma = cfg.verify_outlier_sigma
         self.verify_max_outlier_frac = cfg.verify_max_outlier_frac
 
@@ -392,7 +402,7 @@ class HypothesisManager:
         self.log_conf_hist = torch.zeros(self.n_components, self.llr_hist_length, device=self.device)
         # which history slots hold real evidence (component active and past its birth frame)
         self.hist_valid = torch.zeros(self.n_components, self.llr_hist_length, dtype=torch.bool, device=self.device)
-        # which valid history slots came from a strong pass (strong_pass_frames)
+        # which valid history slots came from a strong pass (STRONG_PASS_FRAMES)
         self.strong_hist = torch.zeros(self.n_components, self.llr_hist_length, dtype=torch.bool, device=self.device)
         self._pending_strong = torch.zeros(self.n_components, dtype=torch.bool, device=self.device)
         self._lc_reject_until: Dict[int, int] = {}
@@ -729,14 +739,13 @@ class HypothesisManager:
         self.component_generations[component_id] += 1
 
     def _effective_frames(self, n_valid: torch.Tensor, rows=None) -> torch.Tensor:
-        """Valid evidence frames, a strong pass counting strong_pass_frames (rows: the components of n_valid)."""
-        if self.strong_pass_frames <= 1:
-            return n_valid
+        """Valid evidence frames, a strong pass counting STRONG_PASS_FRAMES (rows: the components of n_valid)."""
         strong = (self.strong_hist & self.hist_valid) if rows is None else (self.strong_hist[rows] & self.hist_valid[rows])
-        return n_valid + (self.strong_pass_frames - 1) * strong.sum(dim=1)
+        return n_valid + (STRONG_PASS_FRAMES - 1) * strong.sum(dim=1)
 
-    def _is_strong(self, proposal: Dict) -> bool:
-        return self.strong_pass_frames > 1 and int(proposal.get("strong_refs", 0)) >= self.strong_pass_min_refs
+    @staticmethod
+    def _is_strong(proposal: Dict) -> bool:
+        return int(proposal.get("strong_refs", 0)) >= STRONG_PASS_MIN_REFS
 
     def reset_tracking_dist(self):
         """
