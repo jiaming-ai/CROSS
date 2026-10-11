@@ -28,6 +28,7 @@ def main():
     p.add_argument("--kind", action="append", choices=("error", "attenuated", "unavailable"), help="Explicit uncertainty kind per run if export is still running")
     p.add_argument("--per-scene", type=int, default=3)
     p.add_argument("--note", default="")
+    p.add_argument("--related-page", action="append", default=[], help="Label=relative.html; related input recipe")
     p.add_argument("--score", action="append", default=[], help="Label=planability.json; full benchmark summary, separate from shown examples")
     a = p.parse_args()
     windows = json.loads(a.windows.read_text())["windows"]
@@ -76,7 +77,7 @@ def main():
         raw = json.loads(Path(path).read_text())
         scores.append(dict(label=label, source=path, windows=len(raw["windows"]),
                            **{k: v for k, v in raw.items() if k != "windows"}))
-    payload = json.dumps(dict(rows=rows, runs=kinds, scores=scores, note=a.note, source=str(a.windows))).replace("</", "<\\/")
+    payload = json.dumps(dict(rows=rows, runs=kinds, scores=scores, note=a.note, source=str(a.windows), links=[dict(label=v.split("=", 1)[0], href=v.split("=", 1)[1]) for v in a.related_page])).replace("</", "<\\/")
     template = Path(__file__).resolve().parents[1] / "cross_nav/viewer/uncertainty.html"
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(template.read_text().replace("__PAYLOAD__", payload))
