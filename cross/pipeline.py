@@ -721,7 +721,7 @@ def config_risks(cfg, mode: str, odometry: str, odom_file: str = None) -> list:
                    "odometry scale guard cannot see a runaway (ROVER campus_large night, Basalt VIO: map ATE 38.2 m vs "
                    "11.2 m with the pair).  Safer: keep the stereo pair (no configs/overlays/stereo_lowband.yaml)")
     if ff.max_refs <= 4:
-        out.append(f"left image with {ff.max_refs} references per pass (pose_est.ff.max_refs; the overlay sets 6): "
+        out.append(f"left image with {ff.max_refs} references per pass (pose_est.ff.max_refs; the stereo base has 6): "
                    "development split T3 28 -> 24 of 33, office1-7 relocalized at frame 166 instead of 49.  Safer: the "
                    "pair, or the left image with 6 references")
     if ff.image_resolution < 512:

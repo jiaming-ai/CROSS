@@ -133,7 +133,7 @@ def test_odometry_frontend_composes_dataset_motion():
 
 def test_mode_config_files_and_left_image():
     """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry, 6
-    images per pass (stereo DPVO 10); the opt-in low-bandwidth overlay observes on the left image (no stereo anchors) with
+    images per pass (stereo DPVO 10, the others 8); the opt-in low-bandwidth overlay observes on the left image (no stereo anchors) with
     6 references at half the rate; the fast overlay keeps the pair and the passes, at 416 px."""
     import os
     from cross.core.config import load_config
@@ -150,8 +150,8 @@ def test_mode_config_files_and_left_image():
             pe = apply_right_image(load_config(*mode_config_files("stereo", odometry, fast=fast))).pose_est
             assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
             assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor
-            # 6 images (pair + 4 references) except stereo DPVO: 10 (pair + 6 references + 2 reference right images)
-            assert (pe.ff.max_refs, pe.ff.n_ref_anchors) == ((6, 2) if odometry == "visual" else (4, 0))
+            # 8 images (pair + 6 references) except stereo DPVO: 10 (+ 2 reference right images)
+            assert (pe.ff.max_refs, pe.ff.n_ref_anchors) == (6, 2 if odometry == "visual" else 0)
             assert pe.ff.image_resolution == (416 if fast else 512)
     pe = apply_right_image(load_config(*mode_config_files("stereo", "external"), lowband)).pose_est
     assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.6, 0.3, 6)

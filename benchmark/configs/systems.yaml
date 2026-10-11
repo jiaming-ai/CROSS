@@ -61,8 +61,8 @@ cross_stereo_vgio:
 cross_stereo_fast:
   label: CROSS (VGGT-Omega fast, external odometry)
   runner: cross_ff
-  # --fast: configs/overlays/fast/stereo_wheel.yaml on configs/local/: 416 px images in the passes (until 2026-10-11: the
-  # 6-image passes, now the stereo default)
+  # --fast: configs/overlays/fast/stereo_wheel.yaml on configs/local/: 416 px images in the passes (until 2026-10-11: 6
+  # images per pass instead of 10; the stereo default is now 8)
   setups: [stereo]
   uses_odometry: true
   map_reuse: save/load

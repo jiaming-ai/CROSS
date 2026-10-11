@@ -10,8 +10,8 @@
 #   guard (mapping.loop_closure.odom_guard_*) cannot see an odometry failure.  ROVER campus_large night with the Basalt
 #   VIO (a runaway): map ATE 38.2 m with this overlay, 36.3 m with the left image at the stereo cadence, 13.2 m
 #   with the pair at half the rate, 11.2 m with the default (the guard fired twice; with the left image never).
-#   It keeps 6 references per pass (the stereo base has 4 with the pair): with the left image and 4 references the
-#   development split lost T3 28 -> 24.  The fast overlay's lower resolution was not tested with the left image.
+#   With the left image and 4 references per pass (pose_est.ff.max_refs) the development split lost T3 28 -> 24; the
+#   stereo base has 6.  The fast overlay's lower resolution was not tested with the left image.
 #   Both caveats are checked when a session starts (cross.pipeline.config_risks: this overlay with --odometry basalt /
 #   visual / vio or a *vio* odometry file, or with fewer references / a lower resolution): a warning and a [y/N]
 #   prompt; without a terminal the run aborts unless --accept-config-risk is given (the benchmark harness passes nothing).
@@ -21,4 +21,3 @@ pose_est:
   obs_max_interval_steps: 6
   ff:
     right_image: left
-    max_refs: 6

@@ -13,10 +13,13 @@ pose_est:
   ff:
     backend: vggt_omega
     checkpoint: models/VGGT-Omega/vggt_omega_1b_512.pt
-    # 6 images per pass: the current pair and 4 retrieved references, no reference right images (10 before: 6 references
-    # + 2 reference right images; stereo DPVO keeps them, base/stereo_dpvo.yaml).  ~35 % less time per observation; full
-    # benchmark 2026-10-10/11 (outputs/2026-10-09_config_profiles, H1), ROVER T3 of 1142: wheel 1008 -> 1019 (v5),
-    # Basalt 998 -> 1014, IMU 985 -> 1004; OpenLORIS and KITTI T1 equal.  The keyframes' right images are still stored
-    # with the map (cross_world's stereo depth when the map is reconstructed without its source frames).
-    max_refs: 4
+    # 8 images per pass: the current pair and 6 retrieved references, no reference right images (10 before: + the
+    # stored right images of the best 2 references as extra anchors; stereo DPVO keeps them, base/stereo_dpvo.yaml).
+    # Full benchmark 2026-10-11 (outputs/2026-10-11_config_confirm), against the 10 images: ROVER T3 of 1142 wheel 1077 ->
+    # 1074, Basalt 1064 -> 1068, IMU 1023 -> 1045, T1 equal; OpenLORIS T3 equal, T2 at 1 m 0.689 -> 0.657 / 0.801 ->
+    # 0.795.  With 4 references (6 images) ROVER held too but the OpenLORIS corridors lost T2 at 1 m (stereo 0.689 ->
+    # 0.538, every corridor query).  RTX 4000 Ada pass 236 ms (8 images) vs 167 ms (6 images).  The keyframes' right
+    # images are still stored with the map (cross_world's stereo depth when the map is reconstructed without its source
+    # frames).
+    max_refs: 6
     n_ref_anchors: 0

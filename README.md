@@ -267,9 +267,10 @@ system.step(obs={"rgb": left, "rgb_right": right, "depth": None, "conf": None,
                  "delta_pose": odom_delta, "timestamp": t})
 ```
 
-**Speed.** One observation with the default 6-image pass (the current pair + 4 references) takes ~73 ms on an RTX
-5090 (p95 79 ms; bf16, compute-bound), the 10-image pass of the stereo DPVO mode (+2 references, +2 stored reference
-right images as extra anchors) ~120 ms; the frames in between take ~3 ms. The pass reuses the DINO patch tokens of every image seen before (`pose_est.ff.token_cache`;
+**Speed.** One observation is one forward pass over the current pair and the retrieved references: 8 images by default
+(6 references), 10 in the stereo DPVO mode (+ the stored right images of 2 references as extra anchors). On an RTX
+5090 (bf16, compute-bound) 10 images take ~120 ms and 6 images ~73 ms; on an RTX 4000 Ada 8 images take ~236 ms and 6
+~167 ms. The frames in between take ~3 ms. The pass reuses the DINO patch tokens of every image seen before (`pose_est.ff.token_cache`;
 a loaded map's keyframes are embedded once at load), runs compiled transformer blocks (`pose_est.ff.compile`; a few
 seconds of warm-up per process, kernels cached in `TORCHINDUCTOR_CACHE_DIR`) replayed as CUDA graphs
 (`pose_est.ff.cuda_graphs`), and the filter state lives on the CPU (`state_device`). None of these changes the estimate
