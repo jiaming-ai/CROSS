@@ -28,6 +28,7 @@ def main():
     p.add_argument("--kind", action="append", choices=("error", "attenuated", "unavailable"), help="Explicit uncertainty kind per run if export is still running")
     p.add_argument("--per-scene", type=int, default=3)
     p.add_argument("--note", default="")
+    p.add_argument("--score", action="append", default=[], help="Label=planability.json; full benchmark summary, separate from shown examples")
     a = p.parse_args()
     windows = json.loads(a.windows.read_text())["windows"]
     runs = [(label, Path(path)) for label, path in (v.split("=", 1) for v in a.run)]
@@ -69,7 +70,13 @@ def main():
     for ri, (label, root) in enumerate(runs):
         m = json.loads((root / "manifest.json").read_text()) if (root / "manifest.json").exists() else {}
         kinds.append(dict(label=label, kind=m.get("uncertainty_kind", a.kind[ri] if a.kind else "unavailable"), checkpoint=m.get("heads", str(root))))
-    payload = json.dumps(dict(rows=rows, runs=kinds, note=a.note, source=str(a.windows))).replace("</", "<\\/")
+    scores = []
+    for value in a.score:
+        label, path = value.split("=", 1)
+        raw = json.loads(Path(path).read_text())
+        scores.append(dict(label=label, source=path, windows=len(raw["windows"]),
+                           **{k: v for k, v in raw.items() if k != "windows"}))
+    payload = json.dumps(dict(rows=rows, runs=kinds, scores=scores, note=a.note, source=str(a.windows))).replace("</", "<\\/")
     template = Path(__file__).resolve().parents[1] / "cross_nav/viewer/uncertainty.html"
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(template.read_text().replace("__PAYLOAD__", payload))
