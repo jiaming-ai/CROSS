@@ -31,6 +31,20 @@ cell can be confidently predicted free and still contain an obstacle.
 
 ## Planning
 
+For receding-horizon evaluation, `cross_nav.observed_plan.ObservedAudit` scores
+only the proposed execution prefix inside observed space. It stops before an
+unobserved full robot footprint, including diagonal side cells. Visible collisions,
+goal completion, safe progress to re-observe, and insufficient progress are separate
+outcomes. Defaults require 1 m travel and 0.5 m reduction in goal distance for a
+successful re-observation segment. Cases without a GT-supported observed route
+offering that progress are reported separately, not counted as model failures.
+The present robot footprint is assumed observed only where GT is free.
+
+Observation masks must come from the input views with occlusion accounted for;
+the historical `vis` depth-hit mask is not a complete visibility mask. GT masks
+are used only in evaluation. Local segment success is not final-goal completion
+or a closed-loop navigation result. Keep the full-map audit as a separate diagnostic.
+
 ```python
 from cross_nav.plan import evaluate_planning, risk_cost
 import numpy as np
