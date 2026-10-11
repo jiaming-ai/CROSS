@@ -12,6 +12,7 @@ frame 0's camera, `cam_h` frame 0's height above the ground.
 from __future__ import annotations
 
 import math
+import json
 from collections import OrderedDict
 from pathlib import Path
 
@@ -29,8 +30,9 @@ from .context import past_frames, validate_lags
 class WorldBEVs:
     """Lazy, LRU-cached world BEVs of a dataset folder (<bev_root>/<dataset>/<world>.npz)."""
 
-    def __init__(self, root: Path, capacity: int = 24):
+    def __init__(self, root: Path, capacity: int = 24, include_ground: bool = False):
         self.root, self.capacity = Path(root), capacity
+        self.include_ground = include_ground
         self._c: OrderedDict = OrderedDict()
 
     def path(self, dataset: str, world: str) -> Path:
@@ -45,6 +47,9 @@ class WorldBEVs:
         d = {"bev": z["bev"], "origin": z["origin"].astype(np.float64), "res": float(z["res"]),
              "R_g": z["R_g"].astype(np.float64),
              "cam_h": {k[len("cam_h/"):]: z[k] for k in z.files if k.startswith("cam_h/")}}
+        if self.include_ground:
+            d["ground"] = z["ground"].astype(np.float32)
+            d["label_cfg"] = json.loads(str(z["cfg"]))
         self._c[k] = d
         if len(self._c) > self.capacity:
             self._c.popitem(last=False)
@@ -111,7 +116,7 @@ class NavStream(IterableDataset):
                 raise ValueError("context_lags requires a fixed matching frames count")
 
     def _build(self):
-        self.bevs = WorldBEVs(self.cfg["bev_root"])
+        self.bevs = WorldBEVs(self.cfg["bev_root"], include_ground=self.cfg.get("observation_targets", False))
         pools, self.label_ds = [], {}
         for n, c in self.cfg["datasets"].items():
             if c.get("weight", 1.0) <= 0:
@@ -180,6 +185,13 @@ class NavStream(IterableDataset):
         vis = visible_cells(it["depths"], it["extrinsics"], it["intrinsics"], A, self.spec)
         S = len(frames)
         it["bev"] = torch.from_numpy(label)
+        if self.cfg.get("observation_targets", False):
+            from .observation import observed_cells
+            valid = [kk not in negs and fr[0].world_id == sc.world_id for kk, fr in enumerate(frames)]
+            observed = observed_cells(it["depths"].numpy(), it["extrinsics"].numpy(),
+                                      it["intrinsics"].numpy(), up_cam, label, wb, E0, self.spec,
+                                      frame_valid=valid)
+            it["observed"] = torch.from_numpy(observed)
         it["vis"] = torch.from_numpy(vis)
         it["up_cam"] = torch.from_numpy(up_cam.astype(np.float32))
         it["cam_h"] = torch.tensor(cam_h, dtype=torch.float32)
