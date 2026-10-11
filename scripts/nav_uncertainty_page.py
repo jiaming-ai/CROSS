@@ -52,6 +52,7 @@ def main():
     p.add_argument("--supplement-score", action="append", default=[], help="Label=observed_plan.json; append verified outcomes to --supplement")
     p.add_argument("--supplement", type=Path, help="JSON containing supplementary scores and embedded failure figures")
     p.add_argument("--observability-root", type=Path, help="Learned mono observability predictions, INDEX.npz / observed_probability")
+    p.add_argument("--reserved-results", type=Path, help="Separately labelled frozen-candidate head-held-out summary JSON")
     p.add_argument("--local-stop-results", type=Path, help="JSON summary of explicitly labelled observed-local-stop-v2 trials")
     p.add_argument("--observed-root", type=Path, help="Directory of evaluation-only observed masks, named INDEX.npz")
     p.add_argument("--observed-score", action="append", default=[], help="Label=observed_plan.json")
@@ -120,7 +121,7 @@ def main():
         label, path = value.split("=", 1)
         raw = json.loads(Path(path).read_text())
         observed_scores.append(dict(label=label, source=path, **{k: v for k, v in raw.items() if k != "records"}))
-    payload = json.dumps(dict(local_stop=json.loads(a.local_stop_results.read_text()) if a.local_stop_results else None, observability_root=str(a.observability_root) if a.observability_root else None, supplement=add_supplement_scores(json.loads(a.supplement.read_text()) if a.supplement else None, a.supplement_score), observed_scores=observed_scores, observed_root=str(a.observed_root) if a.observed_root else None, rows=rows, runs=kinds, scores=scores, note=a.note, source=str(a.windows), links=[dict(label=v.split("=", 1)[0], href=v.split("=", 1)[1]) for v in a.related_page])).replace("</", "<\\/")
+    payload = json.dumps(dict(reserved=json.loads(a.reserved_results.read_text()) if a.reserved_results else None, local_stop=json.loads(a.local_stop_results.read_text()) if a.local_stop_results else None, observability_root=str(a.observability_root) if a.observability_root else None, supplement=add_supplement_scores(json.loads(a.supplement.read_text()) if a.supplement else None, a.supplement_score), observed_scores=observed_scores, observed_root=str(a.observed_root) if a.observed_root else None, rows=rows, runs=kinds, scores=scores, note=a.note, source=str(a.windows), links=[dict(label=v.split("=", 1)[0], href=v.split("=", 1)[1]) for v in a.related_page])).replace("</", "<\\/")
     template = Path(__file__).resolve().parents[1] / "cross_nav/viewer/uncertainty.html"
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(template.read_text().replace("__PAYLOAD__", payload))
