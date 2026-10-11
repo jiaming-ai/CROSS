@@ -262,12 +262,14 @@ def test_map_and_reloc_mono_loads_shipped_defaults():
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo"]))
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.0
     # the checkpoint decides the fine-tuned VGGT-Omega's settings; --set still wins
+    from cross.core.config import resolve_ff_checkpoint
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo", "--checkpoint", "finetuned"]))
     assert cfg.pose_est.ff.covis_source == "auto" and cfg.pose_est.ff.checkpoint.endswith("vggt_omega_cross_1b_512.pt")
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo", "--checkpoint", "released"]))
     assert cfg.pose_est.ff.covis_source == "geometric" and cfg.pose_est.ff.checkpoint.endswith("vggt_omega_1b_512.pt")
     cfg = mod.make_config(mod.build_parser().parse_args(
         base + ["--mode", "stereo", "--set", "pose_est.ff.checkpoint=finetuned", "pose_est.ff.covis_source=min"]))
-    assert cfg.pose_est.ff.covis_source == "min" and cfg.pose_est.ff.checkpoint.endswith("vggt_omega_cross_1b_512.pt")
+    assert cfg.pose_est.ff.covis_source == "min"
+    assert resolve_ff_checkpoint(cfg.pose_est.ff.checkpoint).endswith("vggt_omega_cross_1b_512.pt")   # the estimator resolves it
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo", "--backend", "da3"]))
     assert cfg.pose_est.ff.checkpoint == "models/DA3-LARGE-1.1" and cfg.pose_est.ff.covis_source == "geometric"

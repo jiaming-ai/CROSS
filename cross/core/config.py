@@ -25,6 +25,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import functools
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -1127,12 +1128,14 @@ def resolve_ff_checkpoint(checkpoint: Optional[str], backend=FFBackend.VGGT_OMEG
 @functools.lru_cache(maxsize=16)
 def _has_covis_head_map(path: str, mtime: float) -> bool:
     import torch
-    for weights_only in (True, False):        # older vggt_ft checkpoints hold numpy objects
+    # older vggt_ft checkpoints hold numpy objects (weights_only=False); legacy (non-zip) files cannot be memory-mapped
+    for mmap, weights_only in ((True, True), (True, False), (False, False)):
         try:
-            ckpt = torch.load(path, map_location="cpu", mmap=True, weights_only=weights_only)
+            ckpt = torch.load(path, map_location="cpu", mmap=mmap, weights_only=weights_only)
         except Exception:
             continue
         return isinstance(ckpt, dict) and ckpt.get("covis_head_map") is not None
+    logging.getLogger(__name__).warning(f"could not read {path}: the fine-tuned VGGT-Omega settings stay off")
     return False
 
 
