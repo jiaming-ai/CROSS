@@ -134,7 +134,7 @@ def test_odometry_frontend_composes_dataset_motion():
 def test_mode_config_files_and_left_image():
     """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry, 6
     images per pass (stereo DPVO 10, the others 8); the opt-in low-bandwidth overlay observes on the left image (no stereo anchors) with
-    6 references at half the rate; the fast overlay keeps the pair and the passes, at 416 px."""
+    6 references at half the rate; the fast overlays (Basalt, DPVO) keep the pair, at 416 px."""
     import os
     from cross.core.config import load_config
     from cross.pipeline import CONFIG_DIR, apply_right_image, mode_config_files
@@ -151,8 +151,9 @@ def test_mode_config_files_and_left_image():
             assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
             assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor
             # 8 images (pair + 6 references) except stereo DPVO: 10 (+ 2 reference right images)
-            assert (pe.ff.max_refs, pe.ff.n_ref_anchors) == (6, 2 if odometry == "visual" else 0)
-            assert pe.ff.image_resolution == (416 if fast else 512)
+            refs = (4, 0) if fast and odometry == "basalt" else (6, 2 if odometry == "visual" else 0)
+            assert (pe.ff.max_refs, pe.ff.n_ref_anchors) == refs
+            assert pe.ff.image_resolution == (416 if fast and odometry in ("basalt", "visual") else 512)
     pe = apply_right_image(load_config(*mode_config_files("stereo", "external"), lowband)).pose_est
     assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.6, 0.3, 6)
     assert pe.ff.right_image == "left" and not pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
@@ -177,9 +178,13 @@ def test_profile_folders():
         assert local["mapping"]["loop_closure"]["async_pgo"] and dataclasses.asdict(cloud) == local
         assert cloud.pose_est.ff.right_image == "pair"
         fast = dataclasses.asdict(load_config(os.path.join(CONFIG_DIR, "local", m), os.path.join(CONFIG_DIR, "overlays/fast", m)))
-        res = {"mono_imu.yaml": 448}.get(m, 416 if m.startswith(("stereo", "mono_wheel", "mono_basalt")) else 512)
-        assert fast["pose_est"]["ff"]["image_resolution"] == res
-        fast["pose_est"]["ff"]["image_resolution"] = 512
+        # only stereo + Basalt (6 images at 416 px) and stereo DPVO (416 px) have a fast overlay
+        if m in ("stereo_basalt.yaml", "stereo_dpvo.yaml"):
+            assert fast["pose_est"]["ff"]["image_resolution"] == 416
+            fast["pose_est"]["ff"]["image_resolution"] = 512
+        if m == "stereo_basalt.yaml":
+            assert (fast["pose_est"]["ff"]["max_refs"], fast["pose_est"]["ff"]["n_ref_anchors"]) == (4, 0)
+            fast["pose_est"]["ff"]["max_refs"] = local["pose_est"]["ff"]["max_refs"]
         assert fast == local
     assert load_yaml_layers(os.path.join(CONFIG_DIR, "local", "stereo_imu.yaml"))["imu"] == {"vgio_align": True}
     assert load_yaml_layers(os.path.join(CONFIG_DIR, "cloud", "mono_imu.yaml"))["imu"] == {"vgio_align": False}
@@ -283,10 +288,11 @@ def test_config_risks_of_the_left_image():
         (risk,) = config_risks(left, "stereo", odometry, odom_file)
         assert "run away" in risk and "38.2 m" in risk
     assert config_risks(left, "stereo", "vgio") == []          # valid: the frontend keeps the pair
-    fast_left = load_config(*mode_config_files("stereo", "external", fast=True), lowband)
-    (risk,) = config_risks(fast_left, "stereo", "external")
-    assert "416 px" in risk and "not tested" in risk
-    assert len(config_risks(fast_left, "stereo", "basalt")) == 2
+    # the stereo + Basalt fast overlay (4 references, 416 px) under the left image: both caveats (+ the runaway one)
+    fast_left = load_config(*mode_config_files("stereo", "basalt", fast=True), lowband)
+    risks = config_risks(fast_left, "stereo", "external")
+    assert len(risks) == 2 and "28 -> 24" in risks[0] and "416 px" in risks[1] and "not tested" in risks[1]
+    assert len(config_risks(fast_left, "stereo", "basalt")) == 3
     few_refs = load_config(*mode_config_files("stereo", "external"), lowband)
     few_refs.pose_est.ff.max_refs = 4
     (risk,) = config_risks(few_refs, "stereo", "external")

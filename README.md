@@ -156,7 +156,7 @@ Options:
 | `--odometry {external,basalt,visual,vio,vgio}` | Motion source: the dataset's odometry (default; wheel / INS), the sequence's Basalt VIO file (`odom_vio.txt`), DPVO visual odometry, (mono) DPVO with IMU scale, or (mono ff, stereo) VGGT-Omega + IMU |
 | `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
 | `--profile {local,cloud}` | Deployment folder of the shipped configuration `configs/<profile>/<mode>.yaml` (default `local`; `cloud`: remote GPU server; `local-fast` = `local --fast`, deprecated) |
-| `--fast` | Constrained compute: the mode's fast overlay `configs/overlays/fast/<mode>.yaml` on top (feed-forward modes: 416 px passes, mono + IMU 448 px) |
+| `--fast` | Constrained compute: the mode's fast overlay `configs/overlays/fast/<mode>.yaml` on top (stereo + Basalt and stereo DPVO: 416 px passes; the other modes have none) |
 | `--config A.yaml B.yaml` | Config layers on top of the mode's shipped file, merged left to right (e.g. `configs/overlays/outdoor.yaml`) |
 | `--reproducible` | Synchronous pose-graph optimisation (the shipped default optimises long loop closures in the background; the benchmark always passes it) |
 | `--loader {r3d,rosbag,loris,tum,posed,stereo}` | Force dataset loader (default: auto-detect) |
@@ -275,7 +275,7 @@ a loaded map's keyframes are embedded once at load), runs compiled transformer b
 seconds of warm-up per process, kernels cached in `TORCHINDUCTOR_CACHE_DIR`) replayed as CUDA graphs
 (`pose_est.ff.cuda_graphs`), and the filter state lives on the CPU (`state_device`). None of these changes the estimate
 beyond floating-point rounding. The pass itself runs at the GPU's bf16 peak, so the number and size of the images are the
-remaining levers: `--fast` passes 416 px images instead of 512 px (1.35-1.5x the frame rate on an RTX 4000 Ada).
+remaining levers: `--fast` passes 416 px images instead of 512 px in the modes where that keeps relocalization (stereo + Basalt, stereo DPVO).
 
 Module-level evaluation (relative pose accuracy vs. ground truth) and the report experiments:
 

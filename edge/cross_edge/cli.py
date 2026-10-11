@@ -41,7 +41,7 @@ def build_parser():
     r.add_argument("--save-map", default=None, help="map file on the server to store at the end")
     r.add_argument("--profile", choices=["local", "cloud"], default="cloud",
                    help="folder of the server's shipped configuration (configs/<profile>/stereo_<odometry>.yaml)")
-    r.add_argument("--fast", action="store_true", help="the server's fast overlay (configs/overlays/fast/): 416 px passes")
+    r.add_argument("--fast", action="store_true", help="the server's fast overlay (configs/overlays/fast/; stereo + Basalt: 6 images at 416 px)")
     r.add_argument("--config-file", nargs="*", default=[], help="configuration files of the server's configs/ folder "
                    "layered on the mode's (e.g. overlays/outdoor.yaml)")
     r.add_argument("--set", nargs="*", action="extend", default=[], help="server configuration overrides key=value")

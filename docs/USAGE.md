@@ -108,7 +108,7 @@ and `--profile`, with `--fast` the mode's fast overlay, then the user's `--confi
 |---|---|---|
 | `local` (default) | `configs/local/` | a normal local run on a desktop GPU |
 | `cloud` | `configs/cloud/` | the back end on a remote GPU server (`--remote-server`, `cross-edge`; the link's own options stay command-line options) |
-| `--fast` (with either) | + `configs/overlays/fast/<mode>.yaml` | constrained compute (RTX 4000 Ada): the feed-forward modes (stereo, mono with odometry / IMU) observe on 416 px images instead of 512 px (mono + IMU 448 px; 1.3-1.5x the frame rate, ROVER relocalization within 2.5 %, maps less accurate); nothing for RGB-D and mono DPVO. A map built with `--fast` must be relocalized in with `--fast` (its stored images are smaller; checked at load). `--profile local-fast` is a deprecated alias of `--profile local --fast` |
+| `--fast` (with either) | + `configs/overlays/fast/<mode>.yaml` | constrained compute (RTX 4000 Ada), only where relocalization stays within 5 % (T3 and T2 at 1 m indoors / 3 m outdoors): `stereo_basalt` (6 images per pass at 416 px: query 10.6 -> 20.7 FPS) and `stereo_dpvo` (416 px: 6.5 -> 8.9 FPS). The other modes' overlays are empty: 416 / 448 px cost more than 5 % there (each file says what was tested); their defaults on an RTX 4000 Ada: stereo + wheel 10.6, stereo + IMU 6.8, mono + wheel 18.5, mono + IMU 9.7, RGB-D 40, mono DPVO 15 query FPS. A map built with `--fast` must be relocalized in with `--fast` (its stored images are smaller; checked at load). `--profile local-fast` is a deprecated alias of `--profile local --fast` |
 
 | mode file | `--mode` / `--odometry` (/ `--mono-estimator`) |
 |---|---|

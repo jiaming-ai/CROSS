@@ -651,8 +651,8 @@ def add_session_args(ap):
                          "local run), cloud (remote GPU server); local-fast: deprecated, = local --fast")
     ap.add_argument("--fast", action="store_true",
                     help="constrained compute: the mode's fast overlay on the folder file (configs/overlays/fast/<mode>.yaml; "
-                         "the feed-forward modes: 416 px images in the back end's passes (mono + IMU 448 px), 1.3-1.5x the "
-                         "frame rate, relocalization within a few %% on ROVER; RGB-D and mono DPVO: nothing)")
+                         "stereo + Basalt: 6 images per pass at 416 px, 2x the frame rate; stereo DPVO: 416 px, 1.4x; the "
+                         "other modes: nothing, lower resolutions cost them more than 5 %% relocalization)")
     ap.add_argument("--reproducible", action="store_true",
                     help="synchronous pose-graph optimisation whatever the configuration says (mapping.loop_closure."
                          "async_pgo false; the shipped default runs long optimisations in the background, whose results "
