@@ -1,3 +1,10 @@
-# Fast overlay of the stereo_wheel mode (--fast; layered on configs/<profile>/stereo_wheel.yaml, local or cloud):
-# 6-image stereo passes (configs/base/stereo_fast.yaml).
-include: ../../base/stereo_fast.yaml
+# Fast overlay of the stereo_wheel mode (--fast; layered on configs/<profile>/stereo_wheel.yaml, local or cloud): 416 px
+# instead of 512 px images in the back end's passes (on the base's 6-image passes).  RTX 4000 Ada, OpenLORIS office: 416
+# px 1.35-1.53x the query frame rate.  ROVER subset (map + winter / night / dusk / autumn;
+# outputs/2026-10-09_config_profiles H6), T3 of the 10-image 512 px passes -> 6 images at 416 px: stereo 569 -> 571,
+# stereo + Basalt 565 -> 562, stereo + IMU 547 -> 558.  Half the observation rate cost ~5 % there (541 / 540): not
+# used.  A map built with this overlay stores 416 px images: sessions relocalizing in it need the same image resolution
+# (checked when the map is loaded).
+pose_est:
+  ff:
+    image_resolution: 416

@@ -184,8 +184,10 @@ class System:
         self.odom_accumulator.register_item("since_last_retrieval")
         self.odom_accumulator.register_item("since_last_obs")
 
-        # right images are only stored when stored keyframe pairs are used as scale anchors
-        self._store_right_images = self.config.pose_est.type == PoseEstType.FF and self.config.pose_est.ff.n_ref_anchors > 0
+        # the keyframes' right images are stored whenever the back end observes on the pair: scale anchors of later
+        # passes (pose_est.ff.n_ref_anchors) and the stereo depth of a reconstruction from the map alone (cross_world)
+        self._store_right_images = (self.config.pose_est.type == PoseEstType.FF
+                                    and getattr(self.config.pose_est.ff, "right_image", "pair") == "pair")
 
         self._unsuccessful_retrieval_steps = 0
 

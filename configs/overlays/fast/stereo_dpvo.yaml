@@ -1,3 +1,8 @@
-# Fast overlay of the stereo_dpvo mode (--fast; layered on configs/<profile>/stereo_dpvo.yaml, local or cloud):
-# 6-image stereo passes (configs/base/stereo_fast.yaml).
-include: ../../base/stereo_fast.yaml
+# Fast overlay of the stereo_dpvo mode (--fast; layered on configs/<profile>/stereo_dpvo.yaml, local or cloud): 416 px
+# instead of 512 px images in the back end's passes; the 10-image passes stay (6 images lost OpenLORIS with DPVO,
+# base/stereo_dpvo.yaml).  416 px was free for the other stereo modes (stereo_wheel.yaml here); with DPVO: tested in
+# outputs/2026-10-11_config_confirm.  A map built with this overlay stores 416 px images: sessions relocalizing in it
+# need the same image resolution (checked when the map is loaded).
+pose_est:
+  ff:
+    image_resolution: 416

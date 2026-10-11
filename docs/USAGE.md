@@ -108,7 +108,7 @@ and `--profile`, with `--fast` the mode's fast overlay, then the user's `--confi
 |---|---|---|
 | `local` (default) | `configs/local/` | a normal local run on a desktop GPU |
 | `cloud` | `configs/cloud/` | the back end on a remote GPU server (`--remote-server`, `cross-edge`; the link's own options stay command-line options) |
-| `--fast` (with either) | + `configs/overlays/fast/<mode>.yaml` | constrained compute (RTX 4000 Ada): the stereo modes observe with 6-image passes instead of 10 (~35 % less time per observation, relocalization within noise on OpenLORIS, maps 1-2 cm less accurate); empty for the other modes so far. `--profile local-fast` is a deprecated alias of `--profile local --fast` |
+| `--fast` (with either) | + `configs/overlays/fast/<mode>.yaml` | constrained compute (RTX 4000 Ada): the feed-forward modes (stereo, mono with odometry / IMU) observe on 416 px images instead of 512 px (mono + IMU 448 px; 1.3-1.5x the frame rate, ROVER relocalization within 2.5 %, maps less accurate); nothing for RGB-D and mono DPVO. A map built with `--fast` must be relocalized in with `--fast` (its stored images are smaller; checked at load). `--profile local-fast` is a deprecated alias of `--profile local --fast` |
 
 | mode file | `--mode` / `--odometry` (/ `--mono-estimator`) |
 |---|---|
@@ -132,7 +132,7 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | file | use |
 |---|---|
 | `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius); the benchmark adds it on outdoor datasets |
-| `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away), not with `--fast` |
+| `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; keeps 6 references per pass (the stereo default has 4 with the pair); blinds the odometry scale guard (not with a VIO that can run away); not tested with `--fast` |
 | `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
 | `configs/mono_*.json` | mono profiles: the arguments of `python -m cross.mono.run`. `mono_benchmark_10hz.json` for offline runs at 10 Hz, `mono_streaming_dpvo_v2_20hz.json` for real time; select with `--mono-profile`, extra arguments with `--mono-args`. Their `--cross-config` lines configure the DA3 back end only (the `ff` back end and the stereo mode refuse `--cross-config` in `--mono-args`; use `--set`); with external odometry or `vio` the DA3 back end drops the odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
 
@@ -144,8 +144,9 @@ enabled by the mono profiles.
 on the fully resolved configuration when a session starts (`cross.pipeline.config_risks`; `run.py`, the
 `scripts/map_and_reloc*.py` runners, and the remote server, whose warning the `cross-edge` CLI shows): with odometry
 that can run away (`--odometry basalt`, `visual`, `vio`, or an odometry file named `*vio*`) the odometry scale guard
-cannot see a runaway (ROVER night with Basalt: map ATE 38.2 m vs 11.2 m with the pair), and with the fast passes
-(`--fast`) relocalization drops (development split T3 28 -> 24 of 33). The run prints a warning naming the caveat and
+cannot see a runaway (ROVER night with Basalt: map ATE 38.2 m vs 11.2 m with the pair), and with 4 references per
+pass relocalization drops (development split T3 28 -> 24 of 33; the overlay sets 6); `--fast` (416 px) with the left
+image is untested. The run prints a warning naming the caveat and
 the safer alternative and asks `[y/N]`; without a terminal it aborts unless `--accept-config-risk` is given (the
 benchmark harness passes nothing, so a risky experiment must opt in with `--args "--accept-config-risk"`). The left
 image with trusted external odometry, the overlay's purpose, and with `--odometry vgio` (the frontend keeps the pair for

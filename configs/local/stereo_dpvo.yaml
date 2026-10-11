@@ -1,5 +1,5 @@
 # Stereo visual odometry (DPVO, metric scale from stereo depth; a reference mode): --mode stereo --odometry visual.
 # Folder local: the mode's base, then the folder's shared settings; keys below override both.
 include:
-  - ../base/stereo.yaml
+  - ../base/stereo_dpvo.yaml
   - ../base/local.yaml

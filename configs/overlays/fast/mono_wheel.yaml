@@ -1,3 +1,9 @@
-# Fast overlay of the mono_wheel mode (--fast; layered on configs/<profile>/mono_wheel.yaml, local or cloud):
-# nothing yet.
-{}
+# Fast overlay of the mono_wheel mode (--fast; layered on configs/<profile>/mono_wheel.yaml, local or cloud): 416 px
+# instead of 512 px images in the back end's passes (also the feed-forward back end with DPVO / DPVO + IMU, which use
+# the mono_wheel files).  RTX 4000 Ada, OpenLORIS office: query 16.7 -> 24.1 FPS (1.44x; geometric gate).  ROVER subset
+# (map + winter / night / dusk / autumn; outputs/2026-10-09_config_profiles H6), learned gate + 416 px: T3 575 -> 561
+# (-2.4 %); development split T2 0.945 -> 0.965.  A map built with this overlay stores 416 px images: sessions
+# relocalizing in it need the same image resolution (checked when the map is loaded).
+pose_est:
+  ff:
+    image_resolution: 416

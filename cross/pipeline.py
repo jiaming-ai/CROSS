@@ -651,8 +651,8 @@ def add_session_args(ap):
                          "local run), cloud (remote GPU server); local-fast: deprecated, = local --fast")
     ap.add_argument("--fast", action="store_true",
                     help="constrained compute: the mode's fast overlay on the folder file (configs/overlays/fast/<mode>.yaml; "
-                         "stereo: 6 images per pass instead of 10, ~35 %% less time per observation, relocalization within "
-                         "noise on OpenLORIS, maps slightly less accurate)")
+                         "the feed-forward modes: 416 px images in the back end's passes (mono + IMU 448 px), 1.3-1.5x the "
+                         "frame rate, relocalization within a few %% on ROVER; RGB-D and mono DPVO: nothing)")
     ap.add_argument("--reproducible", action="store_true",
                     help="synchronous pose-graph optimisation whatever the configuration says (mapping.loop_closure."
                          "async_pgo false; the shipped default runs long optimisations in the background, whose results "
@@ -708,8 +708,9 @@ RUNAWAY_ODOMETRY = ("basalt", "visual", "vio")
 def config_risks(cfg, mode: str, odometry: str, odom_file: str = None) -> list:
     """The documented caveats a fully resolved session configuration hits (messages naming the caveat, its measured
     cost and the safer alternative): the stereo mode's back end on the left image (pose_est.ff.right_image left,
-    configs/overlays/stereo_lowband.yaml) (1) with odometry that can run away, (2) with the fast passes.  (The left image
-    with --odometry vgio is valid: the frontend keeps the pair for its stereo depth and PnP, and a remote edge sends it.)"""
+    configs/overlays/stereo_lowband.yaml) (1) with odometry that can run away, (2) with 4 references per pass, (3) with
+    the fast overlay's lower resolution (untested).  (The left image with --odometry vgio is valid: the frontend keeps
+    the pair for its stereo depth and PnP, and a remote edge sends it.)"""
     ff = cfg.pose_est.ff
     if mode != "stereo" or ff.right_image != "left":
         return []
@@ -720,9 +721,12 @@ def config_risks(cfg, mode: str, odometry: str, odom_file: str = None) -> list:
                    "odometry scale guard cannot see a runaway (ROVER campus_large night, Basalt VIO: map ATE 38.2 m vs "
                    "11.2 m with the pair).  Safer: keep the stereo pair (no configs/overlays/stereo_lowband.yaml)")
     if ff.max_refs <= 4:
-        out.append("left image with the fast passes (pose_est.ff.max_refs 4, --fast): the current pair is their only "
-                   "scale anchor (development split T3 28 -> 24 of 33; office1-7 relocalized at frame 166 instead of 49).  "
-                   "Safer: the pair with --fast, or the left image without --fast")
+        out.append(f"left image with {ff.max_refs} references per pass (pose_est.ff.max_refs; the overlay sets 6): "
+                   "development split T3 28 -> 24 of 33, office1-7 relocalized at frame 166 instead of 49.  Safer: the "
+                   "pair, or the left image with 6 references")
+    if ff.image_resolution < 512:
+        out.append(f"left image at {ff.image_resolution} px (pose_est.ff.image_resolution, --fast): not tested.  Safer: "
+                   "the pair with --fast, or the left image without --fast")
     return out
 
 

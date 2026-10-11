@@ -156,7 +156,7 @@ Options:
 | `--odometry {external,basalt,visual,vio,vgio}` | Motion source: the dataset's odometry (default; wheel / INS), the sequence's Basalt VIO file (`odom_vio.txt`), DPVO visual odometry, (mono) DPVO with IMU scale, or (mono ff, stereo) VGGT-Omega + IMU |
 | `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
 | `--profile {local,cloud}` | Deployment folder of the shipped configuration `configs/<profile>/<mode>.yaml` (default `local`; `cloud`: remote GPU server; `local-fast` = `local --fast`, deprecated) |
-| `--fast` | Constrained compute: the mode's fast overlay `configs/overlays/fast/<mode>.yaml` on top (stereo: 6-image passes) |
+| `--fast` | Constrained compute: the mode's fast overlay `configs/overlays/fast/<mode>.yaml` on top (feed-forward modes: 416 px passes, mono + IMU 448 px) |
 | `--config A.yaml B.yaml` | Config layers on top of the mode's shipped file, merged left to right (e.g. `configs/overlays/outdoor.yaml`) |
 | `--reproducible` | Synchronous pose-graph optimisation (the shipped default optimises long loop closures in the background; the benchmark always passes it) |
 | `--loader {r3d,rosbag,loris,tum,posed,stereo}` | Force dataset loader (default: auto-detect) |
@@ -267,14 +267,14 @@ system.step(obs={"rgb": left, "rgb_right": right, "depth": None, "conf": None,
                  "delta_pose": odom_delta, "timestamp": t})
 ```
 
-**Speed.** One observation with the default 10-image pass takes ~120 ms on an RTX 5090 (bf16, compute-bound); the
-frames in between take ~3 ms. The pass reuses the DINO patch tokens of every image seen before (`pose_est.ff.token_cache`;
+**Speed.** One observation with the default 6-image pass (the current pair + 4 references) takes ~73 ms on an RTX
+5090 (p95 79 ms; bf16, compute-bound), the 10-image pass of the stereo DPVO mode (+2 references, +2 stored reference
+right images as extra anchors) ~120 ms; the frames in between take ~3 ms. The pass reuses the DINO patch tokens of every image seen before (`pose_est.ff.token_cache`;
 a loaded map's keyframes are embedded once at load), runs compiled transformer blocks (`pose_est.ff.compile`; a few
 seconds of warm-up per process, kernels cached in `TORCHINDUCTOR_CACHE_DIR`) replayed as CUDA graphs
 (`pose_est.ff.cuda_graphs`), and the filter state lives on the CPU (`state_device`). None of these changes the estimate
-beyond floating-point rounding. The pass itself runs at the GPU's bf16 peak, so the number of images is the remaining
-lever: `--max-refs 4 --n-ref-anchors 1` (7 images) takes ~90 ms per observation and `--max-refs 4 --n-ref-anchors 0`
-(6 images) ~73 ms (p95 79 ms), with the same relocalization success on OpenLORIS office / home / cafe.
+beyond floating-point rounding. The pass itself runs at the GPU's bf16 peak, so the number and size of the images are the
+remaining levers: `--fast` passes 416 px images instead of 512 px (1.35-1.5x the frame rate on an RTX 4000 Ada).
 
 Module-level evaluation (relative pose accuracy vs. ground truth) and the report experiments:
 

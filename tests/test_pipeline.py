@@ -132,9 +132,9 @@ def test_odometry_frontend_composes_dataset_motion():
 
 
 def test_mode_config_files_and_left_image():
-    """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry; the
-    opt-in low-bandwidth overlay observes on the left image (no stereo anchors) at half the rate; the fast overlay keeps
-    the pair."""
+    """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry, 6
+    images per pass (stereo DPVO 10); the opt-in low-bandwidth overlay observes on the left image (no stereo anchors) with
+    6 references at half the rate; the fast overlay keeps the pair and the passes, at 416 px."""
     import os
     from cross.core.config import load_config
     from cross.pipeline import CONFIG_DIR, apply_right_image, mode_config_files
@@ -146,22 +146,23 @@ def test_mode_config_files_and_left_image():
                                                                                 "overlays/fast/stereo_wheel.yaml"]
     assert mode_config_files("stereo", "external", "local-fast") == mode_config_files("stereo", "external", fast=True)
     for odometry in ("external", "basalt", "vgio", "visual"):
-        pe = apply_right_image(load_config(*mode_config_files("stereo", odometry))).pose_est
-        assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
-        assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 2
+        for fast in (False, True):
+            pe = apply_right_image(load_config(*mode_config_files("stereo", odometry, fast=fast))).pose_est
+            assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
+            assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor
+            # 6 images (pair + 4 references) except stereo DPVO: 10 (pair + 6 references + 2 reference right images)
+            assert (pe.ff.max_refs, pe.ff.n_ref_anchors) == ((6, 2) if odometry == "visual" else (4, 0))
+            assert pe.ff.image_resolution == (416 if fast else 512)
     pe = apply_right_image(load_config(*mode_config_files("stereo", "external"), lowband)).pose_est
     assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.6, 0.3, 6)
     assert pe.ff.right_image == "left" and not pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
-    assert pe.ff.use_odom_anchor and pe.ff.use_map_anchors and pe.ff.n_ref_anchors == 0
-    # the fast passes keep the pair (its only scale anchor) and the stereo cadence
-    pe = apply_right_image(load_config(*mode_config_files("stereo", "external", fast=True))).pose_est
-    assert (pe.obs_min_translation, pe.obs_max_interval_steps, pe.ff.right_image, pe.ff.max_refs) == (0.3, 3, "pair", 4)
-    assert pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
+    assert pe.ff.use_odom_anchor and pe.ff.use_map_anchors and pe.ff.max_refs == 6
 
 
 def test_profile_folders():
     """Every deployment folder and the fast overlay have one file per mode; the folders differ from each other only
-    where they should (phase 1: nowhere), the fast overlay only for the stereo modes; the cloud keeps the stereo pair."""
+    where they should (phase 1: nowhere), the fast overlay changes only the image size of the feed-forward modes (not
+    RGB-D, not mono DPVO); the cloud keeps the stereo pair."""
     import dataclasses
     import os
     from cross.core.config import load_config, load_yaml_layers
@@ -176,7 +177,10 @@ def test_profile_folders():
         assert local["mapping"]["loop_closure"]["async_pgo"] and dataclasses.asdict(cloud) == local
         assert cloud.pose_est.ff.right_image == "pair"
         fast = dataclasses.asdict(load_config(os.path.join(CONFIG_DIR, "local", m), os.path.join(CONFIG_DIR, "overlays/fast", m)))
-        assert (fast != local) == m.startswith("stereo")
+        res = {"mono_imu.yaml": 448}.get(m, 416 if m.startswith(("stereo", "mono_wheel", "mono_basalt")) else 512)
+        assert fast["pose_est"]["ff"]["image_resolution"] == res
+        fast["pose_est"]["ff"]["image_resolution"] = 512
+        assert fast == local
     assert load_yaml_layers(os.path.join(CONFIG_DIR, "local", "stereo_imu.yaml"))["imu"] == {"vgio_align": True}
     assert load_yaml_layers(os.path.join(CONFIG_DIR, "cloud", "mono_imu.yaml"))["imu"] == {"vgio_align": False}
     assert not load_config(os.path.join(CONFIG_DIR, "local", "stereo_imu.yaml")).mapping.loop_closure.odom_guard_rescale
@@ -282,8 +286,12 @@ def test_config_risks_of_the_left_image():
     assert config_risks(left, "stereo", "vgio") == []          # valid: the frontend keeps the pair
     fast_left = load_config(*mode_config_files("stereo", "external", fast=True), lowband)
     (risk,) = config_risks(fast_left, "stereo", "external")
-    assert "fast passes" in risk and "28 -> 24" in risk
+    assert "416 px" in risk and "not tested" in risk
     assert len(config_risks(fast_left, "stereo", "basalt")) == 2
+    few_refs = load_config(*mode_config_files("stereo", "external"), lowband)
+    few_refs.pose_est.ff.max_refs = 4
+    (risk,) = config_risks(few_refs, "stereo", "external")
+    assert "4 references" in risk and "28 -> 24" in risk
     assert config_risks(load_config(*mode_config_files("stereo", "basalt", fast=True)), "stereo", "basalt") == []
     assert config_risks(load_config(*mode_config_files("mono", "basalt", mono_estimator="ff"), lowband), "mono", "basalt") == []
 

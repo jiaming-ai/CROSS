@@ -1,0 +1,9 @@
+# Stereo + DPVO visual odometry base (--mode stereo --odometry visual): the stereo base with 10 images per pass (the
+# current pair, 6 retrieved references and the stored right images of the best 2 as extra scale anchors).  With the
+# 6-image passes of the other stereo modes it lost OpenLORIS (full benchmark 2026-10-11,
+# outputs/2026-10-09_config_profiles H1: T3 199 -> 179, +5 / -25, T2@1 m 0.64 -> 0.45; ROVER +11).
+include: stereo.yaml
+pose_est:
+  ff:
+    max_refs: 6
+    n_ref_anchors: 2

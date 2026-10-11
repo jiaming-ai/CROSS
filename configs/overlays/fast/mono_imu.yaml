@@ -1,3 +1,9 @@
-# Fast overlay of the mono_imu mode (--fast; layered on configs/<profile>/mono_imu.yaml, local or cloud):
-# nothing yet.
-{}
+# Fast overlay of the mono_imu mode (--fast; layered on configs/<profile>/mono_imu.yaml, local or cloud): 448 px instead
+# of 512 px images in the back end's passes.  ROVER subset (map + winter / night / dusk / autumn;
+# outputs/2026-10-09_config_profiles H6), T3 of 625: 518 -> 527 at 448 px, 488 at 416 px (-5.8 %).  The learned
+# covisibility gate (518 -> 514; +34 % FPS in the mono modes, v5) is not used: the VGGT-inertial odometry keeps the
+# geometric score (base/mono_imu.yaml).  A map built with this overlay stores 448 px images: sessions relocalizing in it
+# need the same image resolution (checked when the map is loaded).
+pose_est:
+  ff:
+    image_resolution: 448
