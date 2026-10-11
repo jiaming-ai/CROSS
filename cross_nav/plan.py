@@ -103,7 +103,7 @@ def astar(ok: np.ndarray, start, goal):
 
 
 @njit(cache=True)
-def _dijkstra(ok, sr, sc, cost, allow_corner_cutting=True):
+def _dijkstra(ok, sr, sc, cost, allow_corner_cutting=True, diagonal_cost=False):
     """8-connected shortest-path field from (sr, sc) over ok cells: distance (cells) and parent (flat index, -1)."""
     H, W = ok.shape
     dist = np.full((H, W), np.inf)
@@ -124,7 +124,13 @@ def _dijkstra(ok, sr, sc, cost, allow_corner_cutting=True):
                     continue
                 if not allow_corner_cutting and dr != 0 and dc != 0 and (not ok[r, nc] or not ok[nr, c]):
                     continue
-                nd = d + (1.4142135623730951 if dr != 0 and dc != 0 else 1.0) * (cost[r, c] + cost[nr, nc]) * 0.5
+                edge_cost = (cost[r, c] + cost[nr, nc]) * 0.5
+                if diagonal_cost and dr != 0 and dc != 0:
+                    # The swept diagonal is checked against both side cells.
+                    # Soft maps leave them traversable, so include their risk
+                    # even when both endpoint footprints look safe.
+                    edge_cost = max(cost[r, c], cost[nr, nc], cost[r, nc], cost[nr, c])
+                nd = d + (1.4142135623730951 if dr != 0 and dc != 0 else 1.0) * edge_cost
                 if nd < dist[nr, nc]:
                     dist[nr, nc] = nd
                     parent[nr, nc] = k
@@ -135,7 +141,7 @@ def _dijkstra(ok, sr, sc, cost, allow_corner_cutting=True):
 class Field:
     """Shortest paths from one start to any goal (one Dijkstra run)."""
 
-    def __init__(self, ok, start, cost=None, allow_corner_cutting=True):
+    def __init__(self, ok, start, cost=None, allow_corner_cutting=True, diagonal_cost=False):
         if cost is None:
             cost = np.ones(ok.shape, np.float64)
         cost = np.asarray(cost, dtype=np.float64)
@@ -145,7 +151,8 @@ class Field:
         self.W = ok.shape[1]
         self.valid = bool(ok[start])
         if self.valid:
-            self.dist, self.parent = _dijkstra(ok, int(start[0]), int(start[1]), cost, allow_corner_cutting)
+            self.dist, self.parent = _dijkstra(ok, int(start[0]), int(start[1]), cost,
+                                              allow_corner_cutting, diagonal_cost)
 
     def path(self, goal):
         if not self.valid or not np.isfinite(self.dist[goal]):

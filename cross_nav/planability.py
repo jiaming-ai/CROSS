@@ -56,7 +56,8 @@ def classify_goals(gt, start, goals, res, robot_radius=0.2):
     return rows, known, possible
 
 
-def evaluate_goals(gt, maps, start, goals, res, robot_radius=0.2, max_detour=3.0, costs=None):
+def evaluate_goals(gt, maps, start, goals, res, robot_radius=0.2, max_detour=3.0, costs=None,
+                   diagonal_cost=False):
     """Audit all supplied candidates and score methods only on GT-planable goals.
 
     A successful route must have a known-free footprint throughout, no corner
@@ -76,7 +77,8 @@ def evaluate_goals(gt, maps, start, goals, res, robot_radius=0.2, max_detour=3.0
         if np.asarray(obstacles).shape != np.asarray(gt).shape:
             raise ValueError('method obstacle maps must match GT shape')
         ok = ~footprint_blocked(obstacles, res, robot_radius)
-        fields[name] = Field(ok, tuple(map(int, start)), costs.get(name), allow_corner_cutting=False)
+        fields[name] = Field(ok, tuple(map(int, start)), costs.get(name), allow_corner_cutting=False,
+                             diagonal_cost=diagonal_cost)
     for row in rows:
         row['methods'] = {}
         if row['feasibility'] != 'planable':

@@ -94,6 +94,13 @@ python scripts/nav_planability_eval.py VIZ/win/arrays --out VIZ/planability.json
 python scripts/nav_viz_pack.py VIZ PAGE 'checkpoint with planability audit'
 ```
 
+For soft planning, `--diagonal-risk` charges the maximum risk of the two
+endpoints and both side cells on each diagonal edge. This accounts for the
+side-cell footprints checked by the collision audit, even when the soft map
+leaves every cell traversable. It changes the planner, not goal feasibility or
+success criteria. The flag is opt-in to preserve earlier comparisons; the
+output records whether it was enabled.
+
 By default candidates are sampled uniformly in the 2–8 m annulus before reading
 GT or predictions. `--goal-source historical` instead audits the old sampled
 goals from the exact start, helping diagnose differences between protocols.

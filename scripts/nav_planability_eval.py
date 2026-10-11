@@ -19,6 +19,8 @@ def main():
     ap.add_argument('--goal-source', choices=['unfiltered', 'historical'], default='unfiltered')
     ap.add_argument('--radius', type=float, default=.2)
     ap.add_argument('--risk-weight', type=float, default=4.)
+    ap.add_argument('--diagonal-risk', action='store_true',
+                    help='Charge the maximum endpoint/side-cell risk on diagonal edges')
     ap.add_argument('--condition', choices=['mono', 'oracle'], default='mono',
                     help='Oracle scale/gravity is diagnostic only; mono is the deployment condition')
     args = ap.parse_args()
@@ -48,7 +50,8 @@ def main():
                 fused = np.maximum(p, np.where(z[gk] == 2, .9, 0))
                 maps['soft_geometry_fusion'] = np.zeros_like(gt, bool)
                 costs['soft_geometry_fusion'] = risk_cost(fused, res, robot_radius=args.radius, weight=args.risk_weight)
-            recs = evaluate_goals(gt, maps, start, goals, res, robot_radius=args.radius, costs=costs)
+            recs = evaluate_goals(gt, maps, start, goals, res, robot_radius=args.radius, costs=costs,
+                                  diagonal_cost=args.diagonal_risk)
             summaries = {m: summarize_goals(recs, m) for m in maps}
             if summaries['gt_known_diagnostic']['planable']:
                 assert summaries['gt_known_diagnostic']['success_rate'] == 1, file
@@ -65,6 +68,7 @@ def main():
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps({'protocol': 'exact-start-known-footprint-v1', 'condition': args.condition,
                                     'goal_source': args.goal_source,
+                                    'diagonal_risk': args.diagonal_risk,
                                     'radius': args.radius, 'totals': totals, 'windows': rows}))
     print(json.dumps(totals, indent=2))
 
