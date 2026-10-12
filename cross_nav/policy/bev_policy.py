@@ -65,6 +65,23 @@ controller executes as a turn in place (30 deg per step, no translation): the ro
 The direction is fixed (not toward the goal side) because a stateless goal-side rule oscillates between two headings
 when the goal is near the field-of-view edge and neither heading has a route. 'rotate_goal' turns toward the goal
 side instead; 'stop' returns zeros (the robot then stays put, the same window repeats, so it never recovers).
+
+Closed-loop rules (all off by default = the frozen behaviour; configs/policy/bev_planner_best.json enables the
+selected set; outputs/2026-10-12_sim_nav/bev_closed_loop.md has the validation). Rules marked * keep per-episode
+state (Episode), keyed by the caller's episode id (`episodes=[{'ep', 'odom', 'window_odom'}]`, odometry pose
+(x, y, yaw) REP-103) and dropped by end_episode:
+
+    history_rule     keyframe windows (sim.geom.window_ids): views of new headings while turning in place count
+    occ_block        cells with P(occupied) > it are impassable (footprint-inflated; the robot's own footprint never)
+    near_goal_m      a goal closer than this is driven to straight when that segment is predicted free
+    map *            WorldMap: per-window maps fused in the odometry frame, A* to the goal (optimistic: unseen
+                     cells passable at a cost); falls back to the per-window planner when it finds no route
+    memory_steps *   without a route, keep following the last route (odometry frame) while it stays free
+    no_path 'rotate_hold' *  turn toward the goal side and keep that side for the whole no-route streak
+    relax_after *    after that many no-route windows, the relaxed planner (occupancy only, short waypoints)
+    bump *           commanded forward motion not executed (odometry) -> an obstacle remembered ahead
+    scale_memory *   the episode's last odometry scale when a window has no baseline
+    scale_pairs      odometry scale from all pairwise view baselines (window odometry)
 """
 from __future__ import annotations
 
