@@ -122,7 +122,7 @@ def run_planner(
     reloc_config = SystemConfig(
         async_update=False,
         mapping=MappingConfig(
-            loop_closure=LoopClosureConfig(async_=False, queue_size=1),
+            loop_closure=LoopClosureConfig(),
         ),
     )
     system = System(

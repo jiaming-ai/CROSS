@@ -15,7 +15,7 @@ Examples:
     python run.py data/r3d/lab2.r3d --no-viz --frames 500
     python run.py data/rosbag/topomap_ssi_1 --loader rosbag
     python run.py data/posed/home1-1 --loader posed                       # posed RGB-D folder (e.g. OpenLORIS)
-    python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/outdoor.yaml
+    python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/overlays/outdoor.yaml
     python run.py data/posed/home1-1 --loader posed --odometry visual --no-viz            # RGB-D, visual odometry
     python run.py data/posed/home1-1 --loader posed --mode mono --odometry visual         # RGB only
 """
@@ -29,7 +29,7 @@ from loguru import logger
 
 from cross.core.config import load_config
 from cross.core.types import Camera
-from cross.pipeline import add_session_args, mode_config_files, session_factory
+from cross.pipeline import add_session_args, finish_session_args, session_factory, shipped_config_files
 from cross.utils.profile import print_timing_registry
 
 np.set_printoptions(formatter={"float": lambda x: f"{x:0.2f}"})
@@ -85,18 +85,23 @@ def main():
     parser.add_argument("--start", type=int, default=0, help="Start frame index")
     parser.add_argument("--snr", type=float, default=None, help="Signal-to-noise ratio for R3D datasets")
     parser.add_argument("--async", dest="async_update", action="store_true", help="Enable async step pipeline")
-    parser.add_argument("--config", nargs="*", default=[], help="YAML config file(s), merged left to right")
+    parser.add_argument("--config", nargs="*", default=[], help="YAML config file(s), merged left to right after the "
+                        "mode's shipped file (configs/<--profile>/<mode>.yaml), e.g. configs/overlays/outdoor.yaml")
     parser.add_argument("--set", nargs="*", action="extend", default=[],
                         help="config overrides section.sub.key=value (YAML-parsed), after --config; e.g. "
                              "pose_est.ff.checkpoint=released (the released VGGT-Omega instead of the fine-tuned one)")
-    add_session_args(parser)   # --mode rgbd | stereo | mono, --odometry external | visual, --dpvo-checkpoint, ...
-    args = parser.parse_args()
+    parser.add_argument("--odom-file", default=None, help="odometry file of a prepared folder to read instead of "
+                        "odom_left.txt (--odometry basalt: odom_vio.txt)")
+    add_session_args(parser)   # --mode, --odometry, --profile, --mono-estimator, --dpvo-checkpoint, ...
+    args = finish_session_args(parser.parse_args())
     args.mode = args.mode or "rgbd"
 
     # Load dataset
     loader_kwargs = {}
     if args.snr is not None:
         loader_kwargs["snr"] = args.snr
+    if args.odom_file:
+        loader_kwargs["odom_file"] = args.odom_file
 
     if args.mode == "stereo":
         loader_kwargs["baseline"] = args.baseline
@@ -113,13 +118,9 @@ def main():
         frame_height=dataset.rgb_height,
     )
 
-    # Build config: layer YAML files, then apply CLI overrides
-    # the mode's shipped configuration files (configs/stereo.yaml, + the --fast preset), then the user's
-    configs = mode_config_files(args.mode, args.odometry, args.fast, mono_estimator=args.mono_estimator) \
-        + list(args.config)
-    if args.fast and args.mode != "stereo":
-        logger.warning("--fast only has a preset for the stereo mode; ignored")
-    config = load_config(*configs, sets=args.set)
+    # Build config: the mode's shipped configuration (configs/<--profile>/<mode>.yaml), then the user's --config files
+    # and --set overrides
+    config = load_config(*shipped_config_files(args), *args.config, sets=args.set)
     if args.async_update:
         config.async_update = True
 

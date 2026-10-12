@@ -132,27 +132,83 @@ def test_odometry_frontend_composes_dataset_motion():
 
 
 def test_mode_config_files_and_left_image():
-    """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry; the
-    opt-in low-bandwidth profile observes on the left image (no stereo anchors) at half the rate; --fast keeps the pair."""
+    """The shipped configuration of each mode: the stereo mode keeps the pair and its cadence with every odometry, 6
+    images per pass (stereo DPVO 10, the others 8); the opt-in low-bandwidth overlay observes on the left image (no stereo anchors) with
+    6 references at half the rate; the fast overlays (Basalt, DPVO) keep the pair, at 416 px."""
     import os
     from cross.core.config import load_config
     from cross.pipeline import CONFIG_DIR, apply_right_image, mode_config_files
-    lowband = os.path.join(CONFIG_DIR, "stereo_lowband.yaml")
-    assert mode_config_files("rgbd", "external") == [] and mode_config_files("mono", "external") == []
-    assert [p.rsplit("/", 1)[-1] for p in mode_config_files("stereo", "external", fast=True)] == \
-        ["stereo.yaml", "stereo_fast.yaml", "vggt_finetuned.yaml"]
-    for odometry in ("external", "vgio", "visual"):
-        pe = apply_right_image(load_config(*mode_config_files("stereo", odometry))).pose_est
-        assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
-        assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 2
+    lowband = os.path.join(CONFIG_DIR, "overlays", "stereo_lowband.yaml")
+    rel = lambda files: [os.path.relpath(f, CONFIG_DIR) for f in files]          # noqa: E731
+    assert rel(mode_config_files("rgbd", "external")) == ["local/rgbd_wheel.yaml"]
+    assert rel(mode_config_files("stereo", "basalt", "cloud")) == ["cloud/stereo_basalt.yaml"]
+    assert rel(mode_config_files("stereo", "external", "cloud", fast=True)) == ["cloud/stereo_wheel.yaml",
+                                                                                "overlays/fast/stereo_wheel.yaml"]
+    assert mode_config_files("stereo", "external", "local-fast") == mode_config_files("stereo", "external", fast=True)
+    for odometry in ("external", "basalt", "vgio", "visual"):
+        for fast in (False, True):
+            pe = apply_right_image(load_config(*mode_config_files("stereo", odometry, fast=fast))).pose_est
+            assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.3, 0.15, 3)
+            assert pe.ff.right_image == "pair" and pe.ff.use_curr_anchor
+            # 8 images (pair + 6 references) except stereo DPVO: 10 (+ 2 reference right images)
+            refs = (4, 0) if fast and odometry == "basalt" else (6, 2 if odometry == "visual" else 0)
+            assert (pe.ff.max_refs, pe.ff.n_ref_anchors) == refs
+            assert pe.ff.image_resolution == (416 if fast and odometry in ("basalt", "visual") else 512)
     pe = apply_right_image(load_config(*mode_config_files("stereo", "external"), lowband)).pose_est
     assert (pe.obs_min_translation, pe.obs_min_rotation, pe.obs_max_interval_steps) == (0.6, 0.3, 6)
     assert pe.ff.right_image == "left" and not pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
-    assert pe.ff.use_odom_anchor and pe.ff.use_map_anchors and not pe.ff.store_right_images
-    # the fast preset keeps the pair (its only scale anchor) and the stereo.yaml cadence
-    pe = apply_right_image(load_config(*mode_config_files("stereo", "external", fast=True))).pose_est
-    assert (pe.obs_min_translation, pe.obs_max_interval_steps, pe.ff.right_image, pe.ff.max_refs) == (0.3, 3, "pair", 4)
-    assert pe.ff.use_curr_anchor and pe.ff.n_ref_anchors == 0
+    assert pe.ff.use_odom_anchor and pe.ff.use_map_anchors and pe.ff.max_refs == 6
+
+
+def test_profile_folders():
+    """Every deployment folder and the fast overlay have one file per mode; the folders differ from each other only
+    where they should (phase 1: nowhere), the fast overlay changes only the image size of the feed-forward modes (not
+    RGB-D, not mono DPVO); the cloud keeps the stereo pair."""
+    import dataclasses
+    import os
+    from cross.core.config import load_config, load_yaml_layers
+    from cross.pipeline import CONFIG_DIR, PROFILES
+    modes = sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, "local")) if f.endswith(".yaml"))
+    assert len(modes) == 12 and PROFILES == ("local", "cloud")
+    for folder in PROFILES + ("overlays/fast",):
+        assert sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, folder)) if f.endswith(".yaml")) == modes
+    for m in modes:
+        local = dataclasses.asdict(load_config(os.path.join(CONFIG_DIR, "local", m)))
+        cloud = load_config(os.path.join(CONFIG_DIR, "cloud", m))
+        assert local["mapping"]["loop_closure"]["async_pgo"] and dataclasses.asdict(cloud) == local
+        assert cloud.pose_est.ff.right_image == "pair"
+        fast = dataclasses.asdict(load_config(os.path.join(CONFIG_DIR, "local", m), os.path.join(CONFIG_DIR, "overlays/fast", m)))
+        # only stereo + Basalt (6 images at 416 px) and stereo DPVO (416 px) have a fast overlay
+        if m in ("stereo_basalt.yaml", "stereo_dpvo.yaml"):
+            assert fast["pose_est"]["ff"]["image_resolution"] == 416
+            fast["pose_est"]["ff"]["image_resolution"] = 512
+        if m == "stereo_basalt.yaml":
+            assert (fast["pose_est"]["ff"]["max_refs"], fast["pose_est"]["ff"]["n_ref_anchors"]) == (4, 0)
+            fast["pose_est"]["ff"]["max_refs"] = local["pose_est"]["ff"]["max_refs"]
+        assert fast == local
+    assert load_yaml_layers(os.path.join(CONFIG_DIR, "local", "stereo_imu.yaml"))["imu"] == {"vgio_align": True}
+    assert load_yaml_layers(os.path.join(CONFIG_DIR, "cloud", "mono_imu.yaml"))["imu"] == {"vgio_align": False}
+    assert not load_config(os.path.join(CONFIG_DIR, "local", "stereo_imu.yaml")).mapping.loop_closure.odom_guard_rescale
+
+
+def test_named_odometry_and_profile_arguments():
+    import argparse
+    from cross.pipeline import BASALT_ODOM_FILE, add_session_args, finish_session_args, shipped_config_files
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--odom-file", default=None)
+    add_session_args(ap)
+    args = finish_session_args(ap.parse_args(["--mode", "stereo", "--odometry", "basalt"]))
+    assert args.odometry == "external" and args.odometry_name == "basalt" and args.odom_file == BASALT_ODOM_FILE
+    assert shipped_config_files(args)[0].endswith("local/stereo_basalt.yaml")
+    args = finish_session_args(ap.parse_args(["--mode", "rgbd", "--odometry", "basalt", "--odom-file", "x.txt"]))
+    assert args.odom_file == "x.txt"
+    args = finish_session_args(ap.parse_args(["--mode", "stereo", "--profile", "cloud", "--fast"]))
+    files = shipped_config_files(args)
+    assert files[0].endswith("cloud/stereo_wheel.yaml") and files[1].endswith("overlays/fast/stereo_wheel.yaml")
+    args = finish_session_args(ap.parse_args(["--mode", "stereo", "--profile", "local-fast"]))   # deprecated alias
+    assert args.profile == "local" and args.fast and shipped_config_files(args)[1].endswith("overlays/fast/stereo_wheel.yaml")
+    args = finish_session_args(ap.parse_args(["--mode", "mono", "--mono-estimator", "ff", "--odometry", "vio"]))
+    assert shipped_config_files(args)[0].endswith("local/mono_vio.yaml")
 
 
 def test_left_image_session_drops_the_right_image():
@@ -165,15 +221,12 @@ def test_left_image_session_drops_the_right_image():
     assert f["rgb_right"] is not None      # the loader's frame is not modified
 
 
-def test_vgio_align_by_mode():
+def test_vgio_stereo_structural_settings():
     from cross.mono.config import MonoConfig
     from cross.pipeline import _vgio_config
     stereo = _vgio_config(MonoConfig(), "stereo", np.eye(4))
-    mono = _vgio_config(MonoConfig(), "mono")
-    assert stereo.imu.vgio_align is True and mono.imu.vgio_align is False
-    explicit = MonoConfig()
-    explicit.imu.vgio_align = False
-    assert _vgio_config(explicit, "stereo", np.eye(4)).imu.vgio_align is False
+    assert not stereo.imu.depth_prior and not stereo.imu.vgio_depth_bias
+    assert _vgio_config(MonoConfig(), "mono").imu.depth_prior
 
 
 def test_mono_ff_shipped_defaults():
@@ -181,21 +234,35 @@ def test_mono_ff_shipped_defaults():
     from cross.core.config import load_config
     from cross.pipeline import mode_config_files
     files = mode_config_files("mono", "visual", mono_estimator="ff")
-    assert [os.path.basename(f) for f in files] == ["mono_ff.yaml", "vggt_finetuned.yaml"]
-    assert mode_config_files("mono", "visual", mono_estimator="da3") == []
-    assert [os.path.basename(f) for f in mode_config_files("stereo", "external")] == ["stereo.yaml", "vggt_finetuned.yaml"]
-    cfg = load_config(*files)
-    assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
-    assert cfg.mapping.hypothesis.strong_pass_frames == 3
-    vgio = mode_config_files("mono", "vgio", mono_estimator="ff")
-    assert [os.path.basename(f) for f in vgio] == ["mono_ff.yaml", "vggt_finetuned.yaml", "vgio.yaml"]
-    assert [os.path.basename(f) for f in mode_config_files("stereo", "vgio")] == \
-        ["stereo.yaml", "vggt_finetuned.yaml", "vgio.yaml"]
-    outdoor = os.path.join(os.path.dirname(files[0]), "outdoor.yaml")
-    # the fine-tuned checkpoint: its overlay (the mapped covisibility head; geometric with vgio) and the outdoor gate
+    assert [os.path.basename(f) for f in files] == ["mono_wheel.yaml"]
+    assert [os.path.basename(f) for f in mode_config_files("mono", "visual", mono_estimator="da3")] == ["mono_dpvo.yaml"]
+    assert [os.path.basename(f) for f in mode_config_files("stereo", "external")] == ["stereo_wheel.yaml"]
     ft, rel = ["pose_est.ff.checkpoint=finetuned"], ["pose_est.ff.checkpoint=released"]
-    assert load_config(*files, sets=ft).pose_est.ff.covis_source == "auto"
+    cfg = load_config(*files, sets=ft)
+    assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
+    ff = cfg.pose_est.ff         # the feed-forward back end without a stereo pair
+    assert cfg.pose_est.type.value == "ff" and not ff.use_curr_anchor and ff.n_ref_anchors == 0
+    assert ff.use_odom_anchor and ff.use_map_anchors and cfg.pose_est.obs_max_interval_steps == 3
+    # the fine-tuned checkpoint: its settings (base/vggt_finetuned.yaml: the mapped covisibility head; geometric with
+    # the VGGT-inertial odometry) and the outdoor gate
+    assert ff.covis_source == "auto"
+    vgio = mode_config_files("mono", "vgio", mono_estimator="ff")
+    assert [os.path.basename(f) for f in vgio] == ["mono_imu.yaml"]
     assert load_config(*vgio, sets=ft).pose_est.ff.covis_source == "geometric"
+    assert load_config(*mode_config_files("stereo", "vgio"), sets=ft).pose_est.ff.covis_source == "geometric"
+    for odometry in ("external", "basalt", "visual"):
+        assert load_config(*mode_config_files("stereo", odometry), sets=ft).pose_est.ff.covis_source == "auto"
+    # DPVO + IMU (vio): the feed-forward back end's base (the head) with the old back end's hypothesis behaviour
+    vio = mode_config_files("mono", "vio", mono_estimator="ff")
+    assert [os.path.basename(f) for f in vio] == ["mono_vio.yaml"]
+    hyp = load_config(*vio, sets=ft).mapping.hypothesis
+    assert hyp.adopt_in_mapping_session and hyp.merge_in_mapping_session and not hyp.h0_informative_only
+    assert load_config(*vio, sets=ft).pose_est.ff.covis_source == "auto"
+    hyp = cfg.mapping.hypothesis                   # mono_wheel (VGGT + DPVO alone): the defaults
+    assert not hyp.adopt_in_mapping_session and not hyp.merge_in_mapping_session and hyp.h0_informative_only
+    assert [os.path.basename(f) for f in mode_config_files("mono", "vio", "cloud", "ff", fast=True)] == \
+        ["mono_vio.yaml", "mono_vio.yaml"]
+    outdoor = os.path.join(os.path.dirname(os.path.dirname(files[0])), "overlays", "outdoor.yaml")
     assert load_config(*files, outdoor, sets=ft).pose_est.ff.min_covis == 0.10
     assert load_config(*files, sets=ft).pose_est.ff.min_covis == 0.15
     assert load_config(*files, outdoor, sets=ft).mapping.cluster_eps == 3.0
@@ -248,7 +315,7 @@ def test_vggt_checkpoint_selection(tmp_path, monkeypatch):
 
 
 def test_map_and_reloc_mono_loads_shipped_defaults():
-    """scripts/map_and_reloc.py (the stereo-image datasets' runner, also in mono mode) loads configs/mono_ff.yaml for
+    """scripts/map_and_reloc.py (the stereo-image datasets' runner, also in mono mode) loads the mono files for
     the mono mode's feed-forward estimator (it ignored it until 2026-10-09: KITTI / SimChange mono runs had no pair filter)."""
     import importlib.util
     from pathlib import Path
@@ -258,9 +325,13 @@ def test_map_and_reloc_mono_loads_shipped_defaults():
     spec.loader.exec_module(mod)
     base = ["--map", "m", "--query", "q", "--out", "o"]
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "mono", "--mono-estimator", "ff", "--odometry", "vgio"]))
-    assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15 and cfg.mapping.hypothesis.strong_pass_frames == 3
+    assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo"]))
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.0
+    # explicit options of the runner win over the mode's file (they used to be overwritten by the mono presets)
+    cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "mono", "--mono-estimator", "ff",
+                                                                 "--obs-max-interval", "5"]))
+    assert cfg.pose_est.obs_max_interval_steps == 5
     # the checkpoint decides the fine-tuned VGGT-Omega's settings; --set still wins
     from cross.core.config import resolve_ff_checkpoint
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo", "--checkpoint", "finetuned"]))
@@ -273,3 +344,54 @@ def test_map_and_reloc_mono_loads_shipped_defaults():
     assert resolve_ff_checkpoint(cfg.pose_est.ff.checkpoint).endswith("vggt_omega_cross_1b_512.pt")   # the estimator resolves it
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo", "--backend", "da3"]))
     assert cfg.pose_est.ff.checkpoint == "models/DA3-LARGE-1.1" and cfg.pose_est.ff.covis_source == "geometric"
+
+
+def test_config_risks_of_the_left_image():
+    """The left-image overlay warns with odometry that can run away and with the fast passes, not with trusted
+    external odometry (the low-bandwidth use) or with the stereo pair."""
+    import os
+    from cross.core.config import load_config
+    from cross.pipeline import CONFIG_DIR, config_risks, mode_config_files
+    lowband = os.path.join(CONFIG_DIR, "overlays", "stereo_lowband.yaml")
+    left = load_config(*mode_config_files("stereo", "external"), lowband)
+    assert config_risks(left, "stereo", "external") == []
+    assert config_risks(left, "stereo", "external", "odom_left.txt") == []
+    for odometry, odom_file in (("basalt", "odom_vio.txt"), ("visual", None), ("external", "odom_vio.txt")):
+        (risk,) = config_risks(left, "stereo", odometry, odom_file)
+        assert "run away" in risk and "38.2 m" in risk
+    assert config_risks(left, "stereo", "vgio") == []          # valid: the frontend keeps the pair
+    # the stereo + Basalt fast overlay (4 references, 416 px) under the left image: both caveats (+ the runaway one)
+    fast_left = load_config(*mode_config_files("stereo", "basalt", fast=True), lowband)
+    risks = config_risks(fast_left, "stereo", "external")
+    assert len(risks) == 2 and "28 -> 24" in risks[0] and "416 px" in risks[1] and "not tested" in risks[1]
+    assert len(config_risks(fast_left, "stereo", "basalt")) == 3
+    few_refs = load_config(*mode_config_files("stereo", "external"), lowband)
+    few_refs.pose_est.ff.max_refs = 4
+    (risk,) = config_risks(few_refs, "stereo", "external")
+    assert "4 references" in risk and "28 -> 24" in risk
+    assert config_risks(load_config(*mode_config_files("stereo", "basalt", fast=True)), "stereo", "basalt") == []
+    assert config_risks(load_config(*mode_config_files("mono", "basalt", mono_estimator="ff"), lowband), "mono", "basalt") == []
+
+
+def test_confirm_config_risks(monkeypatch):
+    """No terminal: abort unless --accept-config-risk; at a terminal: the answer decides; asked once per process."""
+    import io
+    import pytest
+    import cross.pipeline as P
+    monkeypatch.setattr(P, "_ACCEPTED_RISKS", set())
+    P.confirm_config_risks([])                                 # nothing to confirm
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))          # not a terminal
+    with pytest.raises(SystemExit):
+        P.confirm_config_risks(["risk a"])
+    P.confirm_config_risks(["risk a"], accept=True)
+    P.confirm_config_risks(["risk a"])                         # accepted before: not asked again
+
+    class Tty(io.StringIO):
+        def isatty(self):
+            return True
+    monkeypatch.setattr("sys.stdin", Tty())
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    with pytest.raises(SystemExit):
+        P.confirm_config_risks(["risk b"])
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
+    P.confirm_config_risks(["risk b"])

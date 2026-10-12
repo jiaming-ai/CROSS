@@ -1,9 +1,0 @@
-# Shipped with the VGGT-inertial odometry (--odometry vgio, mono and stereo modes; cross.pipeline.mode_config_files).
-# The geometric covisibility score instead of the learned head (configs/vggt_finetuned.yaml: covis_source "auto"
-# with the fine-tuned checkpoint; the default is geometric). Full benchmark v6
-# (2026-10-09), mono + IMU on ROVER, two runs each: with vfin2's mapped head relocalization was about equal (T3 985 /
-# 983 vs 967 / 962 of 1159, n.s.) but positioning less precise (T2@3 0.70 / 0.69 vs 0.74 / 0.77) and maps worse
-# (T1 median x1.045), at ~35 % more FPS. Stereo + IMU was not tested with the head.
-pose_est:
-  ff:
-    covis_source: geometric

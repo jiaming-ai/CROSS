@@ -97,7 +97,7 @@ def test_covis_source_auto():
     from types import SimpleNamespace
     from cross.core.config import FeedForwardConfig
     from cross.cv.pose_est_ff import PoseEstFeedForward, auto_covis_source
-    assert FeedForwardConfig().covis_source == "geometric"      # auto: configs/vggt_finetuned.yaml
+    assert FeedForwardConfig().covis_source == "geometric"      # auto: configs/base/vggt_finetuned.yaml
     est = object.__new__(PoseEstFeedForward)
     for head, cmap, want in ((None, None, "geometric"), (object(), None, "geometric"), (object(), ([0, 1], [0, 1]), "head")):
         est._auto_covis = auto_covis_source(SimpleNamespace(covis_head=head, covis_map=cmap))
@@ -115,18 +115,15 @@ def test_set_camera_registers_calibrated_focal_and_principal_point():
     from cross.core.config import FeedForwardConfig
     from cross.cv.pose_est_ff import PoseEstFeedForward, principal_point_rotation
     K = np.array([[300.0, 0, 270.0], [0, 300.0, 180.0], [0, 0, 1]])
-    for scale_focal, ppc in (("calibrated", True), ("predicted", True), ("calibrated", False)):
+    for scale_focal in ("calibrated", "predicted"):
         est = PoseEstFeedForward.__new__(PoseEstFeedForward)        # no model: only the camera bookkeeping
-        est.config = FeedForwardConfig(scale_focal=scale_focal, principal_point_correction=ppc)
+        est.config = FeedForwardConfig(scale_focal=scale_focal)
         est.backend = SimpleNamespace()
         est._R_model_to_cam = None
         est.set_camera(K, 518, 350)
         assert est._focal_norm == 300.0 / 518
         assert getattr(est.backend, "calib_focal", None) == (300.0 / 518 if scale_focal == "calibrated" else None)
-        if ppc:
-            assert np.allclose(est._R_model_to_cam[:3, :3], principal_point_rotation(K, 518, 350).T)
-        else:
-            assert est._R_model_to_cam is None
+        assert np.allclose(est._R_model_to_cam[:3, :3], principal_point_rotation(K, 518, 350).T)
 
 
 def test_no_duplicate_method_definitions():

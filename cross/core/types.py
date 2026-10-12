@@ -70,7 +70,6 @@ def serialize_keyframes(keyframes, path: str, method: str = "pickle"):
         path: output file path
         method: "pickle" (default) or "json"
     """
-    from cross.core.conditional_pose import records
     data = []
     for kf in keyframes:
         data.append({
@@ -81,8 +80,6 @@ def serialize_keyframes(keyframes, path: str, method: str = "pickle"):
             "pose_std": kf.pose_std.tensor().cpu().numpy() if kf.pose_std is not None else None,
             "pose_weights": kf.pose_weights.cpu().numpy() if kf.pose_weights is not None else None,
             "pose_charts": kf.pose_charts.cpu().numpy() if kf.pose_charts is not None else None,
-            "metric_source": kf.metric_source,
-            "conditional_poses": records(kf.conditional_poses),
             "atlas": kf.atlas.id if kf.atlas is not None else None,
             "timestamp": kf.timestamp
         })
@@ -249,11 +246,6 @@ class Keyframe:
     # Coordinate frame of each pose component; independent of acquisition atlas
     # and bounded hypothesis slot. None denotes a legacy map without provenance.
     pose_charts: Optional[torch.Tensor] = _TensorField()
-    # Identity of the image/model prediction that supplied this node's depth.
-    # Independent of pose charts and hypothesis slots; None for legacy maps.
-    metric_source: Optional[dict] = None
-    # Per-component H(x|b); bias covariance is stored once by the manager.
-    conditional_poses: Optional[list] = None
 
     def __post_init__(self):
         self.id = Keyframe._next_id
@@ -312,7 +304,7 @@ class Edge:
     `mean` / `std` are held compactly (pack_tensor) and read back as LieTensors over the stored values; the other
     attributes are slots (a map holds millions of edges), with a __dict__ for metadata set by name.
     """
-    __slots__ = ("_m", "_mt", "_md", "_s", "_st", "_sd", "type", "_cost", "conditional_pose", "n_frames", "conf",
+    __slots__ = ("_m", "_mt", "_md", "_s", "_st", "_sd", "type", "_cost", "n_frames", "conf",
                  "odom_fault", "_mean_np", "_std_np", "__dict__", "__weakref__")
 
     @property
@@ -350,7 +342,6 @@ class Edge:
         self.std = std
         self.type = type
         self._cost = cost
-        self.conditional_pose = None
         # measurement metadata used by the calibrated noise model (see cross/core/lc_verify.py)
         self.n_frames: Optional[int] = None   # odometry: number of integrated readings
         self.conf: Optional[float] = None     # visual: estimator confidence (covisibility)

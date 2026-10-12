@@ -1,0 +1,5 @@
+# Stereo + external odometry (wheel, INS): --mode stereo --odometry external.
+# Folder cloud: the mode's base, then the folder's shared settings; keys below override both.
+include:
+  - ../base/stereo.yaml
+  - ../base/cloud.yaml

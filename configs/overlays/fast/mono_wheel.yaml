@@ -1,0 +1,4 @@
+# Fast overlay of the mono_wheel mode (--fast; layered on configs/<profile>/mono_wheel.yaml, local or cloud): nothing.
+# Tested (outputs/2026-10-11_config_confirm): 416 px (1.42x the query frame rate on an RTX 4000 Ada) lost OpenLORIS T2
+# at 1 m 0.727 -> 0.624 (-14 %; T3 -2.6 %; ROVER subset T3 -1.2 %, T2 at 3 m -1.5 %).
+{}

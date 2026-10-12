@@ -57,11 +57,17 @@ Notes.
 
 | setup | input | CROSS mode |
 |---|---|---|
-| **RGB-D** | colour + depth (+ odometry) | RGB-D mode: XFeat + LightGlue + PnP-RANSAC on keyframe depth (`--mode rgbd`, shipped `configs/default.yaml`) |
-| **stereo** | rectified stereo pair (+ odometry) | stereo mode: VGGT-Omega multi-view relative pose, stereo-baseline scale (`--mode stereo`, `configs/stereo.yaml`) |
+| **RGB-D** | colour + depth (+ odometry) | RGB-D mode: XFeat + LightGlue + PnP-RANSAC on keyframe depth (`--mode rgbd`, `configs/local/rgbd_*.yaml`) |
+| **stereo** | rectified stereo pair (+ odometry) | stereo mode: VGGT-Omega multi-view relative pose, stereo-baseline scale (`--mode stereo`, `configs/local/stereo_*.yaml`) |
 | **mono** | colour only (+ odometry) | monocular mode (in development) |
 
-Outdoor sequences (KITTI, ROVER) add `configs/outdoor.yaml`. It is an environment preset that coarsens clustering and the
+CROSS runs with the shipped configuration of its mode in the `local` folder (`configs/local/<mode>.yaml`; the
+`--fast` systems add `configs/overlays/fast/<mode>.yaml`), with one exception: the pose-graph optimisation is
+synchronous. The shipped default optimises long loop closures in a background worker whose results land at
+machine-dependent times; `benchmark/run.py` passes `--reproducible` (`mapping.loop_closure.async_pgo` false) to every CROSS
+run so that runs are reproducible and comparable across machines.
+
+Outdoor sequences (KITTI, ROVER) add `configs/overlays/outdoor.yaml`. It is an environment preset that coarsens clustering and the
 hypothesis-alignment radius to the outdoor scale; it is not tuned per dataset. **No per-dataset or per-sequence tuning against ground truth is
 allowed.** A system may use a noise model calibrated without ground truth on the first minute (600 frames) of the map
 sequence (`scripts/lc/calibrate_noise.py`). Results using such a model are marked *calibrated*. The default rows use the
@@ -119,7 +125,7 @@ consecutive windows of 30 frames.
   follows the fault window by window.
 - **Relocalization sessions** (`odom_guard_map`): the map measurements' fixes feed the guard too.
 - **Stereo needs the pair.** With the left image only (`pose_est.ff.right_image: left`, the profile
-  `configs/stereo_lowband.yaml`) a pass's scale comes from the odometry, so the guard cannot see a fault and stays off.
+  `configs/overlays/stereo_lowband.yaml`) a pass's scale comes from the odometry, so the guard cannot see a fault and stays off.
 
 **IMU.** The monocular visual-inertial setups (CROSS mono with `--odometry vio`) get the IMU rigidly attached to the
 monocular camera, at its native rate, with its calibrated extrinsics and noise (`benchmark/datasets/prepare_imu.py`,

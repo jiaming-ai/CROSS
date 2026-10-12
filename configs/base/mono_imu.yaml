@@ -1,0 +1,16 @@
+# Mono + IMU base (--mode mono --mono-estimator ff --odometry vgio): the feed-forward back end and the VGGT-inertial
+# odometry with learned depth (DA3, or the scale head of a vggt_ft checkpoint) as the metric-scale prior.
+include: mono_ff.yaml
+# The geometric covisibility score with the VGGT-inertial odometry instead of the learned head (base/vggt_finetuned.yaml:
+# covis_source "auto" with the fine-tuned checkpoint; the code default is geometric).  Full benchmark v6 (2026-10-09), mono + IMU on ROVER, two runs each: with vfin2's mapped head
+# relocalization was about equal (T3 985 / 983 vs 967 / 962 of 1159, n.s.) but positioning less precise (T2@3 0.70 /
+# 0.69 vs 0.74 / 0.77) and maps worse (T1 median x1.045), at ~35 % more FPS.  Stereo + IMU was not tested with the head.
+pose_est:
+  ff:
+    covis_source: geometric
+# ImuConfig of the frontend (cross/imu/scale_filter.py), applied before --mono-args '--imu-config ...'
+imu:
+  # the frontend measures on passes of its own, not on the back end's: those carry map references, and measured on them
+  # alone the indoor scale came out 6 % short (development maps, 5090: office 0.11 -> 0.06 m, KITTI 07 2.76 -> 1.79,
+  # home 0.46 -> 0.36, cafe 0.24 -> 0.17)
+  vgio_align: false
