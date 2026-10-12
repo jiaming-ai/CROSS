@@ -24,7 +24,7 @@ from collections import deque
 
 import numpy as np
 
-from .sim.geom import history_ids
+from .sim.geom import window_ids
 
 
 def to_robot_2d(points, pose):
@@ -64,6 +64,7 @@ class NavigationAgent:
                  camera_height=.8):
         self.planner = planner
         self.history_m = tuple(history_m or getattr(planner, 'history_m', (0., .5, 1., 2.)))
+        self.history_rule = getattr(planner, 'history_rule', None) or {'type': 'distance', 'm': list(self.history_m)}
         self.arrive_m, self.v_max, self.w_max, self.lookahead = arrive_m, v_max, w_max, lookahead
         self.frames = deque(maxlen=max_frames)       # (image, pose, cumulative travel)
         self.goal, self.cum, self.camera_height = None, 0., camera_height
@@ -84,7 +85,7 @@ class NavigationAgent:
         goal_rel = to_robot_2d(self.goal, pose)
         if float(np.hypot(*goal_rel)) < self.arrive_m:
             return {'arrived': True, 'cmd': (0., 0.), 'path': np.zeros((0, 2)), 'path_odom': np.zeros((0, 2)), 'goal_rel': goal_rel}
-        ids = history_ids([f[2] for f in self.frames], self.history_m)
+        ids = window_ids([f[2] for f in self.frames], [f[1][2] for f in self.frames], self.history_rule)
         imgs = np.stack([self.frames[i][0] for i in ids])
         hist = np.array([math.hypot(pose[0] - self.frames[i][1][0], pose[1] - self.frames[i][1][1]) for i in ids], np.float32)
         path = np.asarray(self.planner(imgs, goal_rel.astype(np.float32), hist), np.float64)

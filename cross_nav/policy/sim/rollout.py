@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from . import wire
-from .geom import control, history_ids, resample, spl, to_robot
+from .geom import control, resample, spl, to_robot, window_ids
 from .hab import camera_sample, expert_path, geodesic, make_sim, render, set_hfov
 
 SUCCESS_M = .2
@@ -50,13 +50,14 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
     noise = noise_profile(rng, a.mode)
     camera = camera_sample(rng, a.camera)
     set_hfov(sim, camera['hfov'])
-    frames_cum, cams, traj = [], [], [pos[[0, 2]].tolist()]
+    frames_cum, yaws, cams, traj = [], [], [], [pos[[0, 2]].tolist()]
     cum, travelled, collisions, excursion = 0., 0., 0, 0
     success, steps, min_geo = False, 0, ep['geodesic']
     for step in range(a.max_steps):
         rgb = np.ascontiguousarray(render(sim, pos, yaw, camera=camera))
         frames_cum.append(cum); cams.append(pos + np.array([0., camera['height'], 0.]))
-        ids = history_ids(frames_cum, a.history_m)
+        yaws.append(yaw)
+        ids = window_ids(frames_cum, yaws, a.history_rule)
         goal_rel = to_robot(goal[[0, 2]], pos[[0, 2]], yaw)
         d_geo, pts = expert_path(sim, pos, goal)
         label = None
@@ -171,7 +172,7 @@ def main():
     conn = Client(a.socket, family='AF_UNIX')
     wire.send(conn, {'cmd': 'info'})
     info = wire.recv(conn)
-    a.history_m = tuple(info['history_m'])
+    a.history_rule = info.get('history_rule') or {'type': 'distance', 'm': list(info['history_m'])}
     sim, scene, t0 = None, None, time.time()
     with out.open('a') as f:
         for k, ep in enumerate(eps):

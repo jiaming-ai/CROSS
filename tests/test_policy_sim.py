@@ -66,3 +66,13 @@ def test_polar_goal_far_goals_stay_bounded():
     loss = m.loss(x, torch.tensor([[25., 1.], [2., -1.]]), torch.randn(2, 16, 2))
     loss.backward()
     assert torch.isfinite(loss) and m.goal[0].weight.grad.abs().sum() > 0
+
+
+def test_keyframe_window_includes_turn_views():
+    from cross_nav.policy.sim.geom import window_ids
+    cum = [0, 0, 0, 0, .25, .5, .75, 1.]
+    yaw = [0, .6, 1.2, 1.8, 1.8, 1.8, 1.8, 1.8]          # three 34 deg turns in place, then straight
+    rule = {'type': 'keyframe', 'trans': .5, 'rot_deg': 30, 'lags': [0, 1, 2, 3, 4, 8]}
+    ids = window_ids(cum, yaw, rule)
+    assert ids[0] == 7 and ids[1] == 5 and ids[2:5] == [3, 2, 1] and ids[5] == 0
+    assert window_ids(cum, yaw, {'type': 'distance', 'm': [0, .5, 1, 2]}) == [7, 5, 3, 0]

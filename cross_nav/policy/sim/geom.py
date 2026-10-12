@@ -48,6 +48,30 @@ def history_ids(cumdist, history=HISTORY_M):
     return ids
 
 
+def keyframes(cumdist, yaw, trans=.5, rot=math.radians(30)):
+    """Indices of keyframes: frame 0, then each frame after `trans` metres of travel or `rot` of rotation since the
+    previous keyframe (so turning in place adds views of new headings)."""
+    kf = [0]
+    for i in range(1, len(cumdist)):
+        dy = abs((yaw[i] - yaw[kf[-1]] + math.pi) % (2 * math.pi) - math.pi)
+        if cumdist[i] - cumdist[kf[-1]] >= trans or dy >= rot:
+            kf.append(i)
+    return kf
+
+
+def window_ids(cumdist, yaw, rule):
+    """Causal input frames, current first. rule {'type': 'distance', 'm': [...]} picks frames by travelled distance;
+    {'type': 'keyframe', 'trans', 'rot_deg', 'lags': [0, 1, 2, 4, ...]} picks the keyframes `lag` keyframes before
+    the current frame (the oldest keyframe when fewer exist)."""
+    if rule.get('type', 'distance') == 'distance':
+        return history_ids(cumdist, rule.get('m', HISTORY_M))
+    kf = keyframes(cumdist, yaw, rule.get('trans', .5), math.radians(rule.get('rot_deg', 30.)))
+    n = len(cumdist) - 1
+    if kf[-1] != n:
+        kf = kf + [n]                       # the current frame always leads the window
+    return [kf[max(0, len(kf) - 1 - lag)] for lag in rule['lags']]
+
+
 def control(path, lookahead=.5, step=.25, max_turn=math.radians(45), turn_only=math.radians(60), align=math.radians(30)):
     """One motion command (turn radians, forward metres) that follows a (forward, left) path.
 

@@ -126,7 +126,8 @@ def main():
     listener._listener._socket.setblocking(False)
     conns, frames, seen, done = [], {}, 0, 0
     info = {'head': a.head, 'head_cfg': policy.head.cfg if policy.head else None, 'grid': list(policy.grid), 'scale': a.scale,
-            'history_m': list(bev.history_m) if bev else [0., .5, 1., 2.], 'bev': a.bev}
+            'history_m': list(bev.history_m) if bev else [0., .5, 1., 2.], 'bev': a.bev,
+            'history_rule': getattr(bev, 'history_rule', None) if bev else None}
     t0, n_windows, n_batches = time.time(), 0, 0
     print(json.dumps({'listening': a.socket, **info}), flush=True)
     while True:
