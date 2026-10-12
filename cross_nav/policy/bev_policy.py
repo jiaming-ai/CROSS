@@ -150,6 +150,7 @@ MAP_DEFAULTS = {
     'block_p': .6, 'block_w': .5,  # impassable: fused P(occupied) > block_p with summed P(observed) >= block_w
     'risk_weight': 4.,           # cell cost 1 + risk_weight * footprint-max P(occupied)
     'radius': .2,
+    'block_radius': None,        # inflation of impassable cells (None: radius); the risk cost keeps using radius
     'margin_m': 4.,              # the search box: robot and goal + this margin
     'retry': False,              # no route in the box: search the whole grid, then block only P > retry_block_p
     'retry_block_p': .85,
@@ -515,12 +516,14 @@ class WorldMap:
                 blocked[rr[m], cc[m]] = True
                 p[rr[m], cc[m]] = 1.
         k = int(math.ceil((c['radius'] if radius is None else radius) / R - 1e-9))
+        br = c['radius'] if c['block_radius'] is None else c['block_radius']
+        kb = int(math.ceil((br if radius is None else min(br, radius)) / R - 1e-9))
         own = np.zeros(p.shape, np.uint8)
         for q in (s - lo, g - lo):
             own[tuple(q)] = 1
         own = cv2.dilate(own, disk(k)) > 0
         blocked &= ~own
-        ok = ~(cv2.dilate(blocked.astype(np.uint8), disk(k)) > 0) if k else ~blocked
+        ok = ~(cv2.dilate(blocked.astype(np.uint8), disk(kb)) > 0) if kb else ~blocked
         ok[tuple(s - lo)] = ok[tuple(g - lo)] = True
         pooled = cv2.dilate(p, disk(k)) if k else p
         cost = 1. + c['risk_weight'] * np.where(own, p, pooled)
