@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import time
 from multiprocessing.connection import Listener, wait
 from pathlib import Path
@@ -42,7 +43,7 @@ class ShardWriter:
         if not self.buf:
             return
         name = self.root / f'{self.tag}_{self.k:05d}'
-        tok = torch.stack([r.pop('tokens') for r in self.buf]).view(torch.int16).numpy()
+        tok = torch.stack([r.pop('tokens') for r in self.buf]).to(torch.bfloat16).view(torch.int16).numpy()   # bf16 bits
         np.save(str(name) + '.tok.tmp.npy', tok)
         small = {k: np.stack([r[k] for r in self.buf]) for k in ('xyz', 'log_scale', 'pred_chord', 'hist_chord', 'goal',
                                                                  'label', 'step', 'expert_dist')}
@@ -124,13 +125,15 @@ def main():
         os.unlink(a.socket)
     listener = Listener(a.socket, family='AF_UNIX')
     listener._listener._socket.setblocking(False)
-    conns, frames, seen, done = [], {}, 0, 0
+    conns, frames, odoms, seen, done = [], {}, {}, 0, 0
     info = {'head': a.head, 'head_cfg': policy.head.cfg if policy.head else None, 'grid': list(policy.grid), 'scale': a.scale,
             'history_m': list(bev.history_m) if bev else [0., .5, 1., 2.], 'bev': a.bev,
             'history_rule': getattr(bev, 'history_rule', None) if bev else None}
     t0, n_windows, n_batches = time.time(), 0, 0
+    stop = []
+    signal.signal(signal.SIGTERM, lambda *_: stop.append(1))      # flush recorded shards, then exit
     print(json.dumps({'listening': a.socket, **info}), flush=True)
-    while True:
+    while not stop:
         try:
             while True:
                 c = listener.accept(); conns.append(c); seen += 1
@@ -151,12 +154,20 @@ def main():
             if cmd == 'info':
                 wire.send(c, info)
             elif cmd == 'end':
-                frames.pop(m['ep'], None); wire.send(c, {})
+                frames.pop(m['ep'], None); odoms.pop(m['ep'], None)
+                if bev is not None:
+                    bev.end_episode(m['ep'])
+                wire.send(c, {})
             elif cmd == 'step':
                 buf = frames.setdefault(m['ep'], {})
                 buf[m['frame_idx']] = m['frame']
                 for k in [k for k in buf if k < min(m['window'])]:
                     del buf[k]
+                if m.get('odom') is not None:     # odometry pose (x, y, yaw) of each frame, for the BEV policy's rules
+                    ob = odoms.setdefault(m['ep'], {})
+                    ob[m['frame_idx']] = np.asarray(m['odom'], np.float64)
+                    for k in [k for k in ob if k < min(m['window'])]:
+                        del ob[k]
                 if m.get('predict') or (m.get('record') and writer is not None):
                     batch.append((c, m))
                 else:
@@ -170,7 +181,12 @@ def main():
             debug = [None] * len(part)
             if bev is not None:
                 feat = None
-                paths, debug = bev(imgs, goal, hist, want_debug=[bool(m.get('debug')) for _, m in part])
+                eps = []
+                for _, m in part:
+                    ob = odoms.get(m['ep'], {})
+                    wo = np.stack([ob[j] for j in m['window']]) if all(j in ob for j in m['window']) else None
+                    eps.append({'ep': m['ep'], 'step': m.get('step'), 'odom': ob.get(m['frame_idx']), 'window_odom': wo})
+                paths, debug = bev(imgs, goal, hist, want_debug=[bool(m.get('debug')) for _, m in part], episodes=eps)
             else:
                 feat = policy(imgs, hist)
                 paths = policy.predict(feat, goal, hist).cpu().numpy() if policy.head is not None and any(m['predict'] for _, m in part) else None

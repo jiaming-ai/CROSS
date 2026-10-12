@@ -44,7 +44,7 @@ def pool_tokens(tok, k):
     return x.reshape(N, S, C, h // k, w // k).permute(0, 1, 3, 4, 2).to(tok.dtype)
 
 
-def load(dirs, pool, device, max_windows=0, stream=False):
+def load(dirs, pool, device, max_windows=0, stream=False, token_device=None):
     """Windows of the shards. Small arrays live on `device`; tokens are pooled and resident on `device`, or, with
     stream=True, left in memory-mapped shards (TokenRows) for datasets larger than the GPU."""
     names = shard_names(dirs)
@@ -58,7 +58,7 @@ def load(dirs, pool, device, max_windows=0, stream=False):
         else:
             t = torch.from_numpy(m[:]).view(torch.bfloat16)
             for i in range(0, len(t), 256):
-                toks.append(pool_tokens(t[i:i + 256].to(device), pool))
+                toks.append(pool_tokens(t[i:i + 256].to(device), pool).to(token_device or device))
         for key in SMALL:
             small[key].append(torch.from_numpy(z[key].astype(np.float32)))
         meta += [json.loads(x) for x in z['meta']]
@@ -113,17 +113,18 @@ def geometry_of(S, idx, how, rng_noise=0.):
 @torch.no_grad()
 def evaluate(model, X, S, meta, scale, batch=256):
     model.eval()
-    gen = torch.Generator(device=X.device).manual_seed(2026)
+    dev = S['goal'].device
+    gen = torch.Generator(device=dev).manual_seed(2026)
     preds = []
     for i in range(0, len(X), batch):
-        idx = torch.arange(i, min(i + batch, len(X)), device=X.device)
-        noise = torch.randn(len(idx), model.horizon, 2, device=X.device, generator=gen)
+        idx = torch.arange(i, min(i + batch, len(X)), device=dev)
+        noise = torch.randn(len(idx), model.horizon, 2, device=dev, generator=gen)
         with torch.autocast('cuda', dtype=torch.bfloat16):
-            preds.append(model.predict(X[idx][:, None], S['goal'][idx], noise=noise,
+            preds.append(model.predict(X[i:i + len(idx)].to(dev, non_blocking=True)[:, None], S['goal'][idx], noise=noise,
                                        geometry=geometry_of(S, idx, scale) if model.geometry != 'none' else None).float())
     pred = torch.cat(preds)
     err = (pred - S['label']).norm(dim=-1)
-    dagger = torch.tensor([not m.get('expert_step', True) for m in meta], device=X.device)
+    dagger = torch.tensor([not m.get('expert_step', True) for m in meta], device=dev)
     out = {'n': len(X), 'ADE': float(err.mean()), 'FDE': float(err[:, -1].mean()), 'E1m': float(err[:, 1].mean()),
            'E2m': float(err[:, 3].mean())}
     if dagger.any():
@@ -157,7 +158,7 @@ def main():
     cfg = vars(a); (out / 'config.json').write_text(json.dumps(cfg, indent=2))
     t0 = time.time()
     X, S, meta, names = load(a.train, a.token_pool, 'cuda', a.max_train, a.stream)
-    Xv, Sv, metav, vnames = load(a.val, a.token_pool, 'cuda')
+    Xv, Sv, metav, vnames = load(a.val, a.token_pool, 'cuda', token_device='cpu')   # host memory: shared GPUs
     train_scenes, val_scenes = {m['scene'] for m in meta}, {m['scene'] for m in metav}
     assert not train_scenes & val_scenes, 'scene leakage between train and val'
     horizon = S['label'].shape[1]
