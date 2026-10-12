@@ -100,7 +100,7 @@ def pose_to_mat(p) -> np.ndarray:
 
 
 def make_config(args) -> SystemConfig:
-    # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/<--profile>/<mode>.yaml), then the
+    # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/modes/<mode>.yaml), then the
     # user's --config and --set
     cfg = load_config(*shipped_config_files(args), *(args.config or []), sets=args.set)
     cfg.async_update = False

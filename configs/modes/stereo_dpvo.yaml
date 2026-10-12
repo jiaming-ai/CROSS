@@ -1,0 +1,9 @@
+# configs/modes/stereo_dpvo.yaml: selected by --mode stereo_dpvo.
+# Stereo visual odometry (DPVO, metric scale from stereo depth; a reference mode): --mode stereo --odometry visual.
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/stereo.yaml
+  - ../base/common.yaml
+pose_est:
+  ff:
+    n_ref_anchors: 2

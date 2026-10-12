@@ -372,8 +372,8 @@ def test_provisional_window_optimisation_only_in_the_modes_that_process_frames_o
     assert stats == {0: 0, 1: 0, 2: 1}
 
 
-def test_profiles_switch_the_adaptive_background_optimisation_on_and_reproducible_runs_off():
-    """Every profile folder ships the adaptive background optimisation; --reproducible (the benchmark harness) makes the
+def test_mode_files_switch_the_adaptive_background_optimisation_on_and_reproducible_runs_off():
+    """Every mode file ships the adaptive background optimisation; --reproducible (the benchmark harness) makes the
     session synchronous and changes nothing else."""
     import argparse
     import dataclasses

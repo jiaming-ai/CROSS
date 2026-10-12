@@ -39,8 +39,6 @@ def build_parser():
     r.add_argument("--basalt-wait", type=float, default=5.0, help="seconds to wait for a frame's VIO state")
     r.add_argument("--load-map", default=None, help="map file on the server to relocalize in")
     r.add_argument("--save-map", default=None, help="map file on the server to store at the end")
-    r.add_argument("--profile", choices=["local", "cloud"], default="cloud",
-                   help="folder of the server's shipped configuration (configs/<profile>/stereo_<odometry>.yaml)")
     r.add_argument("--fast", action="store_true", help="the server's fast overlay (configs/overlays/fast/; stereo + Basalt: 6 images at 416 px)")
     r.add_argument("--config-file", nargs="*", default=[], help="configuration files of the server's configs/ folder "
                    "layered on the mode's (e.g. overlays/outdoor.yaml)")
@@ -68,7 +66,7 @@ def open_session(args, src):
     open_msg = {"protocol": PROTOCOL_VERSION, "edge_version": __version__, "mode": "stereo", "odometry": "external",
                 "camera": {"K": src.K, "width": src.width, "height": src.height},
                 "T_right_in_left": src.T_right_in_left, "config_files": list(args.config_file), "set": list(args.set),
-                "max_backlog": args.max_backlog, "profile": args.profile, "fast": args.fast,
+                "max_backlog": args.max_backlog, "fast": args.fast,
                 # the server's shipped configuration of the named odometry (Basalt live or its pose file odom_vio.txt;
                 # another pose file: the wheel / INS mode's)
                 "odometry_name": "basalt" if args.odometry == "basalt" or "vio" in args.odom_file.lower() else "external"}

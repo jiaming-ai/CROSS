@@ -13,10 +13,10 @@ Usage::
     cfg = SystemConfig()
 
     # The shipped configuration of a mode (cross.pipeline.mode_config_files), layered with an overlay
-    cfg = load_config("configs/local/stereo_wheel.yaml", "configs/overlays/outdoor.yaml")
+    cfg = load_config("configs/modes/stereo_wheel.yaml", "configs/overlays/outdoor.yaml")
 
     # Layered: files + section overrides
-    cfg = load_config("configs/local/rgbd_wheel.yaml", pose_est={"obs_max_interval_steps": 2})
+    cfg = load_config("configs/modes/rgbd_wheel.yaml", pose_est={"obs_max_interval_steps": 2})
 """
 
 from __future__ import annotations
@@ -1114,8 +1114,8 @@ def load_config(*yaml_paths: Union[str, Path], sets: Optional[List[str]] = None,
 
     Examples
     --------
-    >>> cfg = load_config("configs/local/stereo_wheel.yaml")
-    >>> cfg = load_config("configs/local/rgbd_wheel.yaml", "configs/overlays/outdoor.yaml",
+    >>> cfg = load_config("configs/modes/stereo_wheel.yaml")
+    >>> cfg = load_config("configs/modes/rgbd_wheel.yaml", "configs/overlays/outdoor.yaml",
     ...                   pose_est={"obs_max_interval_steps": 2})
     """
     layers = yaml_layers(*yaml_paths)

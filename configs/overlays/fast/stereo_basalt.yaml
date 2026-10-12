@@ -1,4 +1,4 @@
-# Fast overlay of the stereo_basalt mode (--fast; layered on configs/<profile>/stereo_basalt.yaml, local or cloud): 6
+# Fast overlay of the stereo_basalt mode (--fast; layered on configs/modes/stereo_basalt.yaml): 6
 # images per pass (the current pair and 4 references, no reference anchors) at 416 px instead of 512 px, set here
 # whatever the stereo base is.  Config confirmation 2026-10-11 (outputs/2026-10-11_config_confirm), against 6 images at
 # 512 px: ROVER subset (map + winter / night / dusk / autumn) T3 602 -> 589 of 630 (-2.2 %), T2 at 3 m 0.995 -> 0.984,

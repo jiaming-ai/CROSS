@@ -1,4 +1,4 @@
-# Fast overlay of the mono_imu mode (--fast; layered on configs/<profile>/mono_imu.yaml, local or cloud): nothing.
+# Fast overlay of the mono_imu mode (--fast; layered on configs/modes/mono_imu.yaml): nothing.
 # Tested (outputs/2026-10-11_config_confirm): 448 px (1.22x the query frame rate on an RTX 4000 Ada) lost the ROVER
 # subset T2 at 3 m 0.781 -> 0.610 (-22 %, all four queries; T3 -2.4 %) and KITTI T1 mean 10.5 -> 32.7 m (OpenLORIS T3
 # +6 %).  416 px lost ROVER T3 -5.8 % (config tests H6).

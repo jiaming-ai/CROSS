@@ -16,7 +16,7 @@ pose_est:
     # checkpoint "auto" (the default): the fine-tuned VGGT-Omega when installed, else the released one; with the
     # fine-tuned one the vggt_finetuned sections apply (base/vggt_finetuned.yaml; cross.core.config.load_config)
     # 8 images per pass: the current pair and 6 retrieved references, no reference right images (10 before: + the
-    # stored right images of the best 2 references as extra anchors; stereo DPVO keeps them, base/stereo_dpvo.yaml).
+    # stored right images of the best 2 references as extra anchors; stereo DPVO keeps them, modes/stereo_dpvo.yaml).
     # Full benchmark 2026-10-11 (outputs/2026-10-11_config_confirm), against the 10 images: ROVER T3 of 1142 wheel 1077 ->
     # 1074, Basalt 1064 -> 1068, IMU 1023 -> 1045, T1 equal; OpenLORIS T3 equal, T2 at 1 m 0.689 -> 0.657 / 0.801 ->
     # 0.795.  With 4 references (6 images) ROVER held too but the OpenLORIS corridors lost T2 at 1 m (stereo 0.689 ->

@@ -93,7 +93,7 @@ def estimator_of(mode: str) -> str:
 
 
 def make_config(args) -> SystemConfig:
-    # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/<--profile>/<mode>.yaml), then the
+    # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/modes/<mode>.yaml), then the
     # user's --config; explicit options below win
     configs = shipped_config_files(args) + list(args.config or [])
     args.estimator = estimator_of(args.mode)

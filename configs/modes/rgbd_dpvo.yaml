@@ -1,0 +1,5 @@
+# configs/modes/rgbd_dpvo.yaml: selected by --mode rgbd_dpvo.
+# RGB-D visual odometry (DPVO, metric scale from sensor depth; a reference mode): --mode rgbd --odometry visual.
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/common.yaml
