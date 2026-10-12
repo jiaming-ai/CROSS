@@ -225,3 +225,31 @@ def test_robot_agent_reports_commanded_motion_to_the_bev_planner():
     agent.reset(); pl.expect.clear()
     agent.set_goal((100., 0.)); agent.step(img, (0., 0., 0.))
     assert pl.expect == [None]                              # no stamps: the planner keeps its own rule
+
+
+def test_real_cache_cast_splits_follow_the_gnm_recordings():
+    from cross_nav.policy.real_cache import split_of
+    assert split_of('cast', 'jackal_x', 'scand') is None and split_of('cast', 'tartan_20210826', 'tartan_drive') is None
+    for g in [f'no{k}vc' for k in range(1, 40)]:            # GNM noNvcF is the same recording group as noNvc
+        assert split_of('cast', g + 'F', 'go_stanford') == split_of('go_stanford', g)
+    assert split_of('cast', 'Dec-09-2022-bww8', 'sac_son') == split_of('sac_son', 'Dec-09-2022-bww8')
+    assert split_of('cast', 'anything', 'recon') == 'test' == split_of('recon', 'anything')
+
+
+def test_real_cache_skips_incomplete_episodes(tmp_path):
+    import json as js
+    from PIL import Image
+    from cross_nav.policy.real_cache import windows
+    def episode(name, frames):
+        d = tmp_path / name; d.mkdir()
+        n = 40
+        np.savez(d / 'trajectory.npz', position=np.stack([np.arange(n) * .5, np.zeros(n)], -1), yaw=np.zeros(n))
+        (d / 'source.json').write_text(js.dumps({'group': 'g'}))
+        for i in range(frames):
+            Image.new('RGB', (8, 6)).save(d / f'{i}.jpg')
+        return d
+    rng = np.random.default_rng(0)
+    assert len(windows('x', episode('full', 40), rng, 400)) > 0
+    assert windows('x', episode('cut', 30), rng, 400) == []           # frames missing
+    bad = episode('badnpz', 40); (bad / 'trajectory.npz').write_bytes(b'xx')
+    assert windows('x', bad, rng, 400) == []

@@ -31,21 +31,34 @@ TEST_ONLY = {'recon'}
 SQUEEZED = {'bdd_mbra': 16 / 9}      # BDD frames are stored 96x96 from 16:9
 
 
+CAST_DROP = {'scand', 'tartan_drive'}   # CAST copies whose GNM recording names cannot be matched to our conversions
+
+
 def split_of(dataset, group, source_dataset=None):
     """Split of a recording; re-used recordings (CAST from GNM) are split by their source dataset, so a recording lands
-    in the same split whichever converted copy it comes from."""
-    dataset = source_dataset or dataset
+    in the same split whichever converted copy it comes from. None: leave the episode out."""
+    if source_dataset is not None:
+        if source_dataset in CAST_DROP:
+            return None              # 128 px duplicates of datasets we convert from the originals; names do not match
+        if source_dataset == 'go_stanford':
+            group = group[:-1] if group.endswith('F') else group     # GNM noNvcF and noNvc are the same recording group
+        dataset = source_dataset
     if dataset in TEST_ONLY:
         return 'test'
     return 'val' if zlib.crc32(f'{dataset}:{group}'.encode()) % 10 == 0 else 'train'
 
 
 def windows(dataset, ep_dir, rng, max_per_episode, horizon=16, spacing=.5, per_metre=1.):
-    with np.load(ep_dir / 'trajectory.npz') as z:
-        pos, yaw = z['position'].astype(np.float64), z['yaw'].astype(np.float64)
-    src = json.loads((ep_dir / 'source.json').read_text())
+    try:                              # an interrupted conversion can leave an unreadable episode: skip it
+        with np.load(ep_dir / 'trajectory.npz') as z:
+            pos, yaw = z['position'].astype(np.float64), z['yaw'].astype(np.float64)
+        src = json.loads((ep_dir / 'source.json').read_text())
+    except (OSError, ValueError, KeyError):
+        return []
     n = len(pos)
     if n < 5 or not (np.isfinite(pos).all() and np.isfinite(yaw).all()):
+        return []
+    if not all((ep_dir / f'{i}.jpg').is_file() and (ep_dir / f'{i}.jpg').stat().st_size > 0 for i in range(n)):
         return []
     edges = np.linalg.norm(np.diff(pos, axis=0), axis=-1)
     if np.any(edges > 1.5):
@@ -119,7 +132,10 @@ def main():
         rng = np.random.default_rng(zlib.crc32(ds.encode()) + a.seed)
         eps = sorted(d for d in (Path(a.root) / ds).iterdir() if (d / 'trajectory.npz').exists())
         def split_ep(d):
-            src = json.loads((d / 'source.json').read_text())
+            try:
+                src = json.loads((d / 'source.json').read_text())
+            except (OSError, ValueError):
+                return None
             return split_of(ds, src['group'], src.get('source_dataset') if ds == 'cast' else None)
         eps = [d for d in eps if split_ep(d) == a.split]
         rows = []
