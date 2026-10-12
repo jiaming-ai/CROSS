@@ -170,7 +170,7 @@ def test_socket_planner_drives_the_robot_agent_over_the_wire():
         if out['arrived']:
             break
         v, w = out['cmd']
-        odom = odometry_step(odom, v * .1, w * .1, rng, 0., np.zeros(2))
+        odom = odometry_step(odom, (v * .1, 0.), w * .1, rng, 0., np.zeros(2))
     planner.end(); t.join()
     assert out['arrived']
     assert 4 in log and log.count(0) < len(log) // 2                       # uploads only for window frames not yet held
@@ -180,11 +180,9 @@ def test_odometry_step_integrates_and_drifts():
     from cross_nav.policy.sim.rollout import odometry_step
     rng = np.random.default_rng(0)
     o = np.zeros(3)
-    for _ in range(10):
-        o = odometry_step(o, .1, math.pi / 20, rng, 0., np.zeros(2))
-    assert math.isclose(o[2], math.pi / 2, abs_tol=1e-9)
-    np.testing.assert_allclose(o[:2], [2 / math.pi * .99, 2 / math.pi * .99], rtol=.02)   # quarter circle, r = 2/pi
-    o2 = np.zeros(3)
-    for _ in range(10):
-        o2 = odometry_step(o2, .1, math.pi / 20, rng, .05, np.array([.05, 0.]))
-    assert not np.allclose(o, o2)
+    o = odometry_step(o, (1., 0.), math.pi / 2, rng, 0., np.zeros(2))       # 1 m forward, then facing left
+    np.testing.assert_allclose(o, [1., 0., math.pi / 2], atol=1e-12)
+    o = odometry_step(o, (.5, .2), 0., rng, 0., np.zeros(2))                 # 0.5 m forward (+y), 0.2 m slide left (-x)
+    np.testing.assert_allclose(o, [.8, .5, math.pi / 2], atol=1e-12)
+    o2 = odometry_step(np.zeros(3), (1., 0.), 0., rng, .05, np.array([.05, 0.]))
+    assert not np.allclose(o2[:2], [1., 0.])

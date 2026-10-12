@@ -165,15 +165,18 @@ class SocketPlanner:
         self._send({'cmd': 'end', 'ep': self.uid})
 
 
-def odometry_step(odom, fwd, turn, rng, noise, bias):
-    """Dead-reckoned odometry pose after moving fwd metres and turning turn radians (midpoint heading); with noise > 0,
-    both are scaled by (1 + per-episode bias + per-tick N(0, noise))."""
+def odometry_step(odom, delta, turn, rng, noise, bias):
+    """Dead-reckoned odometry pose after a planar displacement delta = (forward, left) metres in the previous robot
+    frame (sliding included) and a turn of turn radians; with noise > 0, the displacement and the turn are scaled by
+    (1 + per-episode bias + per-tick N(0, noise)). Noise-free odometry is the ground-truth pose."""
+    delta = np.asarray(delta, np.float64)
     if noise > 0:
-        fwd *= 1. + bias[0] + rng.normal(0, noise)
+        delta = delta * (1. + bias[0] + rng.normal(0, noise))
         turn *= 1. + bias[1] + rng.normal(0, noise)
     x, y, th = odom
-    mid = th + turn / 2
-    return np.array([x + fwd * math.cos(mid), y + fwd * math.sin(mid), (th + turn + math.pi) % (2 * math.pi) - math.pi])
+    c, s = math.cos(th), math.sin(th)
+    return np.array([x + delta[0] * c - delta[1] * s, y + delta[0] * s + delta[1] * c,
+                     (th + turn + math.pi) % (2 * math.pi) - math.pi])
 
 
 def run_episode_robot(sim, conn, ep, a, rng, viz=None):
@@ -181,7 +184,8 @@ def run_episode_robot(sim, conn, ep, a, rng, viz=None):
     with the odometry pose to the agent (it keeps frames, picks the window, plans every replan_every frames and returns
     a pure-pursuit (v, omega)), and integrate (v, omega) for 1/rate s with navmesh sliding. A tick whose result
     differs from the commanded motion by more than 2 cm x (commanded / 0.25 m) is a contact (the step controller's
-    2 cm per 0.25 m step, scaled to the tick). Time limit: a.time_limit seconds."""
+    2 cm per 0.25 m step, scaled to the tick); contact_steps = commanded distance in contact / 0.25 m is comparable
+    with the step controller's contact count. Time limit: a.time_limit seconds."""
     from ..robot import NavigationAgent
     pf = sim.pathfinder
     pos = np.asarray(ep['start'], np.float64)
@@ -200,6 +204,7 @@ def run_episode_robot(sim, conn, ep, a, rng, viz=None):
     bias = rng.normal(0, a.odom_noise, 2) if a.odom_noise > 0 else np.zeros(2)
     dt = 1. / a.rate
     traj, travelled, collisions, success, ticks, plans = [pos[[0, 2]].tolist()], 0., 0, False, 0, 0
+    contact_m = 0.                                         # commanded forward motion during contact ticks
     for tick in range(int(round(a.time_limit * a.rate))):
         rgb = np.ascontiguousarray(render(sim, pos, yaw, camera=camera))
         planner.debug = viz is not None
@@ -220,9 +225,9 @@ def run_episode_robot(sim, conn, ep, a, rng, viz=None):
             want = pos + fwd * np.array([-math.sin(mid), 0., -math.cos(mid)])
             new = np.asarray(pf.try_step(pos.astype(np.float32), want.astype(np.float32)), np.float64)
             if np.linalg.norm((new - want)[[0, 2]]) > .02 * fwd / a.step_m:
-                collisions += 1
+                collisions += 1; contact_m += fwd
         moved = float(np.linalg.norm((new - pos)[[0, 2]]))
-        odom = odometry_step(odom, moved, turn, rng, a.odom_noise, bias)
+        odom = odometry_step(odom, to_robot((new - pos)[[0, 2]], np.zeros(2), yaw), turn, rng, a.odom_noise, bias)
         travelled += moved; pos = new
         yaw = (yaw + turn + math.pi) % (2 * math.pi) - math.pi
         if moved > 0 and tick % 5 == 0:
@@ -236,6 +241,7 @@ def run_episode_robot(sim, conn, ep, a, rng, viz=None):
     return {'id': ep['id'], 'scene': ep['scene'], 'geodesic': ep['geodesic'], 'euclidean': ep['euclidean'], 'success': success,
             'spl': spl(success, ep['geodesic'], travelled), 'steps': ticks, 'seconds': ticks * dt, 'plans': plans,
             'travelled': travelled, 'collisions': collisions, 'contact_s': collisions * dt,
+            'contact_steps': contact_m / a.step_m,
             'collision_free': success and collisions == 0, 'final_geo': final_geo, 'mode': a.mode, 'control': 'robot',
             'rate': a.rate, 'replan_every': a.replan_every, 'odom_noise': a.odom_noise,
             'odom_error_m': float(np.hypot(*(odom[:2] - odom_pose(pos, yaw)[:2]))), 'camera': camera, 'trajectory': traj}
