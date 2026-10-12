@@ -276,7 +276,13 @@ id (the same camera within 1 % of the intrinsics and the rig is the same id), an
 reference gets the principal-point correction of its own camera and, as a scale anchor, its stored right image with
 its own camera's rig. The model predicts each view's field of view, so different focal lengths need nothing else.
 Not supported: PnP (the RGB-D mode) and the DA3 mono back end (they refuse another camera), and with `--odometry vgio`
-a camera whose images need another size than the map's. Maps saved before the table load as one camera.
+a camera whose images need another size than the map's. Maps saved before the table load as one camera. In simulated
+tests (four scenes; cameras with 90°, 75° and 60° field of view, 0.30 / 0.12 / 0.20 m baselines, a shifted principal
+point and another height) a stereo session with the other camera relocalized as often as one with the map's camera,
+and after an extension with the other camera, queries in the extended area localized almost as well as in the
+original one (recall at 1 m 0.93-0.99 against 0.95-0.99). Ignoring the camera ids placed the new keyframes worse (one
+scene: recall at 1 m in the extended area 0.81 instead of 0.95). Untested: the learned scale of the mono modes,
+whose scale head takes the session camera's focal length for the whole pass.
 
 **Map files.** A map is `map.pkl` (the graph: keyframe poses, edges, metadata) plus the directory `map.pkl.store/`
 next to it (keyframe images and retrieval descriptors); copy or move both together. Keyframe images of a loaded map
