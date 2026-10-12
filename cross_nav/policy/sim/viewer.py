@@ -3,7 +3,7 @@
     python -m cross_nav.policy.sim.viewer --runs "trajectory policy=DIR_A" "BEV + planner=DIR_B" --out OUTDIR \
         [--max-episodes 12] [--episodes ID ...] [--frame-width 320] [--jpeg-quality 75]
 
-Each DIR holds results_*.jsonl (cross_nav.policy.sim.rollout --out) and viz/*.npz (rollout --viz-dir, see save_viz).
+Each DIR holds results_*.jsonl (cross_nav.policy.sim.rollout --out; also read from DIR/part*/) and viz/*.npz (rollout --viz-dir, see save_viz).
 The summary tables use every results line; the episode browser shows up to --max-episodes episodes that have a viz
 file, episodes recorded by more runs first. Episodes with the same id are shown side by side, synchronised by step.
 
@@ -39,9 +39,10 @@ BEV_SCALARS = ('status', 'blind_zone', 'vis_threshold', 'log_scale', 'odometry_s
 
 # ------------------------------------------------------------------------------------------------ results
 def load_results(run_dir):
-    """id -> result over results_*.jsonl (a later line of the same id wins; truncated lines are skipped)."""
+    """id -> result over results_*.jsonl, also in part*/ (multi-GPU runs); a later line of the same id wins and
+    truncated lines are skipped."""
     out = {}
-    for f in sorted(Path(run_dir).glob('results_*.jsonl')):
+    for f in sorted(Path(run_dir).glob('results_*.jsonl')) + sorted(Path(run_dir).glob('part*/results_*.jsonl')):
         for line in f.read_text().splitlines():
             try:
                 r = json.loads(line)
