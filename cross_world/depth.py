@@ -64,7 +64,9 @@ class VGGTStereoDepth:
     def __init__(self, checkpoint: str, device: str = "cuda", resolution: int = 512, conf_quantile: float = 0.15):
         from vggt_omega.models import VGGTOmega
         from vggt_omega.utils.pose_enc import encoding_to_camera
+        from cross.core.config import resolve_ff_checkpoint
         self._decode = encoding_to_camera
+        checkpoint = resolve_ff_checkpoint(checkpoint)       # "auto": install.sh's VGGT-Omega (fine-tuned, else released)
         sd = torch.load(checkpoint, map_location="cpu", mmap=True, weights_only=False)
         sd = sd["model"] if isinstance(sd, dict) and isinstance(sd.get("model"), dict) else sd
         self.model = VGGTOmega().eval()

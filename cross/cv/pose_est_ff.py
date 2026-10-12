@@ -30,7 +30,7 @@ import torch
 import torch.nn.functional as F
 from loguru import logger
 
-from cross.core.config import FeedForwardConfig, FFBackend
+from cross.core.config import FeedForwardConfig, FFBackend, resolve_ff_checkpoint
 from cross.cv.stereo_scale import ScaleAnchor, ScaleEstimate, estimate_scale, invert_poses, scale_camera_centers
 from cross.utils.fingerprint import content_keys
 from cross.utils.profile import timeit
@@ -634,6 +634,7 @@ class PoseEstFeedForward:
         self.config = config
         self.T_right_in_left = None if T_right_in_left is None else np.asarray(T_right_in_left, dtype=np.float64)
         t0 = time.perf_counter()
+        config.checkpoint = resolve_ff_checkpoint(config.checkpoint, config.backend)     # "auto" / "finetuned" / "released"
         if config.backend == FFBackend.VGGT_OMEGA:
             self.backend = _VGGTOmegaBackend(config.checkpoint, device, half_weights=config.half_precision_weights,
                                              token_cache=config.token_cache, compile_blocks=config.compile,

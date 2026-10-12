@@ -82,15 +82,22 @@ bash install.sh
 
 The install script handles everything: creates a virtual environment via [uv](https://docs.astral.sh/uv/), installs PyTorch with CUDA, installs CROSS and its dependencies, and builds GTSAM.
 
-For the **stereo mode** add `--stereo` (installs the vendored VGGT-Omega and downloads its weights to
-`models/VGGT-Omega/`; the checkpoint is gated: request access at [facebook/VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega)
-and `huggingface-cli login` first) and optionally `--da3` for the Depth Anything 3 backend:
+For the **stereo mode** add `--stereo`. It installs the vendored VGGT-Omega and downloads our fine-tuned checkpoint
+([Jamie-nus/VGGT-Omega-CROSS](https://huggingface.co/Jamie-nus/VGGT-Omega-CROSS), public) to `models/VGGT-Omega-CROSS/`.
+`--vggt=released` downloads the released checkpoint to `models/VGGT-Omega/` instead (gated: request access at
+[facebook/VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega) and `huggingface-cli login` first); `--vggt=both`
+downloads both. Add `--da3` for the optional Depth Anything 3 backend:
 
 ```bash
-bash install.sh --stereo          # RGB-D + stereo mode
-bash install.sh --stereo --da3    # + Depth Anything 3 backend
-bash install.sh --mono            # + mono mode and visual odometry (builds DPVO; needs nvcc matching PyTorch's CUDA)
+bash install.sh --stereo                   # RGB-D + stereo mode, fine-tuned VGGT-Omega
+bash install.sh --stereo --vggt=released   # the released VGGT-Omega checkpoint instead
+bash install.sh --stereo --da3             # + Depth Anything 3 backend
+bash install.sh --mono                     # + mono mode and visual odometry (builds DPVO; needs nvcc matching PyTorch's CUDA)
 ```
+
+CROSS uses the fine-tuned checkpoint when it is installed, together with its settings (`configs/base/vggt_finetuned.yaml`:
+the learned covisibility head), and otherwise the released one with the default settings. With both installed,
+`--set pose_est.ff.checkpoint=released` selects the released one.
 
 <details>
 <summary><strong>Install options</strong></summary>
