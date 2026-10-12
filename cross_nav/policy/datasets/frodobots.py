@@ -863,8 +863,7 @@ def cmd_convert(a):
     log_path = out / 'convert_log.jsonl'
     done = set()
     if log_path.exists():
-        for line in log_path.read_text().splitlines():
-            d = json.loads(line)
+        for d in log_records(log_path):
             if d['status'] in ('ok', 'no motion episodes') or d['status'].startswith('rejected'): done.add(d['ride'])
     todo = []
     for n in names:
@@ -894,11 +893,20 @@ def _init_worker(k):
 
 
 # ------------------------------------------------------------------------------------------- ready
+def log_records(path):
+    """Parsed lines of convert_log.jsonl; a line cut by an interrupted write (e.g. a full disk) is skipped."""
+    for line in Path(path).read_text().splitlines():
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+
 def status_counts(out):
     c = defaultdict(int)
     p = Path(out) / 'convert_log.jsonl'
     if p.exists():
-        for line in p.read_text().splitlines(): c[json.loads(line)['status']] += 1
+        for d in log_records(p): c[d['status']] += 1
     return dict(c)
 
 
