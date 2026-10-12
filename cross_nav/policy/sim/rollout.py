@@ -138,7 +138,7 @@ class SocketPlanner:
         wire.send(self.conn, msg)
         return wire.recv(self.conn)
 
-    def __call__(self, images, goal, hist, trail=None, odom=None, window_odom=None):
+    def __call__(self, images, goal, hist, trail=None, odom=None, window_odom=None, expect=None):
         keys = [zlib.crc32(np.ascontiguousarray(im).data) for im in images]
         for key in keys:
             if key not in self.sent:
@@ -153,7 +153,7 @@ class SocketPlanner:
                 self.on_server.add(keys[j])
         reply = self._send({**base, 'frame_idx': window[0], 'frame': images[0], 'predict': True, 'goal': goal,
                             'hist_chord': hist, 'trail': trail if trail is not None else np.zeros((5, 3), np.float32),
-                            'odom': odom, 'debug': self.debug, 'expert_dist': np.nan})
+                            'odom': odom, 'expect': expect, 'debug': self.debug, 'expert_dist': np.nan})
         self.on_server.add(keys[0])
         lo = min(window)                                   # the server drops frames older than the window
         self.on_server = {k for k in self.on_server if self.sent[k] >= lo}
@@ -208,7 +208,7 @@ def run_episode_robot(sim, conn, ep, a, rng, viz=None):
     for tick in range(int(round(a.time_limit * a.rate))):
         rgb = np.ascontiguousarray(render(sim, pos, yaw, camera=camera))
         planner.debug = viz is not None
-        out = agent.step(rgb, tuple(odom))
+        out = agent.step(rgb, tuple(odom), tick * dt if a.stamps else None)
         ticks = tick + 1
         if out['arrived']:
             break
@@ -298,6 +298,8 @@ def main():
     p.add_argument('--v-max', type=float, default=.5); p.add_argument('--w-max', type=float, default=1.)
     p.add_argument('--time-limit', type=float, default=0., help='robot control: seconds (default 2 x max_steps x step_m / v_max)')
     p.add_argument('--odom-noise', type=float, default=0., help='robot control: relative odometry noise (bias + per tick)')
+    p.add_argument('--stamps', action='store_true', help='robot control: give the agent frame times (commanded motion '
+                                                         'for the BEV bump rule)')
     a = p.parse_args()
     if a.control == 'robot':
         if a.mode != 'policy':

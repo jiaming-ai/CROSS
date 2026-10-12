@@ -192,7 +192,8 @@ def main():
                 for _, m in part:
                     ob = odoms.get(m['ep'], {})
                     wo = np.stack([ob[j] for j in m['window']]) if all(j in ob for j in m['window']) else None
-                    eps.append({'ep': m['ep'], 'step': m.get('step'), 'odom': ob.get(m['frame_idx']), 'window_odom': wo})
+                    eps.append({'ep': m['ep'], 'step': m.get('step'), 'odom': ob.get(m['frame_idx']), 'window_odom': wo,
+                                'expect': m.get('expect')})
                 paths, debug = bev(imgs, goal, hist, want_debug=[bool(m.get('debug')) for _, m in part], episodes=eps)
                 for k, v in bev.timing.items():
                     t_bev[k] = t_bev.get(k, 0.) + v

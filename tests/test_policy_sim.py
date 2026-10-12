@@ -201,3 +201,27 @@ def test_stuck_recovery_turns_in_place_then_returns_control():
     for _ in range(5):
         out = rec((1., 0., math.radians(90)), path)
     assert out[0, 1] < 0                                     # second recovery turns the other way
+
+
+def test_robot_agent_reports_commanded_motion_to_the_bev_planner():
+    from cross_nav.policy.robot import NavigationAgent
+
+    class Planner:
+        uses_odometry, history_m, history_rule = True, (0., .5, 1., 2.), None
+
+        def __init__(self): self.expect = []
+
+        def __call__(self, images, goal, hist, odom=None, window_odom=None, expect=None):
+            self.expect.append(expect)
+            return np.array([[.5 * (i + 1), 0.] for i in range(16)])
+
+    pl = Planner()
+    agent = NavigationAgent(pl, v_max=.5, replan_every=2)
+    agent.set_goal((100., 0.))
+    img = np.zeros((4, 4, 3), np.uint8)
+    for k in range(5):                                      # blocked: commands forward, odometry stays put
+        agent.step(img, (0., 0., 0.), .1 * k)
+    assert pl.expect[0] == 0. and np.allclose(pl.expect[1:], [.1, .1])   # 2 ticks x 0.1 s x 0.5 m/s per plan
+    agent.reset(); pl.expect.clear()
+    agent.set_goal((100., 0.)); agent.step(img, (0., 0., 0.))
+    assert pl.expect == [None]                              # no stamps: the planner keeps its own rule

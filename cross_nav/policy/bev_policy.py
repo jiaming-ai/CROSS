@@ -744,8 +744,10 @@ class BEVPlannerPolicy:
     def __call__(self, imgs, goal, hist, want_debug=None, up_cam=None, episodes=None):
         """See the module docstring. up_cam: optional (B, 3) gravity up in camera 0 (OpenCV axes), e.g. from a tilted
         IMU; it overrides the configured gravity source. episodes: optional list (B) of dicts {'ep': id, 'odom':
-        (x, y, yaw) of the current frame, 'window_odom': (S, 3) poses of the window's frames}, which enable the
-        per-episode rules (state is kept per id until end_episode)."""
+        (x, y, yaw) of the current frame, 'window_odom': (S, 3) poses of the window's frames, optional 'expect': the
+        forward motion (metres) the robot commanded since the previous window, for the bump rule; without it the rule
+        assumes the simulator's step controller (cfg['control'])}, which enable the per-episode rules (state is kept
+        per id until end_episode)."""
         cfg = self.cfg
         B = imgs.shape[0]
         want_debug = list(want_debug) if want_debug is not None else [False] * B
@@ -785,6 +787,8 @@ class BEVPlannerPolicy:
         for j in range(B):
             st = states[j]
             if st is not None:
+                if episodes[j].get('expect') is not None:    # forward motion the robot commanded since the last window
+                    st.expect = float(episodes[j]['expect'])
                 st.observe(episodes[j].get('odom'), cfg)
                 st.unstick(cfg)
                 if cat['odometry'][j]:

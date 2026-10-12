@@ -76,12 +76,14 @@ class NavigationAgent:
         # Plan on every replan_every-th frame (a planner slower than the camera); in between, follow the rest of the
         # last plan, kept in the odometry frame.
         self.replan_every, self.tick, self.plan = max(1, int(replan_every)), 0, None
+        self.stamp, self.v_cmd, self.commanded = None, 0., 0.   # forward motion commanded since the last plan
 
     def set_goal(self, goal_xy):
         self.goal = np.asarray(goal_xy, np.float64)
 
     def reset(self):
         self.frames.clear(); self.cum = 0.; self.last = None; self.tick = 0; self.plan = None
+        self.stamp, self.v_cmd, self.commanded = None, 0., 0.
         if self.recovery is not None:
             self.recovery.reset()
         if hasattr(self.planner, 'reset'):
@@ -98,10 +100,15 @@ class NavigationAgent:
                 out[k] = (*to_robot_2d(np.asarray(past[-1][1][:2]), pose), 1.)
         return out
 
-    def step(self, image, pose):
-        """image uint8 HxWx3 RGB; pose (x, y, yaw) in the odometry frame. Returns path, command and arrival flag."""
+    def step(self, image, pose, stamp=None):
+        """image uint8 HxWx3 RGB; pose (x, y, yaw) in the odometry frame; stamp: time in seconds (optional: with it,
+        the forward motion commanded since the last plan goes to the BEV planner's bump rule, which then remembers an
+        obstacle ahead when the odometry shows that motion was not executed). Returns path, command and arrival flag."""
         if self.goal is None:
             raise RuntimeError('set_goal first')
+        if stamp is not None and self.stamp is not None:
+            self.commanded += self.v_cmd * max(0., stamp - self.stamp)
+        self.stamp = stamp
         if self.last is not None:
             self.cum += float(np.hypot(pose[0] - self.last[0], pose[1] - self.last[1]))
         self.last = tuple(pose)
@@ -117,6 +124,7 @@ class NavigationAgent:
         if self.plan is not None and (self.tick - 1) % self.replan_every:
             path = self.remaining(pose)
             v, w = pure_pursuit(path, self.v_max, self.w_max, self.lookahead)
+            self.v_cmd = v
             return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': to_odom_2d(path, pose), 'goal_rel': goal_rel,
                     'replanned': False}
         ids = window_ids([f[2] for f in frames], [f[1][2] for f in frames], self.history_rule)
@@ -124,7 +132,9 @@ class NavigationAgent:
         hist = np.array([math.hypot(pose[0] - frames[i][1][0], pose[1] - frames[i][1][1]) for i in ids], np.float32)
         if getattr(self.planner, 'uses_odometry', False):   # per-episode rules (BEV planner): poses of the window
             path = self.planner(imgs, goal_rel.astype(np.float32), hist, odom=np.asarray(pose, np.float64),
-                                window_odom=np.array([frames[i][1] for i in ids], np.float64))
+                                window_odom=np.array([frames[i][1] for i in ids], np.float64),
+                                expect=self.commanded if stamp is not None else None)
+            self.commanded = 0.
         else:
             path = self.planner(imgs, goal_rel.astype(np.float32), hist, trail=self.trail(pose, frames))
             if self.recovery is not None:
@@ -132,6 +142,7 @@ class NavigationAgent:
         path = np.asarray(path, np.float64)
         self.plan = np.vstack((np.asarray(pose[:2], np.float64)[None], to_odom_2d(path, pose)))
         v, w = pure_pursuit(path, self.v_max, self.w_max, self.lookahead)
+        self.v_cmd = v
         return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': self.plan[1:], 'goal_rel': goal_rel,
                 'window': ids, 'replanned': True}
 
@@ -182,12 +193,14 @@ class BEVPlanner:
     def reset(self):
         self.bev.end_episode('robot')
 
-    def __call__(self, images, goal, hist_chord, odom=None, window_odom=None):
+    def __call__(self, images, goal, hist_chord, odom=None, window_odom=None, expect=None):
         """odom: (x, y, yaw) of the current frame and window_odom (S, 3) of the window's frames, for the per-episode
-        rules (memory, bump, scale). The bump rule assumes the simulator's step controller; keep it off on a robot."""
+        rules (memory, bump, scale). expect: forward motion commanded since the previous call (NavigationAgent passes
+        it when step() gets timestamps); the bump rule needs it on a robot (without it, it assumes the simulator's
+        step controller: keep 'bump' off then)."""
         t = self.torch
         imgs = t.from_numpy(np.ascontiguousarray(images))[None].cuda().permute(0, 1, 4, 2, 3).float().div_(255)
-        ep = [{'ep': 'robot', 'odom': odom, 'window_odom': window_odom}] if odom is not None else None
+        ep = [{'ep': 'robot', 'odom': odom, 'window_odom': window_odom, 'expect': expect}] if odom is not None else None
         paths, debug = self.bev(imgs, t.from_numpy(np.asarray(goal, np.float32))[None].cuda(),
                                 t.from_numpy(np.asarray(hist_chord, np.float32))[None].cuda(), want_debug=[True], episodes=ep)
         self.last_debug = debug[0]
