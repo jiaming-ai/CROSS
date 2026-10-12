@@ -173,7 +173,11 @@ def main():
                            compression=a.compression, mode=a.mode, geometry=a.geometry, action_scale=horizon * .5,
                            goal_encoding=a.goal_encoding, trail=5 if a.trail else 0).cuda()
     if a.init:
-        model.load_state_dict(torch.load(a.init, map_location='cpu', weights_only=True)['model'])
+        missing, unexpected = model.load_state_dict(torch.load(a.init, map_location='cpu', weights_only=True)['model'], strict=False)
+        if unexpected or any(not k.startswith(('trail_embed', 'trail_index')) for k in missing):
+            raise RuntimeError(f'--init does not match the model: missing {missing}, unexpected {unexpected}')
+        if missing:
+            print(json.dumps({'init_new_params': missing}), flush=True)   # a trail input added to a trail-less head
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=a.wd)
     prov = {'train_windows': len(X), 'val_windows': len(Xv), 'train_scenes': len(train_scenes), 'val_scenes': len(val_scenes),
             'train_shards': names, 'val_shards': vnames, 'mix': mix, 'windows_per_dataset': counts,
