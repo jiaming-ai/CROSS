@@ -237,10 +237,19 @@ map references with their relative pose in the map anchor the metric scale of ea
 OpenLORIS, ROVER and KITTI 07: relocalization equal to a stereo query in the same map or better, and with IMU the
 query inherits the better stereo map (scale within 0.8 % on ROVER vs 2 % in a mono map). Also using the right images
 stored with a stereo map's keyframes as extra anchors changed nothing measurable, so it is not done (tag
-`opt-mono-right-anchors`). Loading checks the map's camera (stored image size and intrinsics after the mode's resize /
-crop) against the session's and fails with a clear message on another camera or, in a stereo session, another stereo
-rig. With the benchmark harness: `benchmark/run.py --system cross_mono_ff_odom --setup stereo --task query --map-from
+`opt-mono-right-anchors`). With the benchmark harness: `benchmark/run.py --system cross_mono_ff_odom --setup stereo --task query --map-from
 cross_stereo ...` (the query relocalizes in `cross_stereo`'s map of the same run).
+
+**Another camera.** A map made with one camera can be relocalized in and extended with another (another robot,
+another lens, another stereo rig), in the feed-forward modes (stereo, mono with `--mono-estimator ff`). The map keeps
+a camera table (`save_map` "cameras": the intrinsics of the stored images and the stereo rig of each camera) and every
+keyframe the id of the camera that took it. Loading a map: the session's images are made at the size of the stored
+ones (the largest centred crop with their aspect ratio, resized; a wider camera loses the sides), its camera gets an
+id (the same camera within 1 % of the intrinsics and the rig is the same id), and in every forward pass each
+reference gets the principal-point correction of its own camera and, as a scale anchor, its stored right image with
+its own camera's rig. The model predicts each view's field of view, so different focal lengths need nothing else.
+Not supported: PnP (the RGB-D mode) and the DA3 mono back end (they refuse another camera), and with `--odometry vgio`
+a camera whose images need another size than the map's. Maps saved before the table load as one camera.
 
 **Map files.** A map is `map.pkl` (the graph: keyframe poses, edges, metadata) plus the directory `map.pkl.store/`
 next to it (keyframe images and retrieval descriptors); copy or move both together. Keyframe images of a loaded map

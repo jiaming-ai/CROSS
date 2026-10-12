@@ -246,6 +246,9 @@ class Keyframe:
     # Coordinate frame of each pose component; independent of acquisition atlas
     # and bounded hypothesis slot. None denotes a legacy map without provenance.
     pose_charts: Optional[torch.Tensor] = _TensorField()
+    # camera that took the stored images: an id in the map's camera table (System.cameras); a class default, so the
+    # instance holds it only for camera ids other than 0
+    cam_id = 0
 
     def __post_init__(self):
         self.id = Keyframe._next_id

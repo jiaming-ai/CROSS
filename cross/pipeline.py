@@ -374,7 +374,8 @@ def apply_right_image(cfg):
         raise ValueError(f"pose_est.ff.right_image: left | pair, not {ff.right_image}")
     if ff.right_image == "left":
         ff.use_curr_anchor = False
-        ff.n_ref_anchors = 0
+        if not ff.left_ref_anchors:
+            ff.n_ref_anchors = 0
         ff.use_odom_anchor = True
         ff.use_map_anchors = True
     return cfg
@@ -514,6 +515,7 @@ def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_lef
     mono mode takes the metric scale from learned depth (DA3, with its bias in the graph), the stereo mode from the
     current stereo pair (no learned depth)."""
     _vgio_config(mc, mode, T_right_in_left)
+    system.transforms_shared = True          # the frontend's passes use the back end's image transforms
     metric = None
     if mc.imu.depth_prior and mc.imu.depth_prior_source != "head":
         from cross.mono.models import DA3MetricDepth

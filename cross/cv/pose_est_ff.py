@@ -651,6 +651,10 @@ class PoseEstFeedForward:
         self.last_scale: Optional[ScaleEstimate] = None
         self.last_frontend_obs: Optional[dict] = None   # raw output for a frontend's anchor (vgio)
         self._R_model_to_cam: Optional[np.ndarray] = None    # (4, 4) right-multiplied onto model camera poses
+        # cameras of a map made with several cameras (set_cameras): id -> {"M": principal-point correction, "rig":
+        # its stereo rig or None}; the session's camera id.  None: every view is the session's camera
+        self._cameras: Optional[dict] = None
+        self._session_cam = 0
 
     def _covis_source(self, cfg) -> str:
         """The configured covisibility source, "auto" resolved for the loaded checkpoint."""
@@ -698,6 +702,30 @@ class PoseEstFeedForward:
         self._R_model_to_cam = M
         logger.info(f"FF principal-point correction: {np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))):.2f} deg")
 
+    def set_cameras(self, cameras: List[dict], session_id: int):
+        """The camera table of the map (System.cameras: per camera id the intrinsics K, width, height of its stored
+        images and its stereo rig T_right_in_left or None) and the session's camera id.  References taken with another
+        camera (estimate_pose ref_cam_ids) get their own principal-point correction, and their stored right images
+        their own rig.  Call set_camera first (the session's camera)."""
+        self._session_cam = int(session_id)
+        self._cameras = {}
+        for i, c in enumerate(cameras):
+            if i == self._session_cam:
+                M, rig = self._R_model_to_cam, self.T_right_in_left
+            else:
+                M = np.eye(4)
+                M[:3, :3] = principal_point_rotation(c["K"], c["width"], c["height"]).T
+                rig = c.get("T_right_in_left")
+                rig = None if rig is None else np.asarray(rig, dtype=np.float64)
+            self._cameras[i] = {"M": M, "rig": rig}
+
+    def _ref_camera(self, ref_cam_ids, i: int) -> Optional[dict]:
+        """Camera entry of reference i when it was taken with another camera than the session's, else None."""
+        if ref_cam_ids is None or self._cameras is None:
+            return None
+        cid = int(ref_cam_ids[i])
+        return None if cid == self._session_cam else self._cameras[cid]
+
     # ------------------------------------------------------------------ #
     @timeit
     @torch.inference_mode()
@@ -711,6 +739,7 @@ class PoseEstFeedForward:
         ref_images_right: Optional[List[Optional[torch.Tensor]]] = None,
         odom_anchor: Optional[dict] = None,
         ref_rel_poses: Optional[List[Tuple[int, int, np.ndarray]]] = None,
+        ref_cam_ids: Optional[List[int]] = None,
         **kwargs,
     ):
         """Estimate T_ref_cam for every reference image in one forward pass.
@@ -725,6 +754,7 @@ class PoseEstFeedForward:
                 at most `config.n_ref_anchors` of them are used as extra anchors
             odom_anchor: {"image": (3,H,W) previous left image, "T_prev_curr": (4,4) metric}
                 optional temporal anchor from odometry
+            ref_cam_ids: camera id of every reference (set_cameras); None: all the session's camera
         Returns:
             poses: pp.SE3 (B_valid, 7) T_ref_cam (metric), valid_masks (B,) np.bool, confidences (B_valid,)
         """
@@ -755,23 +785,28 @@ class PoseEstFeedForward:
                     anchors.append(ScaleAnchor(idx_a=prev_idx, idx_b=0, T_ab=T_pc, kind="odom",
                                                weight=cfg.odom_anchor_weight))
 
-        # stereo anchors: current pair first, then stored right images of the best references
-        if self.T_right_in_left is not None:
-            if curr_image_right is not None and cfg.use_curr_anchor:
-                views.append(curr_image_right)
-                view_tags.append("curr_R")
-                anchors.append(ScaleAnchor(idx_a=0, idx_b=len(views) - 1, T_ab=self.T_right_in_left, kind="stereo"))
-            if ref_images_right is not None and cfg.n_ref_anchors > 0:
-                n_added = 0
-                for i, img_r in enumerate(ref_images_right):
-                    if img_r is None:
-                        continue
-                    views.append(img_r)
-                    view_tags.append(f"ref{i}_R")
-                    anchors.append(ScaleAnchor(idx_a=1 + i, idx_b=len(views) - 1, T_ab=self.T_right_in_left, kind="stereo"))
-                    n_added += 1
-                    if n_added >= cfg.n_ref_anchors:
-                        break
+        # stereo anchors: current pair first, then stored right images of the best references (each with the rig of
+        # the camera that took it: a reference of another camera has its own, set_cameras)
+        if self.T_right_in_left is not None and curr_image_right is not None and cfg.use_curr_anchor:
+            views.append(curr_image_right)
+            view_tags.append("curr_R")
+            anchors.append(ScaleAnchor(idx_a=0, idx_b=len(views) - 1, T_ab=self.T_right_in_left, kind="stereo"))
+        if ref_images_right is not None and cfg.n_ref_anchors > 0:
+            n_added = 0
+            for i in range(len(ref_images_right)):
+                other = self._ref_camera(ref_cam_ids, i)
+                rig = self.T_right_in_left if other is None else other["rig"]
+                if rig is None:
+                    continue
+                img_r = ref_images_right[i]
+                if img_r is None:
+                    continue
+                views.append(img_r)
+                view_tags.append(f"ref{i}_R")
+                anchors.append(ScaleAnchor(idx_a=1 + i, idx_b=len(views) - 1, T_ab=rig, kind="stereo"))
+                n_added += 1
+                if n_added >= cfg.n_ref_anchors:
+                    break
 
         # map anchors: known metric relative poses between pairs of references (from the map)
         if ref_rel_poses and cfg.use_map_anchors:
@@ -808,13 +843,27 @@ class PoseEstFeedForward:
             if "curr_R" in view_tags:            # the current stereo pair: the frontend's metric scale of the pass
                 self.last_frontend_obs["c2w_right"] = pred.c2w[view_tags.index("curr_R")]
 
+        # ---- per-view principal-point corrections ----
+        # a pass with references of another camera: every view's model pose is rotated into its own calibrated camera
+        # frame before the scale anchors are compared with their calibrated relative poses (X_cal = X_model M_view);
+        # with one camera the session's correction is applied after the scale, as before
+        c2w_model = pred.c2w
+        mixed = ref_cam_ids is not None and any(self._ref_camera(ref_cam_ids, i) is not None for i in range(B))
+        if mixed:
+            Ms = []
+            for tag in view_tags:
+                other = self._ref_camera(ref_cam_ids, int(tag[3:tag.index("_")])) if tag.startswith("ref") else None
+                M = self._R_model_to_cam if other is None else other["M"]
+                Ms.append(np.eye(4) if M is None else M)
+            c2w_model = pred.c2w @ np.stack(Ms)
+
         # ---- metric scale ----
         if getattr(cfg, "map_anchor_min_pair_covis", 0.0) > 0:
             anchors = filter_map_anchors(pred, anchors, cfg.map_anchor_min_pair_covis, cfg.map_anchor_max_pairs,
                                          source=self._covis_source(cfg), grid=cfg.covis_grid,
                                          rel_depth_tol=cfg.covis_depth_tol)
         scale_est = estimate_scale(
-            pred.c2w, anchors, method=cfg.scale_method,
+            c2w_model, anchors, method=cfg.scale_method,
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
             weight_by_baseline=True,          # anchors weighted by their predicted baseline (precision of the ratio)
         )
@@ -832,8 +881,8 @@ class PoseEstFeedForward:
 
         # calibrated metric-scale correction (the estimator's translations divided by their measured/true ratio)
         metric = scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0)
-        c2w_metric = scale_camera_centers(pred.c2w, metric, origin_index=0)
-        if self._R_model_to_cam is not None:
+        c2w_metric = scale_camera_centers(c2w_model, metric, origin_index=0)
+        if self._R_model_to_cam is not None and not mixed:
             c2w_metric = c2w_metric @ self._R_model_to_cam
 
         # ---- per-reference confidence (covisibility / geometric consistency) ----
