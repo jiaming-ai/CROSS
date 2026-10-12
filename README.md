@@ -161,10 +161,9 @@ Options:
 | `--no-viz` | Disable Rerun visualization |
 | `--frames N` | Process only the first N frames |
 | `--start N` | Start from frame N |
-| `--mode {rgbd,stereo,mono}` | Sensor mode: PnP on depth (default), the stereo mode, or colour only |
+| `--mode NAME` | One of the twelve shipped modes (`configs/modes/<name>.yaml`: `stereo_wheel`, `mono_imu`, `rgbd_dpvo`, ...), or a sensor mode `rgbd` (default) / `stereo` / `mono` with the two options below |
 | `--odometry {external,basalt,visual,vio,vgio}` | Motion source: the dataset's odometry (default; wheel / INS), the sequence's Basalt VIO file (`odom_vio.txt`), DPVO visual odometry, (mono) DPVO with IMU scale, or (mono ff, stereo) VGGT-Omega + IMU |
 | `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
-| `--profile {local,cloud}` | Deployment folder of the shipped configuration `configs/<profile>/<mode>.yaml` (default `local`; `cloud`: remote GPU server; `local-fast` = `local --fast`, deprecated) |
 | `--fast` | Constrained compute: the mode's fast overlay `configs/overlays/fast/<mode>.yaml` on top (stereo + Basalt and stereo DPVO: 416 px passes; the other modes have none) |
 | `--config A.yaml B.yaml` | Config layers on top of the mode's shipped file, merged left to right (e.g. `configs/overlays/outdoor.yaml`) |
 | `--reproducible` | Synchronous pose-graph optimisation (the shipped default optimises long loop closures in the background; the benchmark always passes it) |
@@ -173,11 +172,11 @@ Options:
 | `--snr FLOAT` | Signal-to-noise ratio for R3D datasets |
 | `--async` | Enable async step pipeline |
 
-**Shipped configurations.** Each run loads one file `configs/<profile>/<mode>.yaml` chosen by `--mode <name>` (or the
-sensor mode with `--odometry` / `--mono-estimator`) and `--profile`: twelve modes (stereo / rgbd / mono x wheel, basalt, imu, dpvo; no rgbd + imu; + mono_vio, VGGT + DPVO + IMU) in
-the deployment folders `local` (default) and `cloud`; `--fast` adds the mode's overlay `configs/overlays/fast/<mode>.yaml`
-(constrained compute) on either. A folder file includes its mode's base and the folder's shared
-settings from `configs/base/`; `--config` overlays (`configs/overlays/outdoor.yaml`, `stereo_lowband.yaml`) and `--set`
+**Shipped configurations.** Each run loads one file `configs/modes/<mode>.yaml` chosen by `--mode <name>` (or the
+sensor mode with `--odometry` / `--mono-estimator`): twelve modes (stereo / rgbd / mono x wheel, basalt, imu, dpvo; no
+rgbd + imu; + mono_vio, VGGT + DPVO + IMU); `--fast` adds the mode's overlay `configs/overlays/fast/<mode>.yaml`
+(constrained compute). A mode file includes shared pieces from `configs/base/` and also holds the monocular frontends'
+settings (sections `mono` and `imu`); `--config` overlays (`configs/overlays/outdoor.yaml`, `stereo_lowband.yaml`) and `--set`
 come after it. The shipped default optimises long loop-closure pose graphs in a background worker
 (`mapping.loop_closure.async_pgo`), so results depend slightly on the machine's speed; experiments pass `--reproducible`
 (synchronous optimisation, as the benchmark harness `benchmark/run.py` always does). See [docs/USAGE.md](docs/USAGE.md#3-configuration).
@@ -270,7 +269,7 @@ python run.py data/sim/lonemonk/map --mode stereo --baseline 0.3
 Programmatic use differs from the RGB-D mode only by the stereo calibration and the right image:
 
 ```python
-cfg = load_config("configs/local/stereo_wheel.yaml")   # pose_est.type = ff (+ observation gating)
+cfg = load_config("configs/modes/stereo_wheel.yaml")   # pose_est.type = ff (+ observation gating)
 system = System(camera=camera, config=cfg, T_right_in_left=dataset.T_right_in_left)
 system.step(obs={"rgb": left, "rgb_right": right, "depth": None, "conf": None,
                  "delta_pose": odom_delta, "timestamp": t})
@@ -316,21 +315,19 @@ map frame by the last observation, is reported in between).
 python run.py data/posed/home1-1 --loader posed --mode rgbd_dpvo            # RGB-D, no odometry input
 python run.py data/posed/home1-1 --loader posed --mode mono_dpvo            # RGB only
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_mono \
-    --mode mono_dpvo                                                          # mono profile: configs/mono_benchmark_10hz.json
+    --mode mono_dpvo                                                          # settings: configs/modes/mono_dpvo.yaml
 ```
 
 The DPVO weights are read from `models/dpvo.pth` (or `--dpvo-checkpoint`, `CROSS_DPVO_CHECKPOINT`); DPVO itself must be
 importable (`install.sh --mono` builds it under `thirdparty/DPVO`).  With sensor or stereo depth the DPVO scale is
-observed every frame and the back end keeps the mode's odometry noise model; the mono mode uses the DPVO noise model of
-its profile.  `python -m cross.mono.run` is the real-time monocular runner (paced input, a
-separate mapping process, streaming metric depth); its recommended profile is
-`configs/mono_streaming_dpvo_v2_20hz.json`, and `configs/mono_benchmark_10hz.json` is the same profile for offline
-runs at 10 Hz.
+observed every frame and the back end keeps the mode's odometry noise model; the mono DA3 back end uses the DPVO noise
+model of its mode file (`configs/modes/mono_dpvo.yaml`, section `mono`).  `python -m cross.mono.run` is the standalone
+monocular runner of the DA3 back end, configured by its own command-line flags.
 
 ```python
-from cross.pipeline import build_session, mono_config_from_profile
+from cross.pipeline import build_session, mono_config_from_files
 session = build_session("mono", "visual", camera, SystemConfig(),
-                        mono_config=mono_config_from_profile("configs/mono_benchmark_10hz.json", "models/dpvo.pth"))
+                        mono_config=mono_config_from_files(["configs/modes/mono_dpvo.yaml"], "models/dpvo.pth"))
 for frame in dataset.replay_data():          # dict: rgb (uint8), timestamp[, depth, rgb_right, delta_pose]
     session.process(frame)
     T_c0, T_best, weights = session.belief(to_matrix)

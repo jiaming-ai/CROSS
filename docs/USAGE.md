@@ -5,7 +5,7 @@ the benchmark. Installation is in the [README](../README.md#installation).
 
 ## 1. Modes
 
-Pick a mode by name with `--mode <name>`; each name is a shipped configuration file (`configs/<profile>/<name>.yaml`,
+Pick a mode by name with `--mode <name>`; each name is a shipped configuration file (`configs/modes/<name>.yaml`,
 section 3) and sets the sensors, the odometry and the back end in one word:
 
 | `--mode` | sensors | motion between frames (odometry) | needs |
@@ -39,7 +39,7 @@ its weights in `models/dpvo.pth` (or `--dpvo-checkpoint`, env `CROSS_DPVO_CHECKP
 **External odometry from a stereo VIO.** A prepared folder can hold several odometry files; `--odom-file NAME`
 (`run.py`, `scripts/map_and_reloc*.py`) reads `NAME` instead of `odom_left.txt` when it exists (else `odom_left.txt`, else
 the simulated odometry). `--odometry basalt` is external odometry from `odom_vio.txt` (the same fallback) with the
-`*_basalt.yaml` configuration of the profile folder. `benchmark/datasets/prepare_vio.py` writes `odom_vio.txt`: Basalt stereo-inertial odometry run
+`*_basalt.yaml` mode file. `benchmark/datasets/prepare_vio.py` writes `odom_vio.txt`: Basalt stereo-inertial odometry run
 causally on the folder's stereo pair and IMU (build with `scripts/vio/install_basalt.sh`, then `export BASALT_VIO=...`):
 
 ```bash
@@ -111,15 +111,12 @@ are in `scripts/datasets/` and `benchmark/datasets/`.
 
 ## 3. Configuration
 
-Every run loads one shipped file, `configs/<profile>/<mode>.yaml`, chosen by `--mode <name>` (or the sensor mode with
-`--odometry` / `--mono-estimator`, section 1) and `--profile`, with `--fast` the mode's fast overlay, then the user's `--config` files (merged left to right) and
-`--set` overrides:
+Every run loads one shipped file, `configs/modes/<mode>.yaml`, chosen by `--mode <name>` (or the sensor mode with
+`--odometry` / `--mono-estimator`, section 1), with `--fast` the mode's fast overlay, then the user's `--config` files
+(merged left to right) and `--set` overrides. The same files serve a local run and a remote one (section 6): where the
+session runs is chosen by the runner's `--remote-server` / the `cross-edge` client, not by a configuration file.
 
-| `--profile` | folder | for |
-|---|---|---|
-| `local` (default) | `configs/local/` | a normal local run on a desktop GPU |
-| `cloud` | `configs/cloud/` | the back end on a remote GPU server (`--remote-server`, `cross-edge`; the link's own options stay command-line options) |
-| `--fast` (with either) | + `configs/overlays/fast/<mode>.yaml` | constrained compute (RTX 4000 Ada), only where relocalization stays within 5 % (T3 and T2 at 1 m indoors / 3 m outdoors): `stereo_basalt` (6 images per pass at 416 px: query 10.6 -> 20.7 FPS) and `stereo_dpvo` (416 px: 6.5 -> 8.9 FPS). The other modes' overlays are empty: 416 / 448 px cost more than 5 % there (each file says what was tested); their defaults on an RTX 4000 Ada: stereo + wheel 10.6, stereo + IMU 6.8, mono + wheel 18.5, mono + IMU 9.7, RGB-D 40, mono DPVO 15 query FPS. A map built with `--fast` must be relocalized in with `--fast` (its stored images are smaller; checked at load). `--profile local-fast` is a deprecated alias of `--profile local --fast` |
+`--fast` adds `configs/overlays/fast/<mode>.yaml`: constrained compute (RTX 4000 Ada), only where relocalization stays within 5 % (T3 and T2 at 1 m indoors / 3 m outdoors): `stereo_basalt` (6 images per pass at 416 px: query 10.6 -> 20.7 FPS) and `stereo_dpvo` (416 px: 6.5 -> 8.9 FPS). The other modes' overlays are empty: 416 / 448 px cost more than 5 % there (each file says what was tested); their defaults on an RTX 4000 Ada: stereo + wheel 10.6, stereo + IMU 6.8, mono + wheel 18.5, mono + IMU 9.7, RGB-D 40, mono DPVO 15 query FPS. A map built with `--fast` must be relocalized in with `--fast` (its stored images are smaller; checked at load).
 
 | mode file (`--mode`) | = sensor mode / `--odometry` (/ `--mono-estimator`) |
 |---|---|
@@ -130,11 +127,13 @@ Every run loads one shipped file, `configs/<profile>/<mode>.yaml`, chosen by `--
 | `mono_vio` | `mono` / `vio` (`--mono-estimator ff`: VGGT-Omega + DPVO + IMU, a reference system; the old back end's hypothesis behaviour in mapping sessions: ROVER T3 +360 trials, KITTI 10 map worse) |
 
 Reference combinations without a file of their own use their back end's file: mono DA3 with any odometry `mono_dpvo`,
-mono `ff` with DPVO `mono_wheel`. A folder file includes its mode's base and the
-folder's shared settings (`configs/base/`, key `include:`, paths relative to the file); keys below the include override
-them. A file may also carry an `imu:` section (fields of `ImuConfig`, applied to the inertial frontends before
-`--mono-args "--imu-config ..."`). The mono DA3 back end takes its settings from the mono profile (below) and
-`cross/mono/system.py`.
+mono `ff` with DPVO `mono_wheel`. A mode file includes shared pieces of `configs/base/` (key `include:`, paths
+relative to the file; `common.yaml` is in every mode); keys below the include override them. Besides the SystemConfig
+sections a mode file holds the monocular frontends' settings: `mono:` (fields of `MonoConfig`, `cross/mono/config.py`:
+DPVO, learned-depth cadence, people masking; for the DA3 back end also its retrieval, charts and `cross_overrides`, the
+SystemConfig lines it applies after its presets of `cross/mono/system.py`) and `imu:` (fields of `ImuConfig` of the
+inertial frontends). `--mono-args` overrides them from the command line: `"--imu-config key=value"` and, for the DA3
+back end, `"--cross-config section.key=value"`; any other `mono` setting goes in a `--config` file's `mono:` section.
 
 ```bash
 python run.py <seq> --mode stereo --fast --config configs/overlays/outdoor.yaml my_overrides.yaml
@@ -147,11 +146,11 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius) and, with the fine-tuned VGGT-Omega, a looser covisibility gate (0.10); the benchmark adds it on outdoor datasets |
 | `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away); not tested with `--fast` |
 | `configs/noise/<robot>.yaml` | your robot's calibrated loop-closure noise model, written by `scripts/lc/calibrate_noise.py` (see below; nothing is shipped there, the defaults are in `cross/core/config.py` `NoiseModelConfig`) |
-| `configs/mono_*.json` | mono profiles: the arguments of `python -m cross.mono.run`. `mono_benchmark_10hz.json` for offline runs at 10 Hz, `mono_streaming_dpvo_v2_20hz.json` for real time; select with `--mono-profile`, extra arguments with `--mono-args`. Their `--cross-config` lines configure the DA3 back end only (the `ff` back end and the stereo mode refuse `--cross-config` in `--mono-args`; use `--set`); with external odometry or `vio` the DA3 back end drops the odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
+| `configs/base/mono_frontend.yaml` | the monocular frontends' shared `mono:` settings (DPVO frontend, people masking, a learned-depth scale observation every 10 frames), included by the mono modes and `stereo_imu`. The DA3 back end's own lines are in `modes/mono_dpvo.yaml`; with external odometry or `vio` it drops their odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
 
 Override one value with `--set section.key=value` (`run.py` and the `scripts/` runners) or put it in a small
 YAML file and pass it with `--config`. Some options (charts, session recovery, historical retrieval slots, ...) are off by default and are
-enabled by the mono profiles.
+enabled by the DA3 back end's mode file (`configs/modes/mono_dpvo.yaml`).
 
 **Configuration caveats.** The left-image overlay (`pose_est.ff.right_image: left`) has two documented costs, checked
 on the fully resolved configuration when a session starts (`cross.pipeline.config_risks`; `run.py`, the
@@ -192,14 +191,14 @@ A view that is only textureless (a white wall) is kept unless it shows no struct
 default; `--set mapping.keyframe_quality.enabled=false` turns it off. The test set with injected junk views is
 `benchmark/datasets/inject_junk.py` (`benchmark/dev.py ... --tier occ`).
 
-**Background pose-graph optimisation** (`mapping.loop_closure.async_pgo`, `cross/core/async_pgo.py`; on in every shipped folder, off in the dataclass defaults and with `--reproducible`).
+**Background pose-graph optimisation** (`mapping.loop_closure.async_pgo`, `cross/core/async_pgo.py`; on in every shipped mode file, off in the dataclass defaults and with `--reproducible`).
 On a large map one loop-closure optimisation takes seconds, and the front end processes no frame meanwhile. With
 `--set mapping.loop_closure.async_pgo=true` the optimisation of a verified loop closure (and the GNSS-triggered one)
 runs in a forked worker process: it works on a copy-on-write snapshot of the system, and the front end keeps processing
 frames. The result is applied when it arrives, to the state of that moment: keyframes added meanwhile and the tracked
 pose move with the correction of the latest keyframe at the fork. A thread would not help: GTSAM holds the GIL for the
 whole optimisation. Linux only; the state must be on the CPU (the default `state_device`); coordinate-chart (mono
-profile) graphs stay synchronous. Details:
+DA3 back end) graphs stay synchronous. Details:
 - In free-running mode (`async_pgo_lag_steps=-1`, the default) the result is applied as soon as the worker is done, so
   *when* it lands depends on the machine's speed and a run is not bit-reproducible. An optimisation expected to take less
   than `async_pgo_min_s` (0.1 s; and twice the cost of a fork, ~60 ms in a CUDA process) runs in the front end as before, so
@@ -412,8 +411,8 @@ cross-edge run --server gpu-host:50051 --data <stereo folder> --realtime --save-
 cross-edge run --server gpu-host:50051 --data <stereo folder> --realtime --load-map /maps/a.pkl --out run_query
 ```
 
-The server builds the session from its own shipped file for the mode (`configs/<--profile>/stereo_basalt.yaml`,
-default profile `cloud`; `stereo_wheel.yaml` for another pose file than `odom_vio.txt`), plus `--config-file` paths in its
+The server builds the session from its own shipped file for the mode (`configs/modes/stereo_basalt.yaml`;
+`stereo_wheel.yaml` for another pose file than `odom_vio.txt`), plus `--config-file` paths in its
 `configs/` folder (e.g. `overlays/outdoor.yaml`) and `--set` overrides, and sends the cadence settings back; apart from
 the background pose-graph optimisation the effective configuration equals the benchmark's `cross_stereo` (external
 odometry).  Uploads are lossless by default (`--jpeg 0`; JPEG 90 cost the stereo mode relocalization, office1-7 T2
@@ -439,9 +438,9 @@ python -m cross_world.cli export --world worlds/k07/world.pt --map runs/k07/map.
 ## 8. Programmatic use
 
 ```python
-from cross.pipeline import build_session, mono_config_from_profile
+from cross.pipeline import build_session, mono_config_from_files
 session = build_session("mono", "visual", camera, SystemConfig(),
-                        mono_config=mono_config_from_profile("configs/mono_benchmark_10hz.json", "models/dpvo.pth"))
+                        mono_config=mono_config_from_files(["configs/modes/mono_dpvo.yaml"], "models/dpvo.pth"))
 for frame in dataset.replay_data():            # dict: rgb (uint8), timestamp[, depth, rgb_right, delta_pose]
     session.process(frame)
     T_c0, T_best, weights = session.belief(to_matrix)

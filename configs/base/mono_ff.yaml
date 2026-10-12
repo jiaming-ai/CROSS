@@ -2,7 +2,9 @@
 # files): the stereo mode's VGGT-Omega estimator on the single image.  No stereo anchors: the metric scale of a pass
 # comes from the previous observation with the odometry between them and from pairs of references with their relative
 # pose in the map.  Observation cadence of the stereo mode.
-include: vggt_finetuned.yaml
+include:
+  - vggt_finetuned.yaml
+  - mono_frontend.yaml
 pose_est:
   type: ff
   obs_min_translation: 0.3

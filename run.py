@@ -7,7 +7,7 @@ Usage:
     python run.py <stereo_sequence> --mode stereo_wheel [options] # stereo mode (VGGT-Omega, stereo scale)
     python run.py <dataset_path> --mode mono_imu [options]        # one camera + IMU
 
---mode takes one of the twelve shipped modes (configs/<profile>/<mode>.yaml): stereo_{wheel,basalt,imu,dpvo},
+--mode takes one of the twelve shipped modes (configs/modes/<mode>.yaml): stereo_{wheel,basalt,imu,dpvo},
 rgbd_{wheel,basalt,dpvo}, mono_{wheel,basalt,imu,vio,dpvo} (docs/USAGE.md section 1); or a sensor mode (rgbd, stereo,
 mono) with --odometry / --mono-estimator.
 
@@ -87,13 +87,13 @@ def main():
     parser.add_argument("--snr", type=float, default=None, help="Signal-to-noise ratio for R3D datasets")
     parser.add_argument("--async", dest="async_update", action="store_true", help="Enable async step pipeline")
     parser.add_argument("--config", nargs="*", default=[], help="YAML config file(s), merged left to right after the "
-                        "mode's shipped file (configs/<--profile>/<mode>.yaml), e.g. configs/overlays/outdoor.yaml")
+                        "mode's shipped file (configs/modes/<mode>.yaml), e.g. configs/overlays/outdoor.yaml")
     parser.add_argument("--set", nargs="*", action="extend", default=[],
                         help="config overrides section.sub.key=value (YAML-parsed), after --config; e.g. "
                              "pose_est.ff.checkpoint=released (the released VGGT-Omega instead of the fine-tuned one)")
     parser.add_argument("--odom-file", default=None, help="odometry file of a prepared folder to read instead of "
                         "odom_left.txt (--odometry basalt: odom_vio.txt)")
-    add_session_args(parser)   # --mode, --odometry, --profile, --mono-estimator, --dpvo-checkpoint, ...
+    add_session_args(parser)   # --mode, --odometry, --mono-estimator, --dpvo-checkpoint, ...
     args = finish_session_args(parser.parse_args())
     args.mode = args.mode or "rgbd"
 
@@ -119,7 +119,7 @@ def main():
         frame_height=dataset.rgb_height,
     )
 
-    # Build config: the mode's shipped configuration (configs/<--profile>/<mode>.yaml), then the user's --config files
+    # Build config: the mode's shipped configuration (configs/modes/<mode>.yaml), then the user's --config files
     # and --set overrides
     config = load_config(*shipped_config_files(args), *args.config, sets=args.set)
     if args.async_update:

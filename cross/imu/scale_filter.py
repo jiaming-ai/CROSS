@@ -134,7 +134,7 @@ class ImuConfig:
     # pipeline: measure on the back end's forward passes (at least vgio_align_min frames apart); a pass of the
     # frontend's own only after vgio_align_max frames without one.  Off: every visual_interval frames, on the back
     # end's pass when it observes at that frame, else a pass of its own (3 views).  Set by the mode files (imu section):
-    # on in the stereo mode (configs/base/stereo_imu.yaml), off in the mono mode (mono_imu.yaml), with the evidence there
+    # on in the stereo mode (configs/modes/stereo_imu.yaml), off in the mono mode (mono_imu.yaml), with the evidence there
     # (in remote stereo sessions: 20 % fewer uploads; office1-7 relocalized 78 frames later, T2 0.87 -> 0.67)
     vgio_align: bool = False
     vgio_align_min: int = 2

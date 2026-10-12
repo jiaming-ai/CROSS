@@ -1,0 +1,5 @@
+# configs/modes/rgbd_wheel.yaml: selected by --mode rgbd_wheel.
+# RGB-D + external odometry (wheel, INS): --mode rgbd --odometry external.
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/common.yaml

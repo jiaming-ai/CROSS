@@ -1,0 +1,6 @@
+# configs/modes/mono_wheel.yaml: selected by --mode mono_wheel.
+# Mono + external odometry: --mode mono --mono-estimator ff --odometry external.
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/mono_ff.yaml
+  - ../base/common.yaml

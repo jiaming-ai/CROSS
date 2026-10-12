@@ -1,0 +1,34 @@
+# configs/modes/mono_dpvo.yaml: selected by --mode mono_dpvo.
+# Mono visual odometry (DPVO + DA3 learned depth, the DA3 back end): --mode mono --odometry visual.
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/mono_frontend.yaml
+  - ../base/common.yaml
+# The DA3 back end (cross/mono/system.py MonocularSystem) builds its SystemConfig from its own presets; the settings here
+# are its MonoConfig (cross/mono/config.py) (until 2026-10-12 the JSON mono profile
+# configs/mono_benchmark_10hz.json).
+mono:
+  # metric two-view retrieval with the DA3 feed-forward model as fallback, for loaded-map references only
+  retrieval_pose: ff
+  ff_resolution: 336
+  ff_fallback_only: true
+  ff_scope: relocalization
+  # coordinate charts and session recovery (DPVO loses tracking; its charts re-join through merges / adoption)
+  chart_aware: true
+  session_recovery: true
+  # retrieval slots reserved for the loaded map (act only after a map is loaded: query sessions)
+  historical_retrieval_slots: 3
+  historical_min_score: 0.0
+  # SystemConfig lines of the DA3 back end after its presets (the DPVO odometry-chain noise, fitted at 20 Hz indoors);
+  # with external odometry or vio the odometry lines (mapping.loop_closure.noise.odom_*, tracking.*) are dropped
+  cross_overrides:
+    - mapping.loop_closure.noise.odom_k_t=1.0
+    - mapping.loop_closure.noise.odom_floor_t=0.005
+    - mapping.loop_closure.noise.odom_k_r=0.2
+    - mapping.loop_closure.noise.odom_floor_r=0.004
+    - mapping.loop_closure.noise.visual_t_a=0.05
+    - mapping.loop_closure.noise.visual_t_b=0.05
+    - mapping.loop_closure.noise.visual_r_a=0.02
+    - mapping.loop_closure.noise.visual_r_b=0.01
+    - mapping.loop_closure.noise.map_t_a=0.1
+    - mapping.loop_closure.noise.map_r_a=0.03

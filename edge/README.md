@@ -50,7 +50,6 @@ Options:
 |---|---|
 | `--odometry basalt` (default) | live VIO |
 | `--odometry file --odom-file odom_vio.txt` | replay a recorded odometry |
-| `--profile cloud` (default) | the server's shipped configuration folder (`configs/cloud/stereo_basalt.yaml`; or `local`) |
 | `--fast` | the server's fast overlay (`configs/overlays/fast/`; stereo + Basalt: 6 images at 416 px) |
 | `--jpeg 0` (default) | lossless PNG uploads; e.g. `90` for lossy JPEG (cost the stereo mode relocalization: office1-7 T2 0.86 -> 0.56) |
 | `--obs-cap 0.1` | rate cap: no observation the server could not start within 0.1 s |
