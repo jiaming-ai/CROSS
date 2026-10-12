@@ -10,11 +10,14 @@ distances) and the robot-frame goal to a planner, and follows the returned path.
 
     agent = NavigationAgent(TrajectoryPlanner(head_ckpt, backbone_ckpt))
     agent.set_goal(goal_xy)                                   # odometry frame, metres
-    out = agent.step(rgb, (x, y, yaw))                         # per camera frame
+    out = agent.step(rgb, (x, y, yaw), t)                      # per camera frame; t: time in seconds
     publish(out['cmd'])                                        # (v m/s, omega rad/s); out['path_odom'] for display
 
 Odometry frame: x forward / y left at yaw 0, yaw counter-clockwise (ROS REP-103). Images must match the planner's
-training camera (512x384, ~90 deg horizontal FoV, level, ~0.8 m high) or be validated separately. The agent is a local
+training camera (512x384, ~90 deg horizontal FoV, level, ~0.8 m high) or be validated separately. Validated in
+Habitat at 10 Hz with v_max 0.5 m/s (rollout --control robot; outputs/2026-10-12_sim_nav/robot_control.md): pass
+timestamps (the BEV planner's bump rule needs the commanded motion) and use replan_every for a planner slower than
+the camera. The agent is a local
 planner: it does not check collisions itself; keep the robot's own safety layer (bumpers, emergency stop, speed limits).
 """
 from __future__ import annotations
