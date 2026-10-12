@@ -1,6 +1,0 @@
-# Mono + Basalt VIO odometry of the rig (another camera pair + IMU): --mode mono --mono-estimator ff
-# --odometry basalt (odom_vio.txt); the same back end as mono_wheel.
-# Folder cloud: the mode's base, then the folder's shared settings; keys below override both.
-include:
-  - ../base/mono_ff.yaml
-  - ../base/cloud.yaml

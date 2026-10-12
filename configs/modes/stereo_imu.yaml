@@ -1,7 +1,10 @@
-# Stereo + IMU base (--mode stereo --odometry vgio): the stereo mode's back end and the VGGT-inertial odometry, whose
-# metric scale comes from the stereo pair (the frontend's learned depth and its bias state are off in this mode by
-# construction: cross.pipeline._vgio_config).
-include: stereo.yaml
+# configs/modes/stereo_imu.yaml: selected by --mode stereo_imu.
+# Stereo + IMU (VGGT-inertial odometry): --mode stereo --odometry vgio.
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/stereo.yaml
+  - ../base/mono_frontend.yaml
+  - ../base/common.yaml
 # The geometric covisibility score with the VGGT-inertial odometry instead of the learned head (base/vggt_finetuned.yaml:
 # covis_source "auto" with the fine-tuned checkpoint; the code default is geometric).  Full benchmark v6 (2026-10-09), mono + IMU on ROVER, two runs each: with vfin2's mapped head
 # relocalization was about equal (T3 985 / 983 vs 967 / 962 of 1159, n.s.) but positioning less precise (T2@3 0.70 /

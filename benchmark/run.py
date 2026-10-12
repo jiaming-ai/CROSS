@@ -226,7 +226,7 @@ class Job:
         if self.odom_file:
             cmd += ["--odom-file", self.odom_file]
         # experiments: synchronous PGO for reproducibility; the shipped default is the background optimisation
-        # (configs/base/local.yaml), whose results land at machine-dependent times (PROTOCOL.md, DEV.md)
+        # (configs/base/common.yaml), whose results land at machine-dependent times (PROTOCOL.md, DEV.md)
         cmd += ["--reproducible"]
         return cmd + shlex.split(a.args) + extra
 

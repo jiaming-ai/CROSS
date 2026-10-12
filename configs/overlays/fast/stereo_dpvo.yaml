@@ -1,6 +1,6 @@
-# Fast overlay of the stereo_dpvo mode (--fast; layered on configs/<profile>/stereo_dpvo.yaml, local or cloud): 416 px
+# Fast overlay of the stereo_dpvo mode (--fast; layered on configs/modes/stereo_dpvo.yaml): 416 px
 # instead of 512 px images in the back end's passes; the 10-image passes stay (6 images lost OpenLORIS with DPVO,
-# base/stereo_dpvo.yaml).  Config confirmation 2026-10-11 (outputs/2026-10-11_config_confirm): ROVER subset (map +
+# modes/stereo_dpvo.yaml).  Config confirmation 2026-10-11 (outputs/2026-10-11_config_confirm): ROVER subset (map +
 # winter / night / dusk / autumn) T3 498 -> 487 of 630 (-2.2 %), OpenLORIS T3 184 -> 189 of 294, T2 within 1 %, KITTI
 # T1 median ratio 1.00; RTX 4000 Ada query 6.5 -> 8.9 FPS (still below 10 Hz).  A map built with this overlay stores
 # 416 px images: sessions relocalizing in it need the same image resolution (checked when the map is loaded).

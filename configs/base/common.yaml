@@ -1,4 +1,4 @@
-# Settings shared by every mode of the local folder (configs/local/: a normal local run on a desktop GPU).
+# Settings shared by every mode (included last by each configs/modes/<mode>.yaml).
 mapping:
   loop_closure:
     # pose-graph optimisation adapted to the map (cross/core/async_pgo.py): an optimisation expected to take less than

@@ -1,4 +1,4 @@
-# Fast overlay of the mono_basalt mode (--fast; layered on configs/<profile>/mono_basalt.yaml, local or cloud): nothing.
+# Fast overlay of the mono_basalt mode (--fast; layered on configs/modes/mono_basalt.yaml): nothing.
 # Same back end as mono_wheel, whose 416 px overlay lost OpenLORIS T2 at 1 m 0.727 -> 0.624 (-14 %;
 # outputs/2026-10-11_config_confirm).
 {}

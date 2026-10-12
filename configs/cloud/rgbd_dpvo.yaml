@@ -1,5 +1,0 @@
-# RGB-D visual odometry (DPVO, metric scale from sensor depth; a reference mode): --mode rgbd --odometry visual.
-# Folder cloud: the mode's base, then the folder's shared settings; keys below override both.
-include:
-  - ../base/rgbd.yaml
-  - ../base/cloud.yaml

@@ -1,5 +1,0 @@
-# Mono + DPVO-inertial odometry (VGGT-Omega + DPVO + IMU): --mode mono --mono-estimator ff --odometry vio.
-# Folder local: the mode's base, then the folder's shared settings; keys below override both.
-include:
-  - ../base/mono_vio.yaml
-  - ../base/local.yaml

@@ -1,3 +1,0 @@
-# RGB-D mode base (--mode rgbd: XFeat + LightGlue + PnP-RANSAC on keyframe depth): the defaults of
-# cross/core/config.py.
-{}

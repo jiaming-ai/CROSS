@@ -1,5 +1,0 @@
-# Mono + external odometry: --mode mono --mono-estimator ff --odometry external.
-# Folder cloud: the mode's base, then the folder's shared settings; keys below override both.
-include:
-  - ../base/mono_ff.yaml
-  - ../base/cloud.yaml

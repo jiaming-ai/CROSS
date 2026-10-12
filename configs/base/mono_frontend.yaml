@@ -1,0 +1,12 @@
+# The monocular frontends' settings (MonoConfig, cross/mono/config.py; section `mono`, read by
+# cross.pipeline.session_mono_config): DPVO with learned metric depth (mono_dpvo, mono_vio) and the VGGT-inertial
+# odometry (mono_imu, stereo_imu).  Included by base/mono_ff.yaml, modes/mono_dpvo.yaml and modes/stereo_imu.yaml.
+# The frontends' ImuConfig is the top-level `imu` section of the mode files.
+mono:
+  frontend: dpvo
+  # skip DPVO patches on detected people, detection every 3rd frame
+  mask_people: true
+  mask_interval: 3
+  # a learned metric-depth observation of the scale every 10 frames (1 s at 10 Hz)
+  scale:
+    interval: 10
