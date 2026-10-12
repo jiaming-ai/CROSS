@@ -1,7 +1,7 @@
 # Systems of the CROSS benchmark.  runner: how benchmark/run.py executes the system.
-#   cross_rgbd   scripts/map_and_reloc_rgbd.py (posed RGB-D folders) or scripts/map_and_reloc.py --estimator pnp (stereo
+#   cross_rgbd   scripts/map_and_reloc_rgbd.py (posed RGB-D folders) or scripts/map_and_reloc.py --mode rgbd (stereo
 #                folders, RGB-D* with SGBM depth)
-#   cross_ff     scripts/map_and_reloc.py --estimator ff
+#   cross_ff     scripts/map_and_reloc.py (stereo mode)
 #   cross_mono   scripts/map_and_reloc_rgbd.py (posed RGB-D folders, colour only) or scripts/map_and_reloc.py (stereo
 #                folders, left image only), with --mode mono
 #   CROSS systems take --odometry external (the dataset's odometry) or visual (DPVO visual odometry, metric scale from
@@ -34,7 +34,7 @@ cross_stereo:
   setups: [stereo]
   uses_odometry: true
   map_reuse: save/load
-  args: [--estimator, ff]
+  args: []
   outdoor_config: [configs/overlays/outdoor.yaml]
 
 cross_stereo_vo:
@@ -43,7 +43,7 @@ cross_stereo_vo:
   setups: [stereo]
   uses_odometry: false
   map_reuse: save/load
-  args: [--estimator, ff, --odometry, visual]
+  args: [--odometry, visual]
   outdoor_config: [configs/overlays/outdoor.yaml]
 
 # stereo + IMU: the VGGT-Omega + IMU local pose graph of cross_mono_ff_vgio with stereo constraints instead of learned
@@ -55,7 +55,7 @@ cross_stereo_vgio:
   uses_odometry: false
   uses_imu: true
   map_reuse: save/load
-  args: [--estimator, ff, --odometry, vgio]
+  args: [--odometry, vgio]
   outdoor_config: [configs/overlays/outdoor.yaml]
 
 cross_stereo_fast:
@@ -66,7 +66,7 @@ cross_stereo_fast:
   setups: [stereo]
   uses_odometry: true
   map_reuse: save/load
-  args: [--estimator, ff, --fast]
+  args: [--fast]
   outdoor_config: [configs/overlays/outdoor.yaml]
 
 cross_stereo_vo_fast:
@@ -76,7 +76,7 @@ cross_stereo_vo_fast:
   setups: [stereo]
   uses_odometry: false
   map_reuse: save/load
-  args: [--estimator, ff, --odometry, visual, --fast]
+  args: [--odometry, visual, --fast]
   outdoor_config: [configs/overlays/outdoor.yaml]
 
 cross_mono_odom:

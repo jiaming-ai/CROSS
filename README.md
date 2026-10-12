@@ -173,8 +173,8 @@ Options:
 | `--snr FLOAT` | Signal-to-noise ratio for R3D datasets |
 | `--async` | Enable async step pipeline |
 
-**Shipped configurations.** Each run loads one file `configs/<profile>/<mode>.yaml` chosen by `--mode`, `--odometry` (and
-`--mono-estimator`) and `--profile`: twelve modes (stereo / rgbd / mono x wheel, basalt, imu, dpvo; no rgbd + imu; + mono_vio, VGGT + DPVO + IMU) in
+**Shipped configurations.** Each run loads one file `configs/<profile>/<mode>.yaml` chosen by `--mode <name>` (or the
+sensor mode with `--odometry` / `--mono-estimator`) and `--profile`: twelve modes (stereo / rgbd / mono x wheel, basalt, imu, dpvo; no rgbd + imu; + mono_vio, VGGT + DPVO + IMU) in
 the deployment folders `local` (default) and `cloud`; `--fast` adds the mode's overlay `configs/overlays/fast/<mode>.yaml`
 (constrained compute) on either. A folder file includes its mode's base and the folder's shared
 settings from `configs/base/`; `--config` overlays (`configs/overlays/outdoor.yaml`, `stereo_lowband.yaml`) and `--set`
@@ -211,10 +211,10 @@ pose the map implies, 2 m indoors), plus the keyframe ATE of the map:
 - `scripts/map_and_reloc_rgbd.py`: RGB-D mode on posed RGB-D folders (`rgb/`, `depth/`, `poses_left.txt`, optional
   `odom_left.txt` with the robot's own odometry, `calib.json`);
 - `scripts/map_and_reloc.py`: stereo sequences (SimChange, KITTI raw, TartanAir V2, Virtual KITTI 2) or posed RGB-D
-  folders, with `--estimator ff` (stereo mode) or `--estimator pnp --pnp-depth gt|sgbm`.
+  folders, in the stereo mode (default) or `--mode rgbd_* --pnp-depth gt|sgbm` (PnP on ground-truth / stereo depth).
 
-Both take `--mode mono` (colour / left image only) and `--odometry visual` (no odometry input, see
-[Mono mode and visual odometry](#mono-mode-and-visual-odometry)).  The full benchmark protocol (T1 mapping ATE, T2
+Both take `--mode <name>` (one of the twelve shipped modes, e.g. `mono_imu`, `rgbd_dpvo`; see
+[docs/USAGE.md](docs/USAGE.md#1-modes) and [Mono mode and visual odometry](#mono-mode-and-visual-odometry)).  The full benchmark protocol (T1 mapping ATE, T2
 multi-session localization, T3 relocalization success; KITTI, OpenLORIS-Scene, ROVER, SimChange; baselines) is in
 [`benchmark/`](benchmark/README.md).
 
@@ -225,11 +225,11 @@ python scripts/datasets/convert_openloris.py data/openloris/home1-2 data/posed/h
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home
 # the same in the stereo mode on the left image alone (metric scale from the wheel odometry and map keyframe pairs:
 # pose_est.ff.right_image=left), so a posed RGB-D folder without a right camera works
-python scripts/map_and_reloc.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_ff --estimator ff \
+python scripts/map_and_reloc.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_ff \
     --set pose_est.ff.right_image=left
 # stereo mode on a SimChange scene (0.3 m baseline)
 python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/hssd_house/light_night --out outputs/house_ff \
-    --estimator ff --baseline 0.3 --snr 10 --trial-len 100 --trial-stride 50
+    --baseline 0.3 --snr 10 --trial-len 100 --trial-stride 50
 # TUM RGB-D: scripts/datasets/convert_tum.py (simulated noisy odometry: --snr 10 --seed 0)
 ```
 
@@ -313,10 +313,10 @@ loaded map until it is joined, and the global observation runs every few frames 
 map frame by the last observation, is reported in between).
 
 ```bash
-python run.py data/posed/home1-1 --loader posed --odometry visual            # RGB-D, no odometry input
-python run.py data/posed/home1-1 --loader posed --mode mono --odometry visual # RGB only
+python run.py data/posed/home1-1 --loader posed --mode rgbd_dpvo            # RGB-D, no odometry input
+python run.py data/posed/home1-1 --loader posed --mode mono_dpvo            # RGB only
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_mono \
-    --mode mono --odometry visual                                             # mono profile: configs/mono_benchmark_10hz.json
+    --mode mono_dpvo                                                          # mono profile: configs/mono_benchmark_10hz.json
 ```
 
 The DPVO weights are read from `models/dpvo.pth` (or `--dpvo-checkpoint`, `CROSS_DPVO_CHECKPOINT`); DPVO itself must be

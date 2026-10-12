@@ -42,26 +42,26 @@ fi
 
 if [[ "$MODE" == "reloc" || "$MODE" == "all" ]]; then
   SNR=10
-  FF="--estimator ff --obs-min-translation 0.5 --obs-min-rotation 0.15 --obs-max-interval 3 --set pose_est.ff.right_image=pair"
+  FF="--obs-min-translation 0.5 --obs-min-rotation 0.15 --obs-max-interval 3 --set pose_est.ff.right_image=pair"
   # --- vKITTI2: map clone once per estimator, relocalize under every other condition
   run $PY scripts/map_and_reloc.py --reproducible --map $VK/clone --query $VK/clone --out outputs/reloc/vk01_ff/clone $FF --snr $SNR
-  run $PY scripts/map_and_reloc.py --reproducible --map $VK/clone --query $VK/clone --out outputs/reloc/vk01_pnp/clone --estimator pnp --snr $SNR
+  run $PY scripts/map_and_reloc.py --reproducible --map $VK/clone --query $VK/clone --out outputs/reloc/vk01_pnp/clone --mode rgbd --snr $SNR
   for cond in sunset fog rain morning overcast 15-deg-left 15-deg-right 30-deg-left 30-deg-right; do
     for est in ff pnp; do
       mkdir -p outputs/reloc/vk01_${est}/$cond
       cp outputs/reloc/vk01_${est}/clone/map.pkl outputs/reloc/vk01_${est}/clone/map_meta.json outputs/reloc/vk01_${est}/$cond/
-      if [[ $est == ff ]]; then A="$FF"; else A="--estimator pnp"; fi
+      if [[ $est == ff ]]; then A="$FF"; else A="--mode rgbd"; fi
       run $PY scripts/map_and_reloc.py --reproducible --map $VK/clone --query $VK/$cond --out outputs/reloc/vk01_${est}/$cond $A --snr $SNR --skip-map
     done
   done
   # --- TartanAir: map P000, relocalize on overlapping trajectories
   run $PY scripts/map_and_reloc.py --reproducible --map $TA/P000 --query $TA/P000 --out outputs/reloc/ta_ff/P000 $FF --snr $SNR
-  run $PY scripts/map_and_reloc.py --reproducible --map $TA/P000 --query $TA/P000 --out outputs/reloc/ta_pnp/P000 --estimator pnp --snr $SNR
+  run $PY scripts/map_and_reloc.py --reproducible --map $TA/P000 --query $TA/P000 --out outputs/reloc/ta_pnp/P000 --mode rgbd --snr $SNR
   for p in P005 P002 P004; do
     for est in ff pnp; do
       mkdir -p outputs/reloc/ta_${est}/$p
       cp outputs/reloc/ta_${est}/P000/map.pkl outputs/reloc/ta_${est}/P000/map_meta.json outputs/reloc/ta_${est}/$p/
-      if [[ $est == ff ]]; then A="$FF"; else A="--estimator pnp"; fi
+      if [[ $est == ff ]]; then A="$FF"; else A="--mode rgbd"; fi
       run $PY scripts/map_and_reloc.py --reproducible --map $TA/P000 --query $TA/$p --out outputs/reloc/ta_${est}/$p $A --snr $SNR --skip-map
     done
   done
@@ -69,7 +69,7 @@ if [[ "$MODE" == "reloc" || "$MODE" == "all" ]]; then
   for iv in 1 5 10; do
     mkdir -p outputs/reloc/abl_cadence_$iv
     cp outputs/reloc/vk01_ff/clone/map.pkl outputs/reloc/vk01_ff/clone/map_meta.json outputs/reloc/abl_cadence_$iv/
-    run $PY scripts/map_and_reloc.py --reproducible --map $VK/clone --query $VK/sunset --out outputs/reloc/abl_cadence_$iv --estimator ff --obs-min-translation 0 --obs-max-interval $iv --snr $SNR --skip-map
+    run $PY scripts/map_and_reloc.py --reproducible --map $VK/clone --query $VK/sunset --out outputs/reloc/abl_cadence_$iv --obs-min-translation 0 --obs-max-interval $iv --snr $SNR --skip-map
   done
 fi
 echo "[$(date +%H:%M:%S)] done"
