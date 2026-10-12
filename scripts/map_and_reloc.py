@@ -44,7 +44,7 @@ if "--out" in sys.argv and "CROSS_LOG_FILE" not in os.environ:
     _out.mkdir(parents=True, exist_ok=True)
     os.environ["CROSS_LOG_FILE"] = str(_out / "system.log")
 
-from cross.core.config import FFBackend, PoseEstType, SystemConfig, load_config
+from cross.core.config import PoseEstType, SystemConfig, load_config
 from cross.core.system import System
 from cross.core.types import Camera
 from cross.db import store as map_store
@@ -90,7 +90,14 @@ def make_config(args) -> SystemConfig:
     # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/<--profile>/<mode>.yaml), then the
     # user's --config; explicit options below win
     configs = shipped_config_files(args) + list(args.config or [])
-    cfg = load_config(*configs) if configs else SystemConfig()
+    # the feed-forward model goes in with the overrides: the fine-tuned VGGT-Omega's settings (the files' vggt_finetuned
+    # sections) follow the checkpoint in use (cross.core.config.load_config); without --backend / --checkpoint the
+    # configuration's (--backend da3 without --checkpoint: the DA3 weights)
+    sets = list(getattr(args, "set", None) or [])
+    if args.estimator == "ff":
+        sets = ([f"pose_est.ff.backend={args.backend}"] if args.backend else []) + \
+            ([f"pose_est.ff.checkpoint={args.checkpoint or 'auto'}"] if args.backend or args.checkpoint else []) + sets
+    cfg = load_config(*configs, sets=sets)
     cfg.async_update = False
     if getattr(args, "no_intra_lc", False):
         cfg.mapping.loop_closure.intra_enabled = False
@@ -102,14 +109,7 @@ def make_config(args) -> SystemConfig:
         lc.noise_file = args.noise_config
     if args.estimator == "ff":
         cfg.pose_est.type = PoseEstType.FF
-        ff = cfg.pose_est.ff
-        # the model: the configuration's unless given here (--backend da3 without --checkpoint: the DA3 weights)
-        if args.backend is not None:
-            ff.backend = FFBackend(args.backend)
-            if args.checkpoint is None and ff.backend == FFBackend.DA3:
-                ff.checkpoint = "models/DA3-LARGE-1.1"
-        if args.checkpoint is not None:
-            ff.checkpoint = args.checkpoint
+        ff = cfg.pose_est.ff         # backend and checkpoint: above
         if args.max_refs is not None:
             ff.max_refs = args.max_refs
         if args.n_ref_anchors is not None:
@@ -563,7 +563,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", required=True)
     ap.add_argument("--estimator", choices=["ff", "pnp"], default="ff")
     ap.add_argument("--backend", choices=["vggt_omega", "da3"], default=None, help="feed-forward model (default: config)")
-    ap.add_argument("--checkpoint", default=None, help="its weights (default: config)")
+    ap.add_argument("--checkpoint", default=None,
+                    help="its weights: a path, or finetuned / released (install.sh's VGGT-Omega checkpoints); default: "
+                         "the configuration's (auto: the fine-tuned VGGT-Omega when installed, else the released one; "
+                         "DA3: models/DA3-LARGE-1.1)")
     ap.add_argument("--config", nargs="*", default=[])
     ap.add_argument("--depth-source", default="none", help="depth for keyframes when using ff (none|sgbm|gt)")
     ap.add_argument("--pnp-depth", default="sgbm", help="depth source for the PnP baseline (sgbm|gt)")

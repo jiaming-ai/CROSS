@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -639,13 +641,24 @@ class KPMatcherConfig:
     allow_batch_inference: bool = True
 
 
+# VGGT-Omega checkpoints installed by install.sh --stereo: the fine-tuned CROSS checkpoint (the default; public,
+# huggingface.co/Jamie-nus/VGGT-Omega-CROSS) and the released one (install.sh --vggt=released; gated,
+# huggingface.co/facebook/VGGT-Omega)
+FINETUNED_VGGT_CHECKPOINT = "models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt"
+RELEASED_VGGT_CHECKPOINT = "models/VGGT-Omega/vggt_omega_1b_512.pt"
+DA3_CHECKPOINT = "models/DA3-LARGE-1.1"
+
+
 @dataclass
 class FeedForwardConfig:
     """Stereo mode: feed-forward (learned multi-view) relative pose estimation with stereo scale anchors
     (pose_est.type = ff; needs the optional stereo dependencies, see install.sh --stereo).  Observation gating and
     the calibrated measurement noise are estimator-generic options of PoseEstConfig."""
     backend: FFBackend = FFBackend.VGGT_OMEGA
-    checkpoint: str = "models/VGGT-Omega/vggt_omega_1b_512.pt"
+    # "auto": the fine-tuned VGGT-Omega when it is installed, else the released one (DA3 backend: DA3_CHECKPOINT);
+    # "finetuned" / "released": that checkpoint of install.sh; or a path.  A fine-tuned checkpoint (one with a
+    # covis_head_map) turns on the vggt_finetuned sections of the configuration files (load_config)
+    checkpoint: str = "auto"
     image_resolution: int = 512          # longest side fed to the model (multiple of patch size)
     da3_process_res: int = 504
     half_precision_weights: bool = True  # keep the transformer weights in bf16 (halves memory, ~1cm difference)
@@ -701,9 +714,9 @@ class FeedForwardConfig:
     # covisibility of the current view with each reference: "geometric" (reprojection consistency of the predicted
     # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint), "min" of the two, or "auto": the head
     # when the checkpoint has a covisibility head with a covis_head_map (calibrate_covis.py --map_geo; the head on the
-    # geometric score's scale), else geometric. Full benchmark v6 (outputs/2026-10-09_covis_head_gap): the mapped head
-    # relocalizes more on ROVER than the geometric gate (stereo +75/-26 trials) and is neutral elsewhere.
-    covis_source: str = "auto"
+    # geometric score's scale), else geometric.  The fine-tuned checkpoint's overlay (configs/base/vggt_finetuned.yaml)
+    # sets auto
+    covis_source: str = "geometric"
     # metric scale of a pass: "anchors" (stereo / odometry anchors), "head" (scale head of a vggt_ft checkpoint) or
     # "head_fallback" (the head only when no anchor is valid, e.g. monocular passes without odometry)
     scale_source: str = "anchors"
@@ -956,33 +969,115 @@ def _to_dict(obj) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# VGGT-Omega checkpoint: install.sh's two, and the settings of the fine-tuned one
+# ---------------------------------------------------------------------------
+
+# top-level section of a configuration file with the settings of the fine-tuned VGGT-Omega (load_config)
+FINETUNED_SECTION = "vggt_finetuned"
+
+
+def resolve_ff_checkpoint(checkpoint: Optional[str], backend=FFBackend.VGGT_OMEGA) -> str:
+    """The path of pose_est.ff.checkpoint: "auto" = the fine-tuned VGGT-Omega when it is installed, else the released
+    one when that is, else the fine-tuned one's path (install.sh's default; loading it then fails with its path);
+    "finetuned" / "released" = their paths; any other value is a path.  The DA3 backend's "auto" is DA3_CHECKPOINT."""
+    if FFBackend(backend) != FFBackend.VGGT_OMEGA:
+        return DA3_CHECKPOINT if checkpoint in (None, "auto") else checkpoint
+    if checkpoint == "finetuned":
+        return FINETUNED_VGGT_CHECKPOINT
+    if checkpoint == "released":
+        return RELEASED_VGGT_CHECKPOINT
+    if checkpoint in (None, "auto"):
+        if not Path(FINETUNED_VGGT_CHECKPOINT).is_file() and Path(RELEASED_VGGT_CHECKPOINT).is_file():
+            return RELEASED_VGGT_CHECKPOINT
+        return FINETUNED_VGGT_CHECKPOINT
+    return checkpoint
+
+
+@functools.lru_cache(maxsize=16)
+def _has_covis_head_map(path: str, mtime: float) -> bool:
+    import torch
+    # older vggt_ft checkpoints hold numpy objects (weights_only=False); legacy (non-zip) files cannot be memory-mapped
+    for mmap, weights_only in ((True, True), (True, False), (False, False)):
+        try:
+            ckpt = torch.load(path, map_location="cpu", mmap=mmap, weights_only=weights_only)
+        except Exception:
+            continue
+        return isinstance(ckpt, dict) and ckpt.get("covis_head_map") is not None
+    logging.getLogger(__name__).warning(f"could not read {path}: the fine-tuned VGGT-Omega settings stay off")
+    return False
+
+
+def is_finetuned_vggt(checkpoint: str) -> bool:
+    """Whether a VGGT-Omega checkpoint (a path) is a fine-tuned CROSS checkpoint: one with a covis_head_map (vggt_ft +
+    calibrate_covis.py --map_geo), like install.sh's default.  install.sh's two checkpoints are known by their file
+    names, so a missing one is classified too; another missing file is not fine-tuned."""
+    name = Path(checkpoint).name
+    if name == Path(FINETUNED_VGGT_CHECKPOINT).name:
+        return True
+    if name == Path(RELEASED_VGGT_CHECKPOINT).name:
+        return False
+    path = Path(checkpoint)
+    if not path.is_file():
+        return False
+    return _has_covis_head_map(str(path.resolve()), path.stat().st_mtime)
+
+
+def apply_settings(cfg, items):
+    """(In place) configuration overrides "section.sub.key=value" (YAML-parsed values; enums by their value)."""
+    for kv in items or []:
+        key, val = kv.split("=", 1)
+        obj = cfg
+        parts = key.split(".")
+        for part in parts[:-1]:
+            obj = getattr(obj, part)
+        cur = getattr(obj, parts[-1])
+        v = yaml.safe_load(val)
+        if hasattr(cur, "value") and not isinstance(v, type(cur)):   # enums
+            v = type(cur)(v)
+        setattr(obj, parts[-1], v)
+    return cfg
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def load_yaml_layers(*yaml_paths: Union[str, Path]) -> dict:
-    """Deep-merge YAML files left to right into one dict.  A file may name others under the top-level key `include`
-    (a path or a list, relative to the file): they are merged first, in order, and the file's own keys on top (the
-    folder configs include a mode base and a folder base, configs/base/)."""
-    merged: dict = {}
+def yaml_layers(*yaml_paths: Union[str, Path]) -> list:
+    """The layers of YAML files, in merge order: (settings, vggt_finetuned section or None) per file.  A file may name
+    others under the top-level key `include` (a path or a list, relative to the file): their layers come first, in
+    order, then the file's own (the folder configs include a mode base and a folder base, configs/base/)."""
+    layers = []
     for path in yaml_paths:
-        merged = _deep_merge(merged, _load_yaml(Path(path)))
+        layers += _load_yaml(Path(path))
+    return layers
+
+
+def load_yaml_layers(*yaml_paths: Union[str, Path], vggt_finetuned: bool = False) -> dict:
+    """Deep-merge YAML files left to right into one dict (yaml_layers; `vggt_finetuned`: with the files'
+    vggt_finetuned sections, each right after the rest of its file)."""
+    merged: dict = {}
+    for data, finetuned in yaml_layers(*yaml_paths):
+        merged = _deep_merge(merged, data)
+        if vggt_finetuned and finetuned:
+            merged = _deep_merge(merged, finetuned)
     return merged
 
 
-def _load_yaml(path: Path, _parents: tuple = ()) -> dict:
+def _load_yaml(path: Path, _parents: tuple = ()) -> list:
     path = path.resolve()
     if path in _parents:
         raise ValueError(f"{path}: include cycle")
     with open(path) as f:
         data = yaml.safe_load(f) or {}
     includes = data.pop("include", None) or []
-    merged: dict = {}
+    layers = []
     for inc in [includes] if isinstance(includes, str) else includes:
-        merged = _deep_merge(merged, _load_yaml(path.parent / inc, _parents + (path,)))
-    return _deep_merge(merged, data)
+        layers += _load_yaml(path.parent / inc, _parents + (path,))
+    return layers + [(data, data.pop(FINETUNED_SECTION, None))]
 
 
-def load_config(*yaml_paths: Union[str, Path], **overrides) -> SystemConfig:
+def load_config(*yaml_paths: Union[str, Path], sets: Optional[List[str]] = None,
+                vggt_finetuned: Optional[bool] = None, **overrides) -> SystemConfig:
     """Load and deep-merge one or more YAML files into a :class:`SystemConfig`.
 
     Parameters
@@ -990,13 +1085,27 @@ def load_config(*yaml_paths: Union[str, Path], **overrides) -> SystemConfig:
     *yaml_paths
         Zero or more paths to YAML config files.  Files are merged left to
         right (later files override earlier ones), each after the files it
-        includes (`include`, see load_yaml_layers).  Sections that are not
+        includes (`include`, see yaml_layers).  Sections that are not
         SystemConfig fields (`imu`: the VGGT-inertial frontend's ImuConfig,
         read by cross.pipeline) are ignored here.
+    sets
+        "section.sub.key=value" overrides (:func:`apply_settings`), applied
+        after the files and the keyword overrides.
+    vggt_finetuned
+        Whether the files' ``vggt_finetuned`` sections apply (None: when the
+        checkpoint is a fine-tuned VGGT-Omega, below).
     **overrides
         Top-level section overrides as dicts, e.g.
-        ``pose_est={"obs_max_interval_steps": 2}``.  Merged last (highest
-        priority).
+        ``pose_est={"obs_max_interval_steps": 2}``.  Merged after the files.
+
+    A file's top-level ``vggt_finetuned`` section holds settings for the
+    fine-tuned VGGT-Omega (configs/base/vggt_finetuned.yaml, included by the
+    VGGT-Omega modes' bases; configs/overlays/outdoor.yaml).  It is merged
+    right after the rest of its file when the backend is VGGT-Omega and the
+    checkpoint the files, overrides and sets select is fine-tuned
+    (:func:`is_finetuned_vggt`); with the released checkpoint the files'
+    other settings apply alone.  ``pose_est.ff.checkpoint`` is returned as a
+    path (:func:`resolve_ff_checkpoint`).
 
     Returns
     -------
@@ -1009,13 +1118,30 @@ def load_config(*yaml_paths: Union[str, Path], **overrides) -> SystemConfig:
     >>> cfg = load_config("configs/local/rgbd_wheel.yaml", "configs/overlays/outdoor.yaml",
     ...                   pose_est={"obs_max_interval_steps": 2})
     """
-    merged = load_yaml_layers(*yaml_paths)
+    layers = yaml_layers(*yaml_paths)
 
-    # Apply keyword overrides (each key is a top-level section name or scalar)
-    if overrides:
-        merged = _deep_merge(merged, overrides)
+    def build(with_finetuned: bool) -> SystemConfig:
+        merged: dict = {}
+        for data, finetuned in layers:
+            merged = _deep_merge(merged, data)
+            if with_finetuned and finetuned:
+                merged = _deep_merge(merged, finetuned)
+        # Apply keyword overrides (each key is a top-level section name or scalar)
+        if overrides:
+            merged = _deep_merge(merged, overrides)
+        cfg = _from_dict(SystemConfig, merged) if merged else SystemConfig()
+        apply_settings(cfg, sets)
+        ff = cfg.pose_est.ff
+        ff.checkpoint = resolve_ff_checkpoint(ff.checkpoint, ff.backend)
+        return cfg
 
-    return _from_dict(SystemConfig, merged) if merged else SystemConfig()
+    cfg = build(False)
+    if not any(finetuned for _, finetuned in layers):
+        return cfg
+    if vggt_finetuned is None:
+        ff = cfg.pose_est.ff
+        vggt_finetuned = ff.backend == FFBackend.VGGT_OMEGA and is_finetuned_vggt(ff.checkpoint)
+    return build(True) if vggt_finetuned else cfg
 
 
 def config_to_yaml(cfg: SystemConfig) -> str:

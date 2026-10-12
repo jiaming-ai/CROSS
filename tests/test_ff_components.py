@@ -97,7 +97,7 @@ def test_covis_source_auto():
     from types import SimpleNamespace
     from cross.core.config import FeedForwardConfig
     from cross.cv.pose_est_ff import PoseEstFeedForward, auto_covis_source
-    assert FeedForwardConfig().covis_source == "auto"
+    assert FeedForwardConfig().covis_source == "geometric"      # auto: configs/base/vggt_finetuned.yaml
     est = object.__new__(PoseEstFeedForward)
     for head, cmap, want in ((None, None, "geometric"), (object(), None, "geometric"), (object(), ([0, 1], [0, 1]), "head")):
         est._auto_covis = auto_covis_source(SimpleNamespace(covis_head=head, covis_map=cmap))

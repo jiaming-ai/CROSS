@@ -87,6 +87,9 @@ def main():
     parser.add_argument("--async", dest="async_update", action="store_true", help="Enable async step pipeline")
     parser.add_argument("--config", nargs="*", default=[], help="YAML config file(s), merged left to right after the "
                         "mode's shipped file (configs/<--profile>/<mode>.yaml), e.g. configs/overlays/outdoor.yaml")
+    parser.add_argument("--set", nargs="*", action="extend", default=[],
+                        help="config overrides section.sub.key=value (YAML-parsed), after --config; e.g. "
+                             "pose_est.ff.checkpoint=released (the released VGGT-Omega instead of the fine-tuned one)")
     parser.add_argument("--odom-file", default=None, help="odometry file of a prepared folder to read instead of "
                         "odom_left.txt (--odometry basalt: odom_vio.txt)")
     add_session_args(parser)   # --mode, --odometry, --profile, --mono-estimator, --dpvo-checkpoint, ...
@@ -116,7 +119,8 @@ def main():
     )
 
     # Build config: the mode's shipped configuration (configs/<--profile>/<mode>.yaml), then the user's --config files
-    config = load_config(*shipped_config_files(args), *args.config)
+    # and --set overrides
+    config = load_config(*shipped_config_files(args), *args.config, sets=args.set)
     if args.async_update:
         config.async_update = True
 

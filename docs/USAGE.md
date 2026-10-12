@@ -116,9 +116,10 @@ and `--profile`, with `--fast` the mode's fast overlay, then the user's `--confi
 | `rgbd_wheel`, `rgbd_basalt`, `rgbd_dpvo` | `rgbd` / `external`, `basalt`, `visual` |
 | `mono_wheel`, `mono_basalt`, `mono_imu` | `mono` / `external`, `basalt`, `vgio` (`--mono-estimator ff`) |
 | `mono_dpvo` | `mono` / `visual` (the DA3 back end) |
+| `mono_vio` | `mono` / `vio` (`--mono-estimator ff`: VGGT-Omega + DPVO + IMU, a reference system; the old back end's hypothesis behaviour in mapping sessions: ROVER T3 +360 trials, KITTI 10 map worse) |
 
 Reference combinations without a file of their own use their back end's file: mono DA3 with any odometry `mono_dpvo`,
-mono `ff` with DPVO or DPVO + IMU (`vio`) `mono_wheel`. A folder file includes its mode's base and the
+mono `ff` with DPVO `mono_wheel`. A folder file includes its mode's base and the
 folder's shared settings (`configs/base/`, key `include:`, paths relative to the file); keys below the include override
 them. A file may also carry an `imu:` section (fields of `ImuConfig`, applied to the inertial frontends before
 `--mono-args "--imu-config ..."`). The mono DA3 back end takes its settings from the mono profile (below) and
@@ -131,12 +132,13 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 
 | file | use |
 |---|---|
-| `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius); the benchmark adds it on outdoor datasets |
+| `configs/base/vggt_finetuned.yaml` | the fine-tuned VGGT-Omega's settings (included by the bases of every mode that runs VGGT-Omega; applies only with a fine-tuned checkpoint, see below): the learned covisibility head |
+| `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius) and, with the fine-tuned VGGT-Omega, a looser covisibility gate (0.10); the benchmark adds it on outdoor datasets |
 | `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away); not tested with `--fast` |
 | `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
 | `configs/mono_*.json` | mono profiles: the arguments of `python -m cross.mono.run`. `mono_benchmark_10hz.json` for offline runs at 10 Hz, `mono_streaming_dpvo_v2_20hz.json` for real time; select with `--mono-profile`, extra arguments with `--mono-args`. Their `--cross-config` lines configure the DA3 back end only (the `ff` back end and the stereo mode refuse `--cross-config` in `--mono-args`; use `--set`); with external odometry or `vio` the DA3 back end drops the odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
 
-Override one value with `--set section.key=value` (the `scripts/` runners; `run.py` has no `--set`) or put it in a small
+Override one value with `--set section.key=value` (`run.py` and the `scripts/` runners) or put it in a small
 YAML file and pass it with `--config`. Some options (charts, session recovery, historical retrieval slots, ...) are off by default and are
 enabled by the mono profiles.
 
@@ -156,6 +158,17 @@ its stereo depth) runs without a question.
 (`mapping.loop_closure.async_pgo`, below), whose results land at machine-dependent times. For experiments pass
 `--reproducible` (synchronous optimisation whatever the configuration says); the benchmark harness (`benchmark/run.py`,
 `benchmark/dev.py`) always does.
+
+**VGGT-Omega checkpoint.** `pose_est.ff.checkpoint` is `auto` by default: the fine-tuned checkpoint
+(`models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt`, installed by `install.sh --stereo`) when it is there, else the
+released one (`models/VGGT-Omega/vggt_omega_1b_512.pt`, `install.sh --vggt=released`). `finetuned`, `released` or a path
+select one (`--set pose_est.ff.checkpoint=released`; `scripts/map_and_reloc.py --checkpoint released`). A config file's
+top-level `vggt_finetuned:` section holds settings for the fine-tuned model: it applies after the rest of its file when
+the checkpoint in use is fine-tuned, i.e. carries a `covis_head_map` (install.sh's default, or any `vggt_ft` checkpoint
+calibrated with `calibrate_covis.py --map_geo`). The released checkpoint runs with the settings outside these sections.
+`configs/base/vggt_finetuned.yaml` turns on the learned covisibility head (`covis_source: auto`; the IMU bases
+`base/stereo_imu.yaml` / `base/mono_imu.yaml` keep the geometric score for the VGGT-inertial odometry);
+`configs/overlays/outdoor.yaml` lowers the covisibility gate to 0.10.
 
 **Keyframe quality filter** (`mapping.keyframe_quality`, `cross/core/kf_quality.py`). Views that are mostly blocked or
 empty are not stored as permanent keyframes: a person or object right in front of the camera, a wall or shelf at arm's

@@ -42,6 +42,8 @@ import os
 
 import numpy as np
 
+from cross.core.config import apply_settings  # noqa: F401  (configuration overrides of the runners' --set)
+
 MODES = ("rgbd", "stereo", "mono")
 ODOMETRY = ("external", "visual", "vio", "vgio")
 INERTIAL = ("vio", "vgio")
@@ -323,12 +325,12 @@ def mode_file_name(mode: str, odometry: str, mono_estimator: str = None) -> str:
     """The name of a mode's file in a profile folder (configs/<profile>/<name>.yaml).  odometry: the named odometry
     (external = wheel, basalt, visual = dpvo, vgio = imu).  Combinations without a file of their own (reference systems)
     use the file of their back end: the mono DA3 back end any odometry -> mono_dpvo (its presets are the mono profile's
-    and MonocularSystem's), the feed-forward back end with DPVO or DPVO + IMU (vio) -> mono_wheel (mono_imu's settings
-    are the VGGT-inertial odometry's)."""
+    and MonocularSystem's), the feed-forward back end with DPVO -> mono_wheel (mono_imu's settings are the
+    VGGT-inertial odometry's); with DPVO + IMU (vio) it has its own file, mono_vio."""
     if mode == "mono":
         if (mono_estimator or "da3") == "da3":
             return "mono_dpvo"
-        return {"basalt": "mono_basalt", "vgio": "mono_imu"}.get(odometry, "mono_wheel")
+        return {"basalt": "mono_basalt", "vgio": "mono_imu", "vio": "mono_vio"}.get(odometry, "mono_wheel")
     names = {"external": "wheel", "basalt": "basalt", "visual": "dpvo"} | ({"vgio": "imu"} if mode == "stereo" else {})
     if mode not in MODES or odometry not in names:
         raise ValueError(f"No shipped configuration for --mode {mode} --odometry {odometry}")
@@ -560,23 +562,6 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
                           obs_cap=obs_cap, send_right=cfg.pose_est.ff.right_image != "left" or odometry == "vgio")
 
 
-def apply_settings(cfg, items):
-    """(In place) configuration overrides "section.sub.key=value" (YAML-parsed values; enums by their value)."""
-    import yaml
-    for kv in items or []:
-        key, val = kv.split("=", 1)
-        obj = cfg
-        parts = key.split(".")
-        for part in parts[:-1]:
-            obj = getattr(obj, part)
-        cur = getattr(obj, parts[-1])
-        v = yaml.safe_load(val)
-        if hasattr(cur, "value") and not isinstance(v, type(cur)):   # enums
-            v = type(cur)(v)
-        setattr(obj, parts[-1], v)
-    return cfg
-
-
 def server_session(open_msg, device="cuda"):
     """The server of a remote session from the edge's open message: (MapServer, factory of a new pass service for a new
     session of the edge's odometry, information for the edge).  The CROSS runners' edge (edge_session) sends its
@@ -607,7 +592,7 @@ def server_session(open_msg, device="cuda"):
                                   open_msg.get("mono_estimator", "da3") if mode == "mono" else None,
                                   fast=bool(open_msg.get("fast"))) \
             + [os.path.join(CONFIG_DIR, n) for n in names]
-        cfg = apply_settings(load_config(*files) if files else SystemConfig(), open_msg.get("set"))
+        cfg = load_config(*files, sets=open_msg.get("set"))
         cfg.async_update = False
     mc = None if open_msg.get("mono_config") is None else _from_dict(MonoConfig, open_msg["mono_config"])
     p = build_session(mode, odometry, camera, cfg, T_right_in_left=open_msg.get("T_right_in_left"),

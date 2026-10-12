@@ -169,7 +169,7 @@ def test_profile_folders():
     from cross.core.config import load_config, load_yaml_layers
     from cross.pipeline import CONFIG_DIR, PROFILES
     modes = sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, "local")) if f.endswith(".yaml"))
-    assert len(modes) == 11 and PROFILES == ("local", "cloud")
+    assert len(modes) == 12 and PROFILES == ("local", "cloud")
     for folder in PROFILES + ("overlays/fast",):
         assert sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, folder)) if f.endswith(".yaml")) == modes
     for m in modes:
@@ -208,7 +208,7 @@ def test_named_odometry_and_profile_arguments():
     args = finish_session_args(ap.parse_args(["--mode", "stereo", "--profile", "local-fast"]))   # deprecated alias
     assert args.profile == "local" and args.fast and shipped_config_files(args)[1].endswith("overlays/fast/stereo_wheel.yaml")
     args = finish_session_args(ap.parse_args(["--mode", "mono", "--mono-estimator", "ff", "--odometry", "vio"]))
-    assert shipped_config_files(args)[0].endswith("local/mono_wheel.yaml")
+    assert shipped_config_files(args)[0].endswith("local/mono_vio.yaml")
 
 
 def test_left_image_session_drops_the_right_image():
@@ -237,21 +237,81 @@ def test_mono_ff_shipped_defaults():
     assert [os.path.basename(f) for f in files] == ["mono_wheel.yaml"]
     assert [os.path.basename(f) for f in mode_config_files("mono", "visual", mono_estimator="da3")] == ["mono_dpvo.yaml"]
     assert [os.path.basename(f) for f in mode_config_files("stereo", "external")] == ["stereo_wheel.yaml"]
-    cfg = load_config(*files)
+    ft, rel = ["pose_est.ff.checkpoint=finetuned"], ["pose_est.ff.checkpoint=released"]
+    cfg = load_config(*files, sets=ft)
     assert cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
     ff = cfg.pose_est.ff         # the feed-forward back end without a stereo pair
     assert cfg.pose_est.type.value == "ff" and not ff.use_curr_anchor and ff.n_ref_anchors == 0
     assert ff.use_odom_anchor and ff.use_map_anchors and cfg.pose_est.obs_max_interval_steps == 3
+    # the fine-tuned checkpoint: its settings (base/vggt_finetuned.yaml: the mapped covisibility head; geometric with
+    # the VGGT-inertial odometry) and the outdoor gate
     assert ff.covis_source == "auto"
     vgio = mode_config_files("mono", "vgio", mono_estimator="ff")
     assert [os.path.basename(f) for f in vgio] == ["mono_imu.yaml"]
-    assert load_config(*vgio).pose_est.ff.covis_source == "geometric"
-    assert load_config(*mode_config_files("stereo", "vgio")).pose_est.ff.covis_source == "geometric"
-    # DPVO + IMU (vio) keeps the feed-forward back end's file: the head (auto), as before the profile folders
-    assert [os.path.basename(f) for f in mode_config_files("mono", "vio", mono_estimator="ff")] == ["mono_wheel.yaml"]
+    assert load_config(*vgio, sets=ft).pose_est.ff.covis_source == "geometric"
+    assert load_config(*mode_config_files("stereo", "vgio"), sets=ft).pose_est.ff.covis_source == "geometric"
+    for odometry in ("external", "basalt", "visual"):
+        assert load_config(*mode_config_files("stereo", odometry), sets=ft).pose_est.ff.covis_source == "auto"
+    # DPVO + IMU (vio): the feed-forward back end's base (the head) with the old back end's hypothesis behaviour
+    vio = mode_config_files("mono", "vio", mono_estimator="ff")
+    assert [os.path.basename(f) for f in vio] == ["mono_vio.yaml"]
+    hyp = load_config(*vio, sets=ft).mapping.hypothesis
+    assert hyp.adopt_in_mapping_session and hyp.merge_in_mapping_session and not hyp.h0_informative_only
+    assert load_config(*vio, sets=ft).pose_est.ff.covis_source == "auto"
+    hyp = cfg.mapping.hypothesis                   # mono_wheel (VGGT + DPVO alone): the defaults
+    assert not hyp.adopt_in_mapping_session and not hyp.merge_in_mapping_session and hyp.h0_informative_only
+    assert [os.path.basename(f) for f in mode_config_files("mono", "vio", "cloud", "ff", fast=True)] == \
+        ["mono_vio.yaml", "mono_vio.yaml"]
     outdoor = os.path.join(os.path.dirname(os.path.dirname(files[0])), "overlays", "outdoor.yaml")
-    assert load_config(*files, outdoor).pose_est.ff.min_covis == 0.10
-    assert load_config(*files).pose_est.ff.min_covis == 0.15
+    assert load_config(*files, outdoor, sets=ft).pose_est.ff.min_covis == 0.10
+    assert load_config(*files, sets=ft).pose_est.ff.min_covis == 0.15
+    assert load_config(*files, outdoor, sets=ft).mapping.cluster_eps == 3.0
+    # the released checkpoint: the default settings
+    for cfg in (load_config(*files, outdoor, sets=rel), load_config(*vgio, outdoor, sets=rel)):
+        assert cfg.pose_est.ff.covis_source == "geometric" and cfg.pose_est.ff.min_covis == 0.15
+        assert cfg.mapping.cluster_eps == 3.0 and cfg.pose_est.ff.map_anchor_min_pair_covis == 0.15
+    assert load_config(*files, sets=rel).pose_est.ff.checkpoint == "models/VGGT-Omega/vggt_omega_1b_512.pt"
+    # the DA3 backend never takes the fine-tuned VGGT-Omega's settings
+    da3 = load_config(*files, outdoor, sets=["pose_est.ff.backend=da3"])
+    assert da3.pose_est.ff.covis_source == "geometric" and da3.pose_est.ff.checkpoint == "models/DA3-LARGE-1.1"
+
+
+def test_vggt_checkpoint_selection(tmp_path, monkeypatch):
+    """pose_est.ff.checkpoint "auto" = the fine-tuned VGGT-Omega when installed, else the released one; a checkpoint is
+    fine-tuned when it carries a covis_head_map, and then the files' vggt_finetuned sections apply."""
+    import torch
+    from cross.core.config import (FINETUNED_VGGT_CHECKPOINT, RELEASED_VGGT_CHECKPOINT, is_finetuned_vggt, load_config,
+                                   resolve_ff_checkpoint)
+    monkeypatch.chdir(tmp_path)
+    assert resolve_ff_checkpoint("auto") == FINETUNED_VGGT_CHECKPOINT           # nothing installed: install.sh's default
+    (tmp_path / RELEASED_VGGT_CHECKPOINT).parent.mkdir(parents=True)
+    (tmp_path / RELEASED_VGGT_CHECKPOINT).touch()
+    assert resolve_ff_checkpoint("auto") == RELEASED_VGGT_CHECKPOINT
+    (tmp_path / FINETUNED_VGGT_CHECKPOINT).parent.mkdir(parents=True)
+    (tmp_path / FINETUNED_VGGT_CHECKPOINT).touch()
+    assert resolve_ff_checkpoint("auto") == FINETUNED_VGGT_CHECKPOINT
+    assert resolve_ff_checkpoint("released") == RELEASED_VGGT_CHECKPOINT
+    assert resolve_ff_checkpoint("finetuned") == FINETUNED_VGGT_CHECKPOINT
+    assert resolve_ff_checkpoint("my/ckpt.pt") == "my/ckpt.pt"
+    assert resolve_ff_checkpoint("auto", "da3") == "models/DA3-LARGE-1.1"
+    # by content: a covis_head_map makes a checkpoint fine-tuned
+    mapped, plain = tmp_path / "mapped.pt", tmp_path / "plain.pt"
+    torch.save({"model": {"w": torch.zeros(2)}, "covis_head_map": {"x": [0.0, 1.0], "y": [0.0, 1.0]}}, mapped)
+    torch.save({"model": {"w": torch.zeros(2)}}, plain)
+    assert is_finetuned_vggt(str(mapped)) and not is_finetuned_vggt(str(plain))
+    assert not is_finetuned_vggt(str(tmp_path / "missing.pt"))
+    assert is_finetuned_vggt(FINETUNED_VGGT_CHECKPOINT) and not is_finetuned_vggt(RELEASED_VGGT_CHECKPOINT)
+    cfg_file = tmp_path / "c.yaml"
+    cfg_file.write_text("pose_est:\n  ff:\n    min_covis: 0.2\nvggt_finetuned:\n  pose_est:\n    ff:\n      min_covis: 0.1\n")
+    assert load_config(cfg_file, sets=[f"pose_est.ff.checkpoint={mapped}"]).pose_est.ff.min_covis == 0.1
+    assert load_config(cfg_file, sets=[f"pose_est.ff.checkpoint={plain}"]).pose_est.ff.min_covis == 0.2
+    assert load_config(cfg_file, sets=[f"pose_est.ff.checkpoint={plain}"], vggt_finetuned=True).pose_est.ff.min_covis == 0.1
+    assert load_config(cfg_file).pose_est.ff.min_covis == 0.1                      # auto: the installed fine-tuned one
+    # a later file or --set overrides a vggt_finetuned section of an earlier file
+    later = tmp_path / "later.yaml"
+    later.write_text("pose_est:\n  ff:\n    min_covis: 0.3\n")
+    assert load_config(cfg_file, later).pose_est.ff.min_covis == 0.3
+    assert load_config(cfg_file, sets=["pose_est.ff.min_covis=0.4"]).pose_est.ff.min_covis == 0.4
 
 
 def test_map_and_reloc_mono_loads_shipped_defaults():
@@ -272,6 +332,18 @@ def test_map_and_reloc_mono_loads_shipped_defaults():
     cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "mono", "--mono-estimator", "ff",
                                                                  "--obs-max-interval", "5"]))
     assert cfg.pose_est.obs_max_interval_steps == 5
+    # the checkpoint decides the fine-tuned VGGT-Omega's settings; --set still wins
+    from cross.core.config import resolve_ff_checkpoint
+    cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo", "--checkpoint", "finetuned"]))
+    assert cfg.pose_est.ff.covis_source == "auto" and cfg.pose_est.ff.checkpoint.endswith("vggt_omega_cross_1b_512.pt")
+    cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo", "--checkpoint", "released"]))
+    assert cfg.pose_est.ff.covis_source == "geometric" and cfg.pose_est.ff.checkpoint.endswith("vggt_omega_1b_512.pt")
+    cfg = mod.make_config(mod.build_parser().parse_args(
+        base + ["--mode", "stereo", "--set", "pose_est.ff.checkpoint=finetuned", "pose_est.ff.covis_source=min"]))
+    assert cfg.pose_est.ff.covis_source == "min"
+    assert resolve_ff_checkpoint(cfg.pose_est.ff.checkpoint).endswith("vggt_omega_cross_1b_512.pt")   # the estimator resolves it
+    cfg = mod.make_config(mod.build_parser().parse_args(base + ["--mode", "stereo", "--backend", "da3"]))
+    assert cfg.pose_est.ff.checkpoint == "models/DA3-LARGE-1.1" and cfg.pose_est.ff.covis_source == "geometric"
 
 
 def test_config_risks_of_the_left_image():
