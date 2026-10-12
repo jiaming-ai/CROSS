@@ -101,6 +101,8 @@ def test_metric_shared_tokens_inference(tmp_path):
     geometry={'xyz_unit':torch.randn(1,2,8,8,3),'log_scale':torch.tensor([.3])}
     with torch.autocast('cpu',dtype=torch.bfloat16):expected=m.predict(tokens,goal,geometry=geometry).float()
     torch.testing.assert_close(predictor.from_tokens(tokens,goal,geometry=geometry),expected)
+    strided=tokens.transpose(3,4).contiguous().transpose(3,4)
+    torch.testing.assert_close(predictor.from_tokens(strided,goal,geometry=geometry),expected)
 
 
 def test_past_odometry_scale():

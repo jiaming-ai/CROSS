@@ -19,9 +19,9 @@ class TrajectoryPredictor:
     def from_tokens(self,tokens,goal,noise=None,geometry=None):
         """tokens B,L,S,H,W,C in training layer/view order; goal B,2 metres."""
         with torch.autocast(self.device.type,dtype=torch.bfloat16):
-            return self.head.predict(tokens.to(self.device),goal.to(self.device),steps=10,
+            return self.head.predict(tokens.to(self.device).contiguous(),goal.to(self.device),steps=10,
                                      noise=None if noise is None else noise.to(self.device),
-                                     geometry=None if geometry is None else {k:v.to(self.device) for k,v in geometry.items()}).float()
+                                     geometry=None if geometry is None else {k:v.to(self.device).contiguous() for k,v in geometry.items()}).float()
 
     @torch.no_grad()
     def from_aggregator(self,tokens_list,patch_token_start,patch_hw,goal,noise=None,geometry=None):
