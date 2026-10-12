@@ -138,7 +138,7 @@ session runs is chosen by the runner's `--remote-server` / the `cross-edge` clie
 | `rgbd_wheel`, `rgbd_basalt`, `rgbd_dpvo` | `rgbd` / `external`, `basalt`, `visual` |
 | `mono_wheel`, `mono_basalt`, `mono_imu` | `mono` / `external`, `basalt`, `vgio` (`--mono-estimator ff`; implied by `vgio`) |
 | `mono_dpvo` | `mono` / `visual` (the DA3 back end) |
-| `mono_vio` | `mono` / `vio` (`--mono-estimator ff`: VGGT-Omega + DPVO + IMU, a reference system; the old back end's hypothesis behaviour in mapping sessions: ROVER T3 +360 trials, KITTI 10 map worse) |
+| `mono_vio` | `mono` / `vio` (`--mono-estimator ff`: VGGT-Omega + DPVO + IMU, a reference system; merges in mapping sessions and hypothesis 0 updated by every observation: ROVER T3 +360 trials; no adoption in mapping sessions (it broke the KITTI 10 map)) |
 
 Reference combinations without a file of their own use their back end's file: mono DA3 with any odometry `mono_dpvo`,
 mono `ff` with DPVO `mono_wheel`. A mode file includes shared pieces of `configs/base/` (key `include:`, paths
