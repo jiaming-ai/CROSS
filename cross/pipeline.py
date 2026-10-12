@@ -783,6 +783,24 @@ def finish_session_args(args):
     return args
 
 
+def session_mono_config(args, seed=0):
+    """MonoConfig of a runner's mono-mode or VGGT-inertial session (finished session arguments); for the stereo mode's
+    VGGT-inertial odometry only its imu section is used."""
+    import shlex
+    mode, odometry = args.mode, ("external" if args.odometry == "basalt" else args.odometry)
+    mono_estimator = getattr(args, "mono_estimator", "da3") if mode == "mono" else "da3"
+    user = shlex.split(args.mono_args or "")
+    if "--cross-config" in user and (mono_estimator == "ff" or mode == "stereo"):
+        raise ValueError("--mono-args --cross-config configures the mono DA3 back end only; the feed-forward back "
+                         "end and the stereo mode take the SystemConfig from --config / --set")
+    # the imu section of the shipped file and the user's --config files, before the user's --imu-config
+    imu = config_imu_items(shipped_config_files(args) + list(getattr(args, "config", None) or [])) \
+        if odometry in INERTIAL else []
+    extra = imu + user + ["--seed", str(seed)] + (["--imu"] if odometry in INERTIAL else [])
+    return mono_config_from_profile(args.mono_profile,
+                                    args.dpvo_checkpoint if odometry in ("visual",) + INERTIAL else None, extra)
+
+
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):
     """A callable building fresh sessions for the runner's --mode / --odometry (one per map run or query trial)."""
     mode, odometry = args.mode, ("external" if args.odometry == "basalt" else args.odometry)
@@ -797,18 +815,7 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
     confirm_config_risks(risks, accept=getattr(args, "accept_config_risk", False))
     mono_config = vo_config = None
     if mode == "mono" or odometry == "vgio":
-        # the mono mode's configuration; for the stereo mode's VGGT-inertial odometry only its imu section is used
-        import shlex
-        user = shlex.split(args.mono_args or "")
-        if "--cross-config" in user and (mono_estimator == "ff" or mode == "stereo"):
-            raise ValueError("--mono-args --cross-config configures the mono DA3 back end only; the feed-forward back "
-                             "end and the stereo mode take the SystemConfig from --config / --set")
-        # the imu section of the shipped file and the user's --config files, before the user's --imu-config
-        imu = config_imu_items(shipped_config_files(args) + list(getattr(args, "config", None) or [])) \
-            if odometry in INERTIAL else []
-        extra = imu + user + ["--seed", str(seed)] + (["--imu"] if odometry in INERTIAL else [])
-        mono_config = mono_config_from_profile(args.mono_profile,
-                                               args.dpvo_checkpoint if odometry in ("visual",) + INERTIAL else None, extra)
+        mono_config = session_mono_config(args, seed)
     elif odometry == "visual":
         # The back end keeps the odometry noise model of the mode (the depth-scaled DPVO drifts about as much as wheel
         # odometry, ~0.5 % on KITTI 07); the monocular DPVO noise constants (mapping.loop_closure.noise.odom_k_t = 1.0,
