@@ -93,21 +93,3 @@ def test_trail_points_and_head_tokens():
     loss.backward()
     assert m.trail_embed[0].weight.grad.abs().sum() > 0
     assert m.memory(x).shape[1] == 4 * 3 * 4 + 5
-
-
-def test_medoid_sampling_follows_previous_plan():
-    from cross_nav.policy.server import Policy
-    torch.manual_seed(0)
-    pol = object.__new__(Policy)
-    pol.dev, pol.scale, pol.head_pool, pol.steps = torch.device('cpu'), 'mono', 1, 2
-    pol.gen = torch.Generator().manual_seed(0)
-    pol.head = TrajectoryHead(token_dim=16, width=24, heads=4, layers=1, source='last', horizon=16, action_scale=8.,
-                              goal_encoding='polar', mode='flow').eval()
-    feat = {'tokens': torch.randn(2, 4, 3, 4, 16), 'xyz': torch.randn(2, 4, 3, 4, 3), 'log_scale': torch.zeros(2),
-            'pred_chord': torch.ones(2, 4)}
-    goal, hist = torch.tensor([[5., 1.], [2., -1.]]), torch.zeros(2, 4)
-    one = pol.predict(feat, goal, hist, samples=6)
-    assert one.shape == (2, 16, 2) and torch.isfinite(one).all()
-    prev = torch.full((2, 16, 2), float('nan')); prev[0] = 50.          # far plan: commitment cannot pick a closer sample
-    two = pol.predict(feat, goal, hist, samples=6, prev=prev, commit=1.)
-    assert two.shape == (2, 16, 2) and torch.isfinite(two).all()

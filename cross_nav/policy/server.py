@@ -24,7 +24,6 @@ from torch.nn import functional as F
 
 from .backbone import FrozenMetricTokens, sha256
 from .head import TrajectoryHead
-from .robot import to_odom_2d, to_robot_2d
 from .sim import wire
 
 
@@ -89,21 +88,7 @@ class Policy:
         return out
 
     @torch.no_grad()
-    def predict(self, feat, goal, hist_chord, trail=None, samples=1, prev=None, commit=0.):
-        """Paths (B, 16, 2). With samples > 1 (flow heads), draw that many paths per window and keep the medoid (least
-        mean distance to the others: the main mode, not a random draw); `prev` (B, 16, 2) previous plans in the current
-        robot frame (NaN rows: none) add `commit` x their mean distance to the sample's first 4 m, so the robot keeps
-        to one side of an obstacle instead of switching between modes from frame to frame."""
-        if samples > 1 and self.head.mode == 'flow':
-            B, K = goal.shape[0], samples
-            rep = lambda x: None if x is None else x.repeat_interleave(K, 0)
-            paths = self.predict({k: rep(v) for k, v in feat.items()}, rep(goal), rep(hist_chord), rep(trail)).view(B, K, -1, 2)
-            score = torch.cdist(paths.flatten(2), paths.flatten(2)).mean(-1) / paths.shape[2] ** .5
-            if prev is not None and commit > 0:
-                near = paths[:, :, :8]
-                d = torch.cdist(near.flatten(0, 1), prev.repeat_interleave(K, 0)).min(-1).values.mean(-1).view(B, K)
-                score = score + commit * torch.nan_to_num(d, nan=0.)
-            return paths[torch.arange(B, device=paths.device), score.argmin(1)]
+    def predict(self, feat, goal, hist_chord, trail=None):
         tok, xyz = feat['tokens'], feat['xyz']
         if self.head_pool > 1:
             k = self.head_pool
@@ -128,8 +113,6 @@ def main():
     p.add_argument('--record'); p.add_argument('--tag', default='rec'); p.add_argument('--shard', type=int, default=512)
     p.add_argument('--grid', type=int, nargs=2, default=(12, 16)); p.add_argument('--scale', choices=['mono', 'odometry'], default='mono')
     p.add_argument('--max-batch', type=int, default=32); p.add_argument('--flow-steps', type=int, default=10)
-    p.add_argument('--samples', type=int, default=1, help='flow paths per window; the medoid is followed')
-    p.add_argument('--commit', type=float, default=0., help='weight of the distance to the previous plan (needs --samples > 1)')
     p.add_argument('--seed', type=int, default=0); p.add_argument('--workers', type=int, default=0,
                                                                   help='exit after this many workers have connected and left')
     a = p.parse_args()
@@ -144,7 +127,7 @@ def main():
         os.unlink(a.socket)
     listener = Listener(a.socket, family='AF_UNIX')
     listener._listener._socket.setblocking(False)
-    conns, frames, odoms, plans, seen, done = [], {}, {}, {}, 0, 0      # plans: last path per episode, odometry frame
+    conns, frames, odoms, seen, done = [], {}, {}, 0, 0
     info = {'head': a.head, 'head_cfg': policy.head.cfg if policy.head else None, 'grid': list(policy.grid), 'scale': a.scale,
             'history_m': list(bev.history_m) if bev else [0., .5, 1., 2.], 'bev': a.bev,
             'history_rule': getattr(bev, 'history_rule', None) if bev else None}
@@ -173,7 +156,7 @@ def main():
             if cmd == 'info':
                 wire.send(c, info)
             elif cmd == 'end':
-                frames.pop(m['ep'], None); odoms.pop(m['ep'], None); plans.pop(m['ep'], None)
+                frames.pop(m['ep'], None); odoms.pop(m['ep'], None)
                 if bev is not None:
                     bev.end_episode(m['ep'])
                 wire.send(c, {})
@@ -211,18 +194,7 @@ def main():
                     t_bev[k] = t_bev.get(k, 0.) + v
             else:
                 feat = policy(imgs, hist)
-                paths = None
-                if policy.head is not None and any(m['predict'] for _, m in part):
-                    poses = [odoms.get(m['ep'], {}).get(m['frame_idx']) for _, m in part]
-                    prev = np.full((len(part), 16, 2), np.nan, np.float32)
-                    for j, (_, m) in enumerate(part):
-                        if poses[j] is not None and m['ep'] in plans:
-                            prev[j] = to_robot_2d(plans[m['ep']], poses[j])
-                    paths = policy.predict(feat, goal, hist, torch.from_numpy(trails).cuda(), a.samples,
-                                           torch.from_numpy(prev).cuda(), a.commit).cpu().numpy()
-                    for j, (_, m) in enumerate(part):
-                        if poses[j] is not None and m.get('predict'):
-                            plans[m['ep']] = to_odom_2d(paths[j], poses[j])
+                paths = policy.predict(feat, goal, hist, torch.from_numpy(trails).cuda()).cpu().numpy() if policy.head is not None and any(m['predict'] for _, m in part) else None
             if writer is not None and feat is not None:
                 cpu = {k: v.cpu() for k, v in feat.items()}
                 for j, (_, m) in enumerate(part):
