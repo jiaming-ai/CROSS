@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 RADIUS, HEIGHT, MAX_CLIMB, CELL, CAM_H, W, H, HFOV = .18, .9, .2, .05, .8, 512, 384, 90.
-EXPERT_RADIUS = .3          # expert paths keep ~12 cm clearance beyond the robot radius
+EXPERT_RADII = (.3, .24)    # expert clearance ladder: ~12 cm, else ~6 cm beyond the robot radius (narrow doorways)
 OUTDOOR = {'outdoor', 'porch/terrace/deck/driveway', 'balcony'}
 
 
@@ -59,7 +59,7 @@ def make_sim(root, scene, gpu=0, navmesh_dir=None, depth=False):
     sim = habitat_sim.Simulator(habitat_sim.Configuration(sc, [agent]))
     open_doors(sim, root)
     navmesh(sim, sim.pathfinder, scene, RADIUS, navmesh_dir)
-    sim.expert_pathfinder = navmesh(sim, habitat_sim.nav.PathFinder(), scene, EXPERT_RADIUS, navmesh_dir)
+    sim.expert_pathfinders = [navmesh(sim, habitat_sim.nav.PathFinder(), scene, r, navmesh_dir) for r in EXPERT_RADII]
     return sim
 
 
@@ -84,23 +84,28 @@ def navmesh(sim, pf, scene, radius, navmesh_dir=None):
 
 
 def expert_path(sim, pos, goal):
-    """Shortest path with clearance: planned on the EXPERT_RADIUS navmesh between the points snapped onto it, joined
-    to the true start and goal; the robot-radius path when the inflated one does not connect them (narrow passages).
+    """Shortest path with clearance, for the expert labels.
+
+    Planned on the most inflated navmesh of EXPERT_RADII on which the robot (snapped at most 0.6 m) and the goal's
+    nearest point (any distance up to 1 m; the last stretch to a goal beside a wall follows the robot-radius navmesh)
+    are connected, without a detour longer than 2x the robot-radius geodesic + 3 m; the robot-radius path otherwise.
     Returns (geodesic distance on the robot navmesh, (N,3) path points or None)."""
     d, pts = geodesic(sim.pathfinder, pos, goal)
     if pts is None:
         return d, None
-    pf2 = getattr(sim, 'expert_pathfinder', None)
-    if pf2 is None:
-        return d, pts
-    a, b = np.asarray(pf2.snap_point(np.asarray(pos, np.float32))), np.asarray(pf2.snap_point(np.asarray(goal, np.float32)))
-    if not (np.isfinite(a).all() and np.isfinite(b).all()) or np.linalg.norm((a - pos)[[0, 2]]) > .35 \
-            or np.linalg.norm((b - goal)[[0, 2]]) > .35:
-        return d, pts
-    _, inner = geodesic(pf2, a, b)
-    if inner is None:
-        return d, pts
-    return d, np.vstack(([pos], inner, [goal]))
+    for pf2 in getattr(sim, 'expert_pathfinders', []):
+        a, b = np.asarray(pf2.snap_point(np.asarray(pos, np.float32))), np.asarray(pf2.snap_point(np.asarray(goal, np.float32)))
+        if not (np.isfinite(a).all() and np.isfinite(b).all()) or np.linalg.norm((a - pos)[[0, 2]]) > .6 \
+                or np.linalg.norm((b - goal)[[0, 2]]) > 1.:
+            continue
+        d2, inner = geodesic(pf2, a, b)
+        if inner is None or d2 > 2. * d + 3.:
+            continue
+        _, tail = geodesic(sim.pathfinder, b, goal)
+        if tail is None:
+            continue
+        return d, np.vstack(([pos], inner, tail[1:]))
+    return d, pts
 
 
 class Rooms:

@@ -161,7 +161,7 @@ def main():
     p.add_argument('--navmesh-dir'); p.add_argument('--record', action='store_true'); p.add_argument('--record-prob', type=float, default=1.)
     p.add_argument('--beta', type=float, default=.3); p.add_argument('--max-steps', type=int, default=500)
     p.add_argument('--horizon', type=int, default=16); p.add_argument('--spacing', type=float, default=.5)
-    p.add_argument('--lookahead', type=float, default=.5); p.add_argument('--step-m', type=float, default=.25)
+    p.add_argument('--lookahead', type=float, default=.4); p.add_argument('--step-m', type=float, default=.25)
     p.add_argument('--tag', default='run'); p.add_argument('--seed', type=int, default=0); p.add_argument('--limit', type=int, default=0)
     p.add_argument('--camera', choices=['nominal', 'random'], default='nominal')
     p.add_argument('--viz-dir'); p.add_argument('--viz-every', type=int, default=0, help='save every k-th episode for the viewer')

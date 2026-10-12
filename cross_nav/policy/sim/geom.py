@@ -72,7 +72,7 @@ def window_ids(cumdist, yaw, rule):
     return [kf[max(0, len(kf) - 1 - lag)] for lag in rule['lags']]
 
 
-def control(path, lookahead=.5, step=.25, max_turn=math.radians(45), turn_only=math.radians(60), align=math.radians(30)):
+def control(path, lookahead=.4, step=.25, max_turn=math.radians(45), turn_only=math.radians(60), align=math.radians(30)):
     """One motion command (turn radians, forward metres) that follows a (forward, left) path.
 
     Aim at the path point `lookahead` metres along it (the end when shorter); turn at most `max_turn`, then move
