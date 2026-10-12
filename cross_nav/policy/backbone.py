@@ -50,9 +50,10 @@ def anchor_points(depth, extrinsics, intrinsics, grid=8):
     Pixel coordinates below match adaptive average pooling cell centres.
     """
     B,S,H,W=depth.shape
-    d=F.adaptive_avg_pool2d(depth.reshape(B*S,1,H,W),(grid,grid)).reshape(B,S,grid,grid)
-    yy,xx=torch.meshgrid((torch.arange(grid,device=depth.device)+.5)*H/grid-.5,
-                         (torch.arange(grid,device=depth.device)+.5)*W/grid-.5,indexing='ij')
+    gh,gw=(grid,grid) if isinstance(grid,int) else grid
+    d=F.adaptive_avg_pool2d(depth.reshape(B*S,1,H,W),(gh,gw)).reshape(B,S,gh,gw)
+    yy,xx=torch.meshgrid((torch.arange(gh,device=depth.device)+.5)*H/gh-.5,
+                         (torch.arange(gw,device=depth.device)+.5)*W/gw-.5,indexing='ij')
     K=intrinsics
     xyz=torch.stack(((xx-K[:,:,0,2,None,None])/K[:,:,0,0,None,None]*d,
                      (yy-K[:,:,1,2,None,None])/K[:,:,1,1,None,None]*d,d),-1)
@@ -85,7 +86,7 @@ class FrozenMetricTokens(FrozenTokens):
         finally:hook.remove()
         def grid(t,size):
             t=t[:,:,pts:].reshape(B*S,h,w,-1).permute(0,3,1,2)
-            if size:t=F.adaptive_avg_pool2d(t,(size,size))
+            if size:t=F.adaptive_avg_pool2d(t,(size,size) if isinstance(size,int) else tuple(size))
             hh,ww=t.shape[-2:]
             return t.permute(0,2,3,1).reshape(B,S,hh,ww,-1)
         tokens=torch.stack([grid(layers[i],pool) for i in (4,11,17,23)],1)

@@ -13,12 +13,15 @@ from torch.nn import functional as F
 
 class TrajectoryHead(nn.Module):
     def __init__(self, token_dim=2048, width=192, layers=4, heads=6, horizon=8,
-                 source="multi", compression=0, mode="regression", max_views=8, geometry="none", action_scale=4.):
+                 source="multi", compression=0, mode="regression", max_views=8, geometry="none", action_scale=4., goal_encoding="linear"):
         super().__init__()
         if source not in ("last", "multi", "goal") or mode not in ("regression", "flow"):
             raise ValueError("invalid source or policy mode")
         self.cfg = dict(token_dim=token_dim, width=width, layers=layers, heads=heads,
-                        horizon=horizon, source=source, compression=compression, mode=mode, max_views=max_views, geometry=geometry, action_scale=action_scale)
+                        horizon=horizon, source=source, compression=compression, mode=mode, max_views=max_views, geometry=geometry, action_scale=action_scale,
+                        goal_encoding=goal_encoding)
+        if goal_encoding not in ("linear", "polar"): raise ValueError(goal_encoding)
+        self.goal_encoding = goal_encoding
         self.source, self.mode, self.horizon = source, mode, horizon
         if geometry not in ("none","scalar","metric"):raise ValueError(geometry)
         self.geometry,self.action_scale=geometry,action_scale
@@ -29,7 +32,7 @@ class TrajectoryHead(nn.Module):
         self.mix = nn.Parameter(torch.zeros(len(self.proj)))
         self.xy = nn.Linear(2, width)
         self.view = nn.Embedding(max_views, width)
-        self.goal = nn.Sequential(nn.Linear(2, width), nn.SiLU(), nn.Linear(width, width))
+        self.goal = nn.Sequential(nn.Linear(2 if goal_encoding == "linear" else 4, width), nn.SiLU(), nn.Linear(width, width))
         self.query = nn.Parameter(torch.randn(1, horizon, width) * .02)
         self.action = nn.Linear(2, width)
         self.time = nn.Sequential(nn.Linear(32, width), nn.SiLU(), nn.Linear(width, width))
@@ -66,8 +69,15 @@ class TrajectoryHead(nn.Module):
             z = q + self.resampler(q,z,z,need_weights=False)[0]
         return z
 
+    def encode_goal(self, goal):
+        if self.goal_encoding == "linear":
+            return goal / 8.
+        # polar: direction, log distance and the distance clipped to the path horizon (far goals stay in range)
+        d = goal.float().norm(dim=-1, keepdim=True)
+        return torch.cat((goal / d.clamp_min(1e-3), torch.log1p(d), d.clamp(max=self.action_scale) / self.action_scale), -1)
+
     def decode(self, memory, goal, x=None, t=None):
-        q = self.query.expand(goal.shape[0],-1,-1) + self.goal(goal / 8.)[:,None]
+        q = self.query.expand(goal.shape[0],-1,-1) + self.goal(self.encode_goal(goal))[:,None]
         if self.mode == "flow":
             if x is None or t is None:
                 raise ValueError("flow decoding requires state and time")

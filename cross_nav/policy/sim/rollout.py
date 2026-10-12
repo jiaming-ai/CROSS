@@ -1,0 +1,194 @@
+"""Closed-loop point-goal rollouts: expert data collection, policy evaluation and DAgger (habitat environment).
+
+    python -m cross_nav.policy.sim.rollout --hssd ROOT --episodes eps.json --socket /tmp/nav0.sock \
+        --mode expert|policy|dagger --out results.jsonl [--shard i n] [--record] [--beta 0.3] [--gpu 1]
+
+Each step renders the current view, sends it with the causal window (frames at 0 / 0.5 / 1 / 2 m of past travel),
+the robot-frame goal and the expert label (navmesh shortest path from the current position, 16 points at 0.5 m) to
+the policy server, then executes one command of the waypoint controller on the followed path:
+
+* expert  the expert path, with per-episode DART noise (turn/forward noise, random excursions); labels stay clean
+* policy  the predicted path
+* dagger  the predicted path, the expert path with probability beta per step
+
+The robot slides along the navmesh boundary (Habitat's try_step); a step whose result differs from the commanded one
+by more than 2 cm counts as a collision. Success: within 0.2 m of the goal (the goal vector is known, so arrival
+stops the robot) within --max-steps. Results: one JSON line per episode (success, SPL, collisions, path).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import time
+import zlib
+from multiprocessing.connection import Client
+from pathlib import Path
+
+import numpy as np
+
+from . import wire
+from .geom import control, history_ids, resample, spl, to_robot
+from .hab import camera_sample, expert_path, geodesic, make_sim, render, set_hfov
+
+SUCCESS_M = .2
+
+
+def noise_profile(rng, mode):
+    if mode != 'expert':
+        return {'turn': 0., 'fwd': 0., 'excursion': 0.}
+    level = rng.choice([0., .1, .2, .35])
+    return {'turn': float(level), 'fwd': float(level * .3), 'excursion': float(rng.choice([0., .02, .05]))}
+
+
+def run_episode(sim, conn, ep, a, rng, viz=None):
+    pf = sim.pathfinder
+    pos = np.asarray(ep['start'], np.float64)
+    yaw = float(ep['yaw'])
+    goal = np.asarray(ep['goal'], np.float64)
+    uid = f"{a.tag}:{ep['id']}"
+    noise = noise_profile(rng, a.mode)
+    camera = camera_sample(rng, a.camera)
+    set_hfov(sim, camera['hfov'])
+    frames_cum, cams, traj = [], [], [pos[[0, 2]].tolist()]
+    cum, travelled, collisions, excursion = 0., 0., 0, 0
+    success, steps, min_geo = False, 0, ep['geodesic']
+    for step in range(a.max_steps):
+        rgb = np.ascontiguousarray(render(sim, pos, yaw, camera=camera))
+        frames_cum.append(cum); cams.append(pos + np.array([0., camera['height'], 0.]))
+        ids = history_ids(frames_cum, a.history_m)
+        goal_rel = to_robot(goal[[0, 2]], pos[[0, 2]], yaw)
+        d_geo, pts = expert_path(sim, pos, goal)
+        label = None
+        if pts is not None:
+            label = resample(to_robot(pts[:, [0, 2]], pos[[0, 2]], yaw), a.horizon, a.spacing)
+            min_geo = min(min_geo, d_geo)
+        use_expert = a.mode == 'expert' or (a.mode == 'dagger' and rng.random() < a.beta)
+        record = a.record and label is not None and rng.random() < a.record_prob
+        hist = np.array([np.linalg.norm(cams[-1] - cams[i]) for i in ids], np.float32)
+        msg = {'cmd': 'step', 'ep': uid, 'frame_idx': len(frames_cum) - 1, 'frame': rgb, 'window': ids,
+               'goal': goal_rel.astype(np.float32), 'hist_chord': hist, 'label': None if label is None else label.astype(np.float32),
+               'record': record, 'predict': not use_expert, 'step': step, 'expert_dist': d_geo, 'debug': viz is not None,
+               'meta': {'ep': ep['id'], 'scene': ep['scene'], 'mode': a.mode, 'tag': a.tag, 'expert_step': bool(use_expert),
+                        'camera': camera, 'dataset': 'hssd_sim'}}
+        wire.send(conn, msg)
+        reply = wire.recv(conn)
+        if use_expert:
+            if label is None:
+                break
+            path = label
+        else:
+            path = reply['path']
+        if viz is not None:
+            viz.append({'rgb': rgb, 'pos': pos.copy(), 'yaw': yaw, 'goal_rel': goal_rel, 'path': np.asarray(path, np.float32),
+                        'expert': label, 'window': ids, 'expert_step': bool(use_expert), 'debug': reply.get('debug')})
+        turn, fwd = control(path, a.lookahead, a.step_m)
+        if a.mode == 'expert':
+            if excursion == 0 and noise['excursion'] and rng.random() < noise['excursion']:
+                # off-route excursion: one sharp turn, then a few straight steps; the labels keep the expert path
+                excursion, turn = int(rng.integers(3, 9)), float(rng.choice([-1, 1]) * rng.uniform(.3, 1.2))
+                fwd = 0.
+            elif excursion > 0:
+                excursion -= 1
+                turn, fwd = 0., a.step_m
+            turn += rng.normal(0, noise['turn']); fwd = max(0., fwd + rng.normal(0, noise['fwd']) * a.step_m)
+        yaw = (yaw + turn + math.pi) % (2 * math.pi) - math.pi
+        if fwd > 0:
+            f = np.array([-math.sin(yaw), 0., -math.cos(yaw)])
+            want = pos + fwd * f
+            new = np.asarray(pf.try_step(pos.astype(np.float32), want.astype(np.float32)), np.float64)
+            if np.linalg.norm((new - want)[[0, 2]]) > .02:
+                collisions += 1
+            moved = float(np.linalg.norm((new - pos)[[0, 2]]))
+            travelled += moved; cum += moved; pos = new
+            traj.append(pos[[0, 2]].round(3).tolist())
+        steps = step + 1
+        if np.linalg.norm((goal - pos)[[0, 2]]) < SUCCESS_M and abs(goal[1] - pos[1]) < .5:
+            success = True
+            break
+    wire.send(conn, {'cmd': 'end', 'ep': uid}); wire.recv(conn)
+    final_geo, _ = geodesic(pf, pos, goal)
+    return {'id': ep['id'], 'scene': ep['scene'], 'geodesic': ep['geodesic'], 'euclidean': ep['euclidean'], 'success': success,
+            'spl': spl(success, ep['geodesic'], travelled), 'steps': steps, 'travelled': travelled, 'collisions': collisions,
+            'collision_free': success and collisions == 0, 'final_geo': final_geo, 'min_geo': min_geo, 'mode': a.mode,
+            'noise': noise, 'camera': camera, 'trajectory': traj[::2] + [traj[-1]]}
+
+
+def save_viz(path, ep, result, steps, sim=None):
+    """Per-step record of one episode for the viewer: JPEG frames, poses, followed / expert paths, policy debug maps."""
+    import io
+    from PIL import Image
+    jpg = []
+    for s in steps:
+        b = io.BytesIO(); Image.fromarray(s['rgb']).save(b, 'JPEG', quality=85); jpg.append(np.frombuffer(b.getvalue(), np.uint8))
+    debug = {}
+    for k in (steps[0]['debug'] or {}):
+        debug['debug_' + k] = np.stack([s['debug'][k] for s in steps])
+    np.savez_compressed(path, jpg=np.array(jpg, dtype=object), pos=np.stack([s['pos'] for s in steps]),
+                        yaw=np.array([s['yaw'] for s in steps]), goal_rel=np.stack([s['goal_rel'] for s in steps]),
+                        path=np.stack([s['path'] for s in steps]),
+                        expert=np.stack([s['expert'] if s['expert'] is not None else np.full_like(s['path'], np.nan) for s in steps]),
+                        window=np.array([s['window'] for s in steps]), expert_step=np.array([s['expert_step'] for s in steps]),
+                        goal=np.asarray(ep['goal']), start=np.asarray(ep['start']), result=json.dumps(result), **debug, **topdown(sim, ep))
+
+
+def topdown(sim, ep, mpp=.05):
+    """Navigable top-down map at the start height: rows follow +z from bounds lower z, columns +x from lower x."""
+    if sim is None:
+        return {}
+    lo, _ = sim.pathfinder.get_bounds()
+    grid = np.asarray(sim.pathfinder.get_topdown_view(mpp, float(ep['start'][1])), dtype=bool)
+    return {'topdown': np.packbits(grid, axis=1), 'topdown_shape': np.array(grid.shape), 'topdown_origin_xz': np.array([lo[0], lo[2]]),
+            'topdown_mpp': np.float32(mpp)}
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--hssd', required=True); p.add_argument('--episodes', required=True); p.add_argument('--socket', required=True)
+    p.add_argument('--mode', choices=['expert', 'policy', 'dagger'], required=True); p.add_argument('--out', required=True)
+    p.add_argument('--shard', type=int, nargs=2, default=(0, 1)); p.add_argument('--gpu', type=int, default=0)
+    p.add_argument('--navmesh-dir'); p.add_argument('--record', action='store_true'); p.add_argument('--record-prob', type=float, default=1.)
+    p.add_argument('--beta', type=float, default=.3); p.add_argument('--max-steps', type=int, default=500)
+    p.add_argument('--horizon', type=int, default=16); p.add_argument('--spacing', type=float, default=.5)
+    p.add_argument('--lookahead', type=float, default=.75); p.add_argument('--step-m', type=float, default=.25)
+    p.add_argument('--tag', default='run'); p.add_argument('--seed', type=int, default=0); p.add_argument('--limit', type=int, default=0)
+    p.add_argument('--camera', choices=['nominal', 'random'], default='nominal')
+    p.add_argument('--viz-dir'); p.add_argument('--viz-every', type=int, default=0, help='save every k-th episode for the viewer')
+    a = p.parse_args()
+    eps = json.loads(Path(a.episodes).read_text())['episodes']
+    i, n = a.shard
+    eps = [e for k, e in enumerate(eps) if k % n == i]
+    if a.limit:
+        eps = eps[:a.limit]
+    out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
+    done = set()
+    if out.exists():
+        done = {json.loads(l)['id'] for l in out.read_text().splitlines() if l.strip()}
+    eps = sorted((e for e in eps if e['id'] not in done), key=lambda e: e['scene'])
+    conn = Client(a.socket, family='AF_UNIX')
+    wire.send(conn, {'cmd': 'info'})
+    info = wire.recv(conn)
+    a.history_m = tuple(info['history_m'])
+    sim, scene, t0 = None, None, time.time()
+    with out.open('a') as f:
+        for k, ep in enumerate(eps):
+            if ep['scene'] != scene:
+                if sim is not None:
+                    sim.close()
+                sim, scene = make_sim(a.hssd, ep['scene'], a.gpu, a.navmesh_dir), ep['scene']
+            rng = np.random.default_rng((zlib.crc32(f"{a.tag}:{ep['id']}".encode()) + a.seed) % 2**31)
+            viz = [] if a.viz_dir and a.viz_every and zlib.crc32(ep['id'].encode()) % a.viz_every == 0 else None
+            r = run_episode(sim, conn, ep, a, rng, viz)
+            if viz:
+                Path(a.viz_dir).mkdir(parents=True, exist_ok=True)
+                save_viz(Path(a.viz_dir) / f"{ep['id'].replace(':', '_')}.npz", ep, r, viz, sim)
+            f.write(json.dumps(r) + '\n'); f.flush()
+            if k % 10 == 0:
+                print(json.dumps({'done': k + 1, 'of': len(eps), 'seconds': round(time.time() - t0), 'success': r['success']}), flush=True)
+    if sim is not None:
+        sim.close()
+    conn.close()
+
+
+if __name__ == '__main__':
+    main()
