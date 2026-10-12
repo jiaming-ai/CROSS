@@ -275,7 +275,12 @@ python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/h
 ```
 
 The map is written to `--out` (`map.pkl`, `map_meta.json`); `--skip-map` reuses it for another query and `--skip-reloc`
-only maps. Another query in the same scene is another call with the same `--out`/`--skip-map`. In code, use
+only maps. Another query in the same scene is another call with the same `--out`/`--skip-map`. `--extend-map DIR` makes
+the map run a second session in the map of an earlier run (`DIR/map.pkl` + `map_meta.json`): it relocalizes, adds
+keyframes where the map has none, and saves the extended map with a `map_meta.json` covering every keyframe (session in
+`kf_session`), so queries in it are scored like in any map; `map_meta.json` "extension" scores the new keyframes in the
+loaded map's ground-truth alignment (ATE, how far the loaded keyframes moved, fraction of frames localized). With
+`--map-start/--map-end` the first session can map part of a route. In code, use
 `System.save_map(path)` / `System.load_map(path)`; `examples/multi_session.py` runs several sequences through one
 `System`, and `examples/planner.py` loads a map and plans paths on it.
 
@@ -285,10 +290,25 @@ map references with their relative pose in the map anchor the metric scale of ea
 OpenLORIS, ROVER and KITTI 07: relocalization equal to a stereo query in the same map or better, and with IMU the
 query inherits the better stereo map (scale within 0.8 % on ROVER vs 2 % in a mono map). Also using the right images
 stored with a stereo map's keyframes as extra anchors changed nothing measurable, so it is not done (tag
-`opt-mono-right-anchors`). Loading checks the map's camera (stored image size and intrinsics after the mode's resize /
-crop) against the session's and fails with a clear message on another camera or, in a stereo session, another stereo
-rig. With the benchmark harness: `benchmark/run.py --system cross_mono_ff_odom --setup stereo --task query --map-from
+`opt-mono-right-anchors`). With the benchmark harness: `benchmark/run.py --system cross_mono_ff_odom --setup stereo --task query --map-from
 cross_stereo ...` (the query relocalizes in `cross_stereo`'s map of the same run).
+
+**Another camera.** A map made with one camera can be relocalized in and extended with another (another robot,
+another lens, another stereo rig), in the feed-forward modes (stereo, mono with `--mono-estimator ff`). The map keeps
+a camera table (`save_map` "cameras": the intrinsics of the stored images and the stereo rig of each camera) and every
+keyframe the id of the camera that took it. Loading a map: the session's images are made at the size of the stored
+ones (the largest centred crop with their aspect ratio, resized; a wider camera loses the sides), its camera gets an
+id (the same camera within 1 % of the intrinsics and the rig is the same id), and in every forward pass each
+reference gets the principal-point correction of its own camera and, as a scale anchor, its stored right image with
+its own camera's rig. The model predicts each view's field of view, so different focal lengths need nothing else.
+Not supported: PnP (the RGB-D mode) and the DA3 mono back end (they refuse another camera), and with `--odometry vgio`
+a camera whose images need another size than the map's. Maps saved before the table load as one camera. In simulated
+tests (four scenes; cameras with 90°, 75° and 60° field of view, 0.30 / 0.12 / 0.20 m baselines, a shifted principal
+point and another height) a stereo session with the other camera relocalized as often as one with the map's camera,
+and after an extension with the other camera, queries in the extended area localized almost as well as in the
+original one (recall at 1 m 0.93-0.99 against 0.95-0.99). Ignoring the camera ids placed the new keyframes worse (one
+scene: recall at 1 m in the extended area 0.81 instead of 0.95). Untested: the learned scale of the mono modes,
+whose scale head takes the session camera's focal length for the whole pass.
 
 **Map files.** A map is `map.pkl` (the graph: keyframe poses, edges, metadata) plus the directory `map.pkl.store/`
 next to it (keyframe images and retrieval descriptors); copy or move both together. Keyframe images of a loaded map

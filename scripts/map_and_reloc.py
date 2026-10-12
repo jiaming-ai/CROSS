@@ -9,9 +9,18 @@ scene) and record, for every processed frame, the tracked pose of component 0 an
 the best hypothesis.  The map frame is aligned to ground truth with the permanent
 keyframes of the map (SE(3) Umeyama), so query errors are measured in metres/degrees.
 
+Map extension (--extend-map DIR): instead of mapping from scratch, the map session runs in the map of DIR (map.pkl +
+map_meta.json of an earlier run): it relocalizes in that map and adds keyframes where the map has none.  The extended
+map and a map_meta.json covering every keyframe (the loaded ones with their ground truth from DIR, the new ones with
+theirs; `kf_session` gives each keyframe's session) are written to --out, so query sessions in it are scored like in any
+map.  map_meta.json "extension" scores the new session in the loaded map's ground-truth alignment (no re-alignment).
+
 Usage:
   python scripts/map_and_reloc.py --map data/vkitti2/Scene01/clone --query data/vkitti2/Scene01/sunset \
       --out outputs/reloc/vk01_sunset_ff          # stereo mode (default); --mode <mode file> for another mode
+  # map the first 80 frames, then extend that map with another session (e.g. another camera), then query
+  python scripts/map_and_reloc.py --map sim/classroom/map --query sim/classroom/map --map-end 80 --skip-reloc --out m0
+  python scripts/map_and_reloc.py --map sim/classroom/map__camB --query sim/classroom/reverse --extend-map m0 --out m1
 """
 
 from __future__ import annotations
@@ -56,6 +65,25 @@ def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
     T[:3, :3] = R
     T[:3, 3] = mu_d - R @ mu_s
     return T
+
+
+def seq_baseline(root, requested):
+    """Stereo baseline to load for a sequence folder: the requested one, else the folder's own (SimChange: `right/`, the
+    renderer's link to its first baseline; a copy without that link falls back to calib.json's baseline, or the first
+    rendered one) so that sequences rendered with different stereo rigs each load their own pair."""
+    if requested is not None:
+        return requested
+    root = Path(root)
+    if (root / "right").is_dir() or not (root / "calib.json").is_file():
+        return None
+    calib = json.loads((root / "calib.json").read_text())
+    dirs = calib.get("right_dirs") or {}
+    if not dirs:
+        return None
+    b = calib.get("baseline")
+    key = f"{float(b):.2f}" if b is not None and f"{float(b):.2f}" in dirs else next(iter(dirs))
+    logger.info(f"{root}: no right/ folder, stereo baseline {key} from calib.json")
+    return float(key)
 
 
 def estimator_of(mode: str) -> str:
@@ -174,11 +202,23 @@ def step_time_stats(dts) -> dict:
 
 
 def run_mapping(args, out: Path):
+    ext_dir = Path(args.extend_map) if getattr(args, "extend_map", None) else None
+    seed = args.seed
+    if ext_dir is not None:      # the extension session's odometry noise differs from the map's (seed) and queries' (+1)
+        seed = args.extend_seed if args.extend_seed is not None else (None if args.seed is None else args.seed + 2)
     ds = StereoSequenceLoader(args.map, depth_source=depth_source(args),
-                              snr=args.snr, baseline=args.baseline, seed=args.seed, **odom_kwargs(args))
+                              snr=args.snr, baseline=seq_baseline(args.map, args.baseline), seed=seed, **odom_kwargs(args))
     from cross.dataloader.geo import attach
     attach(ds, args.map, args, query=False)
     system = new_session(args, ds, args.seed)
+    ext = None
+    if ext_dir is not None:
+        from reloc_metrics import is_localized
+        system.load_map(ext_dir / "map.pkl")
+        ext = {"meta": json.loads((ext_dir / "map_meta.json").read_text()),
+               "loaded": set(int(k) for k in system.hypothesis_manager.nodes), "rows": []}
+        T_old = np.asarray(ext["meta"]["T_gt_from_map"])
+        logger.info(f"Extending the map of {ext_dir} ({len(ext['loaded'])} keyframes)")
     recorder = None
     if getattr(args, "dump_obs", False):          # every observation of the mapping run (offline back-end studies)
         from lc.obs_recorder import ObsRecorder
@@ -189,6 +229,8 @@ def run_mapping(args, out: Path):
     last_kf = None
     step_times = []
     kf_frame = {}            # frame index of every keyframe created (temporary ones too: T1 completeness)
+    if ext is not None:
+        last_kf = system.last_added_kf_id
     online = [] if getattr(args, "online_poses", False) else None
     step_log = open(out / "steps.csv", "w") if getattr(args, "step_log", False) else None
     if step_log is not None:
@@ -216,16 +258,27 @@ def run_mapping(args, out: Path):
             fp = getattr(system, "frontend_pose", None)
             online.append((d["world_pose"], system.belief(pose_to_mat)[0], None if fp is None else np.array(fp)))
         gts.append(d["world_pose"])
+        if ext is not None:      # the extension session's pose in the loaded map's ground-truth alignment
+            loc = is_localized(system)
+            rec = {"frame": args.map_start + idx * args.stride, "localized": bool(loc), "t_err": None, "r_err": None}
+            if loc:
+                err = invert_poses(np.asarray(d["world_pose"])) @ T_old @ system.belief(pose_to_mat)[0]
+                rec["t_err"] = float(np.linalg.norm(err[:3, 3]))
+                rec["r_err"] = float(rotation_angle_deg(err[:3, :3]))
+            ext["rows"].append(rec)
         if mem_trace is not None and idx % args.mem_trace == 0:
             mem_trace.append(_memory_sample(idx, system))
         if system.last_added_kf_id != last_kf and system.last_added_kf_id is not None:
             last_kf = system.last_added_kf_id
-            kf_gt[int(last_kf)] = d["world_pose"].tolist()
-            kf_frame[int(last_kf)] = args.map_start + idx * args.stride
+            if ext is None or int(last_kf) not in ext["loaded"]:
+                kf_gt[int(last_kf)] = d["world_pose"].tolist()
+                kf_frame[int(last_kf)] = args.map_start + idx * args.stride
     elapsed = time.time() - t0
     if step_log is not None:
         step_log.close()
     frames = system.keyframe_frames() if hasattr(system, "keyframe_frames") else None
+    if frames is not None and ext is not None:
+        frames = {k: f for k, f in frames.items() if int(k) not in ext["loaded"]}
     if frames is not None:                  # behind a real link the keyframe ids come back late: by their frames
         kf_gt = {k: gts[f].tolist() for k, f in frames.items() if f < len(gts)}
         kf_frame = {k: args.map_start + f * args.stride for k, f in frames.items()}
@@ -238,12 +291,22 @@ def run_mapping(args, out: Path):
     t_save = time.perf_counter() - t_save
     if recorder is not None:
         recorder.close()
+    kf_session = None
+    if ext is not None:      # the loaded keyframes keep the ground truth (and frame, session) of their own sessions
+        old = ext["meta"]
+        n_sessions = len(old.get("sessions") or [None])
+        kf_session = {int(k): int(v) for k, v in (old.get("kf_session") or {}).items()}
+        kf_session.update({int(k): 0 for k in old["kf_gt"] if int(k) not in kf_session})
+        kf_session.update({int(k): n_sessions for k in kf_gt})
+        kf_gt = {**{int(k): v for k, v in old["kf_gt"].items()}, **kf_gt}
+        kf_frame = {**{int(k): v for k, v in (old.get("kf_frame") or {}).items()}, **kf_frame}
     # map -> GT alignment from permanent keyframes (component 0 mean)
     ids, src, dst = [], [], []
     kf_est = {}
     for kid, kf in system.hypothesis_manager.nodes.items():
-        if kf.temporary or kid not in kf_gt:
+        if kf.temporary or int(kid) not in kf_gt:
             continue
+        kid = int(kid)
         ids.append(kid)
         M = pose_to_mat(kf.pose_mu[0])
         kf_est[int(kid)] = M.reshape(-1).tolist()
@@ -271,14 +334,94 @@ def run_mapping(args, out: Path):
         meta["mem_trace"] = mem_trace
     if hasattr(system, "remote_stats"):
         meta["remote"] = system.remote_stats()
+    session = {"sequence": str(args.map), "start": args.map_start, "end": args.map_end, "stride": args.stride,
+               "seed": seed, "n_frames": n}
+    if ext is not None:
+        meta.update(extension_metrics(args, ext, system, kf_gt, kf_est, kf_session, T_gt_from_map, map_ate))
+        if args.extend_align == "loaded":       # queries scored in the loaded map's alignment
+            T_old = np.asarray(ext["meta"]["T_gt_from_map"])
+            meta["T_gt_from_map"] = T_old.tolist()
+            meta["map_ate_rmse"] = float(np.sqrt(np.mean(np.sum(((T_old[:3, :3] @ src.T).T + T_old[:3, 3] - dst) ** 2, 1))))
+        meta["sessions"] = (ext["meta"].get("sessions") or [_session_of(ext_dir)]) + [session]
+        meta["extended_from"] = str(ext_dir.resolve())
+        (out / "extend_frames.json").write_text(json.dumps(ext["rows"]))
+        e = meta["extension"]
+        logger.info(f"Extension: {e['n_new_permanent']} new permanent keyframes, ATE in the loaded alignment "
+                    f"{e['ate_rmse']} m (re-aligned {e['ate_rmse_realigned']} m), localized "
+                    f"{e['localized_frac']:.3f} of the frames from frame {e['first_localized_frame']}, "
+                    f"loaded keyframes moved {e['loaded_shift_median']} m (median)")
+    else:
+        meta["sessions"] = [session]
+        meta["kf_session"] = {int(k): 0 for k in kf_gt}
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
-    logger.info(f"Map ATE vs GT (permanent kfs): {map_ate:.3f} m" + (f", online {meta['online']}" if online else ""))
+    meta = json.loads((out / "map_meta.json").read_text())    # string keys, as a --skip-map run reads it
+    logger.info(f"Map ATE vs GT (permanent kfs): {meta['map_ate_rmse']:.3f} m" + (f", online {meta['online']}" if online else ""))
     system.release()          # shuts down and releases the GPU models (`atexit` keeps a reference to the system)
     del system
     gc.collect()
     torch.cuda.empty_cache()
     logger.info(f"GPU memory after mapping cleanup: {torch.cuda.memory_allocated() / 2**30:.2f} GB")
     return meta
+
+
+def _session_of(map_dir: Path) -> dict:
+    """The session of a map run that predates the `sessions` field (its args.json)."""
+    try:
+        a = json.loads((map_dir / "args.json").read_text())
+    except (OSError, ValueError):
+        return {"sequence": None}
+    return {"sequence": a.get("map"), "start": a.get("map_start", 0), "end": a.get("map_end"),
+            "stride": a.get("stride", 1), "seed": a.get("seed")}
+
+
+def extension_metrics(args, ext, system, kf_gt, kf_est, kf_session, T_all, ate_all) -> dict:
+    """map_meta.json fields of an extension session: keyframe sessions, both alignments, and "extension": the new
+    session's permanent keyframes scored in the loaded map's alignment (are they placed consistently with the old map?),
+    re-aligned for comparison, how the loaded keyframes moved, and how much of the session had a pose in the map."""
+    old = ext["meta"]
+    T_old = np.asarray(old["T_gt_from_map"])
+    nodes = system.hypothesis_manager.nodes
+
+    def errs(ids, T):
+        if not ids:
+            return None, None
+        P = np.array([np.asarray(kf_est[k]).reshape(4, 4) for k in ids])
+        G = np.array([np.asarray(kf_gt[k]).reshape(4, 4) for k in ids])
+        t = np.linalg.norm((T[:3, :3] @ P[:, :3, 3].T).T + T[:3, 3] - G[:, :3, 3], axis=1)
+        r = [rotation_angle_deg((G[i, :3, :3].T @ T[:3, :3] @ P[i, :3, :3])) for i in range(len(ids))]
+        return t, np.asarray(r)
+
+    new = sorted(k for k in kf_est if k not in ext["loaded"])
+    loaded = sorted(k for k in kf_est if k in ext["loaded"])
+    t_new, r_new = errs(new, T_old)
+    T_re = umeyama_se3(np.array([np.asarray(kf_est[k]).reshape(4, 4)[:3, 3] for k in new]),
+                       np.array([np.asarray(kf_gt[k]).reshape(4, 4)[:3, 3] for k in new])) if len(new) >= 3 else None
+    t_re = errs(new, T_re)[0] if T_re is not None else None
+    t_old, _ = errs(loaded, T_old)
+    before = old.get("kf_est") or {}
+    shift = [float(np.linalg.norm(np.asarray(kf_est[k]).reshape(4, 4)[:3, 3] - np.asarray(before[str(k)]).reshape(4, 4)[:3, 3]))
+             for k in loaded if str(k) in before]
+    rows = ext["rows"]
+    loc = np.array([r["localized"] for r in rows], bool)
+    te = np.array([np.inf if r["t_err"] is None else r["t_err"] for r in rows], float)
+    rmse = (lambda t: None if t is None or not len(t) else float(np.sqrt(np.mean(t ** 2))))
+    created = [k for k in kf_gt if k not in ext["loaded"]]
+    e = {"n_loaded": len(ext["loaded"]), "n_loaded_permanent": len(loaded),
+         "n_new_created": len(created), "n_new_permanent": len(new),
+         "n_new_temporary": sum(1 for k in created if k in nodes and nodes[k].temporary),
+         "ate_rmse": rmse(t_new), "ate_median": None if t_new is None else float(np.median(t_new)),
+         "ate_max": None if t_new is None else float(np.max(t_new)),
+         "rot_err_median_deg": None if r_new is None else float(np.median(r_new)),
+         "ate_rmse_realigned": rmse(t_re),
+         "loaded_ate_before": old.get("map_ate_rmse"), "loaded_ate_after": rmse(t_old),
+         "loaded_shift_median": float(np.median(shift)) if shift else None,
+         "loaded_shift_max": float(np.max(shift)) if shift else None,
+         "n_frames": len(rows), "localized_frac": float(loc.mean()) if len(loc) else 0.0,
+         "first_localized_frame": next((r["frame"] for r in rows if r["localized"]), None),
+         **{f"lr@{x:g}": float(np.mean(te < x)) if len(te) else 0.0 for x in (0.5, 1.0, 2.0)},
+         "online_t_err_median": float(np.median(te)) if len(te) else None}
+    return {"kf_session": kf_session, "T_gt_from_map_loaded": T_old.tolist(),
+            "T_gt_from_map_all": T_all.tolist(), "map_ate_rmse_all": ate_all, "extension": e}
 
 
 def _timing_summary():
@@ -293,7 +436,7 @@ def _timing_summary():
 
 def run_reloc(args, out: Path, meta: dict):
     ds = StereoSequenceLoader(args.query, depth_source=depth_source(args),
-                              snr=args.snr, baseline=args.baseline, seed=None if args.seed is None else args.seed + 1,
+                              snr=args.snr, baseline=seq_baseline(args.query, args.baseline), seed=None if args.seed is None else args.seed + 1,
                               **odom_kwargs(args))
     from cross.dataloader.geo import attach
     attach(ds, args.query, args, query=True)
@@ -454,6 +597,15 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--obs-min-rotation", type=float, default=None)
     ap.add_argument("--obs-max-interval", type=int, default=None)
     ap.add_argument("--skip-map", action="store_true", help="reuse map.pkl / map_meta.json in --out")
+    ap.add_argument("--extend-map", default=None, metavar="DIR",
+                    help="map session = extension of the map in DIR (map.pkl + map_meta.json of an earlier run): the --map "
+                         "sequence (--map-start / --map-end) relocalizes in it and adds keyframes; the extended map and "
+                         "its map_meta.json (all keyframes, kf_session, 'extension' scores) go to --out")
+    ap.add_argument("--extend-seed", type=int, default=None,
+                    help="odometry-noise seed of the extension session (default: --seed + 2; queries use --seed + 1)")
+    ap.add_argument("--extend-align", choices=["all", "loaded"], default="all",
+                    help="ground-truth alignment of the extended map used to score queries: Umeyama over all its "
+                         "permanent keyframes, as for any map (all), or the loaded map's (loaded)")
     ap.add_argument("--step-log", action="store_true",
                     help="mapping: write steps.csv (per-frame step time, graph nodes, database keyframes, loop closures)")
     ap.add_argument("--mem-trace", type=int, default=0, metavar="N",

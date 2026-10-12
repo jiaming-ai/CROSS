@@ -44,6 +44,7 @@ def mapper():
     value.config = SystemConfig()
     value.device = value.storage_device = value.state_device = 'cpu'
     value.topo_map = None
+    value.cameras, value.cam_id = [None], 0
     value.kf_gmm_n_components = 2
     value._processed_frame_num = 0
     value.db = Database()

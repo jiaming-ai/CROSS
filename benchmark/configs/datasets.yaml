@@ -201,3 +201,63 @@ val_openloris:
     home:   {map: home1-1,   queries: [home1-2, home1-3, home1-4, home1-5]}
     cafe:   {map: cafe1-1,   queries: [cafe1-2]}
   t1: maps
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Cross-camera test (outputs/2026-10-12_cross_camera/): map with one camera, relocalize / continue mapping with another.
+# SimChange traversals rendered with other cameras next to the camA ones: <scene>/<variant>__camB (848 x 480, hfov 75,
+# baseline 0.12 m, off-centre principal point, 0.25 m lower) and __camC (640 x 480, hfov 60, baseline 0.20 m); same
+# world frame.  No fixed `baseline`: every folder loads its own pair (its right/ link = its first rendered baseline;
+# scripts/map_and_reloc.py seq_baseline).  Scenes: <scene>_A / _B / _C = map with camA / camB / camC, queries from the
+# map camera and the other one(s); <scene>_ext<X> = camA map of the first half of the route (map_end), extended by the
+# camX traversal of the whole route (extend: scripts/map_and_reloc.py --extend-map), queries from both cameras; T2 / T3
+# are split by area (first session's vs extension-only, run.py areas) and benchmark/xcam_summary.py tabulates them.
+# tier xcam keeps it out of the tables and of dev.py's tiers; folders not rendered yet exit with code 3.
+xcam_simchange:
+  dev: true
+  tier: xcam
+  xcam: true
+  data: simchange
+  environment: indoor
+  r_d: 2.0
+  thresholds: [1.0, 2.0]
+  trial_len: 100
+  trial_stride: 50
+  odometry: simulated
+  snr: 10
+  setups: {rgbd: ".", stereo: ".", mono: "."}
+  scenes:
+    # classroom: map 159 frames; half map = frames [0, 79)
+    classroom_A: {map: "classroom/map",
+                queries: ["classroom/reverse", "classroom/light_evening", "classroom/offset_0.5", "classroom/half", "classroom/move_50", "classroom/map__camB", "classroom/reverse__camB", "classroom/light_evening__camB", "classroom/offset_0.5__camB", "classroom/half__camB", "classroom/move_50__camB", "classroom/map__camC", "classroom/reverse__camC", "classroom/light_evening__camC", "classroom/offset_0.5__camC", "classroom/half__camC", "classroom/move_50__camC"]}
+    classroom_B: {map: "classroom/map__camB",
+                queries: ["classroom/map", "classroom/reverse", "classroom/light_evening", "classroom/offset_0.5", "classroom/half", "classroom/move_50", "classroom/reverse__camB", "classroom/light_evening__camB", "classroom/offset_0.5__camB", "classroom/half__camB", "classroom/move_50__camB"]}
+    classroom_C: {map: "classroom/map__camC",
+                queries: ["classroom/map", "classroom/reverse", "classroom/light_evening", "classroom/offset_0.5", "classroom/half", "classroom/move_50", "classroom/reverse__camC", "classroom/light_evening__camC", "classroom/offset_0.5__camC", "classroom/half__camC", "classroom/move_50__camC"]}
+    classroom_extA: {map: "classroom/map", map_end: 79, extend: "classroom/map",   # same-camera control
+                queries: ["classroom/reverse", "classroom/light_evening", "classroom/offset_0.5", "classroom/half", "classroom/move_50"]}
+    classroom_extB: {map: "classroom/map", map_end: 79, extend: "classroom/map__camB",
+                queries: ["classroom/map", "classroom/reverse", "classroom/light_evening", "classroom/offset_0.5", "classroom/half", "classroom/move_50", "classroom/reverse__camB", "classroom/light_evening__camB", "classroom/offset_0.5__camB", "classroom/half__camB", "classroom/move_50__camB"]}
+    classroom_extC: {map: "classroom/map", map_end: 79, extend: "classroom/map__camC",
+                queries: ["classroom/map", "classroom/reverse", "classroom/light_evening", "classroom/offset_0.5", "classroom/half", "classroom/move_50", "classroom/reverse__camC", "classroom/light_evening__camC", "classroom/offset_0.5__camC", "classroom/half__camC", "classroom/move_50__camC"]}
+    # hssd_house: map 1080 frames; half map = frames [0, 540)
+    hssd_house_A: {map: "hssd_house/map",
+                queries: ["hssd_house/reverse", "hssd_house/light_evening", "hssd_house/rearr_50", "hssd_house/offset_1.0", "hssd_house/half", "hssd_house/map__camB", "hssd_house/reverse__camB", "hssd_house/light_evening__camB", "hssd_house/rearr_50__camB", "hssd_house/offset_1.0__camB", "hssd_house/half__camB"]}
+    hssd_house_B: {map: "hssd_house/map__camB",
+                queries: ["hssd_house/map", "hssd_house/reverse", "hssd_house/light_evening", "hssd_house/rearr_50", "hssd_house/offset_1.0", "hssd_house/half", "hssd_house/reverse__camB", "hssd_house/light_evening__camB", "hssd_house/rearr_50__camB", "hssd_house/offset_1.0__camB", "hssd_house/half__camB"]}
+    hssd_house_extB: {map: "hssd_house/map", map_end: 540, extend: "hssd_house/map__camB",
+                queries: ["hssd_house/map", "hssd_house/reverse", "hssd_house/light_evening", "hssd_house/rearr_50", "hssd_house/offset_1.0", "hssd_house/half", "hssd_house/reverse__camB", "hssd_house/light_evening__camB", "hssd_house/rearr_50__camB", "hssd_house/offset_1.0__camB", "hssd_house/half__camB"]}
+    # lonemonk: map 713 frames; half map = frames [0, 356)
+    lonemonk_A: {map: "lonemonk/map",
+                queries: ["lonemonk/reverse", "lonemonk/light_evening", "lonemonk/offset_1.0", "lonemonk/half", "lonemonk/map__camB", "lonemonk/reverse__camB", "lonemonk/light_evening__camB", "lonemonk/offset_1.0__camB", "lonemonk/half__camB"]}
+    lonemonk_B: {map: "lonemonk/map__camB",
+                queries: ["lonemonk/map", "lonemonk/reverse", "lonemonk/light_evening", "lonemonk/offset_1.0", "lonemonk/half", "lonemonk/reverse__camB", "lonemonk/light_evening__camB", "lonemonk/offset_1.0__camB", "lonemonk/half__camB"]}
+    lonemonk_extB: {map: "lonemonk/map", map_end: 356, extend: "lonemonk/map__camB",
+                queries: ["lonemonk/map", "lonemonk/reverse", "lonemonk/light_evening", "lonemonk/offset_1.0", "lonemonk/half", "lonemonk/reverse__camB", "lonemonk/light_evening__camB", "lonemonk/offset_1.0__camB", "lonemonk/half__camB"]}
+    # hssd_restaurant: map 1314 frames; half map = frames [0, 657)
+    hssd_restaurant_A: {map: "hssd_restaurant/map",
+                queries: ["hssd_restaurant/reverse", "hssd_restaurant/light_evening", "hssd_restaurant/rearr_50", "hssd_restaurant/offset_1.0", "hssd_restaurant/half", "hssd_restaurant/map__camB", "hssd_restaurant/reverse__camB", "hssd_restaurant/light_evening__camB", "hssd_restaurant/rearr_50__camB", "hssd_restaurant/offset_1.0__camB", "hssd_restaurant/half__camB"]}
+    hssd_restaurant_B: {map: "hssd_restaurant/map__camB",
+                queries: ["hssd_restaurant/map", "hssd_restaurant/reverse", "hssd_restaurant/light_evening", "hssd_restaurant/rearr_50", "hssd_restaurant/offset_1.0", "hssd_restaurant/half", "hssd_restaurant/reverse__camB", "hssd_restaurant/light_evening__camB", "hssd_restaurant/rearr_50__camB", "hssd_restaurant/offset_1.0__camB", "hssd_restaurant/half__camB"]}
+    hssd_restaurant_extB: {map: "hssd_restaurant/map", map_end: 657, extend: "hssd_restaurant/map__camB",
+                queries: ["hssd_restaurant/map", "hssd_restaurant/reverse", "hssd_restaurant/light_evening", "hssd_restaurant/rearr_50", "hssd_restaurant/offset_1.0", "hssd_restaurant/half", "hssd_restaurant/reverse__camB", "hssd_restaurant/light_evening__camB", "hssd_restaurant/rearr_50__camB", "hssd_restaurant/offset_1.0__camB", "hssd_restaurant/half__camB"]}
+  t1: maps

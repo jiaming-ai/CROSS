@@ -318,10 +318,19 @@ class System:
             self.rgb_transform, self.depth_transform = get_transforms_target_max(camera)
         # Expose the (possibly resized/cropped) camera intrinsics used for all downstream geometry.
         self.camera = camera
+        self._input_camera = copy.deepcopy(original_camera)   # the canvas of a loaded map is made from it (_set_canvas)
         if self.pose_est_type == PoseEstType.FF and hasattr(self.pose_est, "set_camera"):
             self.pose_est.set_camera(camera.K, camera.frame_width, camera.frame_height)
         if self._kf_quality is not None:
             self._kf_quality.set_stereo(camera.K, T_right_in_left)
+        # camera table of the map (the intrinsics of the stored images and the stereo rig per camera; keyframes carry
+        # the id of theirs, Keyframe.cam_id) and this session's camera id: a map made with one camera can be
+        # relocalized in and extended with another (_use_map_camera)
+        self.cameras = [self._camera_record()]
+        self.cam_id = 0
+        # a frontend that holds the image transforms (the VGGT-inertial odometry): the canvas of a map made with
+        # another camera cannot be adopted (set by cross.pipeline)
+        self.transforms_shared = False
         # input frames kept for a 3D reconstruction of the map (mapping.world_capture, off by default)
         self._world_capture = None
         wc = self.config.mapping.world_capture
@@ -480,6 +489,8 @@ class System:
             pose_charts=self.hypothesis_manager.get_active_charts(),
         )
         kf.step_created = int(self._processed_frame_num)
+        if self.cam_id:
+            kf.cam_id = self.cam_id
         self.hypothesis_manager.add_node(kf)
         self.last_added_kf_id = kf.id
         if getattr(self, "_geo", None) is not None:
@@ -738,9 +749,11 @@ class System:
             "class_vars": class_vars,
             "current_atlas_id": self.current_atlas.id if hasattr(self, 'current_atlas') else None,
             # intrinsics of the stored keyframe images (after the mode's resize / crop) and the stereo rig: what a
-            # reader of the map needs to use its images geometrically (cross_world); load_map checks it against the
-            # session's camera (_use_map_camera)
-            "camera": self._camera_record(),
+            # reader of the map needs to use its images geometrically (cross_world).  "camera": camera 0 (the map's
+            # first, also the record of maps saved before the table); "cameras": the table and the keyframes of the
+            # other cameras (Keyframe.cam_id; 0 for the others)
+            "camera": self.cameras[0],
+            "cameras": self._camera_columns(),
         }
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
@@ -811,7 +824,7 @@ class System:
         # Note: planning system (sparse graph) will be rebuilt on load if enabled
 
     def _camera_record(self):
-        """Intrinsics of the stored keyframe images and the stereo rig, as saved with the map (None without a camera)."""
+        """Intrinsics of the session's stored keyframe images and its stereo rig (None without a camera)."""
         cam = getattr(self, "camera", None)
         if cam is None:
             return None
@@ -820,41 +833,110 @@ class System:
                 "height": int(cam.frame_height),
                 "T_right_in_left": np.asarray(T, dtype=np.float64).tolist() if T is not None else None}
 
-    def _use_map_camera(self, record):
-        """A loaded map's camera (save_map "camera": the intrinsics of its stored images and its stereo rig) against
-        the session's.  The stored keyframe images are references of the session's passes, so they must show the same
-        camera at the same size: the session's images go through the same resize / crop as the map's, so a camera
-        recorded at another resolution with the same field of view passes, a different camera fails here.  A stereo
-        session must have the map's rig (stored right images are scale anchors with the session's calibration).  A
-        mono session in a stereo map (its left camera) needs nothing more: pairs of map references with their relative
-        pose anchor the metric scale (pose_est.ff.use_map_anchors).  Maps saved before the record existed are not
-        checked."""
-        if record is None or getattr(self, "camera", None) is None:
-            return
-        K = np.asarray(record["K"], dtype=np.float64)
-        size = (int(record["width"]), int(record["height"]))
-        mine = (int(self.camera.frame_width), int(self.camera.frame_height))
-        Ks = np.asarray(self.camera.K, dtype=np.float64)
-        # focal and principal point relative to the image width: 1 % is ~5 px at 512 px
-        dev = float(np.max(np.abs(Ks[[0, 1, 0, 1], [0, 1, 2, 2]] - K[[0, 1, 0, 1], [0, 1, 2, 2]]))) / max(1, size[0])
-        if size != mine or dev > 0.01:
-            raise ValueError(
-                f"The map was built with another camera: its images are {size[0]}x{size[1]} px with fx {K[0, 0]:.1f}, "
-                f"fy {K[1, 1]:.1f}, cx {K[0, 2]:.1f}, cy {K[1, 2]:.1f}; this session's are {mine[0]}x{mine[1]} px with "
-                f"fx {Ks[0, 0]:.1f}, fy {Ks[1, 1]:.1f}, cx {Ks[0, 2]:.1f}, cy {Ks[1, 2]:.1f} (after the mode's resize / "
-                f"crop).  Relocalize with the camera the map was built with (for a stereo map: its left camera) and "
-                f"the same pose_est.ff.image_resolution")
-        rig = record.get("T_right_in_left")
-        if rig is not None and self.T_right_in_left is not None:
-            rig = np.asarray(rig, dtype=np.float64)
-            T = np.asarray(self.T_right_in_left, dtype=np.float64)
-            d_t = float(np.linalg.norm(T[:3, 3] - rig[:3, 3])) / max(1e-9, float(np.linalg.norm(rig[:3, 3])))
-            d_r = float(np.degrees(np.arccos(np.clip((np.trace(T[:3, :3].T @ rig[:3, :3]) - 1) / 2, -1, 1))))
+    def _camera_columns(self):
+        """The camera table and the keyframes taken with a camera other than camera 0, as saved with the map."""
+        kfs = [kf for kf in self.db.get_all_keyframes() if kf.cam_id]
+        return {"table": list(self.cameras), "kf": np.asarray([kf.id for kf in kfs], np.int64),
+                "cam": np.asarray([kf.cam_id for kf in kfs], np.int32)}
+
+    @staticmethod
+    def _same_camera(a: dict, b: dict) -> bool:
+        """Two camera records describe the same camera: the same image size, focal and principal point within 1 % of
+        the width (~5 px at 512 px), and the same stereo rig (baseline within 1 %, rotation within 0.5 deg) when both
+        have one."""
+        if (int(a["width"]), int(a["height"])) != (int(b["width"]), int(b["height"])):
+            return False
+        Ka, Kb = np.asarray(a["K"], dtype=np.float64), np.asarray(b["K"], dtype=np.float64)
+        idx = ([0, 1, 0, 1], [0, 1, 2, 2])
+        if float(np.max(np.abs(Ka[idx] - Kb[idx]))) / max(1, int(a["width"])) > 0.01:
+            return False
+        ra, rb = a.get("T_right_in_left"), b.get("T_right_in_left")
+        if ra is not None and rb is not None:
+            ra, rb = np.asarray(ra, dtype=np.float64), np.asarray(rb, dtype=np.float64)
+            d_t = float(np.linalg.norm(ra[:3, 3] - rb[:3, 3])) / max(1e-9, float(np.linalg.norm(rb[:3, 3])))
+            d_r = float(np.degrees(np.arccos(np.clip((np.trace(ra[:3, :3].T @ rb[:3, :3]) - 1) / 2, -1, 1))))
             if d_t > 0.01 or d_r > 0.5:
+                return False
+        return True
+
+    def _set_canvas(self, width: int, height: int):
+        """Make the session's images at this size (the stored images of the loaded map; every view of a forward pass
+        has one size): the largest centred crop of the input camera with that aspect ratio, resized.  The camera's
+        intrinsics, the estimator's corrections and the keyframe-quality stereo test follow."""
+        if (int(self.camera.frame_width), int(self.camera.frame_height)) == (int(width), int(height)):
+            return
+        if self.pose_est_type != PoseEstType.FF:
+            raise ValueError("A map whose images have another size than this session's needs the feed-forward "
+                             f"estimator (stored {width}x{height}, this session {self.camera.frame_width}x"
+                             f"{self.camera.frame_height})")
+        if self.transforms_shared:
+            raise ValueError(f"The map's images are {width}x{height} px, this session's {self.camera.frame_width}x"
+                             f"{self.camera.frame_height}: a session whose frontend shares the image transforms "
+                             f"(--odometry vgio) cannot change its image size; use a camera with the map's aspect "
+                             f"ratio and pose_est.ff.image_resolution")
+        from cross.utils.camera import get_transforms_ff
+        camera = copy.deepcopy(self._input_camera)
+        self.rgb_transform, self.depth_transform = get_transforms_ff(camera, canvas=(int(width), int(height)))
+        logger.info(f"Session images made at the map's size {width}x{height} (from {self._input_camera.frame_width}x"
+                    f"{self._input_camera.frame_height}: centred crop + resize; fx {camera.K[0, 0]:.1f}, cx "
+                    f"{camera.K[0, 2]:.1f}, cy {camera.K[1, 2]:.1f})")
+        self.camera = camera
+        if hasattr(self.pose_est, "set_camera"):
+            self.pose_est.set_camera(camera.K, camera.frame_width, camera.frame_height)
+        if self._kf_quality is not None:
+            self._kf_quality.set_stereo(camera.K, self.T_right_in_left)
+
+    def _use_map_camera(self, record, columns=None):
+        """The camera table of a loaded map (save_map "cameras", or its single "camera" record for maps saved before
+        the table) and the session's camera in it.
+
+        The feed-forward estimator takes references of any camera: the session's images are made at the size of the
+        stored ones (_set_canvas: a centred crop with their aspect ratio, resized), a session camera that is not in the
+        table gets a new id (its keyframes carry it, Keyframe.cam_id), and every reference gets the principal-point
+        correction and stereo rig of its own camera (PoseEstFeedForward.set_cameras).  The metric scale needs no
+        common camera: the model predicts each view's field of view, and the anchors are metric.  Other estimators
+        (PnP on the session's intrinsics) need the map's camera.  Maps saved without a camera record take the
+        session's camera as camera 0."""
+        if getattr(self, "camera", None) is None:
+            return
+        if columns:
+            table = [dict(c) for c in columns["table"]]
+        elif record is not None:
+            table = [dict(record)]
+        else:
+            self.cameras, self.cam_id = [self._camera_record()], 0
+            return
+        if len({(int(c["width"]), int(c["height"])) for c in table}) != 1:
+            raise ValueError(f"The map's cameras store images of different sizes: {table}")
+        self._set_canvas(int(table[0]["width"]), int(table[0]["height"]))
+        mine = self._camera_record()
+        match = [i for i, c in enumerate(table) if self._same_camera(mine, c)]
+        if match:
+            self.cam_id = match[0]
+            if table[self.cam_id].get("T_right_in_left") is None and mine["T_right_in_left"] is not None:
+                table[self.cam_id]["T_right_in_left"] = mine["T_right_in_left"]
+        else:
+            if self.pose_est_type != PoseEstType.FF:
+                K = np.asarray(table[0]["K"], dtype=np.float64)
                 raise ValueError(
-                    f"The map was built with another stereo rig (baseline {np.linalg.norm(rig[:3, 3]):.4f} m vs this "
-                    f"session's {np.linalg.norm(T[:3, 3]):.4f} m, {d_r:.2f} deg apart): its stored right images would "
-                    f"anchor the scale with the wrong calibration")
+                    f"The map was built with another camera (fx {K[0, 0]:.1f}, fy {K[1, 1]:.1f}, cx {K[0, 2]:.1f}, cy "
+                    f"{K[1, 2]:.1f} at {table[0]['width']}x{table[0]['height']}; this session fx {mine['K'][0][0]:.1f}, "
+                    f"cx {mine['K'][0][2]:.1f}, cy {mine['K'][1][2]:.1f}): only the feed-forward estimator takes "
+                    f"references of another camera")
+            table.append(mine)
+            self.cam_id = len(table) - 1
+            logger.info(f"Session camera {self.cam_id}: not one of the map's {len(table) - 1} camera(s) (fx "
+                        f"{mine['K'][0][0]:.1f}, cx {mine['K'][0][2]:.1f}, cy {mine['K'][1][2]:.1f} at "
+                        f"{mine['width']}x{mine['height']}); references of the others use their own intrinsics")
+        self.cameras = table
+        if columns is not None and len(columns.get("kf", ())):
+            nodes = self.hypothesis_manager.nodes
+            for k, c in zip(np.asarray(columns["kf"]).tolist(), np.asarray(columns["cam"]).tolist()):
+                kf = nodes.get(int(k))
+                if kf is not None:
+                    kf.cam_id = int(c)
+        if self.pose_est_type == PoseEstType.FF and hasattr(self.pose_est, "set_cameras"):
+            self.pose_est.set_cameras(self.cameras, self.cam_id)
 
     def session_localized(self) -> bool:
         """Whether hypothesis 0 is expressed in the frame of the stored map.
@@ -959,7 +1041,7 @@ class System:
         self._contra_pending.clear()
         self._last_retrieved_results = None
 
-        self._use_map_camera(save_data.get("camera"))
+        self._use_map_camera(save_data.get("camera"), save_data.get("cameras"))
         if getattr(self, "_world_capture", None) is not None:
             self._world_capture.load(load_path)
         if getattr(self, "_geo", None) is not None and save_data.get("geo"):
@@ -2075,6 +2157,8 @@ class System:
                 raw_rgb_right=rgb_right.to(self.device) if (rgb_right is not None and self._store_right_images) else None,
                 pose_charts=pose_charts,
             )
+            if self.cam_id:
+                keyframe.cam_id = self.cam_id
             logger.debug(f"Add permanent keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
         else:
             # otherwise create a temporary keyframe
@@ -2789,6 +2873,7 @@ class System:
                 ref_images_right=_LazyImages(keyframes, "raw_rgb_right", self.device),
                 odom_anchor=odom_anchor,
                 ref_rel_poses=self._map_anchor_pairs(keyframes),
+                ref_cam_ids=[k.cam_id for k in keyframes] if len(self.cameras) > 1 else None,
                 **source_context,
             )
         else:

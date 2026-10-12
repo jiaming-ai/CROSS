@@ -12,6 +12,14 @@ Tasks
   python benchmark/run.py ... --task query --query office1-2
 
 Layout: <out>/<dataset>/<scene>/<system>/<setup>/s<seed>/{maps/<seq>, t1/<seq>, t2/<map>__<query>, t3/<map>__<query>}
+
+Scenes with a partial map and / or a map extension (CROSS runners; the cross-camera datasets): `map_start` / `map_end`
+map only those frames of the map sequence (map key <map>@<start>-<end>); `extend` (with optional `extend_start` /
+`extend_end`) runs that sequence as a second session in the map (scripts/map_and_reloc.py --extend-map), and the queries
+load the extended map (key <map key>+<extend variant>, its score in ext/<key>/result.json).  Such scenes (and datasets
+with `xcam: true`) store per evaluated query frame the area it lies in (errors.npz `area`: 1 = within the larger
+threshold of the first session's path, 2 = only of the extension's, 0 = not covered) and per T3 trial `covered` and
+`area` of its last frame; covered = the union of both sessions' paths.
 """
 from __future__ import annotations
 
@@ -183,6 +191,13 @@ class Job:
                 sys.exit(f"--map-from: unknown system {ms}")
             self.map_root = Path(a.out) / a.dataset / a.scene / (
                 ms + (f"+{a.odom_source}" if a.odom_source != "external" else "") + (f"@{mv}" if mv else "")) / a.setup / f"s{a.seed}"
+        # partial map / map extension (cross-camera datasets): the key of the map the queries load
+        sc = self.scene
+        self.map_range = (int(sc.get("map_start", 0)), sc.get("map_end"))
+        self.base_key = sc.get("map", "") + (f"@{self.map_range[0]}-{self.map_range[1] if self.map_range[1] is not None else ''}"
+                                             if self.map_range != (0, None) else "")
+        self.map_key = self.base_key + (f"+{Path(sc['extend']).name}" if sc.get("extend") else "")
+        self.area_split = bool(self.dcfg.get("xcam") or sc.get("extend") or self.map_range != (0, None))
         self.outdoor = self.dcfg["environment"] == "outdoor"
         # T1 completeness: a frame is covered within 1 s or within this distance of travelled path of a pose
         self.path_m = float(self.dcfg.get("completeness_path_m", 2.0 if self.outdoor else 1.0))
@@ -230,9 +245,37 @@ class Job:
         cmd += ["--reproducible"]
         return cmd + shlex.split(a.args) + extra
 
-    def cross_map(self, map_seq, out: Path):
-        rc, dt = sh(self.cross_cmd(map_seq, map_seq, out, ["--skip-reloc"]), out / "bench.log", self.a.timeout, alloc_conf=True)
+    def cross_map(self, map_seq, out: Path, extra=()):
+        rc, dt = sh(self.cross_cmd(map_seq, map_seq, out, ["--skip-reloc"] + [str(e) for e in extra]), out / "bench.log",
+                    self.a.timeout, alloc_conf=True)
         return rc, dt
+
+    def cross_extend(self, base_dir: Path, out: Path):
+        """The extension session: the scene's `extend` sequence in the map of base_dir, saved to out."""
+        sc = self.scene
+        extra = ["--extend-map", base_dir.resolve(), "--map-start", int(sc.get("extend_start", 0))]
+        if sc.get("extend_end") is not None:
+            extra += ["--map-end", int(sc["extend_end"])]
+        return self.cross_map(sc["extend"], out, extra)
+
+    def cross_ext_result(self, out: Path, dt):
+        """Score of the extension session (map_meta.json "extension", written by scripts/map_and_reloc.py), with the
+        protocol's completeness over the keyframes it created on its own sequence."""
+        meta = json.loads((out / "map_meta.json").read_text())
+        e = meta["extension"]
+        sc = self.scene
+        s0, s1 = int(sc.get("extend_start", 0)), sc.get("extend_end")
+        seq_gt = gt_poses(self.seq(sc["extend"]))[s0:s1]
+        last = max(int(v) for v in meta["kf_session"].values())
+        frames = sorted(int(meta["kf_frame"][k]) - s0 for k, v in meta["kf_session"].items()
+                        if int(v) == last and k in meta["kf_frame"])
+        fps = json.loads((self.seq(sc["extend"]) / "calib.json").read_text()).get("fps", 10.0)
+        return {**self.base, "track": "ext", "map": self.base_key, "extend": sc["extend"], "map_key": self.map_key, **e,
+                "completeness": completeness(frames, seq_gt, fps=fps, path_m=self.path_m) if len(seq_gt) else None,
+                "completeness_rule": COMPLETENESS_RULE, "map_ate_rmse": meta.get("map_ate_rmse"),
+                "map_ate_rmse_all": meta.get("map_ate_rmse_all"), "n_keyframes": meta.get("n_permanent"),
+                "fps": (meta["n_frames"] / meta["elapsed"]) if meta.get("n_frames") and meta.get("elapsed") else None,
+                "wall_s": dt}
 
     def cross_t1_result(self, seq_name, out: Path, dt):
         meta = json.loads((out / "map_meta.json").read_text())
@@ -245,12 +288,22 @@ class Job:
         seq_gt = gt_poses(self.seq(seq_name))
         fps = json.loads((self.seq(seq_name) / "calib.json").read_text()).get("fps", 10.0)
         frames = cross_kf_frames(meta, seq_gt)
+        try:                                 # a partial map (--map-start / --map-end): its frames only
+            run_args = json.loads((out / "args.json").read_text())
+        except (OSError, ValueError):
+            run_args = {}
+        s0, s1 = int(run_args.get("map_start") or 0), run_args.get("map_end")
+        if s0 or s1 is not None:
+            seq_gt = seq_gt[s0:s1]
+            frames = [f - s0 for f in frames if 0 <= f - s0 < len(seq_gt)]
         r["completeness"] = completeness(frames, seq_gt, fps=fps, path_m=self.path_m)
         r["failed"] = bool(r["completeness"] < 0.8)
         r["completeness_rule"] = COMPLETENESS_RULE
         n = meta.get("n_frames")
         T = np.asarray(r["T_gt_from_est"])
         pos_est = (T[:3, :3] @ np.array([est[i][:3, 3] for i in est]).T).T + T[:3, 3]
+        if s0 or s1 is not None:
+            r["frames"] = [s0, s1]
         return {**self.base, "track": "t1", "sequence": seq_name, **{k: v for k, v in r.items() if k != "T_gt_from_est"},
                 "fps": (n / meta["elapsed"]) if n and meta.get("elapsed") else None, "n_frames": n,
                 "n_keyframes": meta.get("n_permanent"), "n_keyframes_all": len(frames), "map_bytes": meta.get("map_file_bytes"),
@@ -305,11 +358,22 @@ class Job:
 
     def covered(self, q):
         """Query frames whose ground-truth position lies within the larger threshold of the map session's ground-truth path
-        (only these are evaluated: elsewhere the map has nothing to relocalize against)."""
+        (only these are evaluated: elsewhere the map has nothing to relocalize against); with a partial map / an
+        extension session, of the mapped frames and of the extension's path."""
+        return self.areas(q) > 0
+
+    def areas(self, q):
+        """Per query frame: 1 = within the larger threshold of the (first) map session's path (its mapped frames), 2 = only
+        of the extension session's path, 0 = of neither."""
         from scipy.spatial import cKDTree
+        sc, r = self.scene, self.dcfg["thresholds"][1]
         gq = gt_poses(self.seq(q))[:, :3, 3]
-        gm = gt_poses(self.seq(self.scene["map"]))[:, :3, 3]
-        return cKDTree(gm).query(gq)[0] < self.dcfg["thresholds"][1]
+        gm = gt_poses(self.seq(sc["map"]))[self.map_range[0]:self.map_range[1], :3, 3]
+        area = np.where(cKDTree(gm).query(gq)[0] < r, 1, 0)
+        if sc.get("extend"):
+            ge = gt_poses(self.seq(sc["extend"]))[int(sc.get("extend_start", 0)):sc.get("extend_end"), :3, 3]
+            area[(area == 0) & (cKDTree(ge).query(gq)[0] < r)] = 2
+        return area
 
     def moving(self, q):
         """Query frames at which the robot moves (PROTOCOL.md, T2 / T3: moving robot), from the ground truth."""
@@ -318,7 +382,8 @@ class Job:
 
     def t2_from_rows(self, rows, q, key, rel_errors, summ, out_dir=None):
         thr = self.dcfg["thresholds"]
-        cov = self.covered(q)
+        area_q = self.areas(q)
+        cov = area_q > 0
         mov = self.moving(q)
         if "t2" not in moving_rule(self.dcfg)["tracks"]:
             mov = np.ones(len(mov), bool)
@@ -335,10 +400,26 @@ class Job:
         m = multisession(e, thresholds=self.LR_GRID, loc_threshold=thr[0])
         rel = np.array([np.inf if v is None else v for v in rel_errors], dtype=float)
         m_rel = multisession(rel, thresholds=self.LR_GRID)
+        extra = {}
+        if self.area_split:              # per area (1: first session's, 2: extension only): evaluated frames' recall
+            area = np.array([area_q[f] if 0 <= f < len(area_q) else 1 for f in frames], dtype=np.int8)
+            extra["area"] = area
+            split = {}
+            for a_, name in ((1, "first"), (2, "extension")):
+                sel = keep & (area == a_)
+                if sel.any():
+                    split[name] = {**{k: v for k, v in multisession(e_all[sel], thresholds=self.LR_GRID).items()
+                                      if k.startswith("lr@") or k in ("n_frames", "ms_ate", "ms_median", "est_frac")},
+                                   "err_median": float(np.median(e_all[sel])),
+                                   "map_relative": {k: v for k, v in multisession(rel_all[sel], thresholds=self.LR_GRID).items()
+                                                    if k.startswith("lr@")}}
+            extra_res = {"area_split": split, "map_key": self.map_key}
+        else:
+            extra_res = {}
         if out_dir is not None:          # per-frame errors: later threshold changes need no rerun
             np.savez_compressed(Path(out_dir) / "errors.npz", err=e_all.astype(np.float32), err_map_relative=rel_all.astype(np.float32),
-                                covered=covered, moving=moving, frame=np.asarray(frames))
-        return {**self.base, "track": "t2", "map": self.scene["map"], "query": q, **m,
+                                covered=covered, moving=moving, frame=np.asarray(frames), **extra)
+        return {**self.base, "track": "t2", "map": self.scene["map"], "query": q, **m, **extra_res,
                 "covered": float(covered.mean()) if len(covered) else None,
                 "moving": float(moving.mean()) if len(moving) else None, "evaluated": float(keep.mean()) if len(keep) else None,
                 "n_frames_all": int(len(keep)),
@@ -358,7 +439,15 @@ class Job:
                    "moving": round(moving_fraction(int(t.get("start") or 0), int(t.get("n") or tl), moving=mov), 3)}
                   for t in tr["trials"]]
         fails = [t["final_err"] for t in trials if not t["success"] and t["final_err"] is not None and np.isfinite(t["final_err"])]
-        return {**self.base, "track": "t3", "map": self.scene["map"], "query": q, "n_trials": n, "n_success": k,
+        extra = {}
+        if self.area_split:              # coverage (union of the sessions' paths) and area of each trial's last frame
+            area_q = self.areas(q)
+            for t, t0 in zip(trials, tr["trials"]):
+                last = int(t0.get("start") or 0) + int(t0.get("n") or tl) - 1
+                t["area"] = int(area_q[min(max(last, 0), len(area_q) - 1)])
+                t["covered"] = t["area"] > 0
+            extra = {"map_key": self.map_key}
+        return {**self.base, "track": "t3", "map": self.scene["map"], "query": q, "n_trials": n, "n_success": k, **extra,
                 "rs": tr["RS"], "rs_ci95": wilson(k, n),
                 "fail_err_median": float(np.median(fails)) if fails else None, "trials": trials, "r_d": self.scene.get("r_d", self.dcfg["r_d"]),
                 "trial_len": self.dcfg["trial_len"]}
@@ -558,9 +647,37 @@ class Job:
 
     def ensure_map(self, map_seq) -> Path:
         do_map, t1_result, _ = self.runner()
-        d = self.run_root / "maps" / map_seq
+        return self._ensure(map_seq, lambda d: do_map(map_seq, d), lambda d, dt: t1_result(map_seq, d, dt),
+                            self.run_root / "t1" / map_seq / "result.json", {"track": "t1", "sequence": map_seq})
+
+    def scene_map(self) -> Path:
+        """The map the scene's queries load: the map sequence's map, or (partial map / extension) the map of its frames
+        and the extension session's map built on it."""
+        if self.map_key == self.scene["map"]:
+            return self.ensure_map(self.scene["map"])
+        if self.scfg["runner"] not in ("cross_rgbd", "cross_ff", "cross_mono"):
+            sys.exit(f"map_start / map_end / extend: CROSS runners only ({self.a.system})")
+        m, (s0, s1) = self.scene["map"], self.map_range
+        extra = ["--map-start", s0] + (["--map-end", s1] if s1 is not None else [])
+        base = self._ensure(self.base_key, lambda d: self.cross_map(m, d, extra), lambda d, dt: self.cross_t1_result(m, d, dt),
+                            self.run_root / "t1" / self.base_key / "result.json", {"track": "t1", "sequence": m})
+        if not self.scene.get("extend"):
+            return base
+
+        def extend(d):
+            rc = json.loads((base / "MAP_DONE").read_text()).get("rc", 0)
+            if rc != 0:                         # no map to extend
+                return rc, 0.0
+            return self.cross_extend(base, d)
+        return self._ensure(self.map_key, extend, self.cross_ext_result, self.run_root / "ext" / self.map_key / "result.json",
+                            {"track": "ext", "map": self.base_key, "extend": self.scene["extend"]})
+
+    def _ensure(self, map_key, build, result, res_file: Path, fields: dict) -> Path:
+        """Build the map maps/<map_key> once (build(dir) -> (rc, seconds); result(dir, seconds) -> its result, written to
+        res_file), with a lock so parallel workers share it."""
+        d = self.run_root / "maps" / map_key
         done = d / "MAP_DONE"
-        lock = self.run_root / "maps" / f".{map_seq.replace('/', '_')}.lock"
+        lock = self.run_root / "maps" / f".{map_key.replace('/', '_')}.lock"
         while not done.is_file():
             d.parent.mkdir(parents=True, exist_ok=True)
             try:
@@ -570,21 +687,21 @@ class Job:
                     shutil.rmtree(lock, ignore_errors=True)
                     continue
                 if not self.a.wait_for_map:   # another worker builds this map: release the job, it is retried later
-                    print(f"map {map_seq} is being built by another worker", file=sys.stderr)
+                    print(f"map {map_key} is being built by another worker", file=sys.stderr)
                     sys.exit(3)
                 time.sleep(30)
                 continue
             try:
                 if not done.is_file():
                     d.mkdir(parents=True, exist_ok=True)
-                    rc, dt = do_map(map_seq, d)
+                    rc, dt = build(d)
                     try:
-                        res = t1_result(map_seq, d, dt)
+                        res = result(d, dt)
                         res.update({"status": "ok" if rc == 0 else "failed", "rc": rc, **env_info()})
                     except Exception as e:      # noqa: BLE001
-                        res = {**self.base, "track": "t1", "sequence": map_seq, "status": "failed", "rc": rc,
+                        res = {**self.base, **fields, "status": "failed", "rc": rc,
                                "error": repr(e), "wall_s": dt, **env_info()}
-                    write_result(self.run_root / "t1" / map_seq / "result.json", res)
+                    write_result(res_file, res)
                     done.write_text(json.dumps({"rc": rc, "wall_s": dt}))
             finally:
                 shutil.rmtree(lock, ignore_errors=True)
@@ -617,14 +734,15 @@ class Job:
     def run(self):
         a = self.a
         do_map, t1_result, do_query = self.runner()
-        need = [self.scene["map"]] + ([a.seq] if a.task == "t1" else []) + ([a.query] if a.task == "query" else [])
+        need = [self.scene["map"]] + ([self.scene["extend"]] if self.scene.get("extend") else []) + \
+            ([a.seq] if a.task == "t1" else []) + ([a.query] if a.task == "query" else [])
         if not self.ready(need):
             print(f"data not ready: {[str(self.seq(n)) for n in need]}", file=sys.stderr)
             sys.exit(3)                        # the worker releases the job for a later pass
         if self.map_root is not None and a.task != "query":
             sys.exit("--map-from: query tasks only (the map and its T1 belong to the other system's run)")
         if a.task == "map" and not a.reeval:
-            md = self.ensure_map(self.scene["map"])
+            md = self.scene_map()
             if not self.scene.get("queries") and not a.keep_maps:     # single-session scene: the map is not reused
                 for f in ("map.pkl", "atlas.osa", "map.db"):
                     if (md / f).exists():
@@ -658,7 +776,7 @@ class Job:
                 shutil.rmtree(nat / "views_map", ignore_errors=True)
                 shutil.rmtree(nat / "map.pkl.store", ignore_errors=True)
         elif a.task == "query":
-            m = self.scene["map"]
+            m = self.map_key                   # the map sequence, or the key of a partial / extended map
             if a.reeval:
                 tag = f"{m}__{a.query}".replace("/", "_")
                 do_query((self.map_root or self.run_root) / "maps" / m, a.query, self.run_root / "t2" / tag, self.run_root / "t3" / tag)
@@ -671,7 +789,7 @@ class Job:
                         sys.exit(3)
                     time.sleep(30)
             else:
-                md = self.ensure_map(m)
+                md = self.scene_map()
             tag = f"{m}__{a.query}".replace("/", "_")
             if json.loads((md / "MAP_DONE").read_text()).get("rc", 0) != 0:     # no map to localize in
                 for track in ("t2", "t3"):

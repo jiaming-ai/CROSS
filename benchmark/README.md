@@ -26,6 +26,7 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 | `jobs.py` | prints the job list of a dataset / set of systems (one `run.py` argument line per job) |
 | `dev.py` | runs the development split and compares two runs ([DEV.md](DEV.md)); `datasets/make_dev.py` writes its clipped sequences |
 | `eval/metrics.py` | ATE, completeness, localization recall, Wilson intervals |
+| `xcam_summary.py` | tables of the cross-camera dataset `xcam_simchange` (map with one camera, query / extend the map with another): T2 / T3 per map and query camera, split into the first session's and the extension-only area, and the extension sessions' scores |
 | `make_dataset_assets.py`, `configs/dataset_samples.yaml` | representative images of the Datasets tab: the same place across the sessions of a scene (`site/assets/datasets/`, `results/dataset_samples.json`); run where the prepared data is |
 | `collect.py`, `make_tables.py`, `build_site.py` | merge results, write RESULTS.md, write the page data (`site/data.js`) |
 | `failure_stats.py`, `failure_analysis.py` | Failure cases tab: features of every T3 trial from the data (motion, viewpoint, image statistics, SIFT matchability against the map; run where the data is, `results/failure_trials.json`), and the cause analysis (`results/failure_analysis.json`) |

@@ -538,6 +538,7 @@ def _vgio_pipeline(system, mc, K, device, mode, continuous_start, T_right_in_lef
     mono mode takes the metric scale from learned depth (DA3, with its bias in the graph), the stereo mode from the
     current stereo pair (no learned depth)."""
     _vgio_config(mc, mode, T_right_in_left)
+    system.transforms_shared = True          # the frontend's passes use the back end's image transforms
     metric = None
     if mc.imu.depth_prior and mc.imu.depth_prior_source != "head":
         from cross.mono.models import DA3MetricDepth
