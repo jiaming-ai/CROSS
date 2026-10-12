@@ -2,6 +2,7 @@
 map keys, coverage = union of the sessions' paths split by area, missing folders exit with code 3, per-folder stereo
 baselines (scripts/map_and_reloc.py seq_baseline)."""
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -11,8 +12,15 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "benchmark"))
 sys.path.insert(0, str(ROOT / "scripts"))
+
+
+def bench_run():
+    """benchmark/run.py under its own module name (the repository's top-level run.py is `run` too)."""
+    spec = importlib.util.spec_from_file_location("bench_run", ROOT / "benchmark" / "run.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def write_seq(folder: Path, xs, baselines=(0.3,), right_link=True):
@@ -32,7 +40,7 @@ def write_seq(folder: Path, xs, baselines=(0.3,), right_link=True):
 
 
 def job(tmp_path, scene, task="query", query="classroom/reverse"):
-    import run
+    run = bench_run()
     a = argparse.Namespace(dataset="xcam_simchange", scene=scene, system="cross_stereo", setup="stereo", seed=0,
                            task=task, seq=None, query=query, data=str(tmp_path / "data"), out=str(tmp_path / "out"),
                            odom_source="external", map_from="", variant="", args="", reeval=False, force=False,

@@ -226,7 +226,12 @@ python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/h
 ```
 
 The map is written to `--out` (`map.pkl`, `map_meta.json`); `--skip-map` reuses it for another query and `--skip-reloc`
-only maps. Another query in the same scene is another call with the same `--out`/`--skip-map`. In code, use
+only maps. Another query in the same scene is another call with the same `--out`/`--skip-map`. `--extend-map DIR` makes
+the map run a second session in the map of an earlier run (`DIR/map.pkl` + `map_meta.json`): it relocalizes, adds
+keyframes where the map has none, and saves the extended map with a `map_meta.json` covering every keyframe (session in
+`kf_session`), so queries in it are scored like in any map; `map_meta.json` "extension" scores the new keyframes in the
+loaded map's ground-truth alignment (ATE, how far the loaded keyframes moved, fraction of frames localized). With
+`--map-start/--map-end` the first session can map part of a route. In code, use
 `System.save_map(path)` / `System.load_map(path)`; `examples/multi_session.py` runs several sequences through one
 `System`, and `examples/planner.py` loads a map and plans paths on it.
 
