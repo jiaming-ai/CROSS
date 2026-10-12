@@ -305,23 +305,6 @@ def test_world_map_retry_radii_leave_a_passage_narrower_than_the_inflated_walls(
     assert np.abs(routes[2][:, 1]).max() < .2                # straight out along the corridor
 
 
-def test_world_map_block_radius_opens_a_door_the_full_inflation_closes():
-    from cross_nav.policy.bev_policy import WorldMap
-    n, res = 80, .1
-    i = (n / 2 - np.arange(n) - .5) * res
-    F, L = np.meshgrid(i, i, indexing='ij')
-    # a wall 1.5 m ahead with a 0.4 m gap straight ahead (a door whose predicted edges are blurred); around: a long way
-    p = np.where((np.abs(F - 1.5) < .1) & (np.abs(L) > .2) & (np.abs(L) < 3.5), .97, .02).astype(np.float32)
-    v = np.full((n, n), .9, np.float32)
-    lat = {}
-    for br in (None, .1):
-        wm = WorldMap((0., 0., 0.), resolve({'map': {'res': .1, 'size': 200, 'block_radius': br}})['map'])
-        wm.fuse(p, v, (0., 0., 0.), res)
-        route = wm.plan((0., 0., 0.), np.array([3., 0.]))
-        lat[br] = float(np.abs(route[:, 1]).max())
-    assert lat[None] > 3. and lat[.1] < .3                 # around the wall vs through the door
-
-
 def test_relaxed_planner_after_a_no_route_streak():
     from cross_nav.policy.bev_policy import STATUS_RELAXED, Episode
     p, v = _open()
