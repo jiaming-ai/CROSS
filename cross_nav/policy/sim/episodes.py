@@ -1,7 +1,9 @@
 """Point-goal episodes on the largest navmesh island of HSSD scenes (habitat environment).
 
     python -m cross_nav.policy.sim.episodes --hssd ROOT --split test --per-scene 25 --out test.json \
-        [--min-geo 1.5] [--max-geo 20] [--navmesh-dir DIR] [--scenes ...] [--exclude-scenes-file F]
+        [--min-geo 1.5] [--max-geo 20] [--navmesh-dir DIR] [--scenes ...] [--scenes-file F] [--exclude ...]
+
+--hssd may also be an hssd/ai2thor-hab root (scenes from --scenes / --scenes-file; every navigable point is indoor).
 
 Habitat PointNav-style sampling on the island with the largest indoor area: indoor start and goal on one floor (height difference < 0.3 m), geodesic distance in
 [min, max], and an episode whose geodesic/Euclidean ratio is below 1.1 kept only with probability 0.05, so most need a
@@ -64,7 +66,10 @@ def main():
     p.add_argument('--max-geo', type=float, default=20.); p.add_argument('--navmesh-dir'); p.add_argument('--scenes', nargs='*')
     p.add_argument('--gpu', type=int, default=0); p.add_argument('--seed', type=int, default=0)
     p.add_argument('--exclude', nargs='*', default=[], help='scenes to leave out (e.g. the held-out test scenes)')
+    p.add_argument('--scenes-file', help='scene ids, one per line (AI2-THOR houses have no official split file)')
     a = p.parse_args()
+    if a.scenes_file:
+        a.scenes = (a.scenes or []) + [l.strip() for l in Path(a.scenes_file).read_text().splitlines() if l.strip()]
     scenes = [s for s in (a.scenes or split_scenes(a.hssd, a.split)) if s not in set(a.exclude)]
     eps, skipped = [], []
     for scene in scenes:

@@ -5,6 +5,10 @@ room); one forward RGB camera 512x384, 90 deg horizontal FoV, 0.8 m above the fl
 solid slabs in HSSD) are removed, so doorways are open in both the navmesh and the renders. The navmesh treats static
 furniture as obstacles and is cached per scene. HSSD navmeshes include outdoor yards (black sky): episodes use indoor
 points only, by the scene's room polygons (semantics/scenes/<id>.semantic_config.json).
+
+The same code runs AI2-THOR houses (hssd/ai2thor-hab: ProcTHOR, RoboTHOR, ArchitecTHOR, iTHOR), detected from the
+dataset root (ai2thor-hab.scene_dataset_config.json): their door objects (Doorway*, with a door leaf) are removed like
+HSSD doors, open Doorframe objects stay; the houses have no outdoor area, so every navigable point counts as indoor.
 """
 from __future__ import annotations
 
@@ -22,8 +26,33 @@ EXPERT_RADII = (.3, .24)    # expert clearance ladder: ~12 cm, else ~6 cm beyond
 OUTDOOR = {'outdoor', 'porch/terrace/deck/driveway', 'balcony'}
 
 
+@lru_cache(maxsize=8)
+def dataset_kind(root):
+    """'ai2thor' for an hssd/ai2thor-hab root, else 'hssd'."""
+    return 'ai2thor' if (Path(root) / 'ai2thor-hab.scene_dataset_config.json').exists() else 'hssd'
+
+
+def dataset_name(root):
+    """Dataset tag of recorded windows (training mixture weights are per tag)."""
+    return 'ai2thor_sim' if dataset_kind(root) == 'ai2thor' else 'hssd_sim'
+
+
 def scene_config(root):
+    if dataset_kind(root) == 'ai2thor':
+        return str(Path(root) / 'ai2thor-hab.scene_dataset_config.json')
     return str(Path(root) / 'hssd-hab.scene_dataset_config.json')
+
+
+def ai2thor_scenes(root, family='ProcTHOR'):
+    """Scene ids (file stems) of one AI2-THOR family, sorted."""
+    d = Path(root) / 'configs/scenes' / family
+    return sorted(f.name[:-len('.scene_instance.json')] for f in d.rglob('*.scene_instance.json'))
+
+
+def is_ai2thor_door(handle):
+    """AI2-THOR door objects with a leaf (Doorway, Doorway_Double, <scene>-Doorway_<id>); not open Doorframes."""
+    name = handle.split(':')[0].rstrip('_')
+    return 'Doorway' in name
 
 
 @lru_cache(maxsize=1)
@@ -34,10 +63,15 @@ def door_ids(root):
 
 
 def open_doors(sim, root):
-    rom, doors = sim.get_rigid_object_manager(), door_ids(root)
+    rom = sim.get_rigid_object_manager()
+    if dataset_kind(root) == 'ai2thor':
+        is_door = is_ai2thor_door
+    else:
+        doors = door_ids(root)
+        is_door = lambda h: h.split(':')[0].rstrip('_') in doors
     removed = 0
     for h in list(rom.get_object_handles()):
-        if h.split(':')[0].rstrip('_') in doors:
+        if is_door(h):
             rom.remove_object_by_handle(h); removed += 1
     return removed
 
@@ -109,8 +143,12 @@ def expert_path(sim, pos, goal):
 
 
 class Rooms:
-    """Room polygons of an HSSD scene; indoor(p) for a 3D point p (x, y, z)."""
+    """Room polygons of an HSSD scene; indoor(p) for a 3D point p (x, y, z). AI2-THOR houses: everything is indoor."""
     def __init__(self, root, scene):
+        self.everywhere = dataset_kind(root) == 'ai2thor'
+        if self.everywhere:
+            self.regions = []
+            return
         cfg = json.loads((Path(root) / 'semantics/scenes' / f'{scene}.semantic_config.json').read_text())
         self.regions = [(r['label'], np.asarray(r['poly_loop'], np.float64)[:, [0, 2]], r['floor_height'], r['extrusion_height'])
                         for r in cfg['region_annotations']]
@@ -129,6 +167,8 @@ class Rooms:
         return None
 
     def indoor(self, p):
+        if self.everywhere:
+            return True
         r = self.region(p)
         return r is not None and r not in OUTDOOR
 

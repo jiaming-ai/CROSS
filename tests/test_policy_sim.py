@@ -227,6 +227,26 @@ def test_robot_agent_reports_commanded_motion_to_the_bev_planner():
     assert pl.expect == [None]                              # no stamps: the planner keeps its own rule
 
 
+def test_ai2thor_dataset_switch(tmp_path):
+    from cross_nav.policy.sim import hab
+    (tmp_path / 'ai2thor-hab.scene_dataset_config.json').write_text('{}')
+    d = tmp_path / 'configs/scenes/ProcTHOR/1'
+    d.mkdir(parents=True)
+    for n in ('ProcTHOR-Train-2', 'ProcTHOR-Train-10'):
+        (d / f'{n}.scene_instance.json').write_text('{}')
+    assert hab.dataset_kind(str(tmp_path)) == 'ai2thor' and hab.dataset_name(str(tmp_path)) == 'ai2thor_sim'
+    assert hab.scene_config(str(tmp_path)).endswith('ai2thor-hab.scene_dataset_config.json')
+    assert hab.ai2thor_scenes(str(tmp_path)) == ['ProcTHOR-Train-10', 'ProcTHOR-Train-2']
+    rooms = hab.Rooms(str(tmp_path), 'ProcTHOR-Train-2')
+    assert rooms.indoor((0., 0., 0.)) and rooms.indoor((100., 3., -5.))
+    assert hab.is_ai2thor_door('Doorway_Double_3_:0000') and hab.is_ai2thor_door('ArchitecTHOR-Val-00-Doorway_39f930c1_:0001')
+    assert not hab.is_ai2thor_door('Doorframe_2_:0000') and not hab.is_ai2thor_door('Sofa_3_:0000')
+    hssd = tmp_path / 'hssd'
+    hssd.mkdir()
+    assert hab.dataset_kind(str(hssd)) == 'hssd' and hab.dataset_name(str(hssd)) == 'hssd_sim'
+    assert hab.scene_config(str(hssd)).endswith('hssd-hab.scene_dataset_config.json')
+
+
 def test_real_cache_cast_splits_follow_the_gnm_recordings():
     from cross_nav.policy.real_cache import split_of
     assert split_of('cast', 'jackal_x', 'scand') is None and split_of('cast', 'tartan_20210826', 'tartan_drive') is None

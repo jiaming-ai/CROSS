@@ -29,7 +29,7 @@ import numpy as np
 
 from . import wire
 from .geom import control, resample, spl, to_robot, trail, window_ids
-from .hab import camera_sample, expert_path, geodesic, make_sim, render, set_hfov
+from .hab import camera_sample, dataset_name, expert_path, geodesic, make_sim, render, set_hfov
 
 SUCCESS_M = .2
 
@@ -78,7 +78,7 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
                'record': record, 'predict': not use_expert, 'step': step, 'expert_dist': d_geo, 'debug': viz is not None,
                'odom': odom_pose(pos, yaw),
                'meta': {'ep': ep['id'], 'scene': ep['scene'], 'mode': a.mode, 'tag': a.tag, 'expert_step': bool(use_expert),
-                        'camera': camera, 'dataset': 'hssd_sim'}}
+                        'camera': camera, 'dataset': dataset_name(a.hssd)}}
         wire.send(conn, msg)
         reply = wire.recv(conn)
         if use_expert:
@@ -195,7 +195,7 @@ def run_episode_robot(sim, conn, ep, a, rng, viz=None):
     camera = camera_sample(rng, a.camera)
     set_hfov(sim, camera['hfov'])
     meta = {'ep': ep['id'], 'scene': ep['scene'], 'mode': a.mode, 'tag': a.tag, 'expert_step': False, 'camera': camera,
-            'dataset': 'hssd_sim'}
+            'dataset': dataset_name(a.hssd)}
     planner = SocketPlanner(conn, uid, a.info, meta)
     agent = NavigationAgent(planner, arrive_m=SUCCESS_M, v_max=a.v_max, w_max=a.w_max, lookahead=a.lookahead,
                             replan_every=a.replan_every)
