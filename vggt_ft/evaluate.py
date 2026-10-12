@@ -1,6 +1,6 @@
 """Held-out evaluation: relative pose, depth, metric scale and covisibility on fixed windows of scene caches.
 
-    python -m vggt_ft.evaluate --ckpt <ckpt.pt | released.pt> --suite configs/vggt_ft/eval_suite.yaml --out res.json
+    python -m vggt_ft.evaluate --ckpt <ckpt.pt | released.pt> --suite vggt_ft/configs/eval_suite.yaml --out res.json
 
 Protocols (per test set in the suite):
   seq     S frames of one sequence, `stride` frames apart (consecutive frames overlap), deterministic starts.

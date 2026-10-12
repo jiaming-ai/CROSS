@@ -1,6 +1,6 @@
 #!/bin/bash
 # Launch vggt_ft.train on one H20 node (run once per node; NODE_RANK 0 is the master).
-#   GPUS=0,1,2,3 NNODES=2 NODE_RANK=0 MASTER=192.168.26.62 scripts/vggt_ft/launch_h20.sh configs/vggt_ft/<run>.yaml [overrides]
+#   GPUS=0,1,2,3 NNODES=2 NODE_RANK=0 MASTER=192.168.26.62 scripts/vggt_ft/launch_h20.sh vggt_ft/configs/<run>.yaml [overrides]
 # (NODE_RANK only names the log; with NNODES > 1 the c10d rendezvous on MASTER assigns ranks, GPU counts may differ)
 # Inter-node traffic goes over RoCE (mlx5_1..4, GID 7; settings from the platform's NCCL test).  Logs to
 # /data0/jz/logs/<exp>_node<rank>.log.
@@ -8,7 +8,7 @@ set -e
 CFG=$1; shift
 cd ${CODE_DIR:-/mnt/datasets-livsyn/jz/code/CROSS-ft}     # CODE_DIR: another deployed copy
 . /mnt/datasets-livsyn/jz/envs/ft/bin/activate
-export VGGT_FT_ROOT=${VGGT_FT_ROOT:-/mnt/datasets-livsyn/jz}   # ${VGGT_FT_ROOT} in configs/vggt_ft/*.yaml
+export VGGT_FT_ROOT=${VGGT_FT_ROOT:-/mnt/datasets-livsyn/jz}   # ${VGGT_FT_ROOT} in vggt_ft/configs/*.yaml
 export CUDA_VISIBLE_DEVICES=${GPUS:-0,1,2,3,4,5,6,7}
 NPROC=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
 export NCCL_IB_DISABLE=0 NCCL_IB_HCA=mlx5_1,mlx5_2,mlx5_3,mlx5_4 NCCL_IB_GID_INDEX=7 NCCL_SOCKET_IFNAME=eth0

@@ -65,9 +65,9 @@ cross/
 └── visualization/  # Rerun-based 3D visualization, graph plotting
 cross_world/        # 3D Gaussian-splatting reconstruction of a saved map, export, web viewer (docs/WORLD.md)
 benchmark/          # Evaluation protocol, dataset converters, system runners, results page
-configs/            # Shipped configs: local/, cloud/ (one per mode), base/, overlays/ (fast/, outdoor, lowband), mono profiles,
-                    # vggt_ft/ (recipe of the fine-tuned checkpoint; paths from $VGGT_FT_ROOT)
-vggt_ft/            # Fine-tuning of VGGT-Omega: metric-scale and covisibility heads, multi-session training, evaluation
+configs/            # Shipped configs: local/, cloud/ (one per mode), base/, overlays/ (fast/, outdoor, lowband), mono profiles
+vggt_ft/            # Fine-tuning of VGGT-Omega: metric-scale and covisibility heads, multi-session training, evaluation;
+                    # configs/ = the recipe of the released checkpoint (paths from $VGGT_FT_ROOT; docs/USAGE.md section 9)
 docs/               # Usage guide
 scripts/            # Map-and-relocalize harnesses, dataset converters, baselines, figures
 ```

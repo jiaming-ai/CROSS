@@ -7,7 +7,7 @@ the same windows.  Per test set and source: m_abs (AbsRel of s * d against GT me
 (|log s - log s*|, s* = median GT / d), ratio (median of s / s*: > 1 means scenes predicted too large), and for the
 labelers their own per-frame dense AbsRel against GT (dense_abs).
 
-python scripts/vggt_ft/eval_metric_labelers.py --ckpt <fine-tuned ckpt> --suite configs/vggt_ft/eval_suite.yaml \
+python scripts/vggt_ft/eval_metric_labelers.py --ckpt <fine-tuned ckpt> --suite vggt_ft/configs/eval_suite.yaml \
     --weights <dir with DA3METRIC-LARGE/, unidepth-v2-vitl14/, moge-2-vitl-normal/> \
     --labelers da3metric unidepth moge2 --max_windows 40 --out <json>
 Labeler packages (depth_anything_3, unidepth, moge) must be importable (PYTHONPATH).

@@ -5,7 +5,7 @@
 GPU=$1; shift
 RUNS=${RUNS:-/mnt/datasets-livsyn/jz/runs}; EVAL=${EVAL:-/mnt/datasets-livsyn/jz/eval}
 cd "$(dirname "$0")/../.." && . /mnt/datasets-livsyn/jz/envs/ft/bin/activate
-export VGGT_FT_ROOT=${VGGT_FT_ROOT:-/mnt/datasets-livsyn/jz}   # ${VGGT_FT_ROOT} in configs/vggt_ft/*.yaml
+export VGGT_FT_ROOT=${VGGT_FT_ROOT:-/mnt/datasets-livsyn/jz}   # ${VGGT_FT_ROOT} in vggt_ft/configs/*.yaml
 while true; do
   for run in "$@"; do
     for ck in $(ls $RUNS/$run/${CKPT_GLOB:-ckpt_*_bf16.pt} 2>/dev/null); do
@@ -13,14 +13,14 @@ while true; do
       # <out>.lock (atomic mkdir): several watchers can share runs without evaluating the same checkpoint twice
       if [ ! -e $out.done ] && mkdir $out.lock 2>/dev/null; then
         echo "$(date +%F_%T) eval $run $tag"
-        CUDA_VISIBLE_DEVICES=$GPU python -m vggt_ft.evaluate --ckpt $ck --suite configs/vggt_ft/eval_suite.yaml --out $out \
+        CUDA_VISIBLE_DEVICES=$GPU python -m vggt_ft.evaluate --ckpt $ck --suite vggt_ft/configs/eval_suite.yaml --out $out \
           > /data0/jz/logs/eval_${run}_${tag}.log 2>&1 && touch $out.done
         rmdir $out.lock
       fi
       # validation split of the training datasets (checkpoint selection) for runs trained with data.val_mod
       vo=${out%.json}_val.json
       if [ -n "$VAL_RUNS" ] && echo " $VAL_RUNS " | grep -q " $run " && [ ! -e $vo.done ] && mkdir $vo.lock 2>/dev/null; then
-        CUDA_VISIBLE_DEVICES=$GPU python -m vggt_ft.evaluate --ckpt $ck --suite configs/vggt_ft/val_suite.yaml \
+        CUDA_VISIBLE_DEVICES=$GPU python -m vggt_ft.evaluate --ckpt $ck --suite vggt_ft/configs/val_suite.yaml \
           --out $vo > /data0/jz/logs/eval_${run}_${tag}_val.log 2>&1 && touch $vo.done
         rmdir $vo.lock
       fi

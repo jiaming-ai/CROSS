@@ -1,4 +1,4 @@
-"""Usage: python scripts/vggt_ft/gauge_check.py <ckpt> (from the repo root; reads configs/vggt_ft/eval_suite.yaml windows).
+"""Usage: python scripts/vggt_ft/gauge_check.py <ckpt> (from the repo root; reads vggt_ft/configs/eval_suite.yaml windows).
    Gauge of the released VGGT-Omega vs our GT normalisation (unit mean point distance of the window, frame 0 at the
 origin): per window, median of predicted depth / normalised GT depth, and median of |t_pred| / |t_gt| over frames > 0."""
 import json, sys
@@ -13,7 +13,7 @@ from vggt_ft.geometry import normalize_window, gt_covisibility, connected_to_ref
 from vggt_ft.evaluate import load_model
 
 model = load_model(sys.argv[1])
-suite = load_yaml("configs/vggt_ft/eval_suite.yaml")
+suite = load_yaml("vggt_ft/configs/eval_suite.yaml")
 wd = Path(suite["windows_dir"])
 out = {}
 for name in ["eth3d", "nrgbd", "dtu", "hiroom", "7scenes", "openloris_seq", "simchange_seq", "tum_dynamic"]:

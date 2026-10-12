@@ -1,6 +1,6 @@
 """Fine-tune VGGT-Omega with the metric-scale and covisibility heads.
 
-    torchrun --nproc_per_node=8 -m vggt_ft.train --config configs/vggt_ft/<run>.yaml [key.sub=value ...]
+    torchrun --nproc_per_node=8 -m vggt_ft.train --config vggt_ft/configs/<run>.yaml [key.sub=value ...]
     (multi-node: add --nnodes / --node_rank / --rdzv_endpoint; images_per_gpu is per GPU)
 
 Per step: GT covisibility of every frame pair of each window (geometry.gt_covisibility); frames not connected to frame

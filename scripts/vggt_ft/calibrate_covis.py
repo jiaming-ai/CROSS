@@ -6,7 +6,7 @@ config's datasets; the GT covisibility of every pair is the training target.  p 
 soft-target BCE, then folded into the head's last layer (weight * a, a * bias + b), so CROSS loads the calibrated head
 unchanged.
 
-  calibrate_covis.py --config configs/vggt_ft/<run>.yaml --ckpt <ckpt.pt> --out <ckpt_cal.pt> [--windows 400]
+  calibrate_covis.py --config vggt_ft/configs/<run>.yaml --ckpt <ckpt.pt> --out <ckpt_cal.pt> [--windows 400]
 """
 import argparse
 
