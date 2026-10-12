@@ -122,6 +122,125 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
             'noise': noise, 'camera': camera, 'trajectory': traj[::2] + [traj[-1]]}
 
 
+class SocketPlanner:
+    """cross_nav.policy.robot planner interface over the policy server's wire protocol, so --control robot runs the
+    robot's own NavigationAgent. Window frames the server does not hold yet are uploaded first as non-predicting step
+    messages (frames are recognised by content), then the current frame asks for a path."""
+    def __init__(self, conn, uid, info, meta):
+        self.conn, self.uid, self.meta = conn, uid, meta
+        self.history_m = tuple(info['history_m'])
+        self.history_rule = info.get('history_rule') or {'type': 'distance', 'm': list(info['history_m'])}
+        self.uses_odometry = bool(info.get('bev'))
+        self.sent, self.next_idx, self.calls, self.debug, self.last_debug = {}, 0, 0, False, None
+        self.on_server = set()       # keys of frames the server holds (it drops those older than the latest window)
+
+    def _send(self, msg):
+        wire.send(self.conn, msg)
+        return wire.recv(self.conn)
+
+    def __call__(self, images, goal, hist, trail=None, odom=None, window_odom=None):
+        keys = [zlib.crc32(np.ascontiguousarray(im).data) for im in images]
+        for key in keys:
+            if key not in self.sent:
+                self.sent[key] = self.next_idx; self.next_idx += 1
+        window = [self.sent[k] for k in keys]
+        base = {'cmd': 'step', 'ep': self.uid, 'window': window, 'label': None, 'record': False, 'step': self.calls,
+                'meta': self.meta}
+        for j in range(len(images) - 1, 0, -1):          # older window frames the server has not seen, oldest first
+            if keys[j] not in keys[:j] and keys[j] not in self.on_server:
+                self._send({**base, 'frame_idx': window[j], 'frame': images[j], 'predict': False, 'debug': False,
+                            'odom': None if window_odom is None else window_odom[j]})
+                self.on_server.add(keys[j])
+        reply = self._send({**base, 'frame_idx': window[0], 'frame': images[0], 'predict': True, 'goal': goal,
+                            'hist_chord': hist, 'trail': trail if trail is not None else np.zeros((5, 3), np.float32),
+                            'odom': odom, 'debug': self.debug, 'expert_dist': np.nan})
+        self.on_server.add(keys[0])
+        lo = min(window)                                   # the server drops frames older than the window
+        self.on_server = {k for k in self.on_server if self.sent[k] >= lo}
+        self.calls += 1
+        self.last_debug = reply.get('debug')
+        return reply['path']
+
+    def end(self):
+        self._send({'cmd': 'end', 'ep': self.uid})
+
+
+def odometry_step(odom, fwd, turn, rng, noise, bias):
+    """Dead-reckoned odometry pose after moving fwd metres and turning turn radians (midpoint heading); with noise > 0,
+    both are scaled by (1 + per-episode bias + per-tick N(0, noise))."""
+    if noise > 0:
+        fwd *= 1. + bias[0] + rng.normal(0, noise)
+        turn *= 1. + bias[1] + rng.normal(0, noise)
+    x, y, th = odom
+    mid = th + turn / 2
+    return np.array([x + fwd * math.cos(mid), y + fwd * math.sin(mid), (th + turn + math.pi) % (2 * math.pi) - math.pi])
+
+
+def run_episode_robot(sim, conn, ep, a, rng, viz=None):
+    """Camera-rate closed loop through cross_nav.policy.robot.NavigationAgent: every 1/rate s render a frame, give it
+    with the odometry pose to the agent (it keeps frames, picks the window, plans every replan_every frames and returns
+    a pure-pursuit (v, omega)), and integrate (v, omega) for 1/rate s with navmesh sliding. A tick whose result
+    differs from the commanded motion by more than 2 cm x (commanded / 0.25 m) is a contact (the step controller's
+    2 cm per 0.25 m step, scaled to the tick). Time limit: a.time_limit seconds."""
+    from ..robot import NavigationAgent
+    pf = sim.pathfinder
+    pos = np.asarray(ep['start'], np.float64)
+    yaw = float(ep['yaw'])
+    goal = np.asarray(ep['goal'], np.float64)
+    uid = f"{a.tag}:{ep['id']}"
+    camera = camera_sample(rng, a.camera)
+    set_hfov(sim, camera['hfov'])
+    meta = {'ep': ep['id'], 'scene': ep['scene'], 'mode': a.mode, 'tag': a.tag, 'expert_step': False, 'camera': camera,
+            'dataset': 'hssd_sim'}
+    planner = SocketPlanner(conn, uid, a.info, meta)
+    agent = NavigationAgent(planner, arrive_m=SUCCESS_M, v_max=a.v_max, w_max=a.w_max, lookahead=a.lookahead,
+                            replan_every=a.replan_every)
+    odom = odom_pose(pos, yaw)
+    agent.set_goal(odom_pose(goal, 0.)[:2])          # the goal in the odometry frame (exact at the start)
+    bias = rng.normal(0, a.odom_noise, 2) if a.odom_noise > 0 else np.zeros(2)
+    dt = 1. / a.rate
+    traj, travelled, collisions, success, ticks, plans = [pos[[0, 2]].tolist()], 0., 0, False, 0, 0
+    for tick in range(int(round(a.time_limit * a.rate))):
+        rgb = np.ascontiguousarray(render(sim, pos, yaw, camera=camera))
+        planner.debug = viz is not None
+        out = agent.step(rgb, tuple(odom))
+        ticks = tick + 1
+        if out['arrived']:
+            break
+        plans += bool(out.get('replanned'))
+        if viz is not None and out.get('replanned'):
+            viz.append({'rgb': rgb, 'pos': pos.copy(), 'yaw': yaw, 'goal_rel': to_robot(goal[[0, 2]], pos[[0, 2]], yaw),
+                        'path': np.asarray(out['path'], np.float32), 'expert': None, 'window': out['window'],
+                        'expert_step': False, 'debug': planner.last_debug})
+        v, w = out['cmd']
+        turn, fwd = w * dt, v * dt
+        mid = yaw + turn / 2
+        new = pos
+        if fwd > 0:
+            want = pos + fwd * np.array([-math.sin(mid), 0., -math.cos(mid)])
+            new = np.asarray(pf.try_step(pos.astype(np.float32), want.astype(np.float32)), np.float64)
+            if np.linalg.norm((new - want)[[0, 2]]) > .02 * fwd / a.step_m:
+                collisions += 1
+        moved = float(np.linalg.norm((new - pos)[[0, 2]]))
+        odom = odometry_step(odom, moved, turn, rng, a.odom_noise, bias)
+        travelled += moved; pos = new
+        yaw = (yaw + turn + math.pi) % (2 * math.pi) - math.pi
+        if moved > 0 and tick % 5 == 0:
+            traj.append(pos[[0, 2]].round(3).tolist())
+        if np.linalg.norm((goal - pos)[[0, 2]]) < SUCCESS_M and abs(goal[1] - pos[1]) < .5:
+            success = True
+            break
+    planner.end()
+    traj.append(pos[[0, 2]].round(3).tolist())
+    final_geo, _ = geodesic(pf, pos, goal)
+    return {'id': ep['id'], 'scene': ep['scene'], 'geodesic': ep['geodesic'], 'euclidean': ep['euclidean'], 'success': success,
+            'spl': spl(success, ep['geodesic'], travelled), 'steps': ticks, 'seconds': ticks * dt, 'plans': plans,
+            'travelled': travelled, 'collisions': collisions, 'contact_s': collisions * dt,
+            'collision_free': success and collisions == 0, 'final_geo': final_geo, 'mode': a.mode, 'control': 'robot',
+            'rate': a.rate, 'replan_every': a.replan_every, 'odom_noise': a.odom_noise,
+            'odom_error_m': float(np.hypot(*(odom[:2] - odom_pose(pos, yaw)[:2]))), 'camera': camera, 'trajectory': traj}
+
+
 def save_viz(path, ep, result, steps, sim=None):
     """Per-step record of one episode for the viewer: JPEG frames, poses, followed / expert paths, policy debug maps."""
     import io
@@ -165,7 +284,19 @@ def main():
     p.add_argument('--tag', default='run'); p.add_argument('--seed', type=int, default=0); p.add_argument('--limit', type=int, default=0)
     p.add_argument('--camera', choices=['nominal', 'random'], default='nominal')
     p.add_argument('--viz-dir'); p.add_argument('--viz-every', type=int, default=0, help='save every k-th episode for the viewer')
+    p.add_argument('--control', choices=['step', 'robot'], default='step',
+                   help='step: one waypoint-controller command per frame; robot: camera-rate (v, omega) loop of '
+                        'cross_nav.policy.robot.NavigationAgent (policy mode only)')
+    p.add_argument('--rate', type=float, default=10., help='robot control: camera / control rate (Hz)')
+    p.add_argument('--replan-every', type=int, default=1, help='robot control: plan on every k-th frame')
+    p.add_argument('--v-max', type=float, default=.5); p.add_argument('--w-max', type=float, default=1.)
+    p.add_argument('--time-limit', type=float, default=0., help='robot control: seconds (default 2 x max_steps x step_m / v_max)')
+    p.add_argument('--odom-noise', type=float, default=0., help='robot control: relative odometry noise (bias + per tick)')
     a = p.parse_args()
+    if a.control == 'robot':
+        if a.mode != 'policy':
+            raise SystemExit('--control robot supports --mode policy only')
+        a.time_limit = a.time_limit or 2 * a.max_steps * a.step_m / a.v_max
     eps = json.loads(Path(a.episodes).read_text())['episodes']
     i, n = a.shard
     eps = [e for k, e in enumerate(eps) if k % n == i]
@@ -180,6 +311,7 @@ def main():
     wire.send(conn, {'cmd': 'info'})
     info = wire.recv(conn)
     a.history_rule = info.get('history_rule') or {'type': 'distance', 'm': list(info['history_m'])}
+    a.info = info
     sim, scene, t0 = None, None, time.time()
     with out.open('a') as f:
         for k, ep in enumerate(eps):
@@ -189,7 +321,7 @@ def main():
                 sim, scene = make_sim(a.hssd, ep['scene'], a.gpu, a.navmesh_dir), ep['scene']
             rng = np.random.default_rng((zlib.crc32(f"{a.tag}:{ep['id']}".encode()) + a.seed) % 2**31)
             viz = [] if a.viz_dir and a.viz_every and zlib.crc32(ep['id'].encode()) % a.viz_every == 0 else None
-            r = run_episode(sim, conn, ep, a, rng, viz)
+            r = (run_episode_robot if a.control == 'robot' else run_episode)(sim, conn, ep, a, rng, viz)
             if viz:
                 Path(a.viz_dir).mkdir(parents=True, exist_ok=True)
                 save_viz(Path(a.viz_dir) / f"{ep['id'].replace(':', '_')}.npz", ep, r, viz, sim)

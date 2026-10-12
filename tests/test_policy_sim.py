@@ -112,3 +112,79 @@ def test_robot_agent_keeps_long_history_at_camera_rate():
     assert seen['n'] == 4 and seen['trail'][:, 2].all()   # the 16 m trail point is available
     np.testing.assert_allclose(seen['trail'][4, :2], [-16, 0], atol=.11)
     assert len(agent.frames) < 250 and out['cmd'][0] > 0
+
+
+def test_robot_agent_replans_every_k_frames_and_follows_the_plan_between():
+    from cross_nav.policy.robot import NavigationAgent
+    calls = []
+
+    def planner(images, goal, hist, trail=None):
+        calls.append(1)
+        return np.array([[.5 * (i + 1), 0.] for i in range(16)])
+
+    agent = NavigationAgent(planner, replan_every=3)
+    agent.set_goal((100., 0.))
+    img = np.zeros((4, 4, 3), np.uint8)
+    outs = [agent.step(img, (.05 * k, 0., 0.)) for k in range(9)]
+    assert len(calls) == 3 and [o['replanned'] for o in outs[:4]] == [True, False, False, True]
+    assert outs[1]['cmd'][0] > 0 and abs(outs[1]['cmd'][1]) < 1e-9          # follows the stored straight plan
+    np.testing.assert_allclose(outs[2]['path'][0], [.4, 0.], atol=1e-9)     # the plan's points still ahead
+
+
+def _fake_server(conn, log):
+    """The policy server's frame buffer rules (cross_nav.policy.server): store each step's frame, drop frames older
+    than the window; a predicting step needs every window frame."""
+    buf = {}
+    while True:
+        m = wire.recv(conn)
+        if m['cmd'] == 'end':
+            wire.send(conn, {}); return
+        buf[m['frame_idx']] = m['frame']
+        for k in [k for k in buf if k < min(m['window'])]:
+            del buf[k]
+        if m['predict']:
+            assert all(j in buf for j in m['window']), (m['window'], sorted(buf))
+            log.append(len(m['window']))
+            g = m['goal'] / max(np.linalg.norm(m['goal']), 1e-6)
+            wire.send(conn, {'path': np.outer(np.arange(1, 17) * .5, g), 'debug': None})
+        else:
+            log.append(0)
+            wire.send(conn, {'path': None, 'debug': None})
+
+
+def test_socket_planner_drives_the_robot_agent_over_the_wire():
+    import threading
+    from cross_nav.policy.robot import NavigationAgent
+    from cross_nav.policy.sim.rollout import SocketPlanner, odometry_step
+    a, b = Pipe()
+    log = []
+    t = threading.Thread(target=_fake_server, args=(b, log)); t.start()
+    info = {'history_m': [0., .5, 1., 2.], 'history_rule': None, 'bev': None}
+    planner = SocketPlanner(a, 'ep', info, {})
+    agent = NavigationAgent(planner, v_max=.5, w_max=1.)
+    agent.set_goal((3., 2.))
+    odom, rng = np.zeros(3), np.random.default_rng(0)
+    for k in range(200):
+        img = np.full((4, 4, 3), k % 256, np.uint8)                       # distinct frames
+        out = agent.step(img, tuple(odom))
+        if out['arrived']:
+            break
+        v, w = out['cmd']
+        odom = odometry_step(odom, v * .1, w * .1, rng, 0., np.zeros(2))
+    planner.end(); t.join()
+    assert out['arrived']
+    assert 4 in log and log.count(0) < len(log) // 2                       # uploads only for window frames not yet held
+
+
+def test_odometry_step_integrates_and_drifts():
+    from cross_nav.policy.sim.rollout import odometry_step
+    rng = np.random.default_rng(0)
+    o = np.zeros(3)
+    for _ in range(10):
+        o = odometry_step(o, .1, math.pi / 20, rng, 0., np.zeros(2))
+    assert math.isclose(o[2], math.pi / 2, abs_tol=1e-9)
+    np.testing.assert_allclose(o[:2], [2 / math.pi * .99, 2 / math.pi * .99], rtol=.02)   # quarter circle, r = 2/pi
+    o2 = np.zeros(3)
+    for _ in range(10):
+        o2 = odometry_step(o2, .1, math.pi / 20, rng, .05, np.array([.05, 0.]))
+    assert not np.allclose(o, o2)

@@ -61,7 +61,7 @@ def pure_pursuit(path, v_max=.5, w_max=1., lookahead=.4, turn_only=math.radians(
 
 class NavigationAgent:
     def __init__(self, planner, history_m=None, arrive_m=.2, v_max=.5, w_max=1., lookahead=.4, max_frames=1024,
-                 camera_height=.8, store_m=.1, store_deg=10.):
+                 camera_height=.8, store_m=.1, store_deg=10., replan_every=1):
         self.planner = planner
         self.history_m = tuple(history_m or getattr(planner, 'history_m', (0., .5, 1., 2.)))
         self.history_rule = getattr(planner, 'history_rule', None) or {'type': 'distance', 'm': list(self.history_m)}
@@ -72,12 +72,15 @@ class NavigationAgent:
         self.store_m, self.store_rad = store_m, math.radians(store_deg)
         self.frames = deque(maxlen=max_frames)       # kept frames: (image, pose, cumulative travel)
         self.goal, self.cum, self.last, self.camera_height = None, 0., None, camera_height
+        # Plan on every replan_every-th frame (a planner slower than the camera); in between, follow the rest of the
+        # last plan, kept in the odometry frame.
+        self.replan_every, self.tick, self.plan = max(1, int(replan_every)), 0, None
 
     def set_goal(self, goal_xy):
         self.goal = np.asarray(goal_xy, np.float64)
 
     def reset(self):
-        self.frames.clear(); self.cum = 0.; self.last = None
+        self.frames.clear(); self.cum = 0.; self.last = None; self.tick = 0; self.plan = None
         if hasattr(self.planner, 'reset'):
             self.planner.reset()
 
@@ -107,6 +110,12 @@ class NavigationAgent:
         goal_rel = to_robot_2d(self.goal, pose)
         if float(np.hypot(*goal_rel)) < self.arrive_m:
             return {'arrived': True, 'cmd': (0., 0.), 'path': np.zeros((0, 2)), 'path_odom': np.zeros((0, 2)), 'goal_rel': goal_rel}
+        self.tick += 1
+        if self.plan is not None and (self.tick - 1) % self.replan_every:
+            path = self.remaining(pose)
+            v, w = pure_pursuit(path, self.v_max, self.w_max, self.lookahead)
+            return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': to_odom_2d(path, pose), 'goal_rel': goal_rel,
+                    'replanned': False}
         ids = window_ids([f[2] for f in frames], [f[1][2] for f in frames], self.history_rule)
         imgs = np.stack([frames[i][0] for i in ids])
         hist = np.array([math.hypot(pose[0] - frames[i][1][0], pose[1] - frames[i][1][1]) for i in ids], np.float32)
@@ -116,9 +125,15 @@ class NavigationAgent:
         else:
             path = self.planner(imgs, goal_rel.astype(np.float32), hist, trail=self.trail(pose, frames))
         path = np.asarray(path, np.float64)
+        self.plan = np.vstack((np.asarray(pose[:2], np.float64)[None], to_odom_2d(path, pose)))
         v, w = pure_pursuit(path, self.v_max, self.w_max, self.lookahead)
-        return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': to_odom_2d(path, pose), 'goal_rel': goal_rel,
-                'window': ids}
+        return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': self.plan[1:], 'goal_rel': goal_rel,
+                'window': ids, 'replanned': True}
+
+    def remaining(self, pose):
+        """The last plan after its point nearest to the robot, in the current robot frame."""
+        k = int(np.argmin(np.linalg.norm(self.plan - np.asarray(pose[:2]), axis=-1)))
+        return to_robot_2d(self.plan[min(k + 1, len(self.plan) - 1):], pose)
 
 
 class TrajectoryPlanner:
