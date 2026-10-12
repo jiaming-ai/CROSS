@@ -156,7 +156,10 @@ def main():
                 buf[m['frame_idx']] = m['frame']
                 for k in [k for k in buf if k < min(m['window'])]:
                     del buf[k]
-                batch.append((c, m))
+                if m.get('predict') or (m.get('record') and writer is not None):
+                    batch.append((c, m))
+                else:
+                    wire.send(c, {'path': None, 'debug': None})   # expert step, not recorded: no backbone pass
         for i in range(0, len(batch), a.max_batch):
             part = batch[i:i + a.max_batch]
             imgs = np.stack([np.stack([frames[m['ep']][j] for j in m['window']]) for _, m in part])

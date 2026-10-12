@@ -36,7 +36,7 @@ def split_of(dataset, group):
     return 'val' if zlib.crc32(f'{dataset}:{group}'.encode()) % 10 == 0 else 'train'
 
 
-def windows(dataset, ep_dir, rng, max_per_episode, horizon=16, spacing=.5):
+def windows(dataset, ep_dir, rng, max_per_episode, horizon=16, spacing=.5, per_metre=1.):
     with np.load(ep_dir / 'trajectory.npz') as z:
         pos, yaw = z['position'].astype(np.float64), z['yaw'].astype(np.float64)
     src = json.loads((ep_dir / 'source.json').read_text())
@@ -47,9 +47,10 @@ def windows(dataset, ep_dir, rng, max_per_episode, horizon=16, spacing=.5):
     if np.any(edges > 1.5):
         return []                     # converters split episodes at discontinuities; skip any that remain
     arc = np.r_[0., np.cumsum(edges)]
+    budget = int(np.clip(arc[-1] / per_metre, 2, max_per_episode))   # long recordings give proportionally more windows
     out = []
     for a in rng.permutation(n):
-        if len(out) >= max_per_episode:
+        if len(out) >= budget:
             break
         remain = arc[-1] - arc[a]
         if remain < 1.:
@@ -92,7 +93,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--root', required=True); p.add_argument('--datasets', nargs='+', required=True); p.add_argument('--out', required=True)
     p.add_argument('--backbone', required=True); p.add_argument('--split', default='train', choices=['train', 'val', 'test'])
-    p.add_argument('--per-dataset', type=int, default=20000); p.add_argument('--per-episode', type=int, default=40)
+    p.add_argument('--per-dataset', type=int, default=20000); p.add_argument('--per-episode', type=int, default=400)
     p.add_argument('--batch', type=int, default=16); p.add_argument('--workers', type=int, default=8); p.add_argument('--seed', type=int, default=0)
     a = p.parse_args()
     model = FrozenMetricTokens(a.backbone).cuda().eval()

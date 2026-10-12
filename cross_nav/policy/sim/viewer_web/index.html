@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Navigation Episode Viewer</title>
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div>
+      <h1>Closed-loop navigation episodes</h1>
+      <p class="sub" id="runs-desc">Loading…</p>
+    </div>
+    <button type="button" class="ghost" id="theme-btn" title="Colour theme">Theme: auto</button>
+  </div>
+</header>
+<main>
+  <section class="card" id="summary">
+    <div class="card-head">
+      <h2>Summary</h2>
+      <div class="seg" id="scope-seg" hidden></div>
+    </div>
+    <p class="note" id="summary-note"></p>
+    <div class="table-wrap"><table id="sum-table"></table></div>
+    <h3>By geodesic distance</h3>
+    <div class="table-wrap"><table id="bin-table"></table></div>
+  </section>
+
+  <section id="browser">
+    <aside class="card" id="ep-card">
+      <h2>Episodes</h2>
+      <p class="note" id="ep-note"></p>
+      <ul id="ep-list" role="listbox" aria-label="Episodes"></ul>
+    </aside>
+    <div id="ep-view">
+      <div class="card controls">
+        <div class="ep-title"><h2 id="ep-title">Select an episode</h2><span class="sub" id="ep-meta"></span></div>
+        <div class="player">
+          <button type="button" id="play-btn" class="primary" aria-label="Play">Play</button>
+          <button type="button" id="prev-btn" class="ghost" aria-label="Previous step">&#8249;</button>
+          <input type="range" id="step" min="0" max="0" value="0" aria-label="Step">
+          <button type="button" id="next-btn" class="ghost" aria-label="Next step">&#8250;</button>
+          <span id="step-label" class="mono">step 0 / 0</span>
+        </div>
+        <div class="opts">
+          <label>BEV overlay
+            <select id="overlay">
+              <option value="occ">Occupancy</option>
+              <option value="obs">Observability</option>
+              <option value="err">Error score</option>
+              <option value="none">Off</option>
+            </select>
+          </label>
+          <label>Speed
+            <select id="speed">
+              <option value="2">2 steps/s</option>
+              <option value="5" selected>5 steps/s</option>
+              <option value="10">10 steps/s</option>
+              <option value="20">20 steps/s</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" id="follow"> Follow robot</label>
+        </div>
+      </div>
+      <div id="panels" class="panels"></div>
+      <div class="card legend" id="legend">
+        <span><i class="sw line traj"></i>executed trajectory</span>
+        <span><i class="sw line path"></i>followed path (current step)</span>
+        <span><i class="sw line expert"></i>expert path (dashed)</span>
+        <span><i class="sw dot start"></i>start</span>
+        <span><i class="sw dot goal"></i>goal</span>
+        <span><i class="sw dot robot"></i>robot + heading</span>
+        <span><i class="sw dot target"></i>BEV route end</span>
+        <span><i class="sw box occ"></i>P(occupied)</span>
+        <span><i class="sw box obs"></i>P(observed)</span>
+        <span><i class="sw box err"></i>error score</span>
+        <span class="tl-legend"><i class="sw box st0"></i>route to goal <i class="sw box st1"></i>local waypoint <i class="sw box st2"></i>no route (rotate) <i class="sw box stx"></i>expert step <i class="sw tick"></i>blind zone used</span>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="viewer.js"></script>
+<script src="data/index.js"></script>
+</body>
+</html>

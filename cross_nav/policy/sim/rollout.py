@@ -118,12 +118,15 @@ def save_viz(path, ep, result, steps, sim=None):
     """Per-step record of one episode for the viewer: JPEG frames, poses, followed / expert paths, policy debug maps."""
     import io
     from PIL import Image
-    jpg = []
-    for s in steps:
-        b = io.BytesIO(); Image.fromarray(s['rgb']).save(b, 'JPEG', quality=85); jpg.append(np.frombuffer(b.getvalue(), np.uint8))
+    jpg = np.empty(len(steps), dtype=object)   # filled one by one: equal-length byte arrays must not stack to 2-D
+    for i, s in enumerate(steps):
+        b = io.BytesIO(); Image.fromarray(s['rgb']).save(b, 'JPEG', quality=85); jpg[i] = np.frombuffer(b.getvalue(), np.uint8)
     debug = {}
-    for k in (steps[0]['debug'] or {}):
-        debug['debug_' + k] = np.stack([s['debug'][k] for s in steps])
+    first = next((s['debug'] for s in steps if s['debug']), None) or {}
+    for k, v0 in first.items():   # steps without debug (DAgger expert steps): NaN, -1 or False
+        v0 = np.asarray(v0)
+        fill = np.full(v0.shape, np.nan if v0.dtype.kind == 'f' else -1 if v0.dtype.kind == 'i' else 0, v0.dtype)
+        debug['debug_' + k] = np.stack([np.asarray(s['debug'][k]) if s['debug'] else fill for s in steps])
     np.savez_compressed(path, jpg=np.array(jpg, dtype=object), pos=np.stack([s['pos'] for s in steps]),
                         yaw=np.array([s['yaw'] for s in steps]), goal_rel=np.stack([s['goal_rel'] for s in steps]),
                         path=np.stack([s['path'] for s in steps]),
@@ -150,7 +153,7 @@ def main():
     p.add_argument('--navmesh-dir'); p.add_argument('--record', action='store_true'); p.add_argument('--record-prob', type=float, default=1.)
     p.add_argument('--beta', type=float, default=.3); p.add_argument('--max-steps', type=int, default=500)
     p.add_argument('--horizon', type=int, default=16); p.add_argument('--spacing', type=float, default=.5)
-    p.add_argument('--lookahead', type=float, default=.75); p.add_argument('--step-m', type=float, default=.25)
+    p.add_argument('--lookahead', type=float, default=.5); p.add_argument('--step-m', type=float, default=.25)
     p.add_argument('--tag', default='run'); p.add_argument('--seed', type=int, default=0); p.add_argument('--limit', type=int, default=0)
     p.add_argument('--camera', choices=['nominal', 'random'], default='nominal')
     p.add_argument('--viz-dir'); p.add_argument('--viz-every', type=int, default=0, help='save every k-th episode for the viewer')

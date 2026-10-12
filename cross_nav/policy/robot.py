@@ -41,7 +41,7 @@ def to_odom_2d(points, pose):
     return np.stack((x + p[..., 0] * c - p[..., 1] * s, y + p[..., 0] * s + p[..., 1] * c), -1)
 
 
-def pure_pursuit(path, v_max=.5, w_max=1., lookahead=.75, turn_only=math.radians(60)):
+def pure_pursuit(path, v_max=.5, w_max=1., lookahead=.5, turn_only=math.radians(60)):
     """(v, omega) toward the path point `lookahead` metres along the path; rotate in place when it is far off-heading."""
     p = np.vstack(([0., 0.], np.asarray(path, np.float64)))
     seg = np.linalg.norm(np.diff(p, axis=0), axis=-1)
@@ -60,7 +60,7 @@ def pure_pursuit(path, v_max=.5, w_max=1., lookahead=.75, turn_only=math.radians
 
 
 class NavigationAgent:
-    def __init__(self, planner, history_m=None, arrive_m=.2, v_max=.5, w_max=1., lookahead=.75, max_frames=256,
+    def __init__(self, planner, history_m=None, arrive_m=.2, v_max=.5, w_max=1., lookahead=.5, max_frames=256,
                  camera_height=.8):
         self.planner = planner
         self.history_m = tuple(history_m or getattr(planner, 'history_m', (0., .5, 1., 2.)))

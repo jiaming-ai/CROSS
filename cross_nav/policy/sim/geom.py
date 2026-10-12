@@ -48,12 +48,14 @@ def history_ids(cumdist, history=HISTORY_M):
     return ids
 
 
-def control(path, lookahead=.75, step=.25, max_turn=math.radians(30), turn_only=math.radians(60)):
+def control(path, lookahead=.5, step=.25, max_turn=math.radians(45), turn_only=math.radians(60), align=math.radians(30)):
     """One motion command (turn radians, forward metres) that follows a (forward, left) path.
 
     Aim at the path point `lookahead` metres along it (the end when shorter); turn at most `max_turn`, then move
-    forward unless the aim point is more than `turn_only` off the heading. The forward step never exceeds the
-    remaining path length, so the robot does not overshoot a goal at the path end.
+    forward, scaled down linearly to zero as the heading error left after the turn reaches `align` (a differential
+    drive rotating before it drives; moving while misaligned cuts corners into obstacles). No forward motion when the
+    aim point is more than `turn_only` off the heading. The step never exceeds the remaining path length, so the robot
+    does not overshoot a goal at the path end.
     """
     p = np.vstack(([0., 0.], np.asarray(path, dtype=np.float64)))
     seg = np.linalg.norm(np.diff(p, axis=0), axis=-1)
@@ -67,8 +69,7 @@ def control(path, lookahead=.75, step=.25, max_turn=math.radians(30), turn_only=
     turn = max(-max_turn, min(max_turn, theta))
     if abs(theta) > turn_only:
         return turn, 0.
-    # remaining heading error after the turn shortens the step (a stand-in for a smooth diff-drive arc)
-    forward = min(step, total, float(np.linalg.norm(aim))) * max(0., math.cos(theta - turn))
+    forward = min(step, total, float(np.linalg.norm(aim))) * max(0., 1. - abs(theta - turn) / align)
     return turn, forward
 
 
