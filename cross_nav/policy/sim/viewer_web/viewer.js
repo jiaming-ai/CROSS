@@ -528,6 +528,7 @@
   }
 
   function frameSrc(run, i) {
+    if (run.frames.inline) return run.frames.inline[i];
     return `${run.frames.dir}/${String(i).padStart(4, '0')}.jpg`;
   }
   function getImg(src, onload) {

@@ -1,7 +1,7 @@
 """Static web viewer of closed-loop episodes: runs side by side, top-down map, BEV overlay, camera frames.
 
     python -m cross_nav.policy.sim.viewer --runs "trajectory policy=DIR_A" "BEV + planner=DIR_B" --out OUTDIR \
-        [--max-episodes 12] [--episodes ID ...] [--frame-width 320] [--jpeg-quality 75]
+        [--max-episodes 12] [--episodes ID ...] [--frame-width 320] [--jpeg-quality 75] [--inline-frames]
 
 Each DIR holds results_*.jsonl (cross_nav.policy.sim.rollout --out; also read from DIR/part*/) and viz/*.npz (rollout --viz-dir, see save_viz).
 The summary tables use every results line; the episode browser shows up to --max-episodes episodes that have a viz
@@ -11,7 +11,7 @@ Output (open OUTDIR/index.html directly, file:// works; no network access):
     index.html viewer.css viewer.js   the page (copied from viewer_web/)
     data/index.js                     runs, summaries, episode list
     data/ep_NNN.js                    one episode, all runs (loaded on demand with a <script> tag)
-    frames/ep_NNN/<run>/SSSS.jpg      camera frames, --frame-width pixels wide
+    frames/ep_NNN/<run>/SSSS.jpg      camera frames, --frame-width pixels wide (in data/ep_NNN.js with --inline-frames)
 
 Frames in the page: world plane (x, z) with x to the right and z downward (the topdown bitmap's rows / columns); robot
 paths are (forward, left) metres, forward = (-sin yaw, -cos yaw), left = (-cos yaw, sin yaw) (geom.py). BEV debug maps
@@ -96,25 +96,32 @@ def rnd(a, k=3):
     return out.tolist()
 
 
-def write_frames(jpgs, out_dir, width, quality):
+def write_frames(jpgs, out_dir, width, quality, inline=False):
+    """Resized JPEG frames, written to out_dir/NNNN.jpg, or returned as data URIs with inline (one file per episode)."""
     from PIL import Image
-    out_dir.mkdir(parents=True, exist_ok=True)
-    size = None
+    if not inline:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    size, uris = None, []
     for k, b in enumerate(jpgs):
         im = Image.open(io.BytesIO(b.tobytes())).convert('RGB')
         if width and im.width > width:
             im = im.resize((width, round(im.height * width / im.width)), Image.LANCZOS)
-        im.save(out_dir / f'{k:04d}.jpg', 'JPEG', quality=quality)
+        if inline:
+            buf = io.BytesIO()
+            im.save(buf, 'JPEG', quality=quality)
+            uris.append('data:image/jpeg;base64,' + base64.b64encode(buf.getvalue()).decode())
+        else:
+            im.save(out_dir / f'{k:04d}.jpg', 'JPEG', quality=quality)
         size = im.size
-    return size
+    return size, uris
 
 
-def load_run_episode(npz, frame_dir, rel_dir, width, quality):
+def load_run_episode(npz, frame_dir, rel_dir, width, quality, inline=False):
     z = np.load(npz, allow_pickle=True)
     result = json.loads(str(z['result']))
     jpgs = jpeg_list(z)
     T = len(jpgs)
-    fw, fh = write_frames(jpgs, frame_dir, width, quality)
+    (fw, fh), uris = write_frames(jpgs, frame_dir, width, quality, inline)
     pos = np.asarray(z['pos'], np.float64)
     traj = result.get('trajectory') or []
     final = traj[-1] if traj else pos[-1, [0, 2]].tolist()
@@ -122,7 +129,7 @@ def load_run_episode(npz, frame_dir, rel_dir, width, quality):
           'final': rnd(final), 'pos': rnd(pos[:, [0, 2]]), 'yaw': rnd(z['yaw'], 4), 'path': rnd(z['path']),
           'expert': rnd(z['expert']), 'goal_rel': rnd(z['goal_rel']), 'window': np.asarray(z['window']).tolist(),
           'expert_step': np.asarray(z['expert_step']).astype(bool).tolist(),
-          'frames': {'dir': rel_dir, 'w': fw, 'h': fh, 'src_w': None},
+          'frames': {'dir': rel_dir, 'w': fw, 'h': fh, 'src_w': None, **({'inline': uris} if inline else {})},
           'camera': result.get('camera')}
     from PIL import Image
     with Image.open(io.BytesIO(jpgs[0].tobytes())) as im0:
@@ -191,7 +198,7 @@ def slug(s):
     return re.sub(r'[^A-Za-z0-9_.-]+', '_', s).strip('_') or 'run'
 
 
-def build(runs, out, max_episodes=12, episodes=None, frame_width=320, quality=75):
+def build(runs, out, max_episodes=12, episodes=None, frame_width=320, quality=75, inline=False):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     for d in ('data', 'frames'):
@@ -225,7 +232,7 @@ def build(runs, out, max_episodes=12, episodes=None, frame_width=320, quality=75
             if f is None:
                 continue
             rel = f'frames/{key}/{ri}'
-            rec, z = load_run_episode(f, out / rel, rel, frame_width, quality)
+            rec, z = load_run_episode(f, out / rel, rel, frame_width, quality, inline)
             ep['runs'][name] = rec
             bounds.append(world_bounds(z, rec))
             ep.setdefault('scene', rec['result'].get('scene'))
@@ -264,6 +271,7 @@ def main():
     p.add_argument('--episodes', nargs='*', help='episode ids to show (default: recorded by most runs first)')
     p.add_argument('--frame-width', type=int, default=320)
     p.add_argument('--jpeg-quality', type=int, default=75)
+    p.add_argument('--inline-frames', action='store_true', help='camera frames inside data/ep_NNN.js (few files, for hosting)')
     a = p.parse_args()
     runs = []
     for s in a.runs:
@@ -275,7 +283,7 @@ def main():
         runs.append((name, d))
     if len({n for n, _ in runs}) != len(runs):
         p.error('run names must be unique')
-    build(runs, a.out, a.max_episodes, a.episodes, a.frame_width, a.jpeg_quality)
+    build(runs, a.out, a.max_episodes, a.episodes, a.frame_width, a.jpeg_quality, a.inline_frames)
 
 
 if __name__ == '__main__':
