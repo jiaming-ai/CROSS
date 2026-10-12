@@ -57,7 +57,7 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
     camera = camera_sample(rng, a.camera)
     set_hfov(sim, camera['hfov'])
     frames_cum, yaws, cams, plane, traj = [], [], [], [], [pos[[0, 2]].tolist()]
-    cum, travelled, collisions, excursion = 0., 0., 0, 0
+    cum, travelled, collisions, excursion, traj_steps = 0., 0., 0, 0, 0
     success, steps, min_geo = False, 0, ep['geodesic']
     for step in range(a.max_steps):
         rgb = np.ascontiguousarray(render(sim, pos, yaw, camera=camera))
@@ -73,10 +73,14 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
         use_expert = a.mode == 'expert' or (a.mode == 'dagger' and rng.random() < a.beta)
         record = a.record and label is not None and rng.random() < a.record_prob
         hist = np.array([np.linalg.norm(cams[-1] - cams[i]) for i in ids], np.float32)
+        rule2 = a.info.get('history_rule2') if getattr(a, 'info', None) else None
+        ids2 = window_ids(frames_cum, yaws, rule2) if rule2 else None   # hybrid server: the trajectory head's window
         msg = {'cmd': 'step', 'ep': uid, 'frame_idx': len(frames_cum) - 1, 'frame': rgb, 'window': ids,
                'goal': goal_rel.astype(np.float32), 'hist_chord': hist, 'trail': trail(frames_cum, plane, pos[[0, 2]], yaw), 'label': None if label is None else label.astype(np.float32),
                'record': record, 'predict': not use_expert, 'step': step, 'expert_dist': d_geo, 'debug': viz is not None,
                'odom': odom_pose(pos, yaw),
+               'window2': ids2, 'hist_chord2': None if ids2 is None else
+               np.array([np.linalg.norm(cams[-1] - cams[i]) for i in ids2], np.float32),
                'meta': {'ep': ep['id'], 'scene': ep['scene'], 'mode': a.mode, 'tag': a.tag, 'expert_step': bool(use_expert),
                         'camera': camera, 'dataset': dataset_name(a.hssd)}}
         wire.send(conn, msg)
@@ -87,6 +91,7 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
             path = label
         else:
             path = reply['path']
+            traj_steps += bool(reply.get('traj'))       # hybrid server: steps driven by the trajectory head
         if viz is not None:
             viz.append({'rgb': rgb, 'pos': pos.copy(), 'yaw': yaw, 'goal_rel': goal_rel, 'path': np.asarray(path, np.float32),
                         'expert': label, 'window': ids, 'expert_step': bool(use_expert), 'debug': reply.get('debug')})
@@ -119,7 +124,8 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
     return {'id': ep['id'], 'scene': ep['scene'], 'geodesic': ep['geodesic'], 'euclidean': ep['euclidean'], 'success': success,
             'spl': spl(success, ep['geodesic'], travelled), 'steps': steps, 'travelled': travelled, 'collisions': collisions,
             'collision_free': success and collisions == 0, 'final_geo': final_geo, 'min_geo': min_geo, 'mode': a.mode,
-            'noise': noise, 'camera': camera, 'trajectory': traj[::2] + [traj[-1]]}
+            'noise': noise, 'camera': camera, 'trajectory': traj[::2] + [traj[-1]],
+            **({'traj_steps': traj_steps} if (getattr(a, 'info', None) or {}).get('hybrid') else {})}
 
 
 class SocketPlanner:

@@ -112,6 +112,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--socket', required=True); p.add_argument('--backbone', required=True); p.add_argument('--head')
     p.add_argument('--bev', help='JSON config of the BEV head + planner policy (cross_nav.policy.bev_policy); replaces --head')
+    p.add_argument('--hybrid', help='JSON config of cross_nav.policy.hybrid.Switch: with --bev and --head, switch per step '
+                   'between the BEV planner and the trajectory head (workers then send a second window for the head)')
     p.add_argument('--record'); p.add_argument('--tag', default='rec'); p.add_argument('--shard', type=int, default=512)
     p.add_argument('--grid', type=int, nargs=2, default=(12, 16)); p.add_argument('--scale', choices=['mono', 'odometry'], default='mono')
     p.add_argument('--max-batch', type=int, default=32); p.add_argument('--flow-steps', type=int, default=10)
@@ -125,7 +127,11 @@ def main():
     a = p.parse_args()
     torch.backends.cuda.matmul.allow_tf32 = True
     policy = Policy(a)
-    bev = None
+    bev, hyb = None, None
+    if a.hybrid:
+        if not (a.bev and a.head):
+            raise SystemExit('--hybrid needs --bev and --head')
+        hyb = json.loads(Path(a.hybrid).read_text())
     if a.bev:
         from .bev_policy import BEVPlannerPolicy
         bev = BEVPlannerPolicy(json.loads(Path(a.bev).read_text()), backbone=policy.backbone)
@@ -134,11 +140,50 @@ def main():
         os.unlink(a.socket)
     listener = Listener(a.socket, family='AF_UNIX')
     listener._listener._socket.setblocking(False)
-    conns, frames, odoms, recover, seen, done = [], {}, {}, {}, 0, 0
+    conns, frames, odoms, recover, switches, seen, done = [], {}, {}, {}, {}, 0, 0
     info = {'head': a.head, 'head_cfg': policy.head.cfg if policy.head else None, 'grid': list(policy.grid), 'scale': a.scale,
             'history_m': list(bev.history_m) if bev else [0., .5, 1., 2.], 'bev': a.bev,
-            'history_rule': getattr(bev, 'history_rule', None) if bev else None}
+            'history_rule': getattr(bev, 'history_rule', None) if bev else None,
+            'history_rule2': {'type': 'distance', 'm': [0., .5, 1., 2.]} if hyb else None, 'hybrid': hyb}
     t0, n_windows, n_batches, t_bev = time.time(), 0, 0, {}
+
+    def hybrid_step(part, paths, debug):
+        """Per episode, the Switch picks the BEV path (already in paths) or the trajectory head's path for this step."""
+        from .hybrid import Switch
+        from .sim.geom import control
+        traj = []
+        for j, (_, m) in enumerate(part):
+            pose = odoms.get(m['ep'], {}).get(m['frame_idx'])
+            if not m.get('predict') or pose is None or not m.get('window2'):
+                continue
+            sw = switches.setdefault(m['ep'], Switch(hyb))
+            st = bev.episodes.get(m['ep'])
+            if sw(pose, m['goal'], st.no_route if st is not None else 0) == 'traj':
+                if sw.fresh or m['ep'] not in recover:
+                    recover[m['ep']] = StuckRecovery(a.recover_window, a.recover_disp, a.recover_turn) if a.recover_window else None
+                traj.append(j)
+            if debug[j] is not None:
+                debug[j]['controller'] = np.asarray(np.int8(len(traj) and traj[-1] == j))
+                debug[j]['switches'] = np.asarray(np.int16(sw.n_switch))
+        if not traj:
+            return traj
+        sub = [part[j][1] for j in traj]
+        imgs2 = np.stack([np.stack([frames[m['ep']][i] for i in m['window2']]) for m in sub])
+        imgs2 = torch.from_numpy(imgs2).to('cuda').permute(0, 1, 4, 2, 3).float().div_(255)
+        hist2 = torch.from_numpy(np.stack([m['hist_chord2'] for m in sub]).astype(np.float32)).cuda()
+        goal2 = torch.from_numpy(np.stack([m['goal'] for m in sub]).astype(np.float32)).cuda()
+        trail2 = torch.from_numpy(np.stack([m.get('trail', np.zeros((5, 3), np.float32)) for m in sub]).astype(np.float32)).cuda()
+        tp = policy.predict(policy(imgs2, hist2), goal2, hist2, trail2).cpu().numpy()
+        c = bev.cfg['control']
+        for k, j in enumerate(traj):
+            m = sub[k]
+            rec = recover.get(m['ep'])
+            p = rec(odoms[m['ep']][m['frame_idx']], tp[k]) if rec is not None else tp[k]
+            paths[j] = p
+            st = bev.episodes.get(m['ep'])
+            if st is not None:          # the bump rule compares the executed path's forward motion with odometry
+                st.expect = float(control(p, c['lookahead'], c['step'])[1])
+        return traj
     stop = []
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))      # flush recorded shards, then exit
     print(json.dumps({'listening': a.socket, **info}), flush=True)
@@ -163,19 +208,20 @@ def main():
             if cmd == 'info':
                 wire.send(c, info)
             elif cmd == 'end':
-                frames.pop(m['ep'], None); odoms.pop(m['ep'], None); recover.pop(m['ep'], None)
+                frames.pop(m['ep'], None); odoms.pop(m['ep'], None); recover.pop(m['ep'], None); switches.pop(m['ep'], None)
                 if bev is not None:
                     bev.end_episode(m['ep'])
                 wire.send(c, {})
             elif cmd == 'step':
                 buf = frames.setdefault(m['ep'], {})
                 buf[m['frame_idx']] = m['frame']
-                for k in [k for k in buf if k < min(m['window'])]:
+                lo = min(min(m['window']), min(m.get('window2') or m['window']))
+                for k in [k for k in buf if k < lo]:
                     del buf[k]
                 if m.get('odom') is not None:     # odometry pose (x, y, yaw) of each frame, for the BEV policy's rules
                     ob = odoms.setdefault(m['ep'], {})
                     ob[m['frame_idx']] = np.asarray(m['odom'], np.float64)
-                    for k in [k for k in ob if k < min(m['window'])]:
+                    for k in [k for k in ob if k < lo]:
                         del ob[k]
                 if m.get('predict') or (m.get('record') and writer is not None):
                     batch.append((c, m))
@@ -189,6 +235,7 @@ def main():
             goal = torch.from_numpy(np.stack([m['goal'] for _, m in part]).astype(np.float32)).cuda()
             trails = np.stack([m.get('trail', np.zeros((5, 3), np.float32)) for _, m in part]).astype(np.float32)
             debug = [None] * len(part)
+            traj = []
             if bev is not None:
                 feat = None
                 eps = []
@@ -200,6 +247,8 @@ def main():
                 paths, debug = bev(imgs, goal, hist, want_debug=[bool(m.get('debug')) for _, m in part], episodes=eps)
                 for k, v in bev.timing.items():
                     t_bev[k] = t_bev.get(k, 0.) + v
+                if hyb is not None:
+                    traj = hybrid_step(part, paths, debug)
             else:
                 feat = policy(imgs, hist)
                 paths = policy.predict(feat, goal, hist, torch.from_numpy(trails).cuda()).cpu().numpy() if policy.head is not None and any(m['predict'] for _, m in part) else None
@@ -219,7 +268,7 @@ def main():
                                     'label': m['label'].astype(np.float32), 'step': np.int32(m['step']),
                                     'expert_dist': np.float32(m.get('expert_dist', np.nan)), 'trail': trails[j], 'meta': m['meta']})
             for j, (c, m) in enumerate(part):
-                wire.send(c, {'path': paths[j] if paths is not None else None, 'debug': debug[j]})
+                wire.send(c, {'path': paths[j] if paths is not None else None, 'debug': debug[j], 'traj': j in traj})
             n_windows += len(part); n_batches += 1
             if n_batches % 200 == 0:
                 print(json.dumps({'windows': n_windows, 'batches': n_batches, 'mean_batch': round(n_windows / n_batches, 1),

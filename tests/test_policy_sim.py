@@ -285,3 +285,13 @@ def test_stuck_recovery_time_window_ignores_planning_rate():
     for k in range(95, 101):
         out = rec((0., 0., 0.), path, stamp=.1 * k)
     assert out is not path and out[0, 0] == 0                # 10 s without displacement: turn in place
+
+
+def test_hybrid_switch_hands_over_for_a_block_then_returns():
+    from cross_nav.policy.hybrid import Switch
+    s = Switch({'stall_window': 3, 'stall_disp': .5, 'block': 2})
+    assert [s((0., 0., 0.), (5., 0.)) for _ in range(6)] == ['bev', 'bev', 'traj', 'traj', 'bev', 'bev']
+    s = Switch({'stall_window': 0, 'no_route': 2, 'block': 3})
+    assert [s((i, 0., 0.), (5., 0.), nr) for i, nr in enumerate([0, 1, 2, 0, 0, 0])] == ['bev', 'bev', 'traj', 'traj', 'traj', 'bev']
+    s = Switch({'primary': 'traj', 'stall_window': 0, 'progress_window': 2, 'progress_m': 1., 'block': 1})
+    assert [s((0., 0., 0.), (d, 0.)) for d in (10., 9.5, 9.2, 8., 5.)] == ['traj', 'traj', 'bev', 'traj', 'traj']
