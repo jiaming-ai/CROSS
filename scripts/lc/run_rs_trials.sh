@@ -10,7 +10,8 @@ export CUDA_VISIBLE_DEVICES=$GPU MPLBACKEND=Agg
 PY=.venv/bin/python
 FF="--obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3"
 D=data/sim/$SCENE; R=outputs/lcstudy_rs/$SCENE/$MODE; mkdir -p $R logs
-if [ $SCENE = lonemonk ]; then M=$D/map_loop; NOISE=configs/noise/lonemonk_full.yaml; else M=$D/map; NOISE=configs/noise/${SCENE}_600.yaml; fi
+ND=${LC_NOISE_DIR:-outputs/2026-09-12_loop_closure_verified/noise}   # the study's calibrated noise models
+if [ $SCENE = lonemonk ]; then M=$D/map_loop; NOISE=$ND/lonemonk_full.yaml; else M=$D/map; NOISE=$ND/${SCENE}_600.yaml; fi
 if [ $MODE = heuristic ]; then LC="--lc-mode heuristic"; else LC="--lc-mode verified --noise-config $NOISE"; fi
 VARS="$*"; [ -z "$VARS" ] && VARS="map"
 log() { echo "[$(date +%F_%T)] $*" | tee -a logs/lcstudy_rs.log; }

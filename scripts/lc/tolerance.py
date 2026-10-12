@@ -5,7 +5,7 @@ For every confidence level the prior test (odometry chain / session anchor, depl
 YAML, gate inflation 2, translation marginal) and the posterior test (map-fixed calibrated Huber optimisation for
 relocalization graphs) are scored against the ground-truth labels (false = translation error > --false-thr).
 
-usage: python scripts/lc/tolerance.py --noise configs/noise/lonemonk_full.yaml graph_s0.json graph_s1.json ... [--out tol.json]
+usage: python scripts/lc/tolerance.py --noise outputs/2026-09-12_loop_closure_verified/noise/lonemonk_full.yaml graph_s0.json graph_s1.json ... [--out tol.json]
 """
 from __future__ import annotations
 
