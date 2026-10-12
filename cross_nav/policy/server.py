@@ -47,6 +47,7 @@ class ShardWriter:
         np.save(str(name) + '.tok.tmp.npy', tok)
         small = {k: np.stack([r[k] for r in self.buf]) for k in ('xyz', 'log_scale', 'pred_chord', 'hist_chord', 'goal',
                                                                  'label', 'step', 'expert_dist')}
+        small['trail'] = np.stack([r.get('trail', np.zeros((5, 3), np.float32)) for r in self.buf])   # unavailable by default
         small['meta'] = np.array([json.dumps(r['meta']) for r in self.buf])
         np.savez(str(name) + '.tmp.npz', **small)
         os.replace(str(name) + '.tok.tmp.npy', str(name) + '.tok.npy')
@@ -87,7 +88,7 @@ class Policy:
         return out
 
     @torch.no_grad()
-    def predict(self, feat, goal, hist_chord):
+    def predict(self, feat, goal, hist_chord, trail=None):
         tok, xyz = feat['tokens'], feat['xyz']
         if self.head_pool > 1:
             k = self.head_pool
@@ -101,7 +102,8 @@ class Policy:
         geometry = {'log_scale': log_scale, 'xyz_unit': xyz} if self.head.geometry != 'none' else None
         noise = torch.randn(goal.shape[0], self.head.horizon, 2, device=self.dev, generator=self.gen)
         with torch.autocast('cuda', dtype=torch.bfloat16):
-            return self.head.predict(tok[:, None].contiguous(), goal, steps=self.steps, noise=noise, geometry=geometry).float()
+            return self.head.predict(tok[:, None].contiguous(), goal, steps=self.steps, noise=noise, geometry=geometry,
+                                     trail=trail if getattr(self.head, 'trail', 0) else None).float()
 
 
 def main():
@@ -178,6 +180,7 @@ def main():
             imgs = torch.from_numpy(imgs).pin_memory().to('cuda', non_blocking=True).permute(0, 1, 4, 2, 3).float().div_(255)
             hist = torch.from_numpy(np.stack([m['hist_chord'] for _, m in part]).astype(np.float32)).cuda()
             goal = torch.from_numpy(np.stack([m['goal'] for _, m in part]).astype(np.float32)).cuda()
+            trails = np.stack([m.get('trail', np.zeros((5, 3), np.float32)) for _, m in part]).astype(np.float32)
             debug = [None] * len(part)
             if bev is not None:
                 feat = None
@@ -191,7 +194,7 @@ def main():
                     t_bev[k] = t_bev.get(k, 0.) + v
             else:
                 feat = policy(imgs, hist)
-                paths = policy.predict(feat, goal, hist).cpu().numpy() if policy.head is not None and any(m['predict'] for _, m in part) else None
+                paths = policy.predict(feat, goal, hist, torch.from_numpy(trails).cuda()).cpu().numpy() if policy.head is not None and any(m['predict'] for _, m in part) else None
             if writer is not None and feat is not None:
                 cpu = {k: v.cpu() for k, v in feat.items()}
                 for j, (_, m) in enumerate(part):
@@ -200,7 +203,7 @@ def main():
                                     'log_scale': cpu['log_scale'][j].float().numpy(), 'pred_chord': cpu['pred_chord'][j].float().numpy(),
                                     'hist_chord': m['hist_chord'].astype(np.float32), 'goal': m['goal'].astype(np.float32),
                                     'label': m['label'].astype(np.float32), 'step': np.int32(m['step']),
-                                    'expert_dist': np.float32(m.get('expert_dist', np.nan)), 'meta': m['meta']})
+                                    'expert_dist': np.float32(m.get('expert_dist', np.nan)), 'trail': trails[j], 'meta': m['meta']})
             for j, (c, m) in enumerate(part):
                 wire.send(c, {'path': paths[j] if paths is not None else None, 'debug': debug[j]})
             n_windows += len(part); n_batches += 1

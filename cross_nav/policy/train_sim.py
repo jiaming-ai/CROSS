@@ -61,6 +61,8 @@ def load(dirs, pool, device, max_windows=0, stream=False, token_device=None):
                 toks.append(pool_tokens(t[i:i + 256].to(device), pool).to(token_device or device))
         for key in SMALL:
             small[key].append(torch.from_numpy(z[key].astype(np.float32)))
+        small.setdefault('trail', []).append(torch.from_numpy(z['trail'].astype(np.float32)) if 'trail' in z.files
+                                              else torch.zeros(len(m), 5, 3))       # older shards: trail unavailable
         meta += [json.loads(x) for x in z['meta']]
         n += len(m)
         if max_windows and n >= max_windows:
@@ -121,7 +123,8 @@ def evaluate(model, X, S, meta, scale, batch=256):
         noise = torch.randn(len(idx), model.horizon, 2, device=dev, generator=gen)
         with torch.autocast('cuda', dtype=torch.bfloat16):
             preds.append(model.predict(X[i:i + len(idx)].to(dev, non_blocking=True)[:, None], S['goal'][idx], noise=noise,
-                                       geometry=geometry_of(S, idx, scale) if model.geometry != 'none' else None).float())
+                                       geometry=geometry_of(S, idx, scale) if model.geometry != 'none' else None,
+                                       trail=S['trail'][idx] if model.trail else None).float())
     pred = torch.cat(preds)
     err = (pred - S['label']).norm(dim=-1)
     dagger = torch.tensor([not m.get('expert_step', True) for m in meta], device=dev)
@@ -148,6 +151,8 @@ def main():
     p.add_argument('--lr', type=float, default=3e-4); p.add_argument('--wd', type=float, default=.01)
     p.add_argument('--seed', type=int, default=17); p.add_argument('--init'); p.add_argument('--eval-every', type=int, default=1000)
     p.add_argument('--max-train', type=int, default=0); p.add_argument('--token-dropout', type=float, default=0.)
+    p.add_argument('--trail', action='store_true', help='odometry trail input (past positions at 1-16 m of travel)')
+    p.add_argument('--trail-dropout', type=float, default=.3)
     p.add_argument('--stream', action='store_true', help='read training tokens from memory-mapped shards (datasets larger than the GPU)')
     p.add_argument('--weights', nargs='*', default=[], help='dataset=weight sampling weights (meta dataset names)')
     p.add_argument('--default-weight', type=float, default=1.); p.add_argument('--loader-workers', type=int, default=12)
@@ -166,7 +171,7 @@ def main():
     probs, mix, counts = sample_weights(meta, dict((k, float(v)) for k, v in (w.split('=') for w in a.weights)), a.default_weight)
     model = TrajectoryHead(token_dim=token_dim, width=a.width, layers=a.layers, heads=a.heads, horizon=horizon, source='last',
                            compression=a.compression, mode=a.mode, geometry=a.geometry, action_scale=horizon * .5,
-                           goal_encoding=a.goal_encoding).cuda()
+                           goal_encoding=a.goal_encoding, trail=5 if a.trail else 0).cuda()
     if a.init:
         model.load_state_dict(torch.load(a.init, map_location='cpu', weights_only=True)['model'])
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=a.wd)
@@ -213,7 +218,11 @@ def main():
             tok = tok * keep
         geom = geometry_of(S, idx, a.scale, .1) if a.geometry != 'none' else None
         with torch.autocast('cuda', dtype=torch.bfloat16):
-            loss = model.loss(tok, S['goal'][idx], S['label'][idx], geometry=geom)
+            tr = None
+            if a.trail:
+                tr = S['trail'][idx].clone()
+                tr[torch.rand(len(idx), device='cuda') < a.trail_dropout] = 0.      # robust to a missing trail
+            loss = model.loss(tok, S['goal'][idx], S['label'][idx], geometry=geom, trail=tr)
         if not torch.isfinite(loss):
             raise FloatingPointError(f'nonfinite loss at {step}')
         opt.zero_grad(set_to_none=True); loss.backward()

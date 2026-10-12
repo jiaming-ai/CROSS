@@ -13,13 +13,13 @@ from torch.nn import functional as F
 
 class TrajectoryHead(nn.Module):
     def __init__(self, token_dim=2048, width=192, layers=4, heads=6, horizon=8,
-                 source="multi", compression=0, mode="regression", max_views=8, geometry="none", action_scale=4., goal_encoding="linear"):
+                 source="multi", compression=0, mode="regression", max_views=8, geometry="none", action_scale=4., goal_encoding="linear", trail=0):
         super().__init__()
         if source not in ("last", "multi", "goal") or mode not in ("regression", "flow"):
             raise ValueError("invalid source or policy mode")
         self.cfg = dict(token_dim=token_dim, width=width, layers=layers, heads=heads,
                         horizon=horizon, source=source, compression=compression, mode=mode, max_views=max_views, geometry=geometry, action_scale=action_scale,
-                        goal_encoding=goal_encoding)
+                        goal_encoding=goal_encoding, trail=trail)
         if goal_encoding not in ("linear", "polar"): raise ValueError(goal_encoding)
         self.goal_encoding = goal_encoding
         self.source, self.mode, self.horizon = source, mode, horizon
@@ -40,9 +40,13 @@ class TrajectoryHead(nn.Module):
             width, heads, width * 4, dropout=0., activation="gelu", batch_first=True, norm_first=True), layers)
         self.out = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, 2))
         self.latents = nn.Parameter(torch.randn(1, compression, width) * .02) if compression else None
+        # odometry trail: past positions (forward, left, available) at fixed travel distances, one memory token each
+        self.trail = trail
+        self.trail_embed = nn.Sequential(nn.Linear(3, width), nn.SiLU(), nn.Linear(width, width)) if trail else None
+        self.trail_index = nn.Embedding(trail, width) if trail else None
         self.resampler = nn.MultiheadAttention(width, heads, batch_first=True) if compression else None
 
-    def memory(self, tokens, geometry=None):
+    def memory(self, tokens, geometry=None, trail=None):
         """tokens: B,L,S,H,W,C (layers 4/11/17/23, or just last)."""
         B,L,S,H,W,C = tokens.shape
         if self.source == "goal":
@@ -64,6 +68,11 @@ class TrajectoryHead(nn.Module):
                 if xyz.shape[:-1]!=z.shape[:-1]:raise ValueError("geometry/token grid mismatch")
                 z=z+self.xyz_embed(torch.asinh(xyz/self.action_scale))
         z = z.flatten(1,3)
+        if self.trail:
+            if trail is None:
+                trail = z.new_zeros(B, self.trail, 3)      # no trail: all points marked unavailable
+            t = torch.cat((torch.asinh(trail[..., :2].float() / self.action_scale) * trail[..., 2:3], trail[..., 2:3]), -1)
+            z = torch.cat((z, self.trail_embed(t) + self.trail_index.weight[None]), 1)
         if self.latents is not None:
             q = self.latents.expand(B,-1,-1)
             z = q + self.resampler(q,z,z,need_weights=False)[0]
@@ -86,8 +95,8 @@ class TrajectoryHead(nn.Module):
             q = q + self.action(x) + self.time(torch.cat((angle.sin(),angle.cos()),-1))[:,None]
         return self.out(self.decoder(q,memory))
 
-    def loss(self, tokens, goal, target, geometry=None):
-        mem = self.memory(tokens,geometry)
+    def loss(self, tokens, goal, target, geometry=None, trail=None):
+        mem = self.memory(tokens,geometry,trail)
         y = target / self.action_scale
         if self.mode == "regression":
             pred = self.decode(mem,goal)
@@ -98,8 +107,8 @@ class TrajectoryHead(nn.Module):
         return F.mse_loss(self.decode(mem,goal,x,t),y-z)
 
     @torch.no_grad()
-    def predict(self, tokens, goal, steps=10, noise=None, geometry=None):
-        mem = self.memory(tokens,geometry)
+    def predict(self, tokens, goal, steps=10, noise=None, geometry=None, trail=None):
+        mem = self.memory(tokens,geometry,trail)
         if self.mode == "regression":
             return self.decode(mem,goal) * self.action_scale
         if steps < 1:

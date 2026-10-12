@@ -10,6 +10,7 @@ import math
 import numpy as np
 
 HISTORY_M = (0., .5, 1., 2.)
+TRAIL_M = (1., 2., 4., 8., 16.)
 
 
 def axes(yaw):
@@ -46,6 +47,19 @@ def history_ids(cumdist, history=HISTORY_M):
     ids = [max(0, int(np.searchsorted(c, d - h + 1e-9, side='right')) - 1) for h in history]
     ids[0] = len(c) - 1
     return ids
+
+
+def trail(cumdist, positions, pos, yaw, trail_m=TRAIL_M):
+    """Odometry trail: the robot's positions h metres of travel ago, in its current frame (forward, left), with an
+    availability flag (0 when the robot has not travelled h yet): (len(trail_m), 3) float32."""
+    c = np.asarray(cumdist, np.float64)
+    out = np.zeros((len(trail_m), 3), np.float32)
+    for k, h in enumerate(trail_m):
+        if c[-1] - c[0] >= h:
+            i = max(0, int(np.searchsorted(c, c[-1] - h + 1e-9, side='right')) - 1)
+            out[k, :2] = to_robot(np.asarray(positions[i])[None], pos, yaw)[0]
+            out[k, 2] = 1.
+    return out
 
 
 def keyframes(cumdist, yaw, trans=.5, rot=math.radians(30)):

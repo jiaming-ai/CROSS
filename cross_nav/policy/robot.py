@@ -24,7 +24,7 @@ from collections import deque
 
 import numpy as np
 
-from .sim.geom import window_ids
+from .sim.geom import TRAIL_M, window_ids
 
 
 def to_robot_2d(points, pose):
@@ -77,6 +77,16 @@ class NavigationAgent:
         if hasattr(self.planner, 'reset'):
             self.planner.reset()
 
+    def trail(self, pose):
+        """Past positions TRAIL_M metres of travel ago in the current robot frame, with availability flags."""
+        out = np.zeros((len(TRAIL_M), 3), np.float32)
+        cum = [f[2] for f in self.frames]
+        for k, h in enumerate(TRAIL_M):
+            past = [f for f, c in zip(self.frames, cum) if c <= cum[-1] - h]
+            if past and cum[-1] - cum[0] >= h:
+                out[k] = (*to_robot_2d(np.asarray(past[-1][1][:2]), pose), 1.)
+        return out
+
     def step(self, image, pose):
         """image uint8 HxWx3 RGB; pose (x, y, yaw) in the odometry frame. Returns path, command and arrival flag."""
         if self.goal is None:
@@ -94,7 +104,7 @@ class NavigationAgent:
             path = self.planner(imgs, goal_rel.astype(np.float32), hist, odom=np.asarray(pose, np.float64),
                                 window_odom=np.array([self.frames[i][1] for i in ids], np.float64))
         else:
-            path = self.planner(imgs, goal_rel.astype(np.float32), hist)
+            path = self.planner(imgs, goal_rel.astype(np.float32), hist, trail=self.trail(pose))
         path = np.asarray(path, np.float64)
         v, w = pure_pursuit(path, self.v_max, self.w_max, self.lookahead)
         return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': to_odom_2d(path, pose), 'goal_rel': goal_rel,
@@ -112,12 +122,13 @@ class TrajectoryPlanner:
                                              flow_steps=10, seed=0))
         self.history_m = (0., .5, 1., 2.)
 
-    def __call__(self, images, goal, hist_chord):
+    def __call__(self, images, goal, hist_chord, trail=None):
         t = self.torch
         imgs = t.from_numpy(np.ascontiguousarray(images))[None].cuda().permute(0, 1, 4, 2, 3).float().div_(255)
         hist = t.from_numpy(np.asarray(hist_chord, np.float32))[None].cuda()
         feat = self.policy(imgs, hist)
-        return self.policy.predict(feat, t.from_numpy(np.asarray(goal, np.float32))[None].cuda(), hist)[0].cpu().numpy()
+        tr = None if trail is None else t.from_numpy(np.asarray(trail, np.float32))[None].cuda()
+        return self.policy.predict(feat, t.from_numpy(np.asarray(goal, np.float32))[None].cuda(), hist, tr)[0].cpu().numpy()
 
 
 class BEVPlanner:

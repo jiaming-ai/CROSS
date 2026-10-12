@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from .backbone import FrozenMetricTokens, sha256
 from .server import ShardWriter
-from .sim.geom import HISTORY_M, history_ids
+from .sim.geom import HISTORY_M, TRAIL_M, history_ids
 
 W, H = 512, 384
 TEST_ONLY = {'recon'}
@@ -69,8 +69,12 @@ def windows(dataset, ep_dir, rng, max_per_episode, horizon=16, spacing=.5, per_m
         if np.linalg.norm(goal) < .5:
             continue                  # loops back to the start: no usable goal direction
         ids = history_ids(arc[:a + 1], HISTORY_M)
+        tr = np.zeros((len(TRAIL_M), 3), np.float32)
+        for k, h in enumerate(TRAIL_M):
+            if arc[a] >= h:
+                tr[k] = (*local[max(0, int(np.searchsorted(arc, arc[a] - h + 1e-9, side='right')) - 1)], 1.)
         out.append({'images': [str(ep_dir / f'{i}.jpg') for i in ids], 'aspect': SQUEEZED.get(dataset), 'goal': goal.astype(np.float32),
-                    'label': label.astype(np.float32), 'hist_chord': np.linalg.norm(pos[ids] - pos[a], axis=-1).astype(np.float32),
+                    'label': label.astype(np.float32), 'trail': tr, 'hist_chord': np.linalg.norm(pos[ids] - pos[a], axis=-1).astype(np.float32),
                     'step': int(a), 'meta': {'ep': f'{dataset}:{ep_dir.name}', 'scene': f"{dataset}:{src['group']}", 'dataset': dataset,
                                              'tag': 'real', 'expert_step': True, 'label_source': src.get('label_source', 'odometry'),
                                              'goal_arc': float(g)}})
@@ -134,7 +138,7 @@ def main():
                 writer.add({'tokens': f['tokens'][j, -1].cpu(), 'xyz': f['xyz_unit'][j].half().cpu().numpy(),
                             'log_scale': f['log_scale'][j].float().cpu().numpy(), 'pred_chord': f['pred_history_chord'][j].float().cpu().numpy(),
                             'hist_chord': r['hist_chord'], 'goal': r['goal'], 'label': r['label'], 'step': np.int32(r['step']),
-                            'expert_dist': np.float32(np.nan), 'meta': r['meta']})
+                            'expert_dist': np.float32(np.nan), 'trail': r['trail'], 'meta': r['meta']})
         writer.flush()
         info = {'windows': len(rows), 'episodes': len(eps), 'groups': len({r['meta']['scene'] for r in rows}), 'seconds': round(time.time() - t0)}
         (out / f'{ds}.DONE.json').write_text(json.dumps(info, indent=2))

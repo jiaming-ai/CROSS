@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from . import wire
-from .geom import control, resample, spl, to_robot, window_ids
+from .geom import control, resample, spl, to_robot, trail, window_ids
 from .hab import camera_sample, expert_path, geodesic, make_sim, render, set_hfov
 
 SUCCESS_M = .2
@@ -56,13 +56,13 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
     noise = noise_profile(rng, a.mode)
     camera = camera_sample(rng, a.camera)
     set_hfov(sim, camera['hfov'])
-    frames_cum, yaws, cams, traj = [], [], [], [pos[[0, 2]].tolist()]
+    frames_cum, yaws, cams, plane, traj = [], [], [], [], [pos[[0, 2]].tolist()]
     cum, travelled, collisions, excursion = 0., 0., 0, 0
     success, steps, min_geo = False, 0, ep['geodesic']
     for step in range(a.max_steps):
         rgb = np.ascontiguousarray(render(sim, pos, yaw, camera=camera))
         frames_cum.append(cum); cams.append(pos + np.array([0., camera['height'], 0.]))
-        yaws.append(yaw)
+        yaws.append(yaw); plane.append(pos[[0, 2]].copy())
         ids = window_ids(frames_cum, yaws, a.history_rule)
         goal_rel = to_robot(goal[[0, 2]], pos[[0, 2]], yaw)
         d_geo, pts = expert_path(sim, pos, goal)
@@ -74,7 +74,7 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
         record = a.record and label is not None and rng.random() < a.record_prob
         hist = np.array([np.linalg.norm(cams[-1] - cams[i]) for i in ids], np.float32)
         msg = {'cmd': 'step', 'ep': uid, 'frame_idx': len(frames_cum) - 1, 'frame': rgb, 'window': ids,
-               'goal': goal_rel.astype(np.float32), 'hist_chord': hist, 'label': None if label is None else label.astype(np.float32),
+               'goal': goal_rel.astype(np.float32), 'hist_chord': hist, 'trail': trail(frames_cum, plane, pos[[0, 2]], yaw), 'label': None if label is None else label.astype(np.float32),
                'record': record, 'predict': not use_expert, 'step': step, 'expert_dist': d_geo, 'debug': viz is not None,
                'odom': odom_pose(pos, yaw),
                'meta': {'ep': ep['id'], 'scene': ep['scene'], 'mode': a.mode, 'tag': a.tag, 'expert_step': bool(use_expert),

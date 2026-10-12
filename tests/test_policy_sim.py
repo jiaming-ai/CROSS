@@ -76,3 +76,20 @@ def test_keyframe_window_includes_turn_views():
     ids = window_ids(cum, yaw, rule)
     assert ids[0] == 7 and ids[1] == 5 and ids[2:5] == [3, 2, 1] and ids[5] == 0
     assert window_ids(cum, yaw, {'type': 'distance', 'm': [0, .5, 1, 2]}) == [7, 5, 3, 0]
+
+
+def test_trail_points_and_head_tokens():
+    from cross_nav.policy.sim.geom import trail
+    cum = [0., 1., 2., 3.]
+    plane = [[0., 0.], [0., -1.], [0., -2.], [0., -3.]]        # driving along -z (yaw 0 faces -z)
+    t = trail(cum, plane, np.array([0., -3.]), 0.)
+    np.testing.assert_allclose(t[0], [-1, 0, 1], atol=1e-6)     # 1 m behind
+    np.testing.assert_allclose(t[1], [-2, 0, 1], atol=1e-6)
+    assert t[3, 2] == 0 and t[4, 2] == 0                         # 8 m / 16 m not travelled yet
+    m = TrajectoryHead(token_dim=16, width=24, heads=4, layers=1, source='last', horizon=16, action_scale=8.,
+                       goal_encoding='polar', trail=5)
+    x = torch.randn(2, 1, 4, 3, 4, 16)
+    loss = m.loss(x, torch.tensor([[5., 1.], [2., -1.]]), torch.randn(2, 16, 2), trail=torch.from_numpy(np.stack([t, t])))
+    loss.backward()
+    assert m.trail_embed[0].weight.grad.abs().sum() > 0
+    assert m.memory(x).shape[1] == 4 * 3 * 4 + 5
