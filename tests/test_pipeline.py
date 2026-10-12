@@ -300,11 +300,11 @@ def test_mono_ff_shipped_defaults():
     assert load_config(*mode_config_files("stereo", "vgio"), sets=ft).pose_est.ff.covis_source == "geometric"
     for odometry in ("external", "basalt", "visual"):
         assert load_config(*mode_config_files("stereo", odometry), sets=ft).pose_est.ff.covis_source == "auto"
-    # DPVO + IMU (vio): the feed-forward back end's base (the head) with the old back end's hypothesis behaviour
+    # DPVO + IMU (vio): the feed-forward back end's base (the head) with merges in mapping sessions and h0 by every observation, no adoption in mapping sessions
     vio = mode_config_files("mono", "vio", mono_estimator="ff")
     assert [os.path.basename(f) for f in vio] == ["mono_vio.yaml"]
     hyp = load_config(*vio, sets=ft).mapping.hypothesis
-    assert hyp.adopt_in_mapping_session and hyp.merge_in_mapping_session and not hyp.h0_informative_only
+    assert not hyp.adopt_in_mapping_session and hyp.merge_in_mapping_session and not hyp.h0_informative_only
     assert load_config(*vio, sets=ft).pose_est.ff.covis_source == "auto"
     hyp = cfg.mapping.hypothesis                   # mono_wheel (VGGT + DPVO alone): the defaults
     assert not hyp.adopt_in_mapping_session and not hyp.merge_in_mapping_session and hyp.h0_informative_only
