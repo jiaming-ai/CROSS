@@ -21,7 +21,7 @@ National University of Singapore
 
 CROSS builds probabilistic topological maps from RGB-D, stereo or monocular camera streams. It maintains a Gaussian mixture belief over SE(3) poses, tracks multiple hypotheses, detects loop closures, and optimizes pose graphs — enabling robust long-term navigation in indoor environments.
 
-Three sensor modes share one back end (belief, hypotheses, verified loop closure, pose graph, retrieval). Each runs with the dataset's odometry (`--odometry external`) or with DPVO visual odometry (`--odometry visual`); the mono mode also with visual-inertial odometry (`--odometry vio`: DPVO with its metric scale from the camera's IMU):
+Three sensor modes share one back end (belief, hypotheses, verified loop closure, pose graph, retrieval). Each runs with the dataset's odometry (`--odometry external`) or with DPVO visual odometry (`--odometry visual`); the mono mode also with visual-inertial odometry (`--odometry vio`: DPVO with its metric scale from the camera's IMU). Each combination is one shipped mode, selected by name (`--mode mono_imu`, `--mode stereo_basalt`, ...; [Configuration](#configuration)):
 
 | mode | relative pose estimator | input | install / run |
 |---|---|---|---|
@@ -65,7 +65,7 @@ cross/
 └── visualization/  # Rerun-based 3D visualization, graph plotting
 cross_world/        # 3D Gaussian-splatting reconstruction of a saved map, export, web viewer (docs/WORLD.md)
 benchmark/          # Evaluation protocol, dataset converters, system runners, results page
-configs/            # Shipped configs: local/, cloud/ (one per mode), base/, overlays/ (fast/, outdoor, lowband), mono profiles
+configs/            # Shipped configs: modes/ (one file per mode), base/ (shared pieces), overlays/ (fast/, outdoor, lowband)
 vggt_ft/            # Fine-tuning of VGGT-Omega: metric-scale and covisibility heads, multi-session training, evaluation;
                     # configs/ = the recipe of the released checkpoint (paths from $VGGT_FT_ROOT; docs/USAGE.md section 9)
 docs/               # Usage guide
@@ -172,14 +172,34 @@ Options:
 | `--snr FLOAT` | Signal-to-noise ratio for R3D datasets |
 | `--async` | Enable async step pipeline |
 
-**Shipped configurations.** Each run loads one file `configs/modes/<mode>.yaml` chosen by `--mode <name>` (or the
-sensor mode with `--odometry` / `--mono-estimator`): twelve modes (stereo / rgbd / mono x wheel, basalt, imu, dpvo; no
-rgbd + imu; + mono_vio, VGGT + DPVO + IMU); `--fast` adds the mode's overlay `configs/overlays/fast/<mode>.yaml`
-(constrained compute). A mode file includes shared pieces from `configs/base/` and also holds the monocular frontends'
-settings (sections `mono` and `imu`); `--config` overlays (`configs/overlays/outdoor.yaml`, `stereo_lowband.yaml`) and `--set`
-come after it. The shipped default optimises long loop-closure pose graphs in a background worker
-(`mapping.loop_closure.async_pgo`), so results depend slightly on the machine's speed; experiments pass `--reproducible`
-(synchronous optimisation, as the benchmark harness `benchmark/run.py` always does). See [docs/USAGE.md](docs/USAGE.md#3-configuration).
+### Configuration
+
+One file per mode, plus optional layers on top:
+
+```
+configs/
+  modes/<mode>.yaml       # the 12 modes: stereo_{wheel,basalt,imu,dpvo}, rgbd_{wheel,basalt,dpvo}, mono_{wheel,basalt,imu,vio,dpvo}
+  base/*.yaml             # shared pieces the mode files include (stereo, mono_ff, mono_frontend, vggt_finetuned, common)
+  overlays/fast/<mode>.yaml   # --fast: constrained compute (only stereo_basalt and stereo_dpvo change anything)
+  overlays/outdoor.yaml       # outdoor scale (the benchmark adds it on outdoor datasets)
+  overlays/stereo_lowband.yaml  # opt-in: left image only, half the rate
+```
+
+A run resolves its configuration in this order: `configs/modes/<mode>.yaml` (chosen by `--mode`), the fast overlay
+with `--fast`, your `--config` files (left to right), then `--set section.key=value`. A mode file holds the back end's
+settings (`SystemConfig`, `cross/core/config.py`) and, for the modes with a monocular frontend, its settings in the
+sections `mono:` (`MonoConfig`, `cross/mono/config.py`) and `imu:` (`ImuConfig`). To change something, put the keys in
+a small YAML file and pass it with `--config`:
+
+```bash
+python run.py <seq> --mode mono_imu --config my_robot.yaml --set pose_est.obs_max_interval_steps=2
+```
+
+The same files serve local and remote sessions: where a session runs is chosen at start-up (`--remote-server` / the
+`cross-edge` client with `scripts/remote/serve.py` on the GPU server), not by a configuration file. The shipped files
+optimise long loop-closure pose graphs in a background worker (`mapping.loop_closure.async_pgo`), so results depend
+slightly on the machine's speed; experiments pass `--reproducible` (synchronous optimisation, as the benchmark harness
+`benchmark/run.py` always does). Details: [docs/USAGE.md](docs/USAGE.md#3-configuration).
 
 ### Interactive demo
 
@@ -262,8 +282,8 @@ runs at a motion-gated cadence while odometry propagates the multi-hypothesis be
 camera the scale comes from the odometry (previous observed frame) and from pairs of map keyframes.
 
 ```bash
-python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/overlays/outdoor.yaml
-python run.py data/sim/lonemonk/map --mode stereo --baseline 0.3
+python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo_wheel --config configs/overlays/outdoor.yaml
+python run.py data/sim/lonemonk/map --mode stereo_wheel --baseline 0.3
 ```
 
 Programmatic use differs from the RGB-D mode only by the stereo calibration and the right image:
@@ -295,13 +315,17 @@ bash scripts/run_experiments.sh all && python scripts/summarize.py && python scr
 
 ## Mono mode and visual odometry
 
-A run is defined by two independent choices (`cross/pipeline.py`):
+Each mode name combines a sensor setup with a motion source (`cross/pipeline.py`); with and without odometry input:
 
-| | `--odometry external` (default) | `--odometry visual` |
+| sensors | with the dataset's odometry | without odometry input (DPVO visual odometry) |
 |---|---|---|
-| `--mode rgbd` | dataset odometry; PnP on sensor depth | DPVO visual odometry, metric scale from the sensor depth |
-| `--mode stereo` | dataset odometry; feed-forward estimator with stereo scale | DPVO on the left image, metric scale from stereo (SGBM) depth |
-| `--mode mono` | dataset odometry; learned metric depth (Depth Anything 3) for keyframes | DPVO with a learned metric-scale prior (DA3-Metric) |
+| RGB-D | `rgbd_wheel`: PnP on sensor depth | `rgbd_dpvo`: DPVO, metric scale from the sensor depth |
+| stereo | `stereo_wheel`: VGGT-Omega with stereo scale | `stereo_dpvo`: DPVO on the left image, metric scale from stereo (SGBM) depth |
+| one camera | `mono_wheel`: VGGT-Omega, scale from the odometry and the map | `mono_dpvo`: DPVO with learned metric depth (Depth Anything 3 back end) |
+
+With an IMU: `stereo_imu` / `mono_imu` (VGGT-Omega + IMU odometry), `mono_vio` (DPVO + IMU); with a Basalt VIO file:
+`*_basalt`. The sensor-mode form (`--mode rgbd | stereo | mono` with `--odometry` and `--mono-estimator`) selects the
+same files and a few reference combinations without a file of their own.
 
 Every motion source feeds the same channel of the back end, the per-frame relative pose (and its covariance) that
 becomes the odometry chain of the pose graph; with external odometry in the RGB-D and stereo modes the frames reach
@@ -364,7 +388,8 @@ python scripts/viz/build_trace_page.py --viz-root outputs/viz --scenes lonemonk 
 The GPU work (the back end, VGGT-Omega) can run on a server while the robot runs only its odometry: see
 `docs/USAGE.md` (section 6) for the simulated and real (gRPC) links, and [`edge/README.md`](edge/README.md) for
 `cross-edge`, the robot's side as a separate, torch-free package (live Basalt stereo-inertial VIO, the observation
-cadence, the uplink, the map-frame pose).
+cadence, the uplink, the map-frame pose). Both sides use the same mode files (`configs/modes/`); there is no separate
+cloud configuration.
 
 ## Datasets
 
@@ -406,7 +431,7 @@ Place processed ROS bag directories in `data/rosbag/`.
 | `cross.cv.stereo_scale` | Robust metric scale from calibrated anchors (stereo mode) |
 | `cross.core.lc_verify` | Verified loop closure: consistency tests, calibrated noise model, odometry-chain predictor |
 | `cross.dataloader.stereo_loader` | Stereo sequences (KITTI raw, TartanAir V2, Virtual KITTI 2, SimChange) and posed RGB-D folders |
-| `cross.pipeline` | Sensor mode x odometry source: sessions of the back end fed by external odometry or DPVO visual odometry |
+| `cross.pipeline` | Modes (sensor setup x odometry source) and their configuration files (`configs/modes/`): sessions of the back end fed by external odometry, DPVO or the VGGT-Omega + IMU frontend |
 | `cross.mono` | Mono mode: DPVO frontend with learned metric scale, DA3 models, monocular two-view / feed-forward relocalization geometry, real-time runner (`python -m cross.mono.run`) |
 | `cross.visualization.viz_rr` | Rerun-based 3D visualization |
 

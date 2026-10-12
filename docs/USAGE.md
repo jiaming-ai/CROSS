@@ -111,6 +111,20 @@ are in `scripts/datasets/` and `benchmark/datasets/`.
 
 ## 3. Configuration
 
+```
+configs/
+  modes/<mode>.yaml             one file per mode (the 12 names of section 1)
+  base/                         shared pieces the mode files include:
+    stereo.yaml, mono_ff.yaml     the stereo / mono VGGT-Omega back end
+    mono_frontend.yaml            the monocular frontends' MonoConfig (DPVO, people masking, learned-depth cadence)
+    vggt_finetuned.yaml           settings that apply only with the fine-tuned VGGT-Omega checkpoint
+    common.yaml                   every mode: background pose-graph optimisation
+  overlays/
+    fast/<mode>.yaml              --fast: constrained compute
+    outdoor.yaml                  outdoor scale (the benchmark adds it on outdoor datasets)
+    stereo_lowband.yaml           opt-in: left image only, half the rate
+```
+
 Every run loads one shipped file, `configs/modes/<mode>.yaml`, chosen by `--mode <name>` (or the sensor mode with
 `--odometry` / `--mono-estimator`, section 1), with `--fast` the mode's fast overlay, then the user's `--config` files
 (merged left to right) and `--set` overrides. The same files serve a local run and a remote one (section 6): where the
@@ -135,8 +149,20 @@ SystemConfig lines it applies after its presets of `cross/mono/system.py`) and `
 inertial frontends). `--mono-args` overrides them from the command line: `"--imu-config key=value"` and, for the DA3
 back end, `"--cross-config section.key=value"`; any other `mono` setting goes in a `--config` file's `mono:` section.
 
+A configuration file of your own uses the same sections as a mode file; only the keys you set change:
+
+```yaml
+# my_robot.yaml: python run.py <seq> --mode mono_imu --config my_robot.yaml
+pose_est:
+  obs_max_interval_steps: 2      # SystemConfig (cross/core/config.py)
+mono:
+  mask_people: false             # MonoConfig of the monocular frontend (cross/mono/config.py)
+imu:
+  depth_prior: false             # ImuConfig of the inertial frontend (cross/imu/scale_filter.py)
+```
+
 ```bash
-python run.py <seq> --mode stereo --fast --config configs/overlays/outdoor.yaml my_overrides.yaml
+python run.py <seq> --mode stereo_wheel --fast --config configs/overlays/outdoor.yaml my_overrides.yaml
 python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=configs/noise/my_robot.yaml  pose_est.obs_max_interval_steps=2
 ```
 
