@@ -41,6 +41,12 @@ def noise_profile(rng, mode):
     return {'turn': float(level), 'fwd': float(level * .3), 'excursion': float(rng.choice([0., .02, .05]))}
 
 
+def odom_pose(pos, yaw):
+    """Odometry pose (x, y, yaw) of a robot at Habitat position pos (Y-up) and heading yaw: x forward / y left at
+    yaw 0, yaw counter-clockwise (REP-103), i.e. x = -z, y = -x of the world, as cross_nav.policy.robot expects."""
+    return np.array([-pos[2], -pos[0], yaw], np.float64)
+
+
 def run_episode(sim, conn, ep, a, rng, viz=None):
     pf = sim.pathfinder
     pos = np.asarray(ep['start'], np.float64)
@@ -70,6 +76,7 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
         msg = {'cmd': 'step', 'ep': uid, 'frame_idx': len(frames_cum) - 1, 'frame': rgb, 'window': ids,
                'goal': goal_rel.astype(np.float32), 'hist_chord': hist, 'label': None if label is None else label.astype(np.float32),
                'record': record, 'predict': not use_expert, 'step': step, 'expert_dist': d_geo, 'debug': viz is not None,
+               'odom': odom_pose(pos, yaw),
                'meta': {'ep': ep['id'], 'scene': ep['scene'], 'mode': a.mode, 'tag': a.tag, 'expert_step': bool(use_expert),
                         'camera': camera, 'dataset': 'hssd_sim'}}
         wire.send(conn, msg)

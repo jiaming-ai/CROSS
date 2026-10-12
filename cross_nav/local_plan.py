@@ -8,7 +8,10 @@ import cv2
 
 class LocalWaypointPlanner:
     def __init__(self, occupancy, observability, start, res, *, threshold=.5,
-                 radius=.2, risk_weight=64., visibility_weight=0., min_travel=1., min_progress=.5):
+                 radius=.2, risk_weight=64., visibility_weight=0., min_travel=1., min_progress=.5,
+                 blocked=None):
+        """blocked: optional (H, W) bool hard obstacles (footprint-inflated like unobserved cells); cells inside
+        the robot's current footprint are never blocked, so a robot touching an obstacle can still leave."""
         p, v = np.asarray(occupancy), np.asarray(observability)
         if v.shape != p.shape or not np.isfinite(v).all() or (v < 0).any() or (v > 1).any():
             raise ValueError('observability must be a matching probability map')
@@ -33,7 +36,10 @@ class LocalWaypointPlanner:
             # A conservative score; correlated cells do not give calibrated
             # probabilities for complete paths or full-footprint observability.
             cost += visibility_weight * -np.log(np.maximum(least, 1e-6))
-        allowed = ~footprint_blocked(~visible, res, radius)
+        impassable = ~visible
+        if blocked is not None:
+            impassable |= np.asarray(blocked, bool) & ~current
+        allowed = ~footprint_blocked(impassable, res, radius)
         self.field = Field(allowed, self.start, cost, allow_corner_cutting=False, diagonal_cost=True)
         self.coords = np.argwhere(np.isfinite(self.field.dist)) if self.field.valid else np.empty((0, 2), int)
         self.travel = np.linalg.norm(self.coords-self.start, axis=1)*res

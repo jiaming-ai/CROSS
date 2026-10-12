@@ -148,3 +148,201 @@ def test_blind_zone_fallback_only_when_frozen_planner_is_stuck():
     z = blind_zone_mask(n, res, 1.3, 90., .2)
     fl = cell_to_robot(np.argwhere(z), n, res)
     assert fl[:, 0].max() <= 1.3 and fl[:, 0].min() >= -.2 and np.all(np.abs(fl[:, 1]) <= np.maximum(fl[:, 0], .3) + 1e-9)
+
+
+# ------------------------------------------------------------------------------------------------ closed-loop rules
+def _open(n=80, p_free=.02):
+    return np.full((n, n), p_free, np.float32), np.full((n, n), .9, np.float32)
+
+
+def test_odometry_pose_matches_sim_robot_frame():
+    from cross_nav.policy.bev_policy import to_odom_2d, to_robot_2d
+    from cross_nav.policy.sim.geom import to_robot
+    from cross_nav.policy.sim.rollout import odom_pose
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        pos, yaw, goal = rng.normal(size=3), rng.uniform(-3, 3), rng.normal(size=3) * 4
+        ref = to_robot(goal[[0, 2]], pos[[0, 2]], yaw)
+        pose = odom_pose(pos, yaw)
+        got = to_robot_2d(odom_pose(goal, 0.)[:2], pose)
+        np.testing.assert_allclose(got, ref, atol=1e-9)
+        np.testing.assert_allclose(to_robot_2d(to_odom_2d(ref, pose), pose), ref, atol=1e-9)
+
+
+def test_occ_block_forbids_crossing_a_predicted_wall():
+    p, v = _open()
+    p[40 - 12, :] = .97                                  # wall across the whole map 1.2 m ahead, everything observed
+    goal = np.array([2.5, 0.])
+    path, rec = plan_window(p, v, goal, .1, resolve({}))
+    assert rec['status'] == STATUS_GOAL                  # frozen: occupancy is only a cost, the route crosses it
+    path, rec = plan_window(p, v, goal, .1, resolve({'occ_block': .6}))
+    assert rec['status'] != STATUS_GOAL
+    if rec['status'] != STATUS_NONE:
+        assert path[:, 0].max() < 1.2 - .2
+
+
+def test_occ_block_lets_a_robot_touching_an_obstacle_leave():
+    p, v = _open()
+    p[40 - 2, 35:46] = .97                                # obstacle 0.15 m ahead, inside the robot's footprint
+    path, rec = plan_window(p, v, np.array([-3., 0.]), .1, resolve({'occ_block': .6}))
+    assert rec['status'] == STATUS_GOAL and path[-1, 0] < -2.5
+
+
+def test_near_goal_approach():
+    from cross_nav.policy.bev_policy import STATUS_APPROACH
+    p, v = _open()
+    v[:] = 0.                                            # nothing observed: the frozen planner finds no route
+    goal = np.array([.3, .15])
+    _, rec = plan_window(p, v, goal, .1, resolve({}))
+    assert rec['status'] == STATUS_NONE
+    cfg = resolve({'near_goal_m': 1.})
+    path, rec = plan_window(p, v, goal, .1, cfg)
+    assert rec['status'] == STATUS_APPROACH
+    np.testing.assert_allclose(path[-1], goal, atol=1e-6)
+    turn, fwd = control(path)
+    assert fwd > 0 and turn > 0
+    p[40 - 3:40 - 2, 38:43] = .9                         # obstacle on the segment: no straight approach
+    _, rec = plan_window(p, v, goal, .1, cfg)
+    assert rec['status'] != STATUS_APPROACH
+
+
+def test_rotate_hold_keeps_the_turn_direction_of_a_streak():
+    from cross_nav.policy.bev_policy import Episode
+    p, v = _open()
+    v[:] = 0.
+    cfg = resolve({'no_path': 'rotate_hold', 'blind_zone': 'off'})
+    st = Episode()
+    sides = []
+    for goal in ([-3., .5], [-3., -.5], [-3., .5], [-3., -.5]):
+        path, rec = plan_window(p, v, np.array(goal), .1, cfg, st)
+        assert rec['status'] == STATUS_NONE
+        sides.append(np.sign(control(path)[0]))
+    assert sides == [1, 1, 1, 1] and st.no_route == 4
+    # stateless 'rotate_goal' flips with the goal side (the 2-cycle the hold prevents)
+    sides = [np.sign(control(plan_window(p, v, np.array(g), .1, resolve({'no_path': 'rotate_goal', 'blind_zone': 'off'}))[0])[0])
+             for g in ([-3., .5], [-3., -.5])]
+    assert sides == [1, -1]
+
+
+def test_memory_follows_the_last_route_in_the_odometry_frame():
+    from cross_nav.policy.bev_policy import STATUS_MEMORY, Episode
+    p, v = _open()
+    cfg = resolve({'memory_steps': 3, 'occ_block': .6, 'blind_zone': 'off'})
+    st = Episode()
+    st.observe((1., 2., 0.), cfg)
+    path, rec = plan_window(p, v, np.array([3., 1.]), .1, cfg, st)
+    assert rec['status'] == STATUS_GOAL and st.route is not None
+    # the robot moved 0.5 m forward and turned; the new window shows nothing: follow the remembered route
+    st.observe((1.5, 2., .3), cfg)
+    v0 = np.zeros_like(v)
+    path2, rec = plan_window(p, v0, np.array([3., 1.]), .1, cfg, st)
+    assert rec['status'] == STATUS_MEMORY
+    from cross_nav.policy.bev_policy import to_odom_2d
+    end = to_odom_2d(path2[-1], (1.5, 2., .3))
+    np.testing.assert_allclose(end, [1. + path[-1, 0], 2. + path[-1, 1]], atol=.08)
+    # a predicted obstacle on it, or age, ends the memory
+    for _ in range(3):
+        _, rec = plan_window(p, v0, np.array([3., 1.]), .1, cfg, st)
+    assert rec['status'] == STATUS_NONE
+
+
+def test_bump_marks_an_obstacle_where_commanded_motion_failed():
+    from cross_nav.policy.bev_policy import Episode
+    cfg = resolve({'bump': True})
+    st = Episode()
+    st.observe((0., 0., 0.), cfg)
+    st.expect = .25
+    st.observe((.02, 0., 0.), cfg)                        # moved 2 cm of 25: blocked
+    assert st.n_bumps == 1
+    p, _ = _open()
+    q = st.add_bumps(p, .1, cfg)
+    r, c = robot_to_cell([.3, 0.], 80, .1)
+    assert q[r, c] == 1. and p[r, c] < .1
+    st.expect = .25
+    st.observe((.25, 0., 0.), cfg)                        # executed: no new bump
+    assert st.n_bumps == 1
+
+
+def test_relaxed_planner_after_a_no_route_streak():
+    from cross_nav.policy.bev_policy import STATUS_RELAXED, Episode
+    p, v = _open()
+    v[:] = 0.
+    cfg = resolve({'relax_after': 2, 'occ_block': .6, 'blind_zone': 'off'})
+    st = Episode()
+    goal = np.array([3., 0.])
+    assert plan_window(p, v, goal, .1, cfg, st)[1]['status'] == STATUS_NONE
+    assert plan_window(p, v, goal, .1, cfg, st)[1]['status'] == STATUS_NONE
+    path, rec = plan_window(p, v, goal, .1, cfg, st)
+    assert rec['status'] == STATUS_RELAXED and path[-1, 0] > 2.5
+    assert st.no_route == 0
+
+
+def test_astar_matches_dijkstra_length():
+    from cross_nav.plan import Field
+    from cross_nav.policy.bev_policy import astar
+    rng = np.random.default_rng(1)
+    ok = rng.random((60, 60)) > .25
+    ok[5, 5] = ok[50, 52] = True
+    cost = 1 + rng.random((60, 60)) * 3
+    f = Field(ok, (5, 5), cost, allow_corner_cutting=False)
+    path = astar(ok, cost, (5, 5), (50, 52))
+
+    def length(pp):
+        pp = np.asarray(pp)
+        d = np.abs(np.diff(pp, axis=0)).sum(1)
+        return sum((1.4142135623730951 if k == 2 else 1.) * .5 * (cost[tuple(a)] + cost[tuple(b)]) for k, a, b in zip(d, pp[:-1], pp[1:]))
+    if np.isfinite(f.dist[50, 52]):
+        assert len(path) and length(path) == pytest.approx(f.dist[50, 52], rel=1e-9)
+        assert tuple(path[0]) == (5, 5) and tuple(path[-1]) == (50, 52)
+    else:
+        assert not len(path)
+
+
+def test_world_map_fuses_in_the_odometry_frame_and_routes_around_a_seen_wall():
+    from cross_nav.policy.bev_policy import STATUS_MAP, Episode, WorldMap, to_odom_2d
+    n, res = 80, .1
+    cfg = resolve({'map': {'res': .1, 'size': 200}, 'blind_zone': 'off'})
+    pose = np.array([2., 1., math.radians(30)])
+    p = np.full((n, n), .02, np.float32)
+    v = np.full((n, n), .9, np.float32)
+    # a wall 1.5 m ahead, 3 m wide (robot frame)
+    i = (n / 2 - np.arange(n) - .5) * res
+    F, L = np.meshgrid(i, i, indexing='ij')
+    wall = (np.abs(F - 1.5) < .1) & (np.abs(L) < 1.5)
+    p[wall] = .97
+    wm = WorldMap(pose, cfg['map'])
+    wm.fuse(p, v, pose, res)
+    # the wall lands at the right odometry-frame place
+    xy = to_odom_2d(np.array([1.5, 0.]), pose)
+    vv, uu = wm.cell(xy)
+    assert wm.num[vv, uu] / wm.den[vv, uu] > .8
+    xy = to_odom_2d(np.array([.7, 0.]), pose)
+    vv, uu = wm.cell(xy)
+    assert wm.num[vv, uu] / wm.den[vv, uu] < .1
+    # plan: around the wall to a goal 3 m ahead; a later window that sees nothing keeps the wall in memory
+    st = Episode()
+    st.observe(pose, cfg)
+    st.world = wm
+    wm.fuse(np.full((n, n), .3, np.float32), np.zeros((n, n), np.float32), pose, res)
+    path, rec = plan_window(np.full((n, n), .3, np.float32), np.zeros((n, n), np.float32), np.array([3., 0.]), res, cfg, st)
+    assert rec['status'] == STATUS_MAP
+    fl = np.vstack(([0, 0], path))
+    near_wall = np.abs(fl[:, 0] - 1.5) < .25
+    assert near_wall.any() and np.abs(fl[near_wall, 1]).min() > 1.5
+
+
+def test_empty_map_config_enables_the_map_with_defaults():
+    from cross_nav.policy.bev_policy import MAP_DEFAULTS
+    assert resolve({'map': {}})['map'] == MAP_DEFAULTS
+    assert resolve({})['map'] is None
+
+
+def test_world_map_unobserved_completions_never_block():
+    from cross_nav.policy.bev_policy import WorldMap
+    n, res = 80, .1
+    cfg = resolve({'map': {'res': .1, 'size': 200}})['map']
+    wm = WorldMap((0., 0., 0.), cfg)
+    for _ in range(40):                                   # spinning in place, nothing observed, everything "occupied"
+        wm.fuse(np.full((n, n), .8, np.float32), np.zeros((n, n), np.float32), (0., 0., 0.), res)
+    route = wm.plan((0., 0., 0.), np.array([2., 1.]))
+    assert route is not None and np.linalg.norm(route[-1] - [2., 1.]) < .15

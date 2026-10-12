@@ -129,7 +129,7 @@ def main():
     info = {'head': a.head, 'head_cfg': policy.head.cfg if policy.head else None, 'grid': list(policy.grid), 'scale': a.scale,
             'history_m': list(bev.history_m) if bev else [0., .5, 1., 2.], 'bev': a.bev,
             'history_rule': getattr(bev, 'history_rule', None) if bev else None}
-    t0, n_windows, n_batches = time.time(), 0, 0
+    t0, n_windows, n_batches, t_bev = time.time(), 0, 0, {}
     stop = []
     signal.signal(signal.SIGTERM, lambda *_: stop.append(1))      # flush recorded shards, then exit
     print(json.dumps({'listening': a.socket, **info}), flush=True)
@@ -187,6 +187,8 @@ def main():
                     wo = np.stack([ob[j] for j in m['window']]) if all(j in ob for j in m['window']) else None
                     eps.append({'ep': m['ep'], 'step': m.get('step'), 'odom': ob.get(m['frame_idx']), 'window_odom': wo})
                 paths, debug = bev(imgs, goal, hist, want_debug=[bool(m.get('debug')) for _, m in part], episodes=eps)
+                for k, v in bev.timing.items():
+                    t_bev[k] = t_bev.get(k, 0.) + v
             else:
                 feat = policy(imgs, hist)
                 paths = policy.predict(feat, goal, hist).cpu().numpy() if policy.head is not None and any(m['predict'] for _, m in part) else None
@@ -204,7 +206,8 @@ def main():
             n_windows += len(part); n_batches += 1
             if n_batches % 200 == 0:
                 print(json.dumps({'windows': n_windows, 'batches': n_batches, 'mean_batch': round(n_windows / n_batches, 1),
-                                  'windows_per_s': round(n_windows / (time.time() - t0), 1), 'clients': len(conns)}), flush=True)
+                                  'windows_per_s': round(n_windows / (time.time() - t0), 1), 'clients': len(conns),
+                                  **{k: round(v / n_windows, 3) for k, v in t_bev.items()}}), flush=True)
     if writer is not None:
         writer.flush()
     print(json.dumps({'exit': True, 'windows': n_windows, 'seconds': round(time.time() - t0)}), flush=True)

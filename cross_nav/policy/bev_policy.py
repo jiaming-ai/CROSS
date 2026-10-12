@@ -69,6 +69,7 @@ side instead; 'stop' returns zeros (the robot then stays put, the same window re
 from __future__ import annotations
 
 import functools
+import heapq
 import math
 import os
 import time
@@ -78,7 +79,7 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from .sim.geom import resample
+from .sim.geom import control, resample
 
 HISTORY_M = (0., .5, 1., 2., 4., 8., 16., 32.)
 FROZEN_PLANNER = {'thresholds': [.75, .625, .5, .375, .25], 'risk_weight': 128., 'visibility_weight': 16.,
@@ -97,13 +98,39 @@ DEFAULTS = {
     'blind_zone': 'fallback',    # 'fallback' | 'always' | 'off' (frozen)
     'blind_zone_m': 1.3,         # floor hidden below the lower FoV edge: 0.8 m / tan(36.9 deg) = 1.07 m, + margin
     'blind_zone_hfov_deg': 90.,
-    'no_path': 'rotate',         # 'rotate' | 'rotate_goal' | 'stop'
+    'no_path': 'rotate',         # 'rotate' | 'rotate_goal' | 'rotate_hold' | 'stop'
     'turn_point_m': .3,
     'horizon': 16, 'spacing': .5,
     'debug_cells': 100,
     'max_chunk': 16,             # windows per backbone pass
+    # closed-loop rules (the defaults are the frozen behaviour; see "Closed-loop rules" in the module docstring)
+    'history_rule': None,        # None: frames at history_m metres of travel; {'type': 'keyframe', 'trans', 'rot_deg', 'lags'}
+    'occ_block': None,           # P(occupied) above which a cell is impassable (footprint-inflated); None: cost only
+    'near_goal_m': 0.,           # > 0: a goal closer than this is approached straight when the segment is predicted free
+    'near_goal_occ': .5,         # max P(occupied) within near_goal_clear_m of that segment
+    'near_goal_clear_m': .1,
+    'memory_steps': 0,           # > 0: without a route, follow the last route (odometry frame) for up to this many windows
+    'relax_after': -1,           # >= 0: after this many consecutive no-route windows, plan with relax_planner
+    'relax_planner': {'thresholds': [0.], 'min_travel': .3, 'min_progress': .1},
+    'bump': False,               # commanded forward motion not executed (odometry) -> remembered obstacle ahead
+    'bump_ratio': .5, 'bump_ahead_m': .3, 'bump_radius_m': .15, 'bump_max': 64,
+    'control': {'lookahead': .5, 'step': .25},   # the executing controller (sim.geom.control), for the bump rule
+    'scale_memory': False,       # keep the episode's last odometry scale when the window has no baseline
+    'scale_pairs': False,        # odometry scale from all pairwise view baselines (needs window odometry)
+    'map': None,                 # None: plan per window (frozen); a dict (MAP_DEFAULTS keys): episode map, see WorldMap
 }
-STATUS_GOAL, STATUS_WAYPOINT, STATUS_NONE = 0, 1, 2
+MAP_DEFAULTS = {
+    'res': .1, 'size': 800,      # odometry-frame grid (metres per cell, cells per side), centred on the first pose
+    'range_m': 6.,               # window cells farther than this from the robot are not fused
+    'w_floor': .05,              # fusion weight = max(P(observed), w_floor): unobserved completions count a little
+    'decay': 1.,                 # evidence kept per window (1 = no forgetting)
+    'unknown_p': .25,            # P(occupied) planned for cells no window has covered (optimistic, passable)
+    'block_p': .6, 'block_w': .5,  # impassable: fused P(occupied) > block_p with summed P(observed) >= block_w
+    'risk_weight': 4.,           # cell cost 1 + risk_weight * footprint-max P(occupied)
+    'radius': .2,
+    'margin_m': 4.,              # the search box: robot and goal + this margin
+}
+STATUS_GOAL, STATUS_WAYPOINT, STATUS_NONE, STATUS_APPROACH, STATUS_MEMORY, STATUS_RELAXED, STATUS_MAP = 0, 1, 2, 3, 4, 5, 6
 
 
 # ------------------------------------------------------------------------------------------------ geometry (numpy)
@@ -153,15 +180,15 @@ def cells_to_path(cells, size, res, horizon=16, spacing=.5):
     return resample(p, horizon, spacing).astype(np.float32)
 
 
-def turn_path(goal, mode, horizon=16, dist=.3):
-    """Path for 'no route': a turn in place (a point 90 deg aside, beyond the controller's turn-only angle) or stop."""
+def turn_path(goal, mode, horizon=16, dist=.3, side=None):
+    """Path for 'no route': a turn in place (a point 90 deg aside, beyond the controller's turn-only angle) or stop.
+    side (+1 left / -1 right) overrides the mode's direction ('rotate_hold' keeps the side of a no-route streak)."""
     if mode == 'stop':
         return np.zeros((horizon, 2), np.float32)
-    side = 1.
-    if mode == 'rotate_goal':
-        side = 1. if float(goal[1]) >= 0 else -1.
-    elif mode != 'rotate':
+    if mode not in ('rotate', 'rotate_goal', 'rotate_hold'):
         raise ValueError(f'unknown no_path mode {mode!r}')
+    if side is None:
+        side = 1. if mode == 'rotate' or float(goal[1]) >= 0 else -1.
     return np.tile(np.array([0., side * dist], np.float32), (horizon, 1))
 
 
@@ -176,9 +203,9 @@ def blind_zone_mask(size, res, depth, hfov_deg, radius):
     return (f >= -radius) & (f <= depth) & (np.abs(l) <= half)
 
 
-def adaptive_plan(prob, obs, goal_cell, res, planner):
+def adaptive_plan(prob, obs, goal_cell, res, planner, blocked=None):
     """AdaptiveVisibilityPlanner(...).plan(goal_cell), constructing a threshold's planner only when the higher
-    thresholds found no route (identical result, fewer shortest-path fields)."""
+    thresholds found no route (identical result, fewer shortest-path fields). blocked: optional hard obstacles."""
     from cross_nav.local_plan import LocalWaypointPlanner
     start = (prob.shape[0] // 2, prob.shape[1] // 2)
     kw = {k: planner[k] for k in ('radius', 'risk_weight', 'visibility_weight', 'min_travel', 'min_progress')}
@@ -186,16 +213,266 @@ def adaptive_plan(prob, obs, goal_cell, res, planner):
     if not th or any(a <= b for a, b in zip(th, th[1:])):
         raise ValueError('thresholds must be strictly decreasing')
     for t in th:
-        r = LocalWaypointPlanner(prob, obs, start, res, threshold=t, **kw).plan(tuple(int(x) for x in goal_cell))
+        r = LocalWaypointPlanner(prob, obs, start, res, threshold=t, blocked=blocked, **kw).plan(tuple(int(x) for x in goal_cell))
         if r['path'] is not None:
             break
     return {**r, 'visibility_threshold': t}
 
 
-def plan_window(prob, obs, goal, res, cfg):
-    """One window: (16, 2) path and a small record (status, target, goal used, threshold)."""
+def max_filter(prob, radius_m, res):
+    """Max of prob within radius_m of each cell."""
+    import cv2
+    from cross_nav.plan import disk
+    r = int(math.ceil(radius_m / res - 1e-9))
+    return cv2.dilate(np.asarray(prob, np.float32), disk(r)) if r > 0 else np.asarray(prob, np.float32)
+
+
+def polyline_max(pmax, pts, res, skip_m=0.):
+    """Max of the map pmax over the cells along a robot-frame polyline starting at the robot, ignoring points within
+    skip_m of the robot; 1 when the line leaves the map."""
+    size = pmax.shape[0]
+    p = np.vstack(([0., 0.], np.asarray(pts, np.float64)))
+    out = [p[:1]]
+    for a, b in zip(p[:-1], p[1:]):
+        n = max(1, int(math.ceil(np.linalg.norm(b - a) / (res / 2))))
+        out.append(a + np.linspace(0, 1, n + 1)[1:, None] * (b - a))
+    q = np.concatenate(out)
+    q = q[np.linalg.norm(q, axis=1) >= skip_m]
+    if not len(q):
+        return 0.
+    rc = robot_to_cell(q, size, res)
+    if (rc < 0).any() or (rc >= size).any():
+        return 1.
+    return float(pmax[rc[:, 0], rc[:, 1]].max())
+
+
+def to_robot_2d(points, pose):
+    """Odometry-frame (x, y) points -> robot frame (forward, left) of pose (x, y, yaw), yaw counter-clockwise."""
+    x, y, yaw = (float(v) for v in pose)
+    c, s = math.cos(yaw), math.sin(yaw)
+    d = np.asarray(points, np.float64) - (x, y)
+    return np.stack((d[..., 0] * c + d[..., 1] * s, -d[..., 0] * s + d[..., 1] * c), -1)
+
+
+def to_odom_2d(points, pose):
+    x, y, yaw = (float(v) for v in pose)
+    c, s = math.cos(yaw), math.sin(yaw)
+    p = np.asarray(points, np.float64)
+    return np.stack((x + p[..., 0] * c - p[..., 1] * s, y + p[..., 0] * s + p[..., 1] * c), -1)
+
+
+class Episode:
+    """Per-episode planner state (keyed by the caller's episode id, dropped at the episode's end). Rules needing
+    motion use the odometry pose (x, y, yaw) of each window's current frame; without it they are inactive."""
+    def __init__(self):
+        self.pose = None          # odometry pose of the previous window
+        self.expect = 0.          # forward motion the previous path commands (metres)
+        self.bumps = []           # odometry-frame points where commanded motion was not executed
+        self.route = None         # last planned route, odometry frame (N, 2)
+        self.route_age = 0        # windows since it was planned
+        self.no_route = 0         # consecutive windows without a route (turn-in-place)
+        self.side = 0.            # turn direction of the current no-route streak
+        self.log_scale = math.nan  # last odometry scale
+        self.n_bumps = 0
+        self.world = None         # WorldMap (cfg['map'])
+
+    def observe(self, pose, cfg):
+        """New window at pose: detect blocked motion of the previous command (bump rule)."""
+        if pose is None:
+            return
+        pose = np.asarray(pose, np.float64)
+        if cfg['bump'] and self.pose is not None and self.expect > .05:
+            moved = float(np.hypot(*(pose[:2] - self.pose[:2])))
+            if moved < cfg['bump_ratio'] * self.expect:
+                ahead = cfg['bump_ahead_m']
+                self.bumps.append(pose[:2] + ahead * np.array([math.cos(pose[2]), math.sin(pose[2])]))
+                self.bumps = self.bumps[-cfg['bump_max']:]
+                self.n_bumps += 1
+        self.pose = pose
+
+    def add_bumps(self, prob, res, cfg):
+        """prob with remembered obstacles (P = 1 within bump_radius_m of each bump point)."""
+        if not self.bumps or self.pose is None:
+            return prob
+        size = prob.shape[0]
+        fl = to_robot_2d(np.asarray(self.bumps), self.pose)
+        half = size * res / 2
+        fl = fl[(np.abs(fl) < half).all(1)]
+        if not len(fl):
+            return prob
+        prob = prob.copy()
+        r = cfg['bump_radius_m']
+        k = int(math.ceil(r / res))
+        for c in robot_to_cell(fl, size, res):
+            r0, r1, c0, c1 = max(0, c[0] - k), min(size, c[0] + k + 1), max(0, c[1] - k), min(size, c[1] + k + 1)
+            rr, cc = np.mgrid[r0:r1, c0:c1]
+            m = np.hypot(rr - c[0], cc - c[1]) * res <= r
+            prob[rr[m], cc[m]] = 1.
+        return prob
+
+    def remembered(self, pmax, res, cfg):
+        """The unfinished part of the last route in the current robot frame, or None (too old, done or blocked)."""
+        if self.route is None or self.pose is None or self.route_age >= cfg['memory_steps']:
+            return None
+        fl = to_robot_2d(self.route, self.pose)
+        k = int(np.argmin(np.linalg.norm(fl, axis=1)))
+        rest = fl[k:] if np.linalg.norm(fl[k]) > .05 else fl[k + 1:]
+        if len(rest) == 0 or np.linalg.norm(rest[-1]) < .25:
+            return None
+        if cfg['occ_block'] is not None and polyline_max(pmax, rest, res, skip_m=cfg['planner']['radius']) > cfg['occ_block']:
+            return None
+        return resample(np.vstack(([0., 0.], rest)), cfg['horizon'], cfg['spacing']).astype(np.float32)
+
+
+def _astar_impl(ok, cost, sr, sc, gr, gc):
+    """8-connected A* over ok cells (no corner cutting) with edge cost length * mean cell cost (cost >= 1, so the
+    octile distance is admissible): the path as an (n, 2) array of (row, col), empty when unreachable."""
+    H, W = ok.shape
+    g = np.full((H, W), np.inf)
+    parent = -np.ones((H, W), np.int64)
+    closed = np.zeros((H, W), np.bool_)
+    g[sr, sc] = 0.
+    heap = [(0., sr * W + sc)]
+    found = False
+    while len(heap) > 0:
+        f, k = heapq.heappop(heap)
+        r, c = k // W, k % W
+        if closed[r, c]:
+            continue
+        closed[r, c] = True
+        if r == gr and c == gc:
+            found = True
+            break
+        for dr in range(-1, 2):
+            for dc in range(-1, 2):
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = r + dr, c + dc
+                if nr < 0 or nr >= H or nc < 0 or nc >= W or not ok[nr, nc] or closed[nr, nc]:
+                    continue
+                diag = dr != 0 and dc != 0
+                if diag and (not ok[r, nc] or not ok[nr, c]):
+                    continue
+                nd = g[r, c] + (1.4142135623730951 if diag else 1.) * .5 * (cost[r, c] + cost[nr, nc])
+                if nd < g[nr, nc]:
+                    g[nr, nc] = nd
+                    parent[nr, nc] = k
+                    ar, ac = abs(nr - gr), abs(nc - gc)
+                    h = max(ar, ac) + .41421356237309515 * min(ar, ac)
+                    heapq.heappush(heap, (nd + h, nr * W + nc))
+    if not found:
+        return np.empty((0, 2), np.int64)
+    n = 0
+    k = gr * W + gc
+    while k >= 0:
+        n += 1
+        k = parent[k // W, k % W]
+    out = np.empty((n, 2), np.int64)
+    k = gr * W + gc
+    for i in range(n - 1, -1, -1):
+        out[i, 0], out[i, 1] = k // W, k % W
+        k = parent[k // W, k % W]
+    return out
+
+
+@functools.lru_cache(maxsize=1)
+def _astar():
+    from cross_nav.plan import njit       # numba when installed, else plain Python
+    return njit(cache=True)(_astar_impl)
+
+
+def astar(ok, cost, start, goal):
+    return _astar()(np.ascontiguousarray(ok, np.bool_), np.ascontiguousarray(cost, np.float64), int(start[0]),
+                    int(start[1]), int(goal[0]), int(goal[1]))
+
+
+class WorldMap:
+    """Episode occupancy map in the odometry frame: the per-window BEV maps fused by a weighted average with weight
+    max(P(observed), w_floor) within range_m of the robot (odometry pose of each window); blocking needs observed
+    evidence (summed P(observed) >= block_w), so unobserved completions only add cost. Cell (v, u) centre:
+    x = ox + (u + .5) res, y = oy + (v + .5) res. Planning (plan): A* from the robot to the goal with cost
+    1 + risk_weight * (footprint-max P(occupied)); cells no window has covered get unknown_p (optimistic: the
+    route may enter unseen space and is re-planned as it is observed); cells with fused P > block_p and weight
+    >= block_w, and remembered bumps, are impassable (inflated by the radius; the robot's and the goal's own
+    footprints stay free)."""
+    def __init__(self, origin, cfg):
+        self.c = {**MAP_DEFAULTS, **cfg}
+        n, r = self.c['size'], self.c['res']
+        self.o = np.asarray(origin[:2], np.float64) - n * r / 2
+        self.num = np.zeros((n, n), np.float32)
+        self.den = np.zeros((n, n), np.float32)
+        self.seen = np.zeros((n, n), np.float32)    # summed P(observed): evidence that may block
+
+    def cell(self, xy):
+        return np.floor((np.asarray(xy, np.float64) - self.o) / self.c['res']).astype(np.int64)[..., ::-1]   # (v, u)
+
+    def fuse(self, prob, obs, pose, res_b):
+        import cv2
+        c, n, R = self.c, self.c['size'], self.c['res']
+        N = prob.shape[0]
+        x0, y0, th = (float(v) for v in pose)
+        ct, st = math.cos(th), math.sin(th)
+        # world grid pixel (u, v) -> BEV pixel (col, row); BEV cell centre: forward = (N/2 - row - .5) res_b, left = ...
+        bx, by = self.o[0] + .5 * R - x0, self.o[1] + .5 * R - y0
+        M = np.array([[R * st / res_b, -R * ct / res_b, N / 2 - .5 - (-bx * st + by * ct) / res_b],
+                      [-R * ct / res_b, -R * st / res_b, N / 2 - .5 - (bx * ct + by * st) / res_b]], np.float64)
+        i = (np.arange(N) - N / 2 + .5) * res_b
+        rng = np.hypot(i[:, None], i[None]) <= c['range_m']
+        w = np.where(rng, np.maximum(obs, c['w_floor']), 0.).astype(np.float32)
+        flags = cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP
+        warp = lambda a: cv2.warpAffine(a, M, (n, n), flags=flags, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        if c['decay'] < 1:
+            self.num *= c['decay']; self.den *= c['decay']; self.seen *= c['decay']
+        self.num += warp(w * prob.astype(np.float32))
+        self.den += warp(w)
+        self.seen += warp(np.where(rng, obs, 0.).astype(np.float32))
+
+    def plan(self, pose, goal_xy, bumps=(), bump_radius=.15):
+        """Odometry-frame route (n, 2) from the pose to the goal, or None."""
+        import cv2
+        from cross_nav.plan import disk
+        c, n, R = self.c, self.c['size'], self.c['res']
+        s, g = self.cell(pose[:2]), self.cell(goal_xy)
+        g = np.clip(g, 0, n - 1)
+        lo = np.maximum(np.minimum(s, g) - int(c['margin_m'] / R), 0)
+        hi = np.minimum(np.maximum(s, g) + int(c['margin_m'] / R) + 1, n)
+        sl = (slice(lo[0], hi[0]), slice(lo[1], hi[1]))
+        den, num = self.den[sl], self.num[sl]
+        p = np.where(den > 1e-3, num / np.maximum(den, 1e-6), c['unknown_p']).astype(np.float32)
+        blocked = (p > c['block_p']) & (self.seen[sl] >= c['block_w'])
+        for b in bumps:
+            v, u = self.cell(b) - lo
+            k = int(math.ceil(bump_radius / R))
+            r0, r1, c0, c1 = max(0, v - k), min(p.shape[0], v + k + 1), max(0, u - k), min(p.shape[1], u + k + 1)
+            if r0 < r1 and c0 < c1:
+                rr, cc = np.mgrid[r0:r1, c0:c1]
+                m = np.hypot(rr - v, cc - u) * R <= bump_radius
+                blocked[rr[m], cc[m]] = True
+                p[rr[m], cc[m]] = 1.
+        k = int(math.ceil(c['radius'] / R - 1e-9))
+        own = np.zeros(p.shape, np.uint8)
+        for q in (s - lo, g - lo):
+            own[tuple(q)] = 1
+        own = cv2.dilate(own, disk(k)) > 0
+        blocked &= ~own
+        ok = ~(cv2.dilate(blocked.astype(np.uint8), disk(k)) > 0) if k else ~blocked
+        ok[tuple(s - lo)] = ok[tuple(g - lo)] = True
+        pooled = cv2.dilate(p, disk(k)) if k else p
+        cost = 1. + c['risk_weight'] * np.where(own, p, pooled)
+        path = astar(ok, cost, s - lo, g - lo)
+        if not len(path):
+            return None
+        vu = path + lo
+        return self.o + (vu[:, ::-1] + .5) * R
+
+
+def plan_window(prob, obs, goal, res, cfg, state=None):
+    """One window: (16, 2) path and a small record (status, target, goal used, threshold). state: the episode's
+    Episode (None: stateless, the per-episode rules are inactive); remembered bumps must already be in prob
+    (Episode.add_bumps)."""
     size = prob.shape[0]
     pc = cfg['planner']
+    goal = np.asarray(goal, np.float64)
     g = clip_goal(goal, size * res / 2, cfg['goal_margin_m'])
     gc = robot_to_cell(g, size, res)
     mode = cfg['blind_zone']
@@ -204,26 +481,78 @@ def plan_window(prob, obs, goal, res, cfg):
     zone = None
     if mode != 'off':
         zone = blind_zone_mask(size, res, cfg['blind_zone_m'], cfg['blind_zone_hfov_deg'], pc['radius'])
+    blocked = prob > cfg['occ_block'] if cfg['occ_block'] is not None else None
+    start = np.array([size // 2, size // 2])
+    rec = {'target': np.full(2, np.nan, np.float32), 'goal_used': g.astype(np.float32),
+           'vis_threshold': np.float32(np.nan), 'blind_zone': False}
+    pmax = max_filter(prob, pc['radius'], res) if (state is not None and cfg['memory_steps'] > 0) else None
+
+    def done(path, status, **kw):
+        path = np.asarray(path, np.float32)
+        if state is not None:
+            if status == STATUS_NONE:
+                state.no_route += 1
+            else:
+                state.no_route = 0
+            if status in (STATUS_GOAL, STATUS_WAYPOINT, STATUS_APPROACH, STATUS_RELAXED, STATUS_MAP) and state.pose is not None:
+                state.route, state.route_age = to_odom_2d(path, state.pose), 0
+            elif state.route is not None:
+                state.route_age += 1
+        return path, {**rec, **kw, 'status': status}
+
+    # near-goal approach: the straight segment to a close goal, when predicted free (no observability needed)
+    if cfg['near_goal_m'] > 0 and float(np.linalg.norm(goal)) < cfg['near_goal_m']:
+        pm = max_filter(prob, cfg['near_goal_clear_m'], res)
+        if polyline_max(pm, goal[None], res, skip_m=pc['radius']) < cfg['near_goal_occ']:
+            path = resample(np.vstack(([0., 0.], goal)), cfg['horizon'], cfg['spacing'])
+            return done(path, STATUS_APPROACH, target=goal.astype(np.float32))
+    # episode map: A* on the fused odometry-frame map to the goal
+    if cfg['map'] and state is not None and state.world is not None and state.pose is not None:
+        route = state.world.plan(state.pose, to_odom_2d(goal, state.pose), state.bumps if cfg['bump'] else (),
+                                 cfg['bump_radius_m'])
+        if route is not None:
+            fl = to_robot_2d(route, state.pose)
+            fl[0] = 0.
+            path = resample(fl, cfg['horizon'], cfg['spacing'])
+            return done(path, STATUS_MAP, target=fl[-1].astype(np.float32))
     used = mode == 'always'
-    r = adaptive_plan(prob, np.maximum(obs, zone) if used else obs, gc, res, pc)
+    r = adaptive_plan(prob, np.maximum(obs, zone) if used else obs, gc, res, pc, blocked)
     if r['path'] is None and mode == 'fallback':
         used = True
-        r = adaptive_plan(prob, np.maximum(obs, zone).astype(np.float32), gc, res, pc)
-    start = np.array([size // 2, size // 2])
+        r = adaptive_plan(prob, np.maximum(obs, zone).astype(np.float32), gc, res, pc, blocked)
+    rec['blind_zone'] = used
+    status = STATUS_WAYPOINT if r['stop_for_reobserve'] else STATUS_GOAL
+    if r['path'] is None and state is not None and cfg['memory_steps'] > 0:
+        path = state.remembered(pmax, res, cfg)
+        if path is not None:
+            state.route_age += 1
+            state.no_route = 0
+            return path, {**rec, 'status': STATUS_MEMORY}
+    if r['path'] is None and cfg['relax_after'] >= 0 and (state.no_route if state is not None else 0) >= cfg['relax_after']:
+        rp = {**pc, **cfg['relax_planner']}
+        r = adaptive_plan(prob, np.maximum(obs, zone).astype(np.float32) if zone is not None else obs, gc, res, rp, blocked)
+        status = STATUS_RELAXED
     if r['path'] is None:
-        path = turn_path(goal, cfg['no_path'], cfg['horizon'], cfg['turn_point_m'])
-        return path, {'status': STATUS_NONE, 'target': np.full(2, np.nan, np.float32), 'goal_used': g.astype(np.float32),
-                      'vis_threshold': np.float32(np.nan), 'blind_zone': used}
+        side = None
+        if state is not None and cfg['no_path'] == 'rotate_hold':
+            if state.no_route == 0 or state.side == 0:
+                state.side = 1. if float(goal[1]) >= 0 else -1.
+            side = state.side
+        path = turn_path(goal, cfg['no_path'], cfg['horizon'], cfg['turn_point_m'], side)
+        return done(path, STATUS_NONE)
     path = cells_to_path(r['path'], size, res, cfg['horizon'], cfg['spacing'])
     target = cell_to_robot(np.asarray(r['target']), size, res) - cell_to_robot(start, size, res)
-    return path, {'status': STATUS_WAYPOINT if r['stop_for_reobserve'] else STATUS_GOAL,
-                  'target': target.astype(np.float32), 'goal_used': g.astype(np.float32),
-                  'vis_threshold': np.float32(r['visibility_threshold']), 'blind_zone': used}
+    return done(path, status, target=target.astype(np.float32), vis_threshold=np.float32(r['visibility_threshold']))
 
 
 def resolve(cfg):
     """Defaults + config; environment variables in path strings are expanded (${CROSS_NAV_ROOT}/...)."""
-    out = {**DEFAULTS, **cfg, 'planner': {**FROZEN_PLANNER, **cfg.get('planner', {})}}
+    out = {**DEFAULTS, **cfg, 'planner': {**FROZEN_PLANNER, **cfg.get('planner', {})},
+           'relax_planner': {**DEFAULTS['relax_planner'], **cfg.get('relax_planner', {})},
+           'control': {**DEFAULTS['control'], **cfg.get('control', {})},
+           'map': {**MAP_DEFAULTS, **cfg['map']} if cfg.get('map') is not None else None}
+    if out['no_path'] not in ('rotate', 'rotate_goal', 'rotate_hold', 'stop'):
+        raise ValueError(f"unknown no_path mode {out['no_path']!r}")
     for k in ('backbone', 'occupancy', 'visibility', 'visibility_gravity'):
         if out[k]:
             out[k] = os.path.expandvars(os.path.expanduser(out[k]))
@@ -252,7 +581,13 @@ class BEVPlannerPolicy:
         self.history_m = tuple(float(h) for h in cfg['history_m'])
         if cfg['gravity'] not in ('imu', 'head') or cfg['scale'] not in ('odometry', 'mono'):
             raise ValueError('gravity must be imu|head, scale odometry|mono')
+        # the window rule the caller should use (sim workers / NavigationAgent); None = distances history_m
+        self.history_rule = dict(cfg['history_rule']) if cfg['history_rule'] else None
+        self.episodes = {}
         self.timing = {}
+
+    def end_episode(self, ep):
+        self.episodes.pop(ep, None)
 
     # images -> the network's input resolution
     def preprocess(self, imgs):
@@ -282,7 +617,7 @@ class BEVPlannerPolicy:
         return dup
 
     @torch.no_grad()
-    def maps(self, imgs, hist, up_cam=None):
+    def maps(self, imgs, hist, up_cam=None, prior_log_scale=None, pair_dist=None):
         """Per-window BEV maps (B, N, N) on the GPU and the scale / gravity used."""
         from cross_nav.model import NavModel
         from cross_nav.uncertainty import uncertainty_score
@@ -301,9 +636,24 @@ class BEVPlannerPolicy:
             # odometry_or_mono uses baselines > 0.2 m; a larger min_baseline_m and duplicate views drop more
             h = torch.where(valid & (hist.float() > cfg['min_baseline_m']), hist.float(), torch.zeros_like(hist.float()))
             ls = odometry_or_mono(chord, h, mono)
+            odo = ((h > .2) & (chord > 1e-3)).any(1) & torch.isfinite(ls)
+            if pair_dist is not None:
+                # all pairwise baselines of the window (metric from odometry, NaN unknown) vs VGGT's camera centres
+                pd = pair_dist.to(x.device).float()
+                pp = (centres[:, :, None] - centres[:, None]).norm(dim=-1)
+                upper = torch.ones(S, S, dtype=torch.bool, device=x.device).triu(1)
+                ok = (valid[:, :, None] & valid[:, None] & upper & torch.isfinite(pd) & (pd > max(cfg['min_baseline_m'], .2))
+                      & (pp > 1e-3))
+                ratio = torch.where(ok, pd / pp.clamp_min(1e-3), torch.nan).reshape(B, -1)
+                lp = ratio.nanmedian(dim=1).values.log()
+                okp = ok.reshape(B, -1).any(1) & torch.isfinite(lp)
+                ls, odo = torch.where(okp, lp, ls), odo | okp
+            if prior_log_scale is not None:
+                pr = prior_log_scale.to(x.device).float()
+                ls = torch.where(~odo & torch.isfinite(pr), pr, ls)
         else:
             ls = mono
-        odo = ls != mono
+            odo = torch.zeros(B, dtype=torch.bool, device=x.device)
         with torch.autocast('cuda', dtype=torch.bfloat16):
             up_head = P.grav(tl, pts).float()
         imu = torch.tensor([0., -1., 0.], device=x.device).expand(B, 3)
@@ -323,41 +673,75 @@ class BEVPlannerPolicy:
         return {'prob': prob, 'obs': obs, 'err': err, 'log_scale': ls, 'odometry': odo,
                 'up_head_deg': torch.rad2deg(torch.acos(cos)), 'n_views': valid.sum(1)}
 
-    def __call__(self, imgs, goal, hist, want_debug=None, up_cam=None):
+    def __call__(self, imgs, goal, hist, want_debug=None, up_cam=None, episodes=None):
         """See the module docstring. up_cam: optional (B, 3) gravity up in camera 0 (OpenCV axes), e.g. from a tilted
-        IMU; it overrides the configured gravity source."""
+        IMU; it overrides the configured gravity source. episodes: optional list (B) of dicts {'ep': id, 'odom':
+        (x, y, yaw) of the current frame, 'window_odom': (S, 3) poses of the window's frames}, which enable the
+        per-episode rules (state is kept per id until end_episode)."""
         cfg = self.cfg
         B = imgs.shape[0]
         want_debug = list(want_debug) if want_debug is not None else [False] * B
         goal_np = goal.detach().float().cpu().numpy() if torch.is_tensor(goal) else np.asarray(goal, np.float32)
         hist = hist if torch.is_tensor(hist) else torch.as_tensor(hist)
         hist = hist.to(imgs.device).float()
+        episodes = list(episodes) if episodes is not None else [None] * B
+        states = [None if e is None or e.get('ep') is None else self.episodes.setdefault(e['ep'], Episode()) for e in episodes]
+        prior = None
+        if cfg['scale_memory']:
+            prior = torch.tensor([s.log_scale if s is not None else math.nan for s in states], dtype=torch.float32)
+        pairs = None
+        if cfg['scale_pairs'] and any(e is not None and e.get('window_odom') is not None for e in episodes):
+            S = imgs.shape[1]
+            pairs = torch.full((B, S, S), math.nan)
+            for j, e in enumerate(episodes):
+                if e is not None and e.get('window_odom') is not None:
+                    w = torch.as_tensor(np.asarray(e['window_odom'], np.float64)[:, :2], dtype=torch.float32)
+                    pairs[j] = (w[:, None] - w[None]).norm(dim=-1)
         t0 = time.perf_counter()
         parts = []
         for i in range(0, B, cfg['max_chunk']):
-            m = self.maps(imgs[i:i + cfg['max_chunk']], hist[i:i + cfg['max_chunk']],
-                          None if up_cam is None else up_cam[i:i + cfg['max_chunk']])
-            k = cfg['debug_cells']
-            f = self.size // k
-            small = {n: F.avg_pool2d(m[n][:, None], f)[:, 0].half().cpu().numpy() for n in ('prob', 'obs', 'err')}
-            parts.append({'prob': m['prob'].cpu().numpy(), 'obs': m['obs'].cpu().numpy(), **{'s_' + n: v for n, v in small.items()},
+            sl = slice(i, i + cfg['max_chunk'])
+            m = self.maps(imgs[sl], hist[sl], None if up_cam is None else up_cam[sl],
+                          None if prior is None else prior[sl], None if pairs is None else pairs[sl])
+            parts.append({'prob': m['prob'].cpu().numpy(), 'obs': m['obs'].cpu().numpy(), 'err': m['err'].cpu().numpy(),
                           **{n: m[n].cpu().numpy() for n in ('log_scale', 'odometry', 'up_head_deg', 'n_views')}})
         cat = {n: np.concatenate([p[n] for p in parts]) for n in parts[0]}
         t1 = time.perf_counter()
         paths = np.zeros((B, cfg['horizon'], 2), np.float32)
         debug = [None] * B
+        k = cfg['debug_cells']
+        f = self.size // k
+
+        def pool(a):
+            return a.reshape(k, f, k, f).mean((1, 3)).astype(np.float16)
         for j in range(B):
-            # the planner validates probability maps strictly; bf16 sigmoid stays in [0, 1]
-            paths[j], rec = plan_window(np.clip(cat['prob'][j], 0, 1), np.clip(cat['obs'][j], 0, 1), goal_np[j], self.res, cfg)
+            st = states[j]
+            if st is not None:
+                st.observe(episodes[j].get('odom'), cfg)
+                if cat['odometry'][j]:
+                    st.log_scale = float(cat['log_scale'][j])
+            prob = np.clip(cat['prob'][j], 0, 1)    # the planner validates probability maps strictly
+            if st is not None and cfg['map'] and st.pose is not None:
+                if st.world is None:
+                    st.world = WorldMap(st.pose, cfg['map'])
+                st.world.fuse(prob, np.clip(cat['obs'][j], 0, 1), st.pose, self.res)
+            if st is not None:
+                prob = st.add_bumps(prob, self.res, cfg)
+            paths[j], rec = plan_window(prob, np.clip(cat['obs'][j], 0, 1), goal_np[j], self.res, cfg,
+                                        st)
+            if st is not None:
+                c = cfg['control']
+                st.expect = float(control(paths[j], c['lookahead'], c['step'])[1])
             if want_debug[j]:
-                k = cfg['debug_cells']
-                debug[j] = {'occ': cat['s_prob'][j], 'obs': cat['s_obs'][j], 'err': cat['s_err'][j],
+                debug[j] = {'occ': pool(prob), 'obs': pool(cat['obs'][j]), 'err': pool(cat['err'][j]),
                             'map_res': np.float32(self.size * self.res / k), 'map_half': np.float32(self.size * self.res / 2),
                             'path': paths[j].copy(), 'target': rec['target'], 'goal_used': rec['goal_used'],
                             'status': np.int8(rec['status']), 'vis_threshold': np.float32(rec['vis_threshold']),
                             'log_scale': np.float32(cat['log_scale'][j]), 'odometry_scale': np.bool_(cat['odometry'][j]),
                             'up_head_deg': np.float32(cat['up_head_deg'][j]), 'n_views': np.int8(cat['n_views'][j]),
-                            'blind_zone': np.bool_(rec['blind_zone'])}
+                            'blind_zone': np.bool_(rec['blind_zone']),
+                            'bumps': np.int16(st.n_bumps if st is not None else 0)}
                 debug[j] = {n: np.asarray(v) for n, v in debug[j].items()}   # 0-d arrays survive the wire format
         self.timing = {'maps_s': t1 - t0, 'plan_s': time.perf_counter() - t1}
         return paths, debug
+

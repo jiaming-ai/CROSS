@@ -74,6 +74,8 @@ class NavigationAgent:
 
     def reset(self):
         self.frames.clear(); self.cum = 0.
+        if hasattr(self.planner, 'reset'):
+            self.planner.reset()
 
     def step(self, image, pose):
         """image uint8 HxWx3 RGB; pose (x, y, yaw) in the odometry frame. Returns path, command and arrival flag."""
@@ -88,7 +90,12 @@ class NavigationAgent:
         ids = window_ids([f[2] for f in self.frames], [f[1][2] for f in self.frames], self.history_rule)
         imgs = np.stack([self.frames[i][0] for i in ids])
         hist = np.array([math.hypot(pose[0] - self.frames[i][1][0], pose[1] - self.frames[i][1][1]) for i in ids], np.float32)
-        path = np.asarray(self.planner(imgs, goal_rel.astype(np.float32), hist), np.float64)
+        if getattr(self.planner, 'uses_odometry', False):   # per-episode rules (BEV planner): poses of the window
+            path = self.planner(imgs, goal_rel.astype(np.float32), hist, odom=np.asarray(pose, np.float64),
+                                window_odom=np.array([self.frames[i][1] for i in ids], np.float64))
+        else:
+            path = self.planner(imgs, goal_rel.astype(np.float32), hist)
+        path = np.asarray(path, np.float64)
         v, w = pure_pursuit(path, self.v_max, self.w_max, self.lookahead)
         return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': to_odom_2d(path, pose), 'goal_rel': goal_rel,
                 'window': ids}
@@ -127,12 +134,20 @@ class BEVPlanner:
             backbone = FrozenMetricTokens(backbone_checkpoint).cuda().eval()
         self.torch, self.bev = torch, BEVPlannerPolicy(cfg, backbone=backbone)
         self.history_m = tuple(self.bev.history_m)
+        self.history_rule = self.bev.history_rule
+        self.uses_odometry = True
         self.last_debug = None
 
-    def __call__(self, images, goal, hist_chord):
+    def reset(self):
+        self.bev.end_episode('robot')
+
+    def __call__(self, images, goal, hist_chord, odom=None, window_odom=None):
+        """odom: (x, y, yaw) of the current frame and window_odom (S, 3) of the window's frames, for the per-episode
+        rules (memory, bump, scale). The bump rule assumes the simulator's step controller; keep it off on a robot."""
         t = self.torch
         imgs = t.from_numpy(np.ascontiguousarray(images))[None].cuda().permute(0, 1, 4, 2, 3).float().div_(255)
+        ep = [{'ep': 'robot', 'odom': odom, 'window_odom': window_odom}] if odom is not None else None
         paths, debug = self.bev(imgs, t.from_numpy(np.asarray(goal, np.float32))[None].cuda(),
-                                t.from_numpy(np.asarray(hist_chord, np.float32))[None].cuda(), want_debug=[True])
+                                t.from_numpy(np.asarray(hist_chord, np.float32))[None].cuda(), want_debug=[True], episodes=ep)
         self.last_debug = debug[0]
         return paths[0]
