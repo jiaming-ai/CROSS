@@ -398,8 +398,7 @@ def apply_right_image(cfg):
         raise ValueError(f"pose_est.ff.right_image: left | pair, not {ff.right_image}")
     if ff.right_image == "left":
         ff.use_curr_anchor = False
-        if not ff.left_ref_anchors:
-            ff.n_ref_anchors = 0
+        ff.n_ref_anchors = 0
         ff.use_odom_anchor = True
         ff.use_map_anchors = True
     return cfg

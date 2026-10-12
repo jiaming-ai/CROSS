@@ -685,10 +685,6 @@ class FeedForwardConfig:
     # translation is metric without the odometry, and the odometry scale guard cannot see an odometry failure (ROVER
     # night with a VIO runaway: map ATE 36-38 m vs 11 m with the pair; outputs/2026-10-07_remote_cadence)
     right_image: str = "pair"
-    # with right_image "left": the stored right images of map references (a map built on the pair) stay scale anchors,
-    # n_ref_anchors of them per pass, each with the rig of the camera that took it (experimental, off: without it
-    # apply_right_image sets n_ref_anchors 0)
-    left_ref_anchors: bool = False
     use_odom_anchor: bool = False        # previous frame + odometry as an additional metric anchor
     odom_anchor_min_translation: float = 0.15
     odom_anchor_weight: float = 0.5
