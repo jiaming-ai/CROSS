@@ -28,9 +28,13 @@ from .sim.geom import HISTORY_M, history_ids
 
 W, H = 512, 384
 TEST_ONLY = {'recon'}
+SQUEEZED = {'bdd_mbra': 16 / 9}      # BDD frames are stored 96x96 from 16:9
 
 
-def split_of(dataset, group):
+def split_of(dataset, group, source_dataset=None):
+    """Split of a recording; re-used recordings (CAST from GNM) are split by their source dataset, so a recording lands
+    in the same split whichever converted copy it comes from."""
+    dataset = source_dataset or dataset
     if dataset in TEST_ONLY:
         return 'test'
     return 'val' if zlib.crc32(f'{dataset}:{group}'.encode()) % 10 == 0 else 'train'
@@ -65,7 +69,7 @@ def windows(dataset, ep_dir, rng, max_per_episode, horizon=16, spacing=.5, per_m
         if np.linalg.norm(goal) < .5:
             continue                  # loops back to the start: no usable goal direction
         ids = history_ids(arc[:a + 1], HISTORY_M)
-        out.append({'images': [str(ep_dir / f'{i}.jpg') for i in ids], 'goal': goal.astype(np.float32),
+        out.append({'images': [str(ep_dir / f'{i}.jpg') for i in ids], 'aspect': SQUEEZED.get(dataset), 'goal': goal.astype(np.float32),
                     'label': label.astype(np.float32), 'hist_chord': np.linalg.norm(pos[ids] - pos[a], axis=-1).astype(np.float32),
                     'step': int(a), 'meta': {'ep': f'{dataset}:{ep_dir.name}', 'scene': f"{dataset}:{src['group']}", 'dataset': dataset,
                                              'tag': 'real', 'expert_step': True, 'label_source': src.get('label_source', 'odometry'),
@@ -73,9 +77,12 @@ def windows(dataset, ep_dir, rng, max_per_episode, horizon=16, spacing=.5, per_m
     return out
 
 
-def letterbox(path):
+def letterbox(path, aspect=None):
+    """Fit the image into W x H keeping its field of view; `aspect` (width / height) restores frames stored squeezed."""
     with Image.open(path) as im:
         im = im.convert('RGB')
+        if aspect:
+            im = im.resize((max(1, round(im.height * aspect)), im.height), Image.Resampling.BILINEAR)
         r = min(W / im.width, H / im.height)
         im = im.resize((max(1, round(im.width * r)), max(1, round(im.height * r))), Image.Resampling.BILINEAR)
         canvas = Image.new('RGB', (W, H), (123, 116, 103))
@@ -86,7 +93,9 @@ def letterbox(path):
 class Windows(Dataset):
     def __init__(self, rows): self.rows = rows
     def __len__(self): return len(self.rows)
-    def __getitem__(self, i): return torch.from_numpy(np.stack([letterbox(p) for p in self.rows[i]['images']])), i
+    def __getitem__(self, i):
+        r = self.rows[i]
+        return torch.from_numpy(np.stack([letterbox(p, r.get('aspect')) for p in r['images']])), i
 
 
 def main():
@@ -105,7 +114,10 @@ def main():
             continue
         rng = np.random.default_rng(zlib.crc32(ds.encode()) + a.seed)
         eps = sorted(d for d in (Path(a.root) / ds).iterdir() if (d / 'trajectory.npz').exists())
-        eps = [d for d in eps if split_of(ds, json.loads((d / 'source.json').read_text())['group']) == a.split]
+        def split_ep(d):
+            src = json.loads((d / 'source.json').read_text())
+            return split_of(ds, src['group'], src.get('source_dataset') if ds == 'cast' else None)
+        eps = [d for d in eps if split_ep(d) == a.split]
         rows = []
         for d in rng.permutation(len(eps)):
             rows += windows(ds, eps[d], rng, a.per_episode)

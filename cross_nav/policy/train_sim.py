@@ -130,8 +130,8 @@ def evaluate(model, X, S, meta, scale, batch=256):
     if dagger.any():
         out['ADE_policy_states'] = float(err[dagger].mean())
     ds = np.array([m.get('dataset', 'hssd_sim') for m in meta])
-    out['by_dataset'] = {d: round(float(err[torch.from_numpy(ds == d).to(err.device)].mean()), 4) for d in sorted(set(ds))}
-    out['macro_ADE'] = float(np.mean(list(out['by_dataset'].values())))
+    out['by_dataset'] = {str(d): round(float(err[torch.from_numpy(ds == d).to(err.device)].mean()), 4) for d in sorted(set(ds))}
+    out['macro_ADE'] = float(np.mean([float(v) for v in out['by_dataset'].values()]))
     return out
 
 
