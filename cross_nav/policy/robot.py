@@ -60,29 +60,34 @@ def pure_pursuit(path, v_max=.5, w_max=1., lookahead=.4, turn_only=math.radians(
 
 
 class NavigationAgent:
-    def __init__(self, planner, history_m=None, arrive_m=.2, v_max=.5, w_max=1., lookahead=.4, max_frames=256,
-                 camera_height=.8):
+    def __init__(self, planner, history_m=None, arrive_m=.2, v_max=.5, w_max=1., lookahead=.4, max_frames=1024,
+                 camera_height=.8, store_m=.1, store_deg=10.):
         self.planner = planner
         self.history_m = tuple(history_m or getattr(planner, 'history_m', (0., .5, 1., 2.)))
         self.history_rule = getattr(planner, 'history_rule', None) or {'type': 'distance', 'm': list(self.history_m)}
         self.arrive_m, self.v_max, self.w_max, self.lookahead = arrive_m, v_max, w_max, lookahead
-        self.frames = deque(maxlen=max_frames)       # (image, pose, cumulative travel)
-        self.goal, self.cum, self.camera_height = None, 0., camera_height
+        # Past frames are kept after store_m of travel or store_deg of rotation since the last kept one (the simulator
+        # moves up to 0.25 m per step; a camera at 10-30 Hz would otherwise fill the buffer within a few metres and
+        # cut the 16 m odometry trail and the BEV planner's keyframe history short). The current frame always leads.
+        self.store_m, self.store_rad = store_m, math.radians(store_deg)
+        self.frames = deque(maxlen=max_frames)       # kept frames: (image, pose, cumulative travel)
+        self.goal, self.cum, self.last, self.camera_height = None, 0., None, camera_height
 
     def set_goal(self, goal_xy):
         self.goal = np.asarray(goal_xy, np.float64)
 
     def reset(self):
-        self.frames.clear(); self.cum = 0.
+        self.frames.clear(); self.cum = 0.; self.last = None
         if hasattr(self.planner, 'reset'):
             self.planner.reset()
 
-    def trail(self, pose):
+    def trail(self, pose, frames=None):
         """Past positions TRAIL_M metres of travel ago in the current robot frame, with availability flags."""
+        frames = list(self.frames) if frames is None else frames
         out = np.zeros((len(TRAIL_M), 3), np.float32)
-        cum = [f[2] for f in self.frames]
+        cum = [f[2] for f in frames]
         for k, h in enumerate(TRAIL_M):
-            past = [f for f, c in zip(self.frames, cum) if c <= cum[-1] - h]
+            past = [f for f, c in zip(frames, cum) if c <= cum[-1] - h]
             if past and cum[-1] - cum[0] >= h:
                 out[k] = (*to_robot_2d(np.asarray(past[-1][1][:2]), pose), 1.)
         return out
@@ -91,20 +96,25 @@ class NavigationAgent:
         """image uint8 HxWx3 RGB; pose (x, y, yaw) in the odometry frame. Returns path, command and arrival flag."""
         if self.goal is None:
             raise RuntimeError('set_goal first')
-        if self.frames:
-            self.cum += float(np.hypot(pose[0] - self.frames[-1][1][0], pose[1] - self.frames[-1][1][1]))
-        self.frames.append((np.asarray(image), tuple(pose), self.cum))
+        if self.last is not None:
+            self.cum += float(np.hypot(pose[0] - self.last[0], pose[1] - self.last[1]))
+        self.last = tuple(pose)
+        cur = (np.asarray(image), tuple(pose), self.cum)
+        if not self.frames or self.cum - self.frames[-1][2] >= self.store_m or \
+                abs((pose[2] - self.frames[-1][1][2] + math.pi) % (2 * math.pi) - math.pi) >= self.store_rad:
+            self.frames.append(cur)
+        frames = list(self.frames) if self.frames[-1] is cur else list(self.frames) + [cur]
         goal_rel = to_robot_2d(self.goal, pose)
         if float(np.hypot(*goal_rel)) < self.arrive_m:
             return {'arrived': True, 'cmd': (0., 0.), 'path': np.zeros((0, 2)), 'path_odom': np.zeros((0, 2)), 'goal_rel': goal_rel}
-        ids = window_ids([f[2] for f in self.frames], [f[1][2] for f in self.frames], self.history_rule)
-        imgs = np.stack([self.frames[i][0] for i in ids])
-        hist = np.array([math.hypot(pose[0] - self.frames[i][1][0], pose[1] - self.frames[i][1][1]) for i in ids], np.float32)
+        ids = window_ids([f[2] for f in frames], [f[1][2] for f in frames], self.history_rule)
+        imgs = np.stack([frames[i][0] for i in ids])
+        hist = np.array([math.hypot(pose[0] - frames[i][1][0], pose[1] - frames[i][1][1]) for i in ids], np.float32)
         if getattr(self.planner, 'uses_odometry', False):   # per-episode rules (BEV planner): poses of the window
             path = self.planner(imgs, goal_rel.astype(np.float32), hist, odom=np.asarray(pose, np.float64),
-                                window_odom=np.array([self.frames[i][1] for i in ids], np.float64))
+                                window_odom=np.array([frames[i][1] for i in ids], np.float64))
         else:
-            path = self.planner(imgs, goal_rel.astype(np.float32), hist, trail=self.trail(pose))
+            path = self.planner(imgs, goal_rel.astype(np.float32), hist, trail=self.trail(pose, frames))
         path = np.asarray(path, np.float64)
         v, w = pure_pursuit(path, self.v_max, self.w_max, self.lookahead)
         return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': to_odom_2d(path, pose), 'goal_rel': goal_rel,

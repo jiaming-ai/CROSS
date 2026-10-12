@@ -93,3 +93,22 @@ def test_trail_points_and_head_tokens():
     loss.backward()
     assert m.trail_embed[0].weight.grad.abs().sum() > 0
     assert m.memory(x).shape[1] == 4 * 3 * 4 + 5
+
+
+def test_robot_agent_keeps_long_history_at_camera_rate():
+    from cross_nav.policy.robot import NavigationAgent
+    seen = {}
+
+    def planner(images, goal, hist, trail=None):
+        seen['hist'], seen['trail'], seen['n'] = hist, trail, len(images)
+        return np.array([[.5 * (i + 1), 0.] for i in range(16)])
+
+    agent = NavigationAgent(planner)
+    agent.set_goal((100., 0.))
+    img = np.zeros((4, 4, 3), np.uint8)
+    for k in range(400):                                   # 20 m straight at 0.05 m per camera frame (10 Hz, 0.5 m/s)
+        out = agent.step(img, (.05 * k, 0., 0.))
+    np.testing.assert_allclose(seen['hist'], [0, .5, 1, 2], atol=.11)
+    assert seen['n'] == 4 and seen['trail'][:, 2].all()   # the 16 m trail point is available
+    np.testing.assert_allclose(seen['trail'][4, :2], [-16, 0], atol=.11)
+    assert len(agent.frames) < 250 and out['cmd'][0] > 0
