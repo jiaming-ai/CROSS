@@ -263,6 +263,48 @@ def test_bump_marks_an_obstacle_where_commanded_motion_failed():
     assert st.n_bumps == 1
 
 
+def test_unstick_forgets_bumps_that_enclose_the_robot():
+    from cross_nav.policy.bev_policy import STATUS_MAP, Episode, WorldMap
+    cfg = resolve({'bump': True, 'occ_block': .6, 'blind_zone': 'off', 'unstick_after': 3, 'unstick_clear_m': .5,
+                   'map': {'res': .1, 'size': 200, 'retry': True}})
+    p, v = _open()
+    st = Episode()
+    st.observe((0., 0., 0.), cfg)
+    st.world = WorldMap(st.pose, cfg['map'])
+    st.world.fuse(p, v, st.pose, .1)
+    st.bumps = [np.array([.3 * math.cos(a), .3 * math.sin(a)]) for a in np.linspace(0, 2 * math.pi, 12, endpoint=False)]
+    goal = np.array([3., 0.])
+    for k in range(3):                                    # enclosed by remembered bumps: no route anywhere
+        st.observe((0., 0., 0.), cfg)
+        assert not st.unstick(cfg)
+        _, rec = plan_window(st.add_bumps(p, .1, cfg), v, goal, .1, cfg, st)
+        assert rec['status'] == STATUS_NONE
+    assert st.no_route == 3 and st.unstick(cfg) and not st.bumps and st.n_unstick == 1
+    vv, uu = st.world.cell((0., 0.))
+    assert st.world.den[vv, uu] == 0 and st.world.den[vv, uu + 10] > 0      # cleared within 0.5 m only
+    _, rec = plan_window(st.add_bumps(p, .1, cfg), v, goal, .1, cfg, st)
+    assert rec['status'] == STATUS_MAP
+    # off by default
+    assert resolve({})['unstick_after'] == -1
+
+
+def test_world_map_retry_radii_leave_a_passage_narrower_than_the_inflated_walls():
+    from cross_nav.policy.bev_policy import WorldMap
+    n, res = 80, .1
+    i = (n / 2 - np.arange(n) - .5) * res
+    F, L = np.meshgrid(i, i, indexing='ij')
+    # the robot in a 0.4 m wide corridor along its heading (walls 0.2 m to each side), closed behind it
+    p = np.where(((np.abs(L) > .2) & (np.abs(L) < .6) & (F > -1.)) | ((F < -1.) & (F > -1.4)), .97, .02).astype(np.float32)
+    v = np.full((n, n), .9, np.float32)
+    routes = {}
+    for radii in ([], [.1, 0.]):
+        wm = WorldMap((0., 0., 0.), resolve({'map': {'res': .1, 'size': 200, 'retry': True, 'retry_radii': radii}})['map'])
+        wm.fuse(p, v, (0., 0., 0.), res)
+        routes[len(radii)] = wm.plan((0., 0., 0.), np.array([3.5, 0.]))
+    assert routes[0] is None and routes[2] is not None
+    assert np.abs(routes[2][:, 1]).max() < .2                # straight out along the corridor
+
+
 def test_relaxed_planner_after_a_no_route_streak():
     from cross_nav.policy.bev_policy import STATUS_RELAXED, Episode
     p, v = _open()

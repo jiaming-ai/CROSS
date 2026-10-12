@@ -82,6 +82,9 @@ state (Episode), keyed by the caller's episode id (`episodes=[{'ep', 'odom', 'wi
     bump *           commanded forward motion not executed (odometry) -> an obstacle remembered ahead
     scale_memory *   the episode's last odometry scale when a window has no baseline
     scale_pairs      odometry scale from all pairwise view baselines (window odometry)
+    unstick_after *  every that many consecutive no-route windows, forget the remembered bumps (and the map's
+                     evidence within unstick_clear_m of the robot): bumps left from sliding along walls can enclose
+                     the robot, which then turns in place for the rest of the episode
 """
 from __future__ import annotations
 
@@ -134,6 +137,8 @@ DEFAULTS = {
     'control': {'lookahead': .5, 'step': .25},   # the executing controller (sim.geom.control), for the bump rule
     'scale_memory': False,       # keep the episode's last odometry scale when the window has no baseline
     'scale_pairs': False,        # odometry scale from all pairwise view baselines (needs window odometry)
+    'unstick_after': -1,         # > 0: every that many consecutive no-route windows, forget bumps (+ nearby map evidence)
+    'unstick_clear_m': 0.,       # > 0: also clear the episode map's evidence within this radius of the robot
     'map': None,                 # None: plan per window (frozen); a dict (MAP_DEFAULTS keys): episode map, see WorldMap
 }
 MAP_DEFAULTS = {
@@ -148,6 +153,7 @@ MAP_DEFAULTS = {
     'margin_m': 4.,              # the search box: robot and goal + this margin
     'retry': False,              # no route in the box: search the whole grid, then block only P > retry_block_p
     'retry_block_p': .85,
+    'retry_radii': [],           # after the retries: search again with these smaller inflation radii (narrow passages)
 }
 STATUS_GOAL, STATUS_WAYPOINT, STATUS_NONE, STATUS_APPROACH, STATUS_MEMORY, STATUS_RELAXED, STATUS_MAP = 0, 1, 2, 3, 4, 5, 6
 
@@ -294,6 +300,7 @@ class Episode:
         self.log_scale = math.nan  # last odometry scale
         self.n_bumps = 0
         self.world = None         # WorldMap (cfg['map'])
+        self.n_unstick = 0        # times the unstick rule fired
 
     def observe(self, pose, cfg):
         """New window at pose: detect blocked motion of the previous command (bump rule)."""
@@ -308,6 +315,17 @@ class Episode:
                 self.bumps = self.bumps[-cfg['bump_max']:]
                 self.n_bumps += 1
         self.pose = pose
+
+    def unstick(self, cfg):
+        """After a no-route streak of unstick_after windows (and each multiple): forget bumps and nearby map evidence."""
+        n = cfg['unstick_after']
+        if n <= 0 or self.no_route < n or self.no_route % n or self.pose is None:
+            return False
+        self.bumps = []
+        if self.world is not None and cfg['unstick_clear_m'] > 0:
+            self.world.clear(self.pose[:2], cfg['unstick_clear_m'])
+        self.n_unstick += 1
+        return True
 
     def add_bumps(self, prob, res, cfg):
         """prob with remembered obstacles (P = 1 within bump_radius_m of each bump point)."""
@@ -422,6 +440,19 @@ class WorldMap:
         self.den = np.zeros((n, n), np.float32)
         self.seen = np.zeros((n, n), np.float32)    # summed P(observed): evidence that may block
 
+    def clear(self, xy, radius_m):
+        """Forget the evidence within radius_m of the odometry-frame point xy (the cells become unseen)."""
+        R = self.c['res']
+        v, u = self.cell(xy)
+        k = int(math.ceil(radius_m / R))
+        r0, r1, c0, c1 = max(0, v - k), min(self.c['size'], v + k + 1), max(0, u - k), min(self.c['size'], u + k + 1)
+        if r0 >= r1 or c0 >= c1:
+            return
+        rr, cc = np.mgrid[r0:r1, c0:c1]
+        m = np.hypot(rr - v, cc - u) * R <= radius_m
+        for a in (self.num, self.den, self.seen):
+            a[rr[m], cc[m]] = 0.
+
     def cell(self, xy):
         return np.floor((np.asarray(xy, np.float64) - self.o) / self.c['res']).astype(np.int64)[..., ::-1]   # (v, u)
 
@@ -448,16 +479,21 @@ class WorldMap:
 
     def plan(self, pose, goal_xy, bumps=(), bump_radius=.15):
         """Odometry-frame route (n, 2) from the pose to the goal, or None. With retry, a failed search is repeated
-        over the whole grid, then with only P(occupied) > retry_block_p blocking (bumps always block)."""
+        over the whole grid, then with only P(occupied) > retry_block_p blocking (bumps always block), then with each
+        inflation radius of retry_radii (a robot in a passage narrower than the inflated predicted walls)."""
         route = self._plan(pose, goal_xy, bumps, bump_radius, self.c['margin_m'], self.c['block_p'])
         if route is None and self.c['retry']:
             full = self.c['size'] * self.c['res']
             route = self._plan(pose, goal_xy, bumps, bump_radius, full, self.c['block_p'])
             if route is None:
                 route = self._plan(pose, goal_xy, bumps, bump_radius, full, self.c['retry_block_p'])
+            for r in self.c['retry_radii']:
+                if route is not None:
+                    break
+                route = self._plan(pose, goal_xy, bumps, bump_radius, full, self.c['retry_block_p'], r)
         return route
 
-    def _plan(self, pose, goal_xy, bumps, bump_radius, margin_m, block_p):
+    def _plan(self, pose, goal_xy, bumps, bump_radius, margin_m, block_p, radius=None):
         import cv2
         from cross_nav.plan import disk
         c, n, R = self.c, self.c['size'], self.c['res']
@@ -478,7 +514,7 @@ class WorldMap:
                 m = np.hypot(rr - v, cc - u) * R <= bump_radius
                 blocked[rr[m], cc[m]] = True
                 p[rr[m], cc[m]] = 1.
-        k = int(math.ceil(c['radius'] / R - 1e-9))
+        k = int(math.ceil((c['radius'] if radius is None else radius) / R - 1e-9))
         own = np.zeros(p.shape, np.uint8)
         for q in (s - lo, g - lo):
             own[tuple(q)] = 1
@@ -747,6 +783,7 @@ class BEVPlannerPolicy:
             st = states[j]
             if st is not None:
                 st.observe(episodes[j].get('odom'), cfg)
+                st.unstick(cfg)
                 if cat['odometry'][j]:
                     st.log_scale = float(cat['log_scale'][j])
             prob = np.clip(cat['prob'][j], 0, 1)    # the planner validates probability maps strictly
