@@ -135,7 +135,8 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | `configs/base/vggt_finetuned.yaml` | the fine-tuned VGGT-Omega's settings (included by the bases of every mode that runs VGGT-Omega; applies only with a fine-tuned checkpoint, see below): the learned covisibility head |
 | `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius) and, with the fine-tuned VGGT-Omega, a looser covisibility gate (0.10); the benchmark adds it on outdoor datasets |
 | `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away); not tested with `--fast` |
-| `configs/noise/*.yaml` | calibrated noise model for one robot (see below) |
+| `configs/noise/*.yaml` | calibrated loop-closure noise models (`mapping.loop_closure.noise_file`; see below). The shipped files are the calibrations of the loop-closure study's scenes (KITTI, SimChange hssd_house / hssd_restaurant / lonemonk; `_600` = the first 600 frames, `_full` = the whole session, `pnp_` = runs with the PnP estimator) used by `scripts/lc/`; no mode file loads one. Each `.json` next to a `.yaml` is `calibrate_noise.py`'s detailed fit (the ground-truth comparison when ground truth was given) |
+| `configs/vggt_ft/*.yaml` | training and evaluation configs of the fine-tuned VGGT-Omega (section 9), not CROSS run configs |
 | `configs/mono_*.json` | mono profiles: the arguments of `python -m cross.mono.run`. `mono_benchmark_10hz.json` for offline runs at 10 Hz, `mono_streaming_dpvo_v2_20hz.json` for real time; select with `--mono-profile`, extra arguments with `--mono-args`. Their `--cross-config` lines configure the DA3 back end only (the `ff` back end and the stereo mode refuse `--cross-config` in `--mono-args`; use `--set`); with external odometry or `vio` the DA3 back end drops the odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
 
 Override one value with `--set section.key=value` (`run.py` and the `scripts/` runners) or put it in a small
@@ -441,3 +442,46 @@ For the back end alone (any mode, external odometry), use `System(camera=camera,
 `system.step(obs={"rgb": ..., "depth": ..., "delta_pose": ..., "timestamp": t})`; stereo adds `rgb_right` and
 `T_right_in_left=` on the constructor. Other tools: `scripts/viz/record_trace.py` and `build_trace_page.py` (replay of
 how a map is built), `scripts/eval_relpose.py` (relative-pose accuracy of the estimators).
+
+## 9. Fine-tuning VGGT-Omega (`vggt_ft/`)
+
+The fine-tuned checkpoint (`Jamie-nus/VGGT-Omega-CROSS`) adds a metric-scale head and a pairwise covisibility head to
+the released VGGT-Omega and is trained with multi-session windows. You do not need this section to run CROSS. It
+describes how to reproduce or retrain the checkpoint. `configs/vggt_ft/` holds that checkpoint's recipe only:
+
+| config | step |
+|---|---|
+| `v5a.yaml` | fine-tune of the released model (8 blocks frozen, scale-aligned losses, distillation to the released model, EMA) |
+| `v10c.yaml` | continues v5a@10000 EMA with close-range / people data (HOI4D, PointOdyssey, Dynamic Replica) |
+| `vfin2_s0.yaml` | the scale and covisibility heads only, on the 0.7 weight blend of v10c@3000 EMA with the released model |
+| `vdl2_s1.yaml` | a dense local scale head on vfin2's frozen model (`pose_est.ff.scale_source=head`; still evaluated against DA3) |
+| `eval_suite.yaml`, `val_suite.yaml` | held-out test suite and validation suite (`python -m vggt_ft.evaluate`) |
+| `smoke.yaml` | a 40-step trainer check |
+
+Paths in these files are `${VGGT_FT_ROOT}/...`, filled in from the environment when a config is loaded. An unset
+variable is an error. Lay out the root as `cache/` (scene cache), `ckpt/` (the released `vggt_omega_1b_512.pt`; the
+DA3 labelers for `vdl2_s1`), `runs/` (outputs) and `test/` (evaluation scenes and windows).
+
+```bash
+export VGGT_FT_ROOT=/path/to/vggt_ft_root
+# scene cache: one converter per dataset, then index + check
+python -m vggt_ft.prep.<dataset> ...            # writes $VGGT_FT_ROOT/cache/<dataset>
+python -m vggt_ft.prep.common index  $VGGT_FT_ROOT/cache/<dataset>
+python -m vggt_ft.prep.common verify $VGGT_FT_ROOT/cache/<dataset>
+# train (8 GPUs; key.sub=value overrides; resumes from runs/<exp>/ckpt_last.pt)
+torchrun --nproc_per_node=8 -m vggt_ft.train --config configs/vggt_ft/v5a.yaml
+torchrun --nproc_per_node=8 -m vggt_ft.train --config configs/vggt_ft/v10c.yaml
+python scripts/vggt_ft/interpolate.py --released $VGGT_FT_ROOT/ckpt/vggt_omega_1b_512.pt \
+    --ft $VGGT_FT_ROOT/runs/v10c/ckpt_003000_ema_bf16.pt --alpha 0.7 --tag s3000 --out_dir $VGGT_FT_ROOT/runs/wise_v10c
+torchrun --nproc_per_node=8 -m vggt_ft.train --config configs/vggt_ft/vfin2_s0.yaml
+# covisibility map that CROSS needs to use the head (and to apply the `vggt_finetuned:` settings)
+python scripts/vggt_ft/calibrate_covis.py --config configs/vggt_ft/vfin2_s0.yaml \
+    --ckpt $VGGT_FT_ROOT/runs/vfin2_s0/ckpt_003000_ema_bf16.pt --map_geo --out vfin2_headmap.pt
+# evaluate any checkpoint (the released one too)
+python -m vggt_ft.evaluate --ckpt vfin2_headmap.pt --suite configs/vggt_ft/eval_suite.yaml --out res.json
+python scripts/vggt_ft/compare_evals.py released.json res.json --md
+```
+
+Use the result with `--set pose_est.ff.checkpoint=vfin2_headmap.pt`. Some datasets and labelers in the recipe are
+non-commercial (Stereo4D, FoundationStereo depth, Oxford Spires, HOI4D, Dynamic Replica); check their licences before
+use. `scripts/vggt_ft/launch_h20.sh`, `evalwatch.sh` and `sync_h20.sh` are the authors' cluster helpers.
