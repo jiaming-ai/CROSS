@@ -1,0 +1,4 @@
+# Fast overlay of the mono_dpvo mode (--fast; layered on configs/<profile>/mono_dpvo.yaml, local or cloud): nothing.
+# DPVO + DA3 runs at ~15 query FPS on an RTX 4000 Ada (its front end, ~70 ms per frame, dominates; half the observation
+# rate 1.15x; outputs/2026-10-09_config_profiles H6).
+{}

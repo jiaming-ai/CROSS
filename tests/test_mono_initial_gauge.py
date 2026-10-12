@@ -11,13 +11,11 @@ torch = pytest.importorskip('torch')
 pp = pytest.importorskip('pypose')
 
 from cross.core.config import HypothesisConfig, SystemConfig
-from cross.core.conditional import SourceFactor
 from cross.core.hypothesis import HypothesisManager
 from cross.core.odom_accum import OdomAccumulator
 from cross.core.system import System
 from cross.core.types import Keyframe
 from cross.mono.geometry import inverse
-from cross.mono.metric_sources import TranslationResponse
 from cross.mono.streaming import FrameSnapshot, StreamingMonocularSystem
 from cross.mono.system import MonocularSystem
 
@@ -41,10 +39,9 @@ class Database:
         return node
 
 
-def mapper(conditional=False):
+def mapper():
     value = System.__new__(System)
     value.config = SystemConfig()
-    value.config.mapping.hypothesis.conditional_sources = conditional
     value.device = value.storage_device = value.state_device = 'cpu'
     value.topo_map = None
     value.kf_gmm_n_components = 2
@@ -52,8 +49,8 @@ def mapper(conditional=False):
     value.db = Database()
     value.hypothesis_manager = HypothesisManager(value, 2, HypothesisConfig(chart_aware=True, session_recovery=True))
     value.odom_accumulator = OdomAccumulator(device='cpu')
-    value.use_odometry, value.async_update = True, False
-    value.use_depth_pred = value.visualize = False
+    value.async_update = False
+    value.visualize = False
     value._cur_obs_queue, value._cur_obs_lock = deque(), Lock()
     value.rgb_transform = torch.as_tensor
     value.depth_transform = lambda x: x
@@ -68,14 +65,12 @@ def pose():
     return result
 
 
-@pytest.mark.parametrize('conditional', [False, True])
-def test_delayed_source_initializes_map_without_a_receipt_time_pose_jump(conditional):
+def test_delayed_source_initializes_map_without_a_receipt_time_pose_jump():
     system = StreamingMonocularSystem.__new__(StreamingMonocularSystem)
-    system.mapper, system.pool, system.map_stream, system.previous_snapshot = mapper(conditional), None, None, None
-    system.config = SimpleNamespace(conditional_sources=conditional)
+    system.mapper, system.pool, system.map_stream, system.previous_snapshot = mapper(), None, None, None
+    system.config = SimpleNamespace()
     source = pose()
-    snapshot = FrameSnapshot(16, .8, np.zeros((8, 8, 3)), {}, source.copy(), np.ones(6), True,
-                             scale_response=TranslationResponse())
+    snapshot = FrameSnapshot(16, .8, np.zeros((8, 8, 3)), {}, source.copy(), np.ones(6), True)
     alignment, event = system._map_snapshot((snapshot, np.ones((8, 8))))
     # The first snapshot predates the receipt. Initialization cannot change
     # either a later receiving pose or the stored source camera coordinates.
@@ -91,8 +86,7 @@ def test_delayed_source_initializes_map_without_a_receipt_time_pose_jump(conditi
     # the accumulated pre-initialization displacement a second time.
     delta = pp.mat2SE3(torch.as_tensor(inverse(source) @ receiving, dtype=torch.float32))
     with torch.inference_mode():
-        system.mapper.hypothesis_manager.motion_update(delta, pp.se3(torch.full((6,), .01)),
-            source_factor=SourceFactor((), np.empty((6, 0)), np.empty(0)) if conditional else None)
+        system.mapper.hypothesis_manager.motion_update(delta, pp.se3(torch.full((6,), .01)))
     np.testing.assert_allclose(system.mapper.get_current_pose().matrix(), receiving, atol=5e-7)
     np.testing.assert_allclose(initial.pose_mu[0].matrix(), source, atol=3e-7)
     np.testing.assert_allclose(snapshot.pose, source, atol=0)

@@ -1,0 +1,6 @@
+# Mono mode with the DA3 back end (--mode mono, the mono_dpvo files: DPVO visual odometry, learned metric depth,
+# two-view / DA3 relative poses).  Its back-end settings come from the mono profile (--mono-profile,
+# configs/mono_benchmark_10hz.json: the cross.mono.run arguments, with --cross-config lines for this SystemConfig) and
+# from cross.mono.system.MonocularSystem (the loop-closure behaviour of a visual-odometry chain, the odometry noise of
+# DPVO); nothing here yet.
+{}

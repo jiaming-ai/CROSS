@@ -20,6 +20,19 @@ from cross.core.pgo import (
     as_se3,
 )
 from cross.core.config import HypothesisConfig
+
+# Strong passes: a proposal backed by at least STRONG_PASS_MIN_REFS references, each with covisibility >=
+# STRONG_PASS_MIN_COVIS, is a multi-view check by itself; such a pass counts as STRONG_PASS_FRAMES valid evidence frames
+# in the frame-count gates of realization (realize_min_frames) and detection (detect_min_frames).  Without it, a short
+# real overlap after non-overlapping views (rightly rejected) gives too few frames, and the passes split over several
+# components (OpenLORIS office1-7, mono: relocalization ~175 frames late).  Mono feed-forward: OpenLORIS T3 +9 / -1
+# (2026-10-09); neutral in every other mode on the full benchmark (2026-10-11, outputs/2026-10-09_config_profiles H2:
+# stereo, + Basalt, + IMU, RGB-D, mono DA3), so on everywhere (the option: tag opt-strong-pass-frames).
+STRONG_PASS_FRAMES = 3
+STRONG_PASS_MIN_REFS = 2
+STRONG_PASS_MIN_COVIS = 0.3
+
+
 @dataclass
 class Hypothesis:
     """
@@ -182,33 +195,16 @@ class HypothesisManager:
         # ========== Component Lifecycle Metadata ==========
         self.n_components = n_components
         self.chart_aware = cfg.chart_aware
-        self.schmidt_map_geometry = cfg.schmidt_map_geometry
-        self.map_geometry_basis = cfg.map_geometry_basis
-        if self.map_geometry_basis not in {'epoch','factor'}:
-            raise ValueError('Unknown shared map geometry basis')
-        if self.map_geometry_basis == 'factor' and not self.schmidt_map_geometry:
-            raise ValueError('Persistent factor geometry requires Schmidt map geometry')
-        if self.schmidt_map_geometry and (not cfg.conditional_sources or not self.chart_aware):
-            raise ValueError('Schmidt map geometry requires conditional sources and coordinate charts')
         if self.chart_aware and not cfg.session_recovery:
             raise ValueError("Chart-aware mapping requires historical-support recovery")
-        if self.chart_aware and cfg.no_pgo_for_lc:
-            raise ValueError("Chart-aware commitment requires graph optimization")
         self.component_charts = torch.zeros(n_components, dtype=torch.long, device=self.device)
         self.component_generations = [0] * n_components
         self.next_chart_id = 0
-        # Experimental conditional pose/source filter. Activated explicitly by
-        # a caller supplying conditional geometry and source-aware factors;
-        # the existing RGB-D/monocular adapters keep the legacy path.
-        self.source_states = None
-        self.saved_source_belief = None
-        self.last_conditional_audit = []
 
         # ========== Evidence Tracking (LLR & Windowing) ==========
         self.llr_hist_length = cfg.llr_hist_length
         self.llr_bias = cfg.llr_bias
         self.filter_process_std = cfg.filter_process_std
-        self.motion_std_accumulation = cfg.motion_std_accumulation
         self.h0_informative_only = cfg.h0_informative_only
         self.reset_evidence_on_slot_reuse = cfg.reset_evidence_on_slot_reuse
         self.unmatched_evidence = cfg.unmatched_evidence
@@ -264,9 +260,6 @@ class HypothesisManager:
         if self.reloc_association_evidence and not (cfg.session_recovery and cfg.chart_aware):
             raise ValueError("Association evidence requires session_recovery with chart_aware")
         self.detect_reject_cooldown_steps = cfg.detect_reject_cooldown_steps
-        self.strong_pass_frames = int(getattr(cfg, "strong_pass_frames", 0))
-        self.strong_pass_min_refs = int(getattr(cfg, "strong_pass_min_refs", 2))
-        self.strong_pass_min_covis = float(getattr(cfg, "strong_pass_min_covis", 0.3))
         self.verify_outlier_sigma = cfg.verify_outlier_sigma
         self.verify_max_outlier_frac = cfg.verify_max_outlier_frac
 
@@ -274,9 +267,6 @@ class HypothesisManager:
         self.self_lc_conf_thresh = cfg.self_lc_conf_thresh
         self.self_lc_cooldown_steps = cfg.self_lc_cooldown_steps
         self.self_lc_min_kf_id_gap = cfg.self_lc_min_kf_id_gap
-
-        # no pgo for lc (used for testing only)
-        self.no_pgo_for_lc = cfg.no_pgo_for_lc
 
         # ========== comp 0 keep-alive (observability) ==========
         self.comp0_keepalive_score = cfg.comp0_keepalive_score
@@ -322,13 +312,6 @@ class HypothesisManager:
         """
         topo_map = getattr(self.system, "topo_map", None)
         return topo_map.proximity_adjacency if topo_map is not None else {}
-
-    def latest_kf_id_before(self, step: int):
-        """Id of the newest permanent keyframe created before processing step `step` (None if there is none)."""
-        # NOTE: keyframes record their creation step in `step_created`; the previous fallback compared keyframe *ids*
-        # with step counts, which made RetrievalConfig.recent_window_steps inert after the first ~200 steps.
-        ids = [kf.id for kf in self.nodes.values() if not kf.temporary and getattr(kf, "step_created", kf.id) < step]
-        return max(ids) if ids else None
 
     def get_active_dist(self):
         """
@@ -401,7 +384,6 @@ class HypothesisManager:
         - Distribution (dist) - remains None until initialized
         """
         self.reference_support.clear_tracking()
-        self.source_states = None
         # Reset lifecycle metadata
         self.ttl = torch.zeros(self.n_components, dtype=torch.long, device=self.device)
         self.last_seen_step = torch.zeros(self.n_components, dtype=torch.long, device=self.device)
@@ -420,7 +402,7 @@ class HypothesisManager:
         self.log_conf_hist = torch.zeros(self.n_components, self.llr_hist_length, device=self.device)
         # which history slots hold real evidence (component active and past its birth frame)
         self.hist_valid = torch.zeros(self.n_components, self.llr_hist_length, dtype=torch.bool, device=self.device)
-        # which valid history slots came from a strong pass (strong_pass_frames)
+        # which valid history slots came from a strong pass (STRONG_PASS_FRAMES)
         self.strong_hist = torch.zeros(self.n_components, self.llr_hist_length, dtype=torch.bool, device=self.device)
         self._pending_strong = torch.zeros(self.n_components, dtype=torch.bool, device=self.device)
         self._lc_reject_until: Dict[int, int] = {}
@@ -436,11 +418,6 @@ class HypothesisManager:
     def add_node(self, keyframe: Keyframe):
         """Registers a new keyframe in the system."""
         assert 0 in self.hypotheses, "Hypothesis 0 must exist"
-        if self.source_states is not None:
-            from cross.core.conditional_pose import ConditionalPose
-            keyframe.conditional_poses = [
-                ConditionalPose.from_state(state) if state is not None and keyframe.pose_weights[i] > 0 else None
-                for i,state in enumerate(self.source_states)]
         # Structural insert guarded by graph lock
         with self.graph_lock:
             if keyframe.id not in self.nodes:
@@ -506,9 +483,6 @@ class HypothesisManager:
             kf.pose_std[new_comp_id] = self.dist[1][new_comp_id]
             kf.pose_weights[new_comp_id] = self.dist[2][new_comp_id]
             kf.pose_charts[new_comp_id] = self.component_charts[new_comp_id]
-            if self.source_states is not None:
-                from cross.core.conditional_pose import ConditionalPose
-                kf.conditional_poses[new_comp_id] = ConditionalPose.from_state(self.source_states[new_comp_id])
         # Initialize TTL for realized components
         self.ttl[new_comp_id] = max(int(self.ttl[new_comp_id].item()), self.death_ttl_base)
 
@@ -558,7 +532,6 @@ class HypothesisManager:
         type: EdgeType,
         from_comp_id: int = 0,
         to_comp_id: int = 0,
-        conditional_pose=None,
         meta: Optional[Dict[str, Any]] = None,
     ):
         """
@@ -576,15 +549,12 @@ class HypothesisManager:
         if id1 not in self.nodes or id2 not in self.nodes:
             logger.warning(f"Attempted to add edge between non-existent nodes: {id1}, {id2}")
             return
-        if self.source_states is not None and conditional_pose is None:
-            raise ValueError('Conditional mapping requires a source model for each raw graph edge')
 
         # --- Logic for Odometry Edges ---
         # Odometry connects consecutive keyframes. It is added to the global graph,
         # as it represents the continuous motion of the robot in each possible "reality".
         if type == EdgeType.ODOMETRY:
             factor = Edge(rel_pose_mean, rel_pose_std, type) # comp_ids are not used for odom edges
-            factor.conditional_pose = conditional_pose
             for k, v in (meta or {}).items():
                 setattr(factor, k, v)
             # Structural mutation under lock
@@ -601,7 +571,6 @@ class HypothesisManager:
             factor = VisualEdge(
                 rel_pose_mean, rel_pose_std, type, from_comp_id, to_comp_id
             )
-            factor.conditional_pose = conditional_pose
             for k, v in (meta or {}).items():
                 setattr(factor, k, v)
             # NOTE: the visual edge is only added to the target hypothesis,
@@ -617,10 +586,6 @@ class HypothesisManager:
         Args:
             last_k (int): The number of last keyframes to keep.
         """
-        # Raw-factor coordinates must keep their measurement lineage. Retain
-        # temporary nodes until noise-preserving composed edges are available.
-        if self.schmidt_map_geometry and self.map_geometry_basis == 'factor':
-            return
         if not self.nodes or len(self.nodes) < 20:
             return
             
@@ -674,14 +639,6 @@ class HypothesisManager:
                     
                     # Create new bridging odometry edge
                     bridging_factor = Edge(combined_pose, combined_std, EdgeType.ODOMETRY)
-                    if self.source_states is not None:
-                        from cross.core.conditional_pose import compose
-                        pose,model = compose(pred_edge.mean.matrix().double().cpu().numpy(),pred_edge.conditional_pose,
-                            succ_edge.mean.matrix().double().cpu().numpy(),succ_edge.conditional_pose,self.source_states[0])
-                        bridging_factor.mean = pp.from_matrix(torch.as_tensor(pose,device=self.device,dtype=combined_pose.dtype),pp.SE3_type)
-                        bridging_factor.std = pp.se3(torch.as_tensor(np.sqrt(model.geometry_covariance.diagonal().clip(0)),
-                                                                  device=self.device,dtype=combined_std.dtype))
-                        bridging_factor.conditional_pose = model
                     bridging_factor.n_frames = (getattr(pred_edge, "n_frames", None) or 1) + (getattr(succ_edge, "n_frames", None) or 1)
                     # odometry-fault inflation of the odometry scale guard (lc_verify): the larger of the two
                     fault = max(float(getattr(pred_edge, "odom_fault", 0.0) or 0.0), float(getattr(succ_edge, "odom_fault", 0.0) or 0.0))
@@ -754,8 +711,6 @@ class HypothesisManager:
                     kf.pose_weights[component_id] = 0.0
                     if kf.pose_charts is not None:
                         kf.pose_charts[component_id] = -1
-                    if kf.conditional_poses is not None:
-                        kf.conditional_poses[component_id] = None
 
             # --- Delete the Hypothesis ---
             del self.hypotheses[component_id]
@@ -782,42 +737,15 @@ class HypothesisManager:
         self.reference_support.clear_component(component_id)
         self.component_charts[component_id] = -1
         self.component_generations[component_id] += 1
-        if self.source_states is not None:
-            self.source_states[component_id] = None
 
     def _effective_frames(self, n_valid: torch.Tensor, rows=None) -> torch.Tensor:
-        """Valid evidence frames, a strong pass counting strong_pass_frames (rows: the components of n_valid)."""
-        if self.strong_pass_frames <= 1:
-            return n_valid
+        """Valid evidence frames, a strong pass counting STRONG_PASS_FRAMES (rows: the components of n_valid)."""
         strong = (self.strong_hist & self.hist_valid) if rows is None else (self.strong_hist[rows] & self.hist_valid[rows])
-        return n_valid + (self.strong_pass_frames - 1) * strong.sum(dim=1)
+        return n_valid + (STRONG_PASS_FRAMES - 1) * strong.sum(dim=1)
 
-    def _is_strong(self, proposal: Dict) -> bool:
-        return self.strong_pass_frames > 1 and int(proposal.get("strong_refs", 0)) >= self.strong_pass_min_refs
-
-    def initialize_source_filter(self):
-        """Start the conditional filter after initializing the tracking poses.
-
-        The current covariance is interpreted as conditional geometry noise.
-        This must not be called on a scale-containing marginal covariance.
-        Source priors are introduced by named factors once. The input adapter,
-        node messages and PGO transport must all support this representation
-        before it can be used as an end-to-end monocular mode.
-        """
-        from cross.core.conditional import SourceState
-        if self.dist is None or self.source_states is not None:
-            raise ValueError("Initialize source filtering once, after the pose distribution")
-        self.source_states = [SourceState(torch.diag(s.tensor().square()).double().cpu().numpy())
-                              for s in self.dist[1]]
-        if self.saved_source_belief is not None:
-            for state in self.source_states:
-                state.keys = self.saved_source_belief.keys
-                state.mean = self.saved_source_belief.mean.copy()
-                state.covariance = self.saved_source_belief.covariance.copy()
-                state.prior_variances = self.saved_source_belief.prior_variances.copy()
-                state.jacobian = np.zeros((6,len(state.keys)))
-                state.seen_factors = self.saved_source_belief.seen_factors
-
+    @staticmethod
+    def _is_strong(proposal: Dict) -> bool:
+        return int(proposal.get("strong_refs", 0)) >= STRONG_PASS_MIN_REFS
 
     def reset_tracking_dist(self):
         """
@@ -830,14 +758,12 @@ class HypothesisManager:
         sigma = pp.identity_se3(B, device=device)
         weights = torch.zeros(B, device=device)
         self.dist = (mu, sigma, weights)
-        self.source_states = None
 
 
     def motion_update(
         self, 
         delta_pose: pp.LieTensor,
         delta_std: pp.LieTensor,
-        source_factor=None,
     ):
         """Motion update the current state GMM
         Args:
@@ -848,49 +774,10 @@ class HypothesisManager:
         If pose is not filtered, we'll not update the std
         """
         last_gmm_mu, last_gmm_sigma, last_gmm_weights = self.dist
-        if self.source_states is not None:
-            if source_factor is None:
-                raise ValueError("Conditional filtering needs the motion factor's source Jacobians")
-            from cross.utils.lie_tensor import SE3_Adj
-            from cross.core.conditional import SourceState, transport_covariance
-            from cross.core.conditional_pose import normalize_mean
-            active = torch.where(last_gmm_weights > self.tracking_active_threshold)[0].tolist()
-            pending = []
-            for component in active:
-                state = self.source_states[component]
-                if state is None:
-                    raise ValueError("Active hypothesis has no conditional source state")
-                state, motion_J, offset = state.expand(source_factor)
-                twist = torch.as_tensor(offset,device=delta_pose.device,dtype=delta_pose.dtype)
-                corrected_delta = normalize_mean(delta_pose @ pp.se3(twist).Exp())
-                A = SE3_Adj(corrected_delta.Inv()).double().cpu().numpy()
-                covariance = transport_covariance(state.geometry_covariance,A)
-                # Keep the inherited std-sum policy for residual geometric
-                # errors, after transporting to the new local tangent.
-                std = torch.as_tensor(covariance.diagonal().copy()).clamp_min(0).sqrt().numpy()
-                noise = delta_std.tensor().double().cpu().numpy()
-                covariance += np.diag((std+noise)**2-std**2)
-                posterior = SourceState(covariance,state.keys,state.mean,state.covariance,
-                    A@state.jacobian+motion_J,state.prior_variances,state.seen_factors)
-                marginal = torch.as_tensor(posterior.marginal_covariance().diagonal().copy(),
-                                            device=last_gmm_sigma.device,dtype=last_gmm_sigma.dtype)
-                pending.append((component,posterior,normalize_mean(last_gmm_mu[component] @ corrected_delta),
-                                pp.se3(marginal.clamp_min(0).sqrt())))
-            # Validate all components before mutating any live pose/bias state.
-            for component,posterior,mean,std in pending:
-                self.source_states[component] = posterior
-                last_gmm_mu[component],last_gmm_sigma[component] = mean,std
-            self.dist = (last_gmm_mu,last_gmm_sigma,last_gmm_weights)
-            return
-        if source_factor is not None:
-            raise ValueError("A source-aware motion factor needs initialize_source_filter()")
         # Update all active components by weight threshold so priors evolve with motion
         active_mask = last_gmm_weights > self.tracking_active_threshold
         last_gmm_mu[active_mask] = normalize_SE3(last_gmm_mu[active_mask] @ delta_pose.unsqueeze(0))
-        if self.motion_std_accumulation == "variance":
-            last_gmm_sigma[active_mask] = pp.se3((last_gmm_sigma[active_mask].tensor() ** 2 + delta_std.tensor().unsqueeze(0) ** 2) ** 0.5)
-        else:
-            last_gmm_sigma[active_mask] = last_gmm_sigma[active_mask] + delta_std.unsqueeze(0)
+        last_gmm_sigma[active_mask] = last_gmm_sigma[active_mask] + delta_std.unsqueeze(0)
 
         self.dist = (last_gmm_mu, last_gmm_sigma, last_gmm_weights)
 
@@ -1001,7 +888,6 @@ class HypothesisManager:
         aligned_weights = torch.zeros(num_components, device=current_mu.device)
 
         aligned_confidence = torch.zeros(num_components, device=current_mu.device)
-        self.aligned_conditional_models = {} if self.source_states is not None else None
 
         matched_proposals = set()
         matched_components = set()
@@ -1030,8 +916,6 @@ class HypothesisManager:
             aligned_sigma[true_comp_idx] = proposal['std']
             aligned_weights[true_comp_idx] = proposal['score']
             aligned_confidence[true_comp_idx] = proposal['score']
-            if self.aligned_conditional_models is not None:
-                self.aligned_conditional_models[true_comp_idx] = proposal['conditional_pose']
 
             # mark component as recently seen
             if true_comp_idx < len(self.last_seen_step):
@@ -1105,8 +989,6 @@ class HypothesisManager:
             aligned_sigma[new_comp_idx] = proposal['std']
             aligned_weights[new_comp_idx] = proposal['score']
             aligned_confidence[new_comp_idx] = proposal['score']
-            if self.aligned_conditional_models is not None:
-                self.aligned_conditional_models[new_comp_idx] = proposal['conditional_pose']
 
             # --- Build the mapping for the new hypothesis ---
             for kf_id, source_comp_id in proposal['source_indices']:
@@ -1159,38 +1041,11 @@ class HypothesisManager:
         proposal_weights: torch.Tensor, # C1
         proposal_confidence: torch.Tensor, # C1
         pose_update_mask: Optional[torch.Tensor] = None, # K bool mask; True means apply retrieval update
-        source_factors=None,
-        source_covariances=None,
         variance_update_mask: Optional[torch.Tensor] = None,  # K bool: components whose skipped update keeps the fused variance
     ):
         """
         Computes the final distribution p = alpha * (p_proposal * p_prior) + (1 - alpha) * p_proposal.
-
-        Experimental source_factors is a dict from aligned component ID to a
-        conditional SourceFactor. Proposal stds then describe conditional
-        geometry only. Source priors and cross-covariances stay in source_states;
-        None/missing means no new geometric factor for that component.
         """
-        if (source_factors is None) != (self.source_states is None):
-            raise ValueError("Conditional states and source-aware observation factors must be supplied together")
-        if source_covariances is not None and source_factors is None:
-            raise ValueError('Conditional covariances require named source factors')
-        if source_factors is not None:
-            if any(not isinstance(i,int) or i < 0 or i >= self.n_components for i in source_factors):
-                raise ValueError("Source factors must name valid aligned component IDs")
-            if any(factor is not None and factor.factor_id is None for factor in source_factors.values()):
-                raise ValueError("Conditional observation factors need stable geometric identities")
-            duplicates = [factor.factor_id is not None and self.source_states[i] is not None
-                          and factor.factor_id in self.source_states[i].seen_factors
-                          for i,factor in source_factors.items() if factor is not None and not self.newborn[i]]
-            if duplicates and any(duplicates):
-                if not all(duplicates) or any(bool(self.newborn[i]) for i in source_factors):
-                    raise ValueError("Remove reused factors before constructing a mixed fresh/replayed observation")
-                # Exact delivery replay must not alter pose, bias, weights,
-                # evidence-window position or TTL. It is not another frame of
-                # independent support for delayed commitment.
-                self.last_conditional_audit = [dict(component=i,duplicate=True) for i in source_factors]
-                return
         # candidate poses are compositions of stored keyframe poses and relative poses: keep them on SE(3)
         proposal_mu = normalize_SE3(proposal_mu)
         # Clamp confidences for numerical stability in LLR downstream
@@ -1269,68 +1124,6 @@ class HypothesisManager:
                 floor = log_c[supported].min() - float(self.unmatched_miss_margin)
                 log_c = torch.where(unmatched, torch.minimum(log_c, floor), log_c)
 
-        pending_sources = None
-        conditional_newborns = {}
-        conditional_evidence_mask = None
-        if source_factors is not None:
-            from cross.core.conditional import transport_covariance
-            from cross.core.conditional_pose import ConditionalPose, right_jacobian, normalize_mean, residual_product, retract_frozen_response
-            pending_sources = list(self.source_states)
-            conditional_evidence_mask = torch.zeros_like(currently_tracking)
-            self.last_conditional_audit = []
-            for component in range(self.n_components):
-                factor = source_factors.get(component)
-                state = self.source_states[component]
-                if factor is None:
-                    if state is not None:
-                        prod_mu[component] = prior_mu[component]
-                        prod_var_diag[component] = prior_var_diag_noQ[component]
-                    continue
-                R = np.diag(proposal_std_diag[component].tensor().square().double().cpu().numpy().clip(1e-9))
-                if source_covariances is not None:
-                    R = np.asarray(source_covariances[component], dtype=np.float64)
-                if bool(self.newborn[component]):
-                    # The newborn has no pose prior in its new chart. Reuse
-                    # the committed bias belief once; seed x conditionally.
-                    state, offset = self.source_states[0].seed(factor,R)
-                    mean = normalize_mean(proposal_mu[component] @ pp.se3(torch.as_tensor(offset,device=self.device,dtype=prior_mu.dtype)).Exp())
-                    T = right_jacobian(offset)
-                    state.geometry_covariance = transport_covariance(state.geometry_covariance,T)
-                    state.jacobian = retract_frozen_response(state.keys,state.jacobian,offset)
-                    variance = torch.as_tensor(state.marginal_covariance().diagonal().copy(),device=self.device,dtype=prod_var_diag.dtype)
-                    conditional_newborns[component] = (mean,variance)
-                    audit = dict(component=component,newborn=True,source_count=len(state.keys))
-                else:
-                    if state is None:
-                        raise ValueError("A source factor has no live hypothesis prior")
-                    # Evaluate H(x|b) at this branch's bias mean, then express
-                    # its right-tangent noise/response in the prior log chart.
-                    observation,model,state = ConditionalPose(R,factor).at(
-                        proposal_mu[component].matrix().double().cpu().numpy(),state)
-                    observed = pp.from_matrix(torch.as_tensor(observation,device=self.device,dtype=prior_mu.dtype),pp.SE3_type)
-                    residual = (prior_mu[component].Inv()@observed).Log().tensor().double().cpu().numpy()
-                    source_before = state.jacobian.copy()
-                    result = residual_product(state,residual,model.geometry_covariance,model.factor,
-                        np.diag(Q[0].double().cpu().numpy()),
-                        frozen_keys=tuple(k for k in state.keys if k.startswith('geometry:'))
-                                    if self.schmidt_map_geometry else ())
-                    state = result.state
-                    mean = normalize_mean(prior_mu[component] @ pp.se3(torch.as_tensor(result.pose_offset,device=self.device,dtype=prior_mu.dtype)).Exp())
-                    T = right_jacobian(result.pose_offset)
-                    state.geometry_covariance = transport_covariance(state.geometry_covariance,T)
-                    state.jacobian = retract_frozen_response(state.keys,state.jacobian,result.pose_offset,source_before)
-                    variance = torch.as_tensor(state.marginal_covariance().diagonal().copy(),device=self.device,dtype=prod_var_diag.dtype)
-                    log_c[component] = result.log_overlap
-                    conditional_evidence_mask[component] = True
-                    audit = dict(component=component,newborn=False,source_count=len(state.keys),
-                                 source_keys=list(state.keys),
-                                 log_overlap=result.log_overlap,
-                                 bias_mean=state.mean.tolist(),bias_std=np.sqrt(state.covariance.diagonal().clip(0)).tolist(),
-                                 innovation_diagonal=result.innovation_covariance.diagonal().tolist())
-                pending_sources[component] = state
-                prod_mu[component],prod_var_diag[component] = mean,variance
-                self.last_conditional_audit.append(audit)
-
         #################
         # Evidence tracking with LLR + bias
         #################
@@ -1357,8 +1150,6 @@ class HypothesisManager:
         # A newborn that evicts an active slot has no prior of its own yet.
         # Comparing it to the evicted identity would be spurious evidence.
         active_tracking_mask = (prior_weights > self.tracking_active_threshold) & ~self.newborn
-        if conditional_evidence_mask is not None:
-            active_tracking_mask &= conditional_evidence_mask
         pos = torch.where(active_tracking_mask, pos, torch.zeros_like(pos))
 
         # Debug history: log individual LLR components (for tuning/visualization)
@@ -1405,8 +1196,6 @@ class HypothesisManager:
         if newborn_mask.any():
             prod_mu[newborn_mask] = proposal_mu[newborn_mask]
             prod_var_diag[newborn_mask] = proposal_var_diag[newborn_mask]
-            for component,(mean,variance) in conditional_newborns.items():
-                prod_mu[component],prod_var_diag[component] = mean,variance
 
         #################
         # Weight update (state tracking only)
@@ -1522,18 +1311,9 @@ class HypothesisManager:
                 revert_mask = ~final_update_mask
                 prod_mu[revert_mask] = prior_mu[revert_mask]
                 var_revert = revert_mask
-                if variance_update_mask is not None and source_factors is None:
+                if variance_update_mask is not None:
                     var_revert = revert_mask & ~variance_update_mask.to(device=revert_mask.device, dtype=torch.bool)
                 prod_var_diag[var_revert] = prior_var_diag_noQ[var_revert]
-                if pending_sources is not None:
-                    for component in torch.where(revert_mask)[0].tolist():
-                        retained = self.source_states[component]
-                        if retained is not None:
-                            retained = retained.copy()
-                            # The factor was already used for place evidence,
-                            # even though pose/bias updates were explicitly gated.
-                            retained.seen_factors = pending_sources[component].seen_factors
-                        pending_sources[component] = retained
 
         # Comp 0 specific weight floor to maintain observability in downstream consumers.
         # This keeps comp 0 above the active distribution threshold without dominating others.
@@ -1551,15 +1331,8 @@ class HypothesisManager:
 
         if torch.isnan(prod_weights).any():
             logger.warning(f"prod_weights is nan: {prod_weights}")
-        if source_factors is None:
-            prod_mu = normalize_se3(prod_mu)
+        prod_mu = normalize_se3(prod_mu)
         self.dist = (prod_mu, prod_std_diag, prod_weights)
-        if pending_sources is not None:
-            for component,state in enumerate(pending_sources):
-                if component == 0 or bool(self.ttl[component] > 0):
-                    self.source_states[component] = state
-                else:
-                    self.source_states[component] = None
         
     def detect_loop_closure(self, ret):
         """
@@ -1728,12 +1501,6 @@ class HypothesisManager:
         }
         assert hypo_id in self.hypotheses, f"Hypothesis {hypo_id} does not exist"
 
-        if self.no_pgo_for_lc and hypo_id != 0:
-            # instead of merging, we just change the hypothesis 0 to the new hypothesis
-            # this is only for test
-            self.change_hypo_to_first(hypo_id)
-            return result
-
         # Use the latest keyframe as target if not specified
         if target_node_id is None:
             target_node_id = max(self.nodes.keys())
@@ -1753,7 +1520,7 @@ class HypothesisManager:
         window, boundary = None, set()
         min_nodes = int(getattr(lc_cfg, "pgo_window_min_nodes", 0) or 0)
         if (window_ref is not None and hypo_id == 0 and full and not global_opt and min_nodes > 0
-                and len(self.nodes) >= min_nodes and not self.chart_aware and self.source_states is None):
+                and len(self.nodes) >= min_nodes and not self.chart_aware):
             ids = sorted(self.nodes.keys())
             i = bisect.bisect_left(ids, int(window_ref)) - int(getattr(lc_cfg, "pgo_window_margin", 0) or 0)
             if i > 0:
@@ -1817,7 +1584,7 @@ class HypothesisManager:
         # keyframe gets a soft prior (its tilt only) instead of the hard fix; in a relocalization session the map stays
         # fixed and the factors pull the session's keyframes
         geo = getattr(self.system, "_geo", None)
-        if geo is not None and not self.chart_aware and self.source_states is None:
+        if geo is not None and not self.chart_aware:
             pg.unary_position_factors = geo.pgo_factors(self.nodes, set(original_kf_ids))
             if pg.unary_position_factors:
                 pg.unary_robust_c = geo.robust_c
@@ -1968,11 +1735,6 @@ class HypothesisManager:
             Dict summarizing the application with success and cost.
         """
         self.pose_epoch += 1
-        if self.source_states is not None:
-            from cross.core.conditional_pgo import apply_result
-            with self.graph_lock:
-                return apply_result(self,pgo_result.get('pose_graph'),pgo_result.get('optimized_poses',{}),
-                                    int(pgo_result.get('other_hypothesis_id',0)))
         optimized_poses: Dict[int, pp.LieTensor] = pgo_result.get("optimized_poses", {})
         other_hypo = int(pgo_result.get("other_hypothesis_id", 0))
         pg = pgo_result.get("pose_graph")
@@ -2049,7 +1811,7 @@ class HypothesisManager:
         n = len(self.nodes)
         full = bool(getattr(lc_cfg, "full_session_pgo", False)) and int(getattr(self.system, "_session_start_kf_id", 0)) == 0
         min_nodes = int(getattr(lc_cfg, "pgo_window_min_nodes", 0) or 0)
-        if window_ref is not None and full and min_nodes > 0 and n >= min_nodes and not self.chart_aware and self.source_states is None:
+        if window_ref is not None and full and min_nodes > 0 and n >= min_nodes and not self.chart_aware:
             i = bisect.bisect_left(sorted(self.nodes), int(window_ref)) - int(getattr(lc_cfg, "pgo_window_margin", 0) or 0)
             if i > 0:
                 return n - i
@@ -2209,15 +1971,13 @@ class HypothesisManager:
             if pend is not None:
                 pend.clear()
 
-    def merge_hypotheses(self, comp_idx: int, conditional_transport_done=False):
+    def merge_hypotheses(self, comp_idx: int):
         """
         Merges the hypothesis after loop closure
         """
         self.pose_epoch += 1
         self.graph_epoch += 1
         self._reset_session_anchor()
-        if self.source_states is not None and not conditional_transport_done:
-            raise NotImplementedError("Conditional pose/source graph transport is required before merging hypotheses")
         logger.debug(f"Merging hypothesis {comp_idx} after loop closure")
         with self.graph_lock:
             # copy edges and adjs
@@ -2267,8 +2027,6 @@ class HypothesisManager:
         """
         self.pose_epoch += 1
         self.graph_epoch += 1
-        if self.source_states is not None:
-            raise NotImplementedError("Conditional pose/source graph transport is required before promoting a hypothesis")
         logger.debug(f"Changing hypothesis {comp_idx} to first component")
         logger.info(f"Adopting hypothesis {comp_idx} as hypothesis 0")
         hypothesis_exist = comp_idx in self.hypotheses
@@ -2366,7 +2124,6 @@ class HypothesisManager:
         """
         if columns:
             return self._save_state_columns()
-        from cross.core.conditional_pose import records
         # --- Check for unresolved ambiguity ---
         realized_hypos = [comp_id for comp_id in self.hypotheses.keys() if self.realized[comp_id]]
         if len(realized_hypos) > 1:
@@ -2386,8 +2143,6 @@ class HypothesisManager:
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,
                     "pose_charts": kf.pose_charts.cpu() if kf.pose_charts is not None else None,
-                    "metric_source": kf.metric_source,
-                    "conditional_poses": records(kf.conditional_poses),
                     "timestamp": kf.timestamp,
                     "temporary": kf.temporary,
                     "atlas_id": kf.atlas.id if kf.atlas is not None else None,
@@ -2401,7 +2156,6 @@ class HypothesisManager:
                 "mean": edge.mean.cpu(),
                 "std": edge.std.cpu(),
                 "type": edge.type.name,
-                "conditional_pose": edge.conditional_pose.record() if edge.conditional_pose is not None else None,
                 "n_frames": getattr(edge, "n_frames", None),
             }
             if getattr(edge, "odom_fault", None):
@@ -2420,7 +2174,6 @@ class HypothesisManager:
                         "type": edge.type.name,
                         "from_comp_id": edge.from_comp_id,
                         "to_comp_id": edge.to_comp_id,
-                        "conditional_pose": edge.conditional_pose.record() if edge.conditional_pose is not None else None,
                         "conf": getattr(edge, "conf", None),
                         "noise_scale": getattr(edge, "noise_scale", None),
                         "noise_scale_along": getattr(edge, "noise_scale_along", None),
@@ -2438,8 +2191,6 @@ class HypothesisManager:
             }
 
         return {
-            "source_belief": (self.source_states[0].record() if self.source_states is not None else
-                              self.saved_source_belief.record() if self.saved_source_belief is not None else None),
             "temp_keyframes": temp_keyframes,
             "odom_edges": odom_edges,
             "hypotheses_data": hypotheses_data,
@@ -2483,8 +2234,6 @@ class HypothesisManager:
                                                                records=False),
             }
         return {
-            "source_belief": (self.source_states[0].record() if self.source_states is not None else
-                              self.saved_source_belief.record() if self.saved_source_belief is not None else None),
             "temp_keyframes": enc_t,
             "odom_edges": enc_o,
             "hypotheses_data": hypotheses_data,
@@ -2502,8 +2251,6 @@ class HypothesisManager:
             device: Device for computation
             existing_keyframes: Dictionary mapping keyframe ID to Keyframe objects from database
         """
-        from cross.core.conditional import SourceState
-        from cross.core.conditional_pose import ConditionalPose, restore
         from cross.db.store import to_device      # .to() skipped on the same device (large maps: 2 LieTensors per edge)
         # --- 1. Restore temporary keyframes ---
         all_keyframes_map = existing_keyframes.copy()
@@ -2532,8 +2279,6 @@ class HypothesisManager:
                 temporary=kf_data["temporary"],
                 last_pgo_step=kf_data["last_pgo_step"],
                 pose_charts=to_device(kf_data.get("pose_charts"), storage_device),
-                metric_source=kf_data.get("metric_source"),
-                conditional_poses=restore(kf_data.get("conditional_poses")),
             )
 
             # Manually set the ID to match the saved one
@@ -2564,8 +2309,6 @@ class HypothesisManager:
             if edge_data.get("odom_fault"):
                 edge.odom_fault = float(edge_data["odom_fault"])
             self.odom_edges[edge_key] = edge
-            if edge_data.get('conditional_pose') is not None:
-                edge.conditional_pose = ConditionalPose.from_record(edge_data['conditional_pose'])
 
         # --- 4. Restore only hypothesis 0 (ground truth) ---
         self.hypotheses.clear()
@@ -2602,8 +2345,6 @@ class HypothesisManager:
                     edge.noise_scale_rot = edge_data.get("noise_scale_rot")
                     edge.informative = edge_data.get("informative")
                     hypothesis.visual_edges.setdefault(edge_key, []).append(edge)
-                    if edge_data.get('conditional_pose') is not None:
-                        edge.conditional_pose = ConditionalPose.from_record(edge_data['conditional_pose'])
 
             # Restore visual adjacency
             va = hypo_data_item["visual_adjacency"]
@@ -2624,18 +2365,6 @@ class HypothesisManager:
                                                      self.hypotheses[0].visual_edges if 0 in self.hypotheses else {})
         # Don't restore old tracking state - start fresh
         self.reset_tracking_state()
-        self.saved_source_belief = (SourceState.from_record(hypo_data['source_belief'])
-                                   if hypo_data.get('source_belief') is not None else None)
-        if self.saved_source_belief is not None:
-            for kf in self.nodes.values():
-                if kf.conditional_poses is None or kf.conditional_poses[0] is None:
-                    raise ValueError('Conditional map is missing a committed node message')
-                # Check source definitions without adding a second bias prior.
-                expanded,_,_ = self.saved_source_belief.expand(kf.conditional_poses[0].factor)
-                if expanded.keys != self.saved_source_belief.keys:
-                    raise ValueError('Conditional node names a source absent from the saved belief')
-                for component in range(1,len(kf.conditional_poses)):
-                    kf.conditional_poses[component] = None
 
         # Ensure hypothesis 0 exists
         if 0 not in self.hypotheses:

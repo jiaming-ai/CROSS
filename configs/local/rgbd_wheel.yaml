@@ -1,0 +1,5 @@
+# RGB-D + external odometry (wheel, INS): --mode rgbd --odometry external.
+# Folder local: the mode's base, then the folder's shared settings; keys below override both.
+include:
+  - ../base/rgbd.yaml
+  - ../base/local.yaml

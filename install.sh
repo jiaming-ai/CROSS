@@ -106,7 +106,7 @@ if [ "$STEREO" = true ]; then
     echo "==> Installing the stereo mode (feed-forward estimator, vendored under third_party/)..."
     uv pip install -e ".[stereo]"
     uv pip install --no-deps -e third_party/vggt-omega
-    # CROSS uses the fine-tuned checkpoint when it is installed (with its settings, configs/vggt_finetuned.yaml), else
+    # CROSS uses the fine-tuned checkpoint when it is installed (with its settings, configs/base/vggt_finetuned.yaml), else
     # the released one with the default settings; --set pose_est.ff.checkpoint=released picks the released one
     if [ "$VGGT" != released ] && [ ! -f models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt ]; then
         echo "    Downloading the fine-tuned VGGT-Omega-1B-512 (https://huggingface.co/Jamie-nus/VGGT-Omega-CROSS, 2.3 GB)..."

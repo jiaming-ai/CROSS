@@ -42,7 +42,7 @@ Without it the build logs a warning and trains without the sky model.
 
 ```bash
 # 1. a map (any mode), optionally keeping the keyframes' full-resolution frames for the reconstruction (section 3)
-python scripts/map_and_reloc.py --map $SEQ --query $SEQ --out runs/k07 --config configs/outdoor.yaml --skip-reloc \
+python scripts/map_and_reloc.py --map $SEQ --query $SEQ --out runs/k07 --config configs/overlays/outdoor.yaml --skip-reloc \
     --set mapping.world_capture.enabled=true
 
 # 2. the reconstruction: train, evaluate on held-out keyframes (+ source frames between keyframes, + the right camera)

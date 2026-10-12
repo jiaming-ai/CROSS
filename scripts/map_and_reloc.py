@@ -41,7 +41,7 @@ from cross.core.types import Camera
 from cross.db import store as map_store
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
-from cross.pipeline import add_session_args, apply_settings, mode_config_files, session_factory
+from cross.pipeline import add_session_args, apply_settings, finish_session_args, session_factory, shipped_config_files
 
 
 def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
@@ -59,20 +59,20 @@ def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
 
 
 def make_config(args) -> SystemConfig:
-    # the mode's shipped configuration files (cross.pipeline.mode_config_files: configs/stereo.yaml, + stereo_fast.yaml
-    # with --fast), then the user's --config; explicit options below win
-    configs = mode_config_files(args.mode, args.odometry, getattr(args, "fast", False) and args.estimator == "ff",
-                                mono_estimator=getattr(args, "mono_estimator", None))
-    configs += list(args.config or [])
+    # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/<--profile>/<mode>.yaml), then the
+    # user's --config; explicit options below win
+    configs = shipped_config_files(args) + list(args.config or [])
     # the feed-forward model goes in with the overrides: the fine-tuned VGGT-Omega's settings (the files' vggt_finetuned
-    # sections) follow the checkpoint in use (cross.core.config.load_config)
+    # sections) follow the checkpoint in use (cross.core.config.load_config); without --backend / --checkpoint the
+    # configuration's (--backend da3 without --checkpoint: the DA3 weights)
     sets = list(getattr(args, "set", None) or [])
     if args.estimator == "ff":
-        sets = [f"pose_est.ff.backend={args.backend}"] + \
-            ([f"pose_est.ff.checkpoint={args.checkpoint}"] if args.checkpoint else []) + sets
+        sets = ([f"pose_est.ff.backend={args.backend}"] if args.backend else []) + \
+            ([f"pose_est.ff.checkpoint={args.checkpoint or 'auto'}"] if args.backend or args.checkpoint else []) + sets
     cfg = load_config(*configs, sets=sets)
     cfg.async_update = False
-    cfg.mapping.loop_closure.intra_enabled = not getattr(args, "no_intra_lc", False)
+    if getattr(args, "no_intra_lc", False):
+        cfg.mapping.loop_closure.intra_enabled = False
     lc = cfg.mapping.loop_closure
     lc.mode = getattr(args, "lc_mode", None) or lc.mode
     if getattr(args, "lc_confidence", None) is not None:
@@ -97,12 +97,14 @@ def make_config(args) -> SystemConfig:
             cfg.pose_est.obs_min_rotation = args.obs_min_rotation
         if args.obs_max_interval is not None:
             cfg.pose_est.obs_max_interval_steps = args.obs_max_interval
-        ff.scale_method = args.scale_method
+        if args.scale_method is not None:
+            ff.scale_method = args.scale_method
         if getattr(args, "ff_meas_std", None):
             ff.base_measurement_std = list(args.ff_meas_std)
     else:
         cfg.pose_est.type = PoseEstType.PNP
-    cfg.retrieval.top_k = args.top_k
+    if args.top_k is not None:
+        cfg.retrieval.top_k = args.top_k
     if getattr(args, "gnss", False):
         cfg.geo.enabled = True
     if getattr(args, "no_gnss", False):
@@ -417,10 +419,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--query", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--estimator", choices=["ff", "pnp"], default="ff")
-    ap.add_argument("--backend", choices=["vggt_omega", "da3"], default="vggt_omega")
+    ap.add_argument("--backend", choices=["vggt_omega", "da3"], default=None, help="feed-forward model (default: config)")
     ap.add_argument("--checkpoint", default=None,
-                    help="feed-forward model: a path, or finetuned / released (install.sh's VGGT-Omega checkpoints); "
-                         "default: the fine-tuned VGGT-Omega when installed, else the released one (DA3: models/DA3-LARGE-1.1)")
+                    help="its weights: a path, or finetuned / released (install.sh's VGGT-Omega checkpoints); default: "
+                         "the configuration's (auto: the fine-tuned VGGT-Omega when installed, else the released one; "
+                         "DA3: models/DA3-LARGE-1.1)")
     ap.add_argument("--config", nargs="*", default=[])
     ap.add_argument("--depth-source", default="none", help="depth for keyframes when using ff (none|sgbm|gt)")
     ap.add_argument("--pnp-depth", default="sgbm", help="depth source for the PnP baseline (sgbm|gt)")
@@ -434,12 +437,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--map-end", type=int, default=None)
     ap.add_argument("--query-start", type=int, default=0)
     ap.add_argument("--query-end", type=int, default=None)
-    ap.add_argument("--top-k", type=int, default=10)
+    ap.add_argument("--top-k", type=int, default=None, help="retrieved keyframes (default: config, 10)")
     ap.add_argument("--max-refs", type=int, default=None, help="references per forward pass (default: config, 6)")
     ap.add_argument("--n-ref-anchors", type=int, default=None, help="reference right images per pass (default: config, 2)")
     ap.add_argument("--odom-anchor", action="store_true")
     ap.add_argument("--no-curr-anchor", action="store_true", help="ablation: drop the current stereo pair as scale anchor")
-    ap.add_argument("--scale-method", default="adaptive")
+    ap.add_argument("--scale-method", default=None, help="metric scale of a pass (default: config, adaptive)")
     ap.add_argument("--obs-min-translation", type=float, default=None,
                     help="observation cadence (default: the mode's configuration file; 0 / 0 / 1 = every frame)")
     ap.add_argument("--obs-min-rotation", type=float, default=None)
@@ -475,7 +478,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main():
     ap = build_parser()
-    args = ap.parse_args()
+    args = finish_session_args(ap.parse_args())
     if args.snr is not None and args.snr <= 0:
         args.snr = None        # perfect odometry
     if args.mode is None:

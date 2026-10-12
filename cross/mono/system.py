@@ -44,20 +44,19 @@ class MonocularSystem(Pipeline):
     depth and an injected monocular relative-pose estimator.
 
     pose_estimator: reuse the estimator of an earlier session (its models); mono_defaults: apply the monocular back-end
-    defaults (filter mode, visual-odometry motion noise, top_k 3) on top of system_config (default: only when no
+    defaults (visual-odometry motion noise, top_k 3) on top of system_config (default: only when no
     system_config is given); external_odometry: the frontend passes on dataset odometry, keep the back end's default
     odometry noise model; odometry: the pipeline's odometry label (default external / visual), vio keeps the back end's
     default odometry noise model as well (the motion is metric, as with external odometry)."""
 
     def __init__(self, K, image_size, config=None, system_config=None, device="cuda", frontend=None,
                  pose_estimator=None, mono_defaults=None, external_odometry=False, odometry=None):
-        if frontend is None and getattr(config, "frontend", None) in {"streaming_pnp", "streaming_dpvo"}:
+        if frontend is None and getattr(config, "frontend", None) == "streaming_dpvo":
             raise ValueError("Use StreamingMonocularSystem for a streaming frontend")
-        from cross.core.config import FilterMode, PoseEstType, SystemConfig
+        from cross.core.config import PoseEstType, SystemConfig
         from cross.core.system import System
         from cross.core.types import Camera
         from .retrieval import DA3RelativePose, MetricRelativePose
-        from .two_view_retrieval import MetricTwoViewRelativePose
 
         self.config = config or MonoConfig()
         if frontend is not None:
@@ -75,9 +74,6 @@ class MonocularSystem(Pipeline):
         cfg = system_config or SystemConfig()
         if cfg.async_update:
             raise ValueError("MonocularSystem currently requires synchronous mapping updates")
-        cfg.tracking.use_odometry = True  # internal visual increments, never input odometry
-        cfg.tracking.use_VO = False
-        cfg.depth_pred.use_depth_pred = False
         cfg.pose_est.type = PoseEstType.DA3 if self.config.retrieval_pose == "da3" else PoseEstType.METRIC_PNP
         # CROSS-mono ran with these two core behaviours always on (flag-gated in the merged core)
         cfg.mapping.hypothesis.reset_evidence_on_slot_reuse = True
@@ -93,7 +89,11 @@ class MonocularSystem(Pipeline):
             # visual odometry (DPVO) and the IMU modes: hypothesis 0 updated by every observation (the base default became
             # informative-only; override with --cross-config mapping.hypothesis.h0_informative_only=true), and the
             # earlier loop-closure behaviour: DPVO loses tracking and drifts in scale, session recovery re-joins its
-            # charts through merges / adoption, and the new options did not improve its development split
+            # charts through merges / adoption, and the new options did not improve its development split.  The other
+            # modes' back end was tested on the full benchmark (2026-10-11, outputs/2026-10-11_config_confirm; tag
+            # opt-mono-new-backend): better on ROVER only without the benchmark's outdoor odometry-noise lines (T3 482 ->
+            # 517, T1 17.9 -> 5.7 m), but KITTI T1 17.7 -> 81 m without them (and ROVER 482 -> 358 with them): it needs
+            # dataset-specific noise, so not adopted
             cfg.mapping.hypothesis.h0_informative_only = False
             lc = cfg.mapping.loop_closure
             lc.informative_margin, lc.anisotropic, lc.test_dof, lc.full_session_pgo = 1.0, False, "translation", False
@@ -104,15 +104,9 @@ class MonocularSystem(Pipeline):
         if self.config.session_recovery:
             cfg.mapping.hypothesis.session_recovery = True
         cfg.mapping.hypothesis.chart_aware = self.config.chart_aware
-        cfg.mapping.hypothesis.conditional_sources = self.config.conditional_sources
-        cfg.mapping.hypothesis.schmidt_map_geometry = self.config.schmidt_map_geometry
-        cfg.mapping.hypothesis.map_geometry_basis = self.config.map_geometry_basis
-        if self.config.conditional_sources and (cfg.mapping.loop_closure.async_ or cfg.mapping.hypothesis.no_pgo_for_lc):
-            raise ValueError('Conditional sources require synchronous graph optimization in the mapping worker')
         if mono_defaults is None:
             mono_defaults = system_config is None
         if mono_defaults:
-            cfg.tracking.filter_mode = FilterMode(self.config.filter_mode)
             cfg.tracking.odom_min_std_translation = 0.005
             cfg.tracking.odom_min_std_rotation = 0.01
             cfg.tracking.odom_std_per_meter = 0.1
@@ -121,7 +115,12 @@ class MonocularSystem(Pipeline):
         overrides = self.config.cross_overrides
         odometry = odometry or ("external" if external_odometry else "visual")
         if odometry in ("external", "vio"):
-            # dataset odometry: the back end's default odometry noise (as in the rgbd / stereo modes), not the DPVO one
+            # dataset odometry (external) or DPVO with the IMU's metric scale (vio): the back end's default odometry noise
+            # (as in the rgbd / stereo modes), not the DPVO one.  The --cross-config lines that set odometry noise
+            # (mapping.loop_closure.noise.odom_*, tracking.*) are dropped here, the profile's (fitted for DPVO at 20 Hz
+            # indoors) and the user's --mono-args alike; the other --cross-config lines apply.  The tracking odometry stds are
+            # reset to the defaults below whatever the SystemConfig says; mapping.loop_closure.noise.odom_* of these
+            # sessions come from --set / --config.
             defaults = SystemConfig()
             cfg.tracking.odom_std_per_meter = defaults.tracking.odom_std_per_meter
             cfg.tracking.odom_std_per_radian = defaults.tracking.odom_std_per_radian
@@ -135,7 +134,6 @@ class MonocularSystem(Pipeline):
             raise ValueError("Historical retrieval slots cannot exceed the total retrieval budget")
         camera = Camera(np.array(K).copy(), *image_size)
         # System rescales camera.K in place to its stored-image resolution.
-        metric_adapter = MetricTwoViewRelativePose if self.config.retrieval_pose == "metric_two_view" else MetricRelativePose
         if pose_estimator is not None:
             pass
         elif self.config.retrieval_pose == "ff":
@@ -143,16 +141,14 @@ class MonocularSystem(Pipeline):
             pose_estimator = FeedForwardRelativePose(self.config.ff_backend, self.config.ff_checkpoint, device,
                                                      self.config.ff_resolution, self.config.ff_min_covisibility)
             if self.config.ff_fallback_only:
+                from .two_view_retrieval import MetricTwoViewRelativePose
                 pose_estimator = FallbackFeedForwardRelativePose(
                     MetricTwoViewRelativePose(camera.K, device, self.config.mask_people, "superpoint_lightglue"),
                     pose_estimator, scope=self.config.ff_scope)
         elif self.config.retrieval_pose == "da3":
             pose_estimator = DA3RelativePose(self.frontend.geometry, device)
         else:
-            pose_estimator = metric_adapter(camera.K, device, self.config.mask_people, self.config.retrieval_matcher,
-                                            self.config.conditional_sources, self.config.source_log_std,
-                                            **(dict(rotation_geometry=self.frontend.geometry)
-                                               if self.config.two_view_rotation_check else {}))
+            pose_estimator = MetricRelativePose(camera.K, device, self.config.mask_people)
         mapper = System(device=device, visualize=False, camera=camera, config=cfg, pose_estimator=pose_estimator)
         attach_pair_motion(self.frontend, pose_estimator, self.config, K)
         super().__init__(mapper, self.frontend, self.config.mapping_interval, mode="mono", odometry=odometry,

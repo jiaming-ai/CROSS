@@ -23,26 +23,26 @@ for spec in $SYSTEMS; do
   TAG="${TAG}${TAG_SUFFIX:-}"
   case $sys in
     ff)
-      [ -f $OUT/$TAG/map/map.pkl ] && [ -f $OUT/$TAG/map/reloc_summary.json ] || run $PY scripts/map_and_reloc.py --map $M --query $D/map --out $OUT/$TAG/map $FF $B --snr $SNR $TRIAL
+      [ -f $OUT/$TAG/map/map.pkl ] && [ -f $OUT/$TAG/map/reloc_summary.json ] || run $PY scripts/map_and_reloc.py --reproducible --map $M --query $D/map --out $OUT/$TAG/map $FF $B --snr $SNR $TRIAL
       for v in $VARIANTS; do
         [ -f $OUT/$TAG/$v/reloc_summary.json ] && continue
         mkdir -p $OUT/$TAG/$v; ln -sf ../map/map.pkl $OUT/$TAG/$v/map.pkl; cp $OUT/$TAG/map/map_meta.json $OUT/$TAG/$v/
-        run $PY scripts/map_and_reloc.py --map $M --query $D/$v --out $OUT/$TAG/$v $FF $B --snr $SNR --skip-map $TRIAL
+        run $PY scripts/map_and_reloc.py --reproducible --map $M --query $D/$v --out $OUT/$TAG/$v $FF $B --snr $SNR --skip-map $TRIAL
       done ;;
     pnp)
-      [ -f $OUT/pnp/map/map.pkl ] && [ -f $OUT/pnp/map/reloc_summary.json ] || run $PY scripts/map_and_reloc.py --map $M --query $D/map --out $OUT/pnp/map --estimator pnp --pnp-depth gt --snr $SNR $TRIAL
+      [ -f $OUT/pnp/map/map.pkl ] && [ -f $OUT/pnp/map/reloc_summary.json ] || run $PY scripts/map_and_reloc.py --reproducible --map $M --query $D/map --out $OUT/pnp/map --estimator pnp --pnp-depth gt --snr $SNR $TRIAL
       for v in $VARIANTS; do
         [ -f $OUT/pnp/$v/reloc_summary.json ] && continue
         mkdir -p $OUT/pnp/$v; ln -sf ../map/map.pkl $OUT/pnp/$v/map.pkl; cp $OUT/pnp/map/map_meta.json $OUT/pnp/$v/
-        run $PY scripts/map_and_reloc.py --map $M --query $D/$v --out $OUT/pnp/$v --estimator pnp --pnp-depth gt --snr $SNR --skip-map $TRIAL
+        run $PY scripts/map_and_reloc.py --reproducible --map $M --query $D/$v --out $OUT/pnp/$v --estimator pnp --pnp-depth gt --snr $SNR --skip-map $TRIAL
       done ;;
     pnpsgbm)
       # original CROSS on a stereo robot: PnP on SGBM depth from the stereo pair (baseline token selects the right camera)
-      [ -f $OUT/$TAG/map/map.pkl ] && [ -f $OUT/$TAG/map/reloc_summary.json ] || run $PY scripts/map_and_reloc.py --map $M --query $D/map --out $OUT/$TAG/map --estimator pnp --pnp-depth sgbm $B --snr $SNR $TRIAL
+      [ -f $OUT/$TAG/map/map.pkl ] && [ -f $OUT/$TAG/map/reloc_summary.json ] || run $PY scripts/map_and_reloc.py --reproducible --map $M --query $D/map --out $OUT/$TAG/map --estimator pnp --pnp-depth sgbm $B --snr $SNR $TRIAL
       for v in $VARIANTS; do
         [ -f $OUT/$TAG/$v/reloc_summary.json ] && continue
         mkdir -p $OUT/$TAG/$v; ln -sf ../map/map.pkl $OUT/$TAG/$v/map.pkl; cp $OUT/$TAG/map/map_meta.json $OUT/$TAG/$v/
-        run $PY scripts/map_and_reloc.py --map $M --query $D/$v --out $OUT/$TAG/$v --estimator pnp --pnp-depth sgbm $B --snr $SNR --skip-map $TRIAL
+        run $PY scripts/map_and_reloc.py --reproducible --map $M --query $D/$v --out $OUT/$TAG/$v --estimator pnp --pnp-depth sgbm $B --snr $SNR --skip-map $TRIAL
       done ;;
     orbslam3|rtabmap|rtabmapstereo)
       [ $sys = rtabmapstereo ] && sys=rtabmap_stereo
