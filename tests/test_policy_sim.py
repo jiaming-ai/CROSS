@@ -238,7 +238,8 @@ def test_ai2thor_dataset_switch(tmp_path):
     assert hab.scene_config(str(tmp_path)).endswith('ai2thor-hab.scene_dataset_config.json')
     assert hab.ai2thor_scenes(str(tmp_path)) == ['ProcTHOR-Train-10', 'ProcTHOR-Train-2']
     rooms = hab.Rooms(str(tmp_path), 'ProcTHOR-Train-2')
-    assert rooms.indoor((0., 0., 0.)) and rooms.indoor((100., 3., -5.))
+    assert rooms.indoor((0., .15, 0.)) and rooms.indoor((100., .1, -5.))
+    assert not rooms.indoor((0., 2.75, 0.)) and not rooms.indoor((0., .8, 0.))   # ceiling top, furniture top
     assert hab.is_ai2thor_door('Doorway_Double_3_:0000') and hab.is_ai2thor_door('ArchitecTHOR-Val-00-Doorway_39f930c1_:0001')
     assert not hab.is_ai2thor_door('Doorframe_2_:0000') and not hab.is_ai2thor_door('Sofa_3_:0000')
     hssd = tmp_path / 'hssd'

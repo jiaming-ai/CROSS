@@ -8,7 +8,9 @@ points only, by the scene's room polygons (semantics/scenes/<id>.semantic_config
 
 The same code runs AI2-THOR houses (hssd/ai2thor-hab: ProcTHOR, RoboTHOR, ArchitecTHOR, iTHOR), detected from the
 dataset root (ai2thor-hab.scene_dataset_config.json): their door objects (Doorway*, with a door leaf) are removed like
-HSSD doors, open Doorframe objects stay; the houses have no outdoor area, so every navigable point counts as indoor.
+HSSD doors, open Doorframe objects stay. The houses are single-storey with the floor near y = 0 and have no outdoor
+area, but their ceilings are flat and unobstructed, so the largest navmesh island is the top of the ceiling: indoor
+means below AI2THOR_FLOOR_MAX_Y (also excludes small islands on furniture tops).
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ import numpy as np
 RADIUS, HEIGHT, MAX_CLIMB, CELL, CAM_H, W, H, HFOV = .18, .9, .2, .05, .8, 512, 384, 90.
 EXPERT_RADII = (.3, .24)    # expert clearance ladder: ~12 cm, else ~6 cm beyond the robot radius (narrow doorways)
 OUTDOOR = {'outdoor', 'porch/terrace/deck/driveway', 'balcony'}
+AI2THOR_FLOOR_MAX_Y = .5    # AI2-THOR floors are at y ~0.1; ceiling tops at 2.5-4.2 m, furniture tops from ~0.5 m
 
 
 @lru_cache(maxsize=8)
@@ -143,7 +146,7 @@ def expert_path(sim, pos, goal):
 
 
 class Rooms:
-    """Room polygons of an HSSD scene; indoor(p) for a 3D point p (x, y, z). AI2-THOR houses: everything is indoor."""
+    """Room polygons of an HSSD scene; indoor(p) for a 3D point p (x, y, z). AI2-THOR houses: the floor, by height."""
     def __init__(self, root, scene):
         self.everywhere = dataset_kind(root) == 'ai2thor'
         if self.everywhere:
@@ -168,7 +171,7 @@ class Rooms:
 
     def indoor(self, p):
         if self.everywhere:
-            return True
+            return bool(p[1] < AI2THOR_FLOOR_MAX_Y)
         r = self.region(p)
         return r is not None and r not in OUTDOOR
 
