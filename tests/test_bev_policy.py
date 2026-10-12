@@ -346,3 +346,43 @@ def test_world_map_unobserved_completions_never_block():
         wm.fuse(np.full((n, n), .8, np.float32), np.zeros((n, n), np.float32), (0., 0., 0.), res)
     route = wm.plan((0., 0., 0.), np.array([2., 1.]))
     assert route is not None and np.linalg.norm(route[-1] - [2., 1.]) < .15
+
+
+def test_world_map_clearance_cost_keeps_away_from_walls():
+    from cross_nav.policy.bev_policy import WorldMap
+    n, res = 80, .1
+    i = (n / 2 - np.arange(n) - .5) * res
+    F, L = np.meshgrid(i, i, indexing='ij')
+    p = np.where(np.abs(L + .45) < .1, .97, .02).astype(np.float32)     # a wall 0.45 m to the right, along the route
+    v = np.full((n, n), .9, np.float32)
+    dist = {}
+    for cw in (0., 8.):
+        wm = WorldMap((0., 0., 0.), resolve({'map': {'res': .1, 'size': 200, 'clear_m': .3, 'clear_weight': cw}})['map'])
+        wm.fuse(p, v, (0., 0., 0.), res)
+        route = wm.plan((0., 0., 0.), np.array([3., -.1]))
+        mid = route[(route[:, 0] > .8) & (route[:, 0] < 2.2)]
+        dist[cw] = float((mid[:, 1] + .45).min())
+    assert dist[8.] > dist[0.]
+
+
+def test_world_map_retry_searches_the_whole_grid_then_relaxes_blocking():
+    from cross_nav.policy.bev_policy import WorldMap
+    n, res = 80, .1
+    i = (n / 2 - np.arange(n) - .5) * res
+    F, L = np.meshgrid(i, i, indexing='ij')
+    # a long wall between the robot and a goal 1 m ahead; its end is 3.5 m to the left (outside a 1 m search box)
+    p = np.where((np.abs(F - .5) < .1) & (L < 3.5), .97, .02).astype(np.float32)
+    v = np.full((n, n), .9, np.float32)
+    for retry in (False, True):
+        wm = WorldMap((0., 0., 0.), resolve({'map': {'res': .1, 'size': 200, 'margin_m': 1., 'retry': retry}})['map'])
+        wm.fuse(p, v, (0., 0., 0.), res)
+        route = wm.plan((0., 0., 0.), np.array([1., 0.]))
+        assert (route is not None) == retry
+    assert route[:, 1].max() > 3.5                         # around the wall's end
+    # a closed wall: no route at block_p, a route when only P > retry_block_p blocks (here .8 < .85)
+    p = np.where(np.abs(F - .5) < .1, .8, .02).astype(np.float32)
+    wm = WorldMap((0., 0., 0.), resolve({'map': {'res': .1, 'size': 200, 'retry': True}})['map'])
+    wm.fuse(p, v, (0., 0., 0.), res)
+    assert wm.plan((0., 0., 0.), np.array([1., 0.])) is not None
+    wm.c['retry'] = False
+    assert wm.plan((0., 0., 0.), np.array([1., 0.])) is None

@@ -128,7 +128,10 @@ MAP_DEFAULTS = {
     'block_p': .6, 'block_w': .5,  # impassable: fused P(occupied) > block_p with summed P(observed) >= block_w
     'risk_weight': 4.,           # cell cost 1 + risk_weight * footprint-max P(occupied)
     'radius': .2,
+    'clear_m': 0., 'clear_weight': 0.,   # + clear_weight * max P(occupied) within radius + clear_m (keeps clearance)
     'margin_m': 4.,              # the search box: robot and goal + this margin
+    'retry': False,              # no route in the box: search the whole grid, then block only P > retry_block_p
+    'retry_block_p': .85,
 }
 STATUS_GOAL, STATUS_WAYPOINT, STATUS_NONE, STATUS_APPROACH, STATUS_MEMORY, STATUS_RELAXED, STATUS_MAP = 0, 1, 2, 3, 4, 5, 6
 
@@ -428,18 +431,28 @@ class WorldMap:
         self.seen += warp(np.where(rng, obs, 0.).astype(np.float32))
 
     def plan(self, pose, goal_xy, bumps=(), bump_radius=.15):
-        """Odometry-frame route (n, 2) from the pose to the goal, or None."""
+        """Odometry-frame route (n, 2) from the pose to the goal, or None. With retry, a failed search is repeated
+        over the whole grid, then with only P(occupied) > retry_block_p blocking (bumps always block)."""
+        route = self._plan(pose, goal_xy, bumps, bump_radius, self.c['margin_m'], self.c['block_p'])
+        if route is None and self.c['retry']:
+            full = self.c['size'] * self.c['res']
+            route = self._plan(pose, goal_xy, bumps, bump_radius, full, self.c['block_p'])
+            if route is None:
+                route = self._plan(pose, goal_xy, bumps, bump_radius, full, self.c['retry_block_p'])
+        return route
+
+    def _plan(self, pose, goal_xy, bumps, bump_radius, margin_m, block_p):
         import cv2
         from cross_nav.plan import disk
         c, n, R = self.c, self.c['size'], self.c['res']
         s, g = self.cell(pose[:2]), self.cell(goal_xy)
         g = np.clip(g, 0, n - 1)
-        lo = np.maximum(np.minimum(s, g) - int(c['margin_m'] / R), 0)
-        hi = np.minimum(np.maximum(s, g) + int(c['margin_m'] / R) + 1, n)
+        lo = np.maximum(np.minimum(s, g) - int(margin_m / R), 0)
+        hi = np.minimum(np.maximum(s, g) + int(margin_m / R) + 1, n)
         sl = (slice(lo[0], hi[0]), slice(lo[1], hi[1]))
         den, num = self.den[sl], self.num[sl]
         p = np.where(den > 1e-3, num / np.maximum(den, 1e-6), c['unknown_p']).astype(np.float32)
-        blocked = (p > c['block_p']) & (self.seen[sl] >= c['block_w'])
+        blocked = (p > block_p) & (self.seen[sl] >= c['block_w'])
         for b in bumps:
             v, u = self.cell(b) - lo
             k = int(math.ceil(bump_radius / R))
@@ -459,6 +472,9 @@ class WorldMap:
         ok[tuple(s - lo)] = ok[tuple(g - lo)] = True
         pooled = cv2.dilate(p, disk(k)) if k else p
         cost = 1. + c['risk_weight'] * np.where(own, p, pooled)
+        if c['clear_m'] > 0 and c['clear_weight'] > 0:
+            k2 = int(math.ceil((c['radius'] + c['clear_m']) / R - 1e-9))
+            cost += c['clear_weight'] * np.where(own, p, cv2.dilate(p, disk(k2)))
         path = astar(ok, cost, s - lo, g - lo)
         if not len(path):
             return None
