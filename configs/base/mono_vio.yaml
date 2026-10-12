@@ -1,0 +1,15 @@
+# Mono + DPVO-inertial odometry base (--mode mono --mono-estimator ff --odometry vio; VGGT-Omega + DPVO + IMU, a
+# reference system): the feed-forward back end of mono_ff.yaml with the hypothesis behaviour of the old back end.
+include: mono_ff.yaml
+mapping:
+  hypothesis:
+    # adopt and merge hypotheses in mapping sessions too, and update hypothesis 0 with every observation (the defaults
+    # are false / false / true since 2026-10-03; RGB-D and stereo maps were teleported by unverified adoptions).
+    # Full benchmark 2026-10-12 (outputs/2026-10-11_config_confirm, "ob3"), against the defaults: ROVER T3 652 -> 1012 of
+    # 1159 (+389 / -29; reruns of the defaults swing by up to 185), T2 0.25 / 0.46 -> 0.41 / 0.69; OpenLORIS T3 169 ->
+    # 168, T2 at 1 / 2 m 0.34 / 0.55 -> 0.32 / 0.47; KITTI equal except 10, whose map breaks in both runs (8.8 -> 39 /
+    # 86 m; 08 noisy).  VGGT + DPVO without the IMU (mono_wheel) keeps the defaults: its ROVER T3 rose too (460 -> 760)
+    # but T2 fell and KITTI 10 broke as well (14 -> 32 m).
+    adopt_in_mapping_session: true
+    merge_in_mapping_session: true
+    h0_informative_only: false

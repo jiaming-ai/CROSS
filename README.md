@@ -172,7 +172,7 @@ Options:
 | `--async` | Enable async step pipeline |
 
 **Shipped configurations.** Each run loads one file `configs/<profile>/<mode>.yaml` chosen by `--mode`, `--odometry` (and
-`--mono-estimator`) and `--profile`: eleven modes (stereo / rgbd / mono x wheel, basalt, imu, dpvo; no rgbd + imu) in
+`--mono-estimator`) and `--profile`: twelve modes (stereo / rgbd / mono x wheel, basalt, imu, dpvo; no rgbd + imu; + mono_vio, VGGT + DPVO + IMU) in
 the deployment folders `local` (default) and `cloud`; `--fast` adds the mode's overlay `configs/overlays/fast/<mode>.yaml`
 (constrained compute) on either. A folder file includes its mode's base and the folder's shared
 settings from `configs/base/`; `--config` overlays (`configs/overlays/outdoor.yaml`, `stereo_lowband.yaml`) and `--set`

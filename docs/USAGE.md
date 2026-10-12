@@ -116,9 +116,10 @@ and `--profile`, with `--fast` the mode's fast overlay, then the user's `--confi
 | `rgbd_wheel`, `rgbd_basalt`, `rgbd_dpvo` | `rgbd` / `external`, `basalt`, `visual` |
 | `mono_wheel`, `mono_basalt`, `mono_imu` | `mono` / `external`, `basalt`, `vgio` (`--mono-estimator ff`) |
 | `mono_dpvo` | `mono` / `visual` (the DA3 back end) |
+| `mono_vio` | `mono` / `vio` (`--mono-estimator ff`: VGGT-Omega + DPVO + IMU, a reference system; the old back end's hypothesis behaviour in mapping sessions: ROVER T3 +360 trials, KITTI 10 map worse) |
 
 Reference combinations without a file of their own use their back end's file: mono DA3 with any odometry `mono_dpvo`,
-mono `ff` with DPVO or DPVO + IMU (`vio`) `mono_wheel`. A folder file includes its mode's base and the
+mono `ff` with DPVO `mono_wheel`. A folder file includes its mode's base and the
 folder's shared settings (`configs/base/`, key `include:`, paths relative to the file); keys below the include override
 them. A file may also carry an `imu:` section (fields of `ImuConfig`, applied to the inertial frontends before
 `--mono-args "--imu-config ..."`). The mono DA3 back end takes its settings from the mono profile (below) and

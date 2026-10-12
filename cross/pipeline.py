@@ -325,12 +325,12 @@ def mode_file_name(mode: str, odometry: str, mono_estimator: str = None) -> str:
     """The name of a mode's file in a profile folder (configs/<profile>/<name>.yaml).  odometry: the named odometry
     (external = wheel, basalt, visual = dpvo, vgio = imu).  Combinations without a file of their own (reference systems)
     use the file of their back end: the mono DA3 back end any odometry -> mono_dpvo (its presets are the mono profile's
-    and MonocularSystem's), the feed-forward back end with DPVO or DPVO + IMU (vio) -> mono_wheel (mono_imu's settings
-    are the VGGT-inertial odometry's)."""
+    and MonocularSystem's), the feed-forward back end with DPVO -> mono_wheel (mono_imu's settings are the
+    VGGT-inertial odometry's); with DPVO + IMU (vio) it has its own file, mono_vio."""
     if mode == "mono":
         if (mono_estimator or "da3") == "da3":
             return "mono_dpvo"
-        return {"basalt": "mono_basalt", "vgio": "mono_imu"}.get(odometry, "mono_wheel")
+        return {"basalt": "mono_basalt", "vgio": "mono_imu", "vio": "mono_vio"}.get(odometry, "mono_wheel")
     names = {"external": "wheel", "basalt": "basalt", "visual": "dpvo"} | ({"vgio": "imu"} if mode == "stereo" else {})
     if mode not in MODES or odometry not in names:
         raise ValueError(f"No shipped configuration for --mode {mode} --odometry {odometry}")
