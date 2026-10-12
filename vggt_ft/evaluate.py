@@ -1,6 +1,6 @@
 """Held-out evaluation: relative pose, depth, metric scale and covisibility on fixed windows of scene caches.
 
-    python -m vggt_ft.evaluate --ckpt <ckpt.pt | released.pt> --suite configs/vggt_ft/eval_suite.yaml --out res.json
+    python -m vggt_ft.evaluate --ckpt <ckpt.pt | released.pt> --suite vggt_ft/configs/eval_suite.yaml --out res.json
 
 Protocols (per test set in the suite):
   seq     S frames of one sequence, `stride` frames apart (consecutive frames overlap), deterministic starts.
@@ -27,10 +27,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 
 from vggt_omega.utils.pose_enc import encoding_to_camera
 
+from . import load_yaml
 from .dataio.scene import list_scenes, load_scene
 from .dataio.windows import materialise
 from .dataio.transforms import target_shape
@@ -292,7 +292,7 @@ def main():
     ap.add_argument("--sets", nargs="*")
     ap.add_argument("--pred_focal", action="store_true", help="canonical-camera scale head: predicted, not known focal")
     a = ap.parse_args()
-    suite = yaml.safe_load(open(a.suite))
+    suite = load_yaml(a.suite)
     model = load_model(a.ckpt)
     wdir = Path(suite.get("windows_dir", Path(a.suite).with_suffix("")))
     wdir.mkdir(parents=True, exist_ok=True)

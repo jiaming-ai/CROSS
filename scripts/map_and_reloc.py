@@ -17,7 +17,7 @@ map.  map_meta.json "extension" scores the new session in the loaded map's groun
 
 Usage:
   python scripts/map_and_reloc.py --map data/vkitti2/Scene01/clone --query data/vkitti2/Scene01/sunset \
-      --estimator ff --out outputs/reloc/vk01_sunset_ff
+      --out outputs/reloc/vk01_sunset_ff          # stereo mode (default); --mode <mode file> for another mode
   # map the first 80 frames, then extend that map with another session (e.g. another camera), then query
   python scripts/map_and_reloc.py --map sim/classroom/map --query sim/classroom/map --map-end 80 --skip-reloc --out m0
   python scripts/map_and_reloc.py --map sim/classroom/map__camB --query sim/classroom/reverse --extend-map m0 --out m1
@@ -86,10 +86,17 @@ def seq_baseline(root, requested):
     return float(key)
 
 
+def estimator_of(mode: str) -> str:
+    """The relative-pose estimator of a sensor mode on stereo sequences: VGGT-Omega (ff) in the stereo and mono modes,
+    PnP on stereo-matched depth in the rgbd mode (RGB-D*)."""
+    return "pnp" if mode == "rgbd" else "ff"
+
+
 def make_config(args) -> SystemConfig:
     # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/<--profile>/<mode>.yaml), then the
     # user's --config; explicit options below win
     configs = shipped_config_files(args) + list(args.config or [])
+    args.estimator = estimator_of(args.mode)
     # the feed-forward model goes in with the overrides: the fine-tuned VGGT-Omega's settings (the files' vggt_finetuned
     # sections) follow the checkpoint in use (cross.core.config.load_config); without --backend / --checkpoint the
     # configuration's (--backend da3 without --checkpoint: the DA3 weights)
@@ -561,7 +568,6 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--map", required=True)
     ap.add_argument("--query", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--estimator", choices=["ff", "pnp"], default="ff")
     ap.add_argument("--backend", choices=["vggt_omega", "da3"], default=None, help="feed-forward model (default: config)")
     ap.add_argument("--checkpoint", default=None,
                     help="its weights: a path, or finetuned / released (install.sh's VGGT-Omega checkpoints); default: "
@@ -633,10 +639,8 @@ def main():
     args = finish_session_args(ap.parse_args())
     if args.snr is not None and args.snr <= 0:
         args.snr = None        # perfect odometry
-    if args.mode is None:
-        args.mode = "stereo" if args.estimator == "ff" else "rgbd"      # rgbd: RGB-D* (PnP on stereo depth)
-    elif args.mode == "stereo" and args.estimator != "ff" or args.mode == "rgbd" and args.estimator != "pnp":
-        ap.error("--mode stereo goes with --estimator ff, --mode rgbd with --estimator pnp")
+    args.mode = args.mode or "stereo"
+    args.estimator = estimator_of(args.mode)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

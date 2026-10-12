@@ -1,24 +1,23 @@
-# v4c: v3c + scale-aligned losses (GT of each window scaled to the prediction's gauge: the released model's gauge is
-# 0.83-1.17x our unit-mean-distance normalisation depending on the dataset, so unaligned losses push all outputs).
-# v3c: v2 with the first 12 of 24 aggregator blocks frozen, 3 GPUs x 64 images (same batch as v2: 4 x 48).
-# v2: keep the released model's static-scene pose (v1 lost precision: ETH3D AUC@3 0.72 -> 0.51, NRGBD rotation error
-# 0.30 -> 0.77 deg at step 2000): DINO + the first 8 of 24 aggregator blocks frozen, half the backbone learning rate,
-# distillation to the released model (v1d), EMA weights, more real static data (ScanNet++, ScanNet, ARKitScenes, Waymo).
-# v1d: v1 + distillation to the frozen released model (pose + log depth; GT-less pixels weighted x2), 3 GPUs x 64 images (same batch as v1: 4 x 48).
-# v1: first full fine-tune.  Released VGGT-Omega 1B-512 + scale head + covisibility head, all parameters trained at a
-# low learning rate (new heads x20), replay of VGGT-Omega's public training sets (whatever is converted), multi-session
-# windows (TartanAir variant / trajectory sessions, Map-free, VKITTI2 variants, Hypersim cameras) and grouped negatives.
-# Distances in the sampler are in units of the sequence's median depth (cross_radius, neg_dist).
-exp_name: v4c
-pretrained: /mnt/datasets-livsyn/jz/ckpt/vggt_omega_1b_512.pt
-out_dir: /mnt/datasets-livsyn/jz/runs
+# v10c: v5a@10000 EMA continued with close-range / people data, ~17 % of the windows:
+#   HOI4D (egocentric, hands and objects at 0.3-1 m; metric depth from the projected scene cloud, hands masked),
+#   PointOdyssey (synthetic indoor / outdoor people at 1.5-4 m) and the Dynamic Replica valid subset (synthetic people
+#   near the camera; sparse depth from the tracks).
+# Otherwise the v5a recipe (freeze 8 blocks, scale-aligned losses, distillation to the released model, EMA, released-
+# model poses on SfM data) at half the learning rate. Teacher = `pretrained` = the raw released model (the
+# {"model": ...} teacher-load bug does not apply); the student starts from `init`. 4 GPUs x 48 images (= v5a's 3 x 64).
+# The final model is the 0.7 blend with the released model, then heads only as vfin_s0 (-> vfin2).
+exp_name: v10c
+pretrained: ${VGGT_FT_ROOT}/ckpt/vggt_omega_1b_512.pt
+init: ${VGGT_FT_ROOT}/runs/v5a/ckpt_010000_ema_bf16.pt
+out_dir: ${VGGT_FT_ROOT}/runs
 resume: auto
 seed: 0
 log_every: 20
 data:
-  root: /mnt/datasets-livsyn/jz/cache
+  root: ${VGGT_FT_ROOT}/cache
+  val_mod: 20
   frames: [2, 24]
-  images_per_gpu: 64
+  images_per_gpu: 48
   aspect: [0.5, 1.33]
   area: 262144
   num_workers: 10
@@ -44,19 +43,25 @@ data:
     arkitscenes: {weight: 0.06, stride: [2, 10], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 60, p_neg: 0.3}
     waymo:      {weight: 0.04, stride: [1, 3], p_cross: 0.0, p_neg: 0.3}
     dl3dv:      {weight: 0.08, stride: [1, 3], p_cross: 0.0, p_neg: 0.3}   # depth = released-model teacher labels
+    bedlam:     {weight: 0.03, stride: [1, 3], p_cross: 0.0, p_neg: 0.2}
+    hoi4d:      {weight: 0.14, stride: [1, 3], p_cross: 0.0, p_neg: 0.1, neg_types: {other_scene: 1.0}}   # 874 seq. in 97 rooms
+    pointodyssey: {weight: 0.08, stride: [1, 3], p_cross: 0.0, p_neg: 0.2, neg_types: {other_scene: 1.0}}
+    dynamicreplica: {weight: 0.03, stride: [1, 4], p_cross: 0.0, p_neg: 0.2, neg_types: {other_scene: 1.0}}   # 20 seq.
 train:
-  steps: 12000
-  lr: 1.0e-5
+  steps: 3000
+  lr: 5.0e-6
   lr_mult: {scale_head: 40.0, covis_head: 40.0}
-  freeze_blocks: 12
+  freeze_blocks: 8
   ema: 0.9995
   # DINO patch embedding frozen (no backward through it: ~25 % faster); everything after it is trained
   trainable: ["aggregator.frame_blocks.*", "aggregator.inter_frame_blocks.*", "aggregator.camera_token",
               "aggregator.register_token", "camera_head.*", "dense_head.*", "scale_head.*", "covis_head.*"]
-  warmup: 600
+  warmup: 200
   weight_decay: 0.05
   clip: 1.0
   save_every: 500
   keep_every: 2000
 loss: {w_camera: 5.0, w_depth: 1.0, w_point: 1.0, w_scale: 1.0, w_covis: 1.0, mask_unobservable: unconnected_other_session, scale_align: true,
-       distill: true, w_distill_pose: 1.0, w_distill_depth: 0.5}
+       distill: true, w_distill_pose: 1.0, w_distill_depth: 0.5,
+       teacher_pose_datasets: [megadepth, co3d, uco3d, blendedmvs, scannet, scannetpp, arkitscenes, wildrgbd, mapfree, dl3dv],
+       teacher_pose_gt_w: 0.2, teacher_pose_distill_w: 5.0}

@@ -1,7 +1,7 @@
 # Validation suite: held-out scenes of the TRAINING datasets (crc32(scene) % 20 == 0, excluded from training when the
 # run sets data.val_mod: 20).  Used to select checkpoints (scale head especially); the test suite is never used for that.
-root: /mnt/datasets-livsyn/jz/cache
-windows_dir: /mnt/datasets-livsyn/jz/test/windows_val_v1
+root: ${VGGT_FT_ROOT}/cache
+windows_dir: ${VGGT_FT_ROOT}/test/windows_val_v1
 sets:
 - {name: val_scannetpp, dataset: scannetpp, val_mod: 20, protocol: seq, frames: 8, stride: 4, per_seq: 2, aspect: 0.75, max_windows: 120}
 - {name: val_arkitscenes, dataset: arkitscenes, val_mod: 20, protocol: seq, frames: 8, stride: 4, per_seq: 1, aspect: 0.75, max_windows: 120}

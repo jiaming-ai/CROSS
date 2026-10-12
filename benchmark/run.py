@@ -227,7 +227,7 @@ class Job:
         else:
             cmd = [PY, "scripts/map_and_reloc.py", "--seed", a.seed]
             if sysc["runner"] == "cross_rgbd":           # RGB-D*: PnP on stereo-matched depth
-                cmd += ["--estimator", "pnp", "--pnp-depth", "sgbm"]
+                cmd += ["--mode", "rgbd", "--pnp-depth", "sgbm"]
             cmd += [str(v) for v in sysc.get("args", [])]
             if self.dcfg.get("baseline"):
                 cmd += ["--baseline", self.dcfg["baseline"]]

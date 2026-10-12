@@ -1,4 +1,3 @@
-# v5b: v5a with 12 frozen blocks instead of 8 (between v4b's static preservation and v5a's cross-session gains), 6000 steps.
 # v5a: v4a (freeze 8, scale-aligned, distillation, EMA) + pose from the released model for sequential windows of the
 # real SfM / MVS-labelled datasets (GT camera loss x0.2, pose distillation x5); cross-session windows keep the GT.
 # Hypothesis: part of the static-precision loss is fitting noisy SfM poses.  Also BEDLAM, validation holdout.
@@ -12,14 +11,14 @@
 # low learning rate (new heads x20), replay of VGGT-Omega's public training sets (whatever is converted), multi-session
 # windows (TartanAir variant / trajectory sessions, Map-free, VKITTI2 variants, Hypersim cameras) and grouped negatives.
 # Distances in the sampler are in units of the sequence's median depth (cross_radius, neg_dist).
-exp_name: v5b
-pretrained: /mnt/datasets-livsyn/jz/ckpt/vggt_omega_1b_512.pt
-out_dir: /mnt/datasets-livsyn/jz/runs
+exp_name: v5a
+pretrained: ${VGGT_FT_ROOT}/ckpt/vggt_omega_1b_512.pt
+out_dir: ${VGGT_FT_ROOT}/runs
 resume: auto
 seed: 0
 log_every: 20
 data:
-  root: /mnt/datasets-livsyn/jz/cache
+  root: ${VGGT_FT_ROOT}/cache
   val_mod: 20
   frames: [2, 24]
   images_per_gpu: 64
@@ -50,10 +49,10 @@ data:
     dl3dv:      {weight: 0.08, stride: [1, 3], p_cross: 0.0, p_neg: 0.3}   # depth = released-model teacher labels
     bedlam:     {weight: 0.03, stride: [1, 3], p_cross: 0.0, p_neg: 0.2}
 train:
-  steps: 6000
+  steps: 12000
   lr: 1.0e-5
   lr_mult: {scale_head: 40.0, covis_head: 40.0}
-  freeze_blocks: 12
+  freeze_blocks: 8
   ema: 0.9995
   # DINO patch embedding frozen (no backward through it: ~25 % faster); everything after it is trained
   trainable: ["aggregator.frame_blocks.*", "aggregator.inter_frame_blocks.*", "aggregator.camera_token",

@@ -15,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "outputs" / "site"
 LC = ROOT / "outputs" / "lcstudy"
+NOISE = ROOT / "outputs" / "2026-09-12_loop_closure_verified" / "noise"   # the study's calibrated noise models
 
 CSS = """
 body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:1100px;margin:0 auto;padding:16px 20px;line-height:1.5;color:#1d1d1b;background:#fcfcfb}
@@ -63,8 +64,8 @@ def main():
         if f.exists():
             h.append(f"<h2>{html.escape(title)}</h2>" + md_table_to_html(f.read_text()))
     h.append("<h2>Calibration files (ground-truth-free, one minute)</h2><ul>")
-    for f in sorted((ROOT / "configs" / "noise").glob("*.yaml")):
-        h.append(f"<li><a href='../../configs/noise/{f.name}'>{f.name}</a></li>")
+    for f in sorted(NOISE.glob("*.yaml")):
+        h.append(f"<li><a href='../2026-09-12_loop_closure_verified/noise/{f.name}'>{f.name}</a></li>")
     h.append("</ul><h2>Run directories</h2><ul>")
     for d in sorted(LC.glob("*/*/")):
         if (d / "trace.json").exists():

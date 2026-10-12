@@ -7,7 +7,7 @@ the same windows.  Per test set and source: m_abs (AbsRel of s * d against GT me
 (|log s - log s*|, s* = median GT / d), ratio (median of s / s*: > 1 means scenes predicted too large), and for the
 labelers their own per-frame dense AbsRel against GT (dense_abs).
 
-python scripts/vggt_ft/eval_metric_labelers.py --ckpt <fine-tuned ckpt> --suite configs/vggt_ft/eval_suite.yaml \
+python scripts/vggt_ft/eval_metric_labelers.py --ckpt <fine-tuned ckpt> --suite vggt_ft/configs/eval_suite.yaml \
     --weights <dir with DA3METRIC-LARGE/, unidepth-v2-vitl14/, moge-2-vitl-normal/> \
     --labelers da3metric unidepth moge2 --max_windows 40 --out <json>
 Labeler packages (depth_anything_3, unidepth, moge) must be importable (PYTHONPATH).
@@ -19,8 +19,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 
+from vggt_ft import load_yaml
 from vggt_ft.dataio.scene import load_scene
 from vggt_ft.dataio.transforms import target_shape
 from vggt_ft.dataio.windows import materialise
@@ -98,7 +98,7 @@ def main():
     ap.add_argument("--max_windows", type=int, default=40)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
-    suite = yaml.safe_load(open(a.suite))
+    suite = load_yaml(a.suite)
     model = load_model(a.ckpt)
     labelers = load_labelers(a.labelers, a.weights)
     wdir = Path(suite.get("windows_dir", Path(a.suite).with_suffix("")))

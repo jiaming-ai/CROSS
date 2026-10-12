@@ -211,6 +211,34 @@ def test_named_odometry_and_profile_arguments():
     assert shipped_config_files(args)[0].endswith("local/mono_vio.yaml")
 
 
+def test_mode_file_names_select_the_mode():
+    import argparse
+    import pytest
+    from cross.pipeline import BASALT_ODOM_FILE, MODE_FILES, add_session_args, finish_session_args, shipped_config_files
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--odom-file", default=None)
+    add_session_args(ap)
+    for name, (mode, odometry, estimator) in MODE_FILES.items():   # every name selects its own file
+        args = finish_session_args(ap.parse_args(["--mode", name, "--profile", "cloud"]))
+        assert args.mode == mode and args.odometry_name == odometry
+        assert shipped_config_files(args)[0].endswith(f"cloud/{name}.yaml")
+        if mode == "mono":
+            assert args.mono_estimator == estimator
+    args = finish_session_args(ap.parse_args(["--mode", "mono_imu"]))
+    assert (args.mode, args.odometry, args.mono_estimator) == ("mono", "vgio", "ff")
+    args = finish_session_args(ap.parse_args(["--mode", "stereo_basalt"]))
+    assert args.odometry == "external" and args.odom_file == BASALT_ODOM_FILE
+    args = finish_session_args(ap.parse_args(["--mode", "mono", "--odometry", "vgio"]))   # vgio implies VGGT-Omega
+    assert args.mono_estimator == "ff" and shipped_config_files(args)[0].endswith("local/mono_imu.yaml")
+    args = finish_session_args(ap.parse_args(["--mode", "mono"]))                          # sensor mode: defaults as before
+    assert (args.odometry, args.mono_estimator) == ("external", "da3")
+    assert finish_session_args(args) is args and args.odometry_name == "external"         # idempotent
+    with pytest.raises(ValueError):
+        finish_session_args(ap.parse_args(["--mode", "mono_imu", "--odometry", "vio"]))
+    with pytest.raises(ValueError):
+        finish_session_args(ap.parse_args(["--mode", "mono", "--odometry", "vgio", "--mono-estimator", "da3"]))
+
+
 def test_left_image_session_drops_the_right_image():
     mapper = FakeMapper()
     mapper.config = SimpleNamespace(pose_est=SimpleNamespace(ff=SimpleNamespace(right_image="left")))
