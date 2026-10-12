@@ -145,7 +145,6 @@ MAP_DEFAULTS = {
     'block_p': .6, 'block_w': .5,  # impassable: fused P(occupied) > block_p with summed P(observed) >= block_w
     'risk_weight': 4.,           # cell cost 1 + risk_weight * footprint-max P(occupied)
     'radius': .2,
-    'clear_m': 0., 'clear_weight': 0.,   # + clear_weight * max P(occupied) within radius + clear_m (keeps clearance)
     'margin_m': 4.,              # the search box: robot and goal + this margin
     'retry': False,              # no route in the box: search the whole grid, then block only P > retry_block_p
     'retry_block_p': .85,
@@ -489,9 +488,6 @@ class WorldMap:
         ok[tuple(s - lo)] = ok[tuple(g - lo)] = True
         pooled = cv2.dilate(p, disk(k)) if k else p
         cost = 1. + c['risk_weight'] * np.where(own, p, pooled)
-        if c['clear_m'] > 0 and c['clear_weight'] > 0:
-            k2 = int(math.ceil((c['radius'] + c['clear_m']) / R - 1e-9))
-            cost += c['clear_weight'] * np.where(own, p, cv2.dilate(p, disk(k2)))
         path = astar(ok, cost, s - lo, g - lo)
         if not len(path):
             return None

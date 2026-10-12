@@ -348,23 +348,6 @@ def test_world_map_unobserved_completions_never_block():
     assert route is not None and np.linalg.norm(route[-1] - [2., 1.]) < .15
 
 
-def test_world_map_clearance_cost_keeps_away_from_walls():
-    from cross_nav.policy.bev_policy import WorldMap
-    n, res = 80, .1
-    i = (n / 2 - np.arange(n) - .5) * res
-    F, L = np.meshgrid(i, i, indexing='ij')
-    p = np.where(np.abs(L + .45) < .1, .97, .02).astype(np.float32)     # a wall 0.45 m to the right, along the route
-    v = np.full((n, n), .9, np.float32)
-    dist = {}
-    for cw in (0., 8.):
-        wm = WorldMap((0., 0., 0.), resolve({'map': {'res': .1, 'size': 200, 'clear_m': .3, 'clear_weight': cw}})['map'])
-        wm.fuse(p, v, (0., 0., 0.), res)
-        route = wm.plan((0., 0., 0.), np.array([3., -.1]))
-        mid = route[(route[:, 0] > .8) & (route[:, 0] < 2.2)]
-        dist[cw] = float((mid[:, 1] + .45).min())
-    assert dist[8.] > dist[0.]
-
-
 def test_world_map_retry_searches_the_whole_grid_then_relaxes_blocking():
     from cross_nav.policy.bev_policy import WorldMap
     n, res = 80, .1
