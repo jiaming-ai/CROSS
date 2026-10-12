@@ -1,5 +1,5 @@
 {
-  "_comment": "BEV occupancy + observability heads with the closed-loop planner selected on HSSD validation (outputs/2026-10-12_sim_nav/bev_closed_loop.md): keyframe windows, episode map (odometry-frame fusion + A*, retry over the whole grid / relaxed blocking), hard occupancy limit, near-goal approach, route memory, turn hysteresis, bump memory, relaxed fallback, scale memory. configs/policy/bev_planner.json is the frozen planner. Set CROSS_NAV_ROOT to the directory holding the checkpoints.",
+  "_comment": "BEV occupancy + observability heads with the closed-loop planner selected on HSSD validation (outputs/2026-10-12_sim_nav/bev_closed_loop.md): keyframe windows, episode map (odometry-frame fusion + A*, retry over the whole grid / relaxed blocking), hard occupancy limit, near-goal approach, route memory, turn hysteresis, bump memory, relaxed fallback, scale memory, unstick (forget bumps + nearby map evidence after 6 no-route windows) and narrow-passage retry (map.retry_radii). configs/policy/bev_planner.json is the frozen planner. Set CROSS_NAV_ROOT to the directory holding the checkpoints.",
   "backbone": "${CROSS_NAV_ROOT}/data/runs/vdl_s1/ckpt_004000_ema_bf16.pt",
   "occupancy": "${CROSS_NAV_ROOT}/experiments/2026-10-11_causal_training/causal8_route_s7/heads_004000_ema.pt",
   "visibility": "${CROSS_NAV_ROOT}/experiments/2026-10-11_visibility_head/visibility/visibility_final.pt",
@@ -68,6 +68,12 @@
   "bump": true,
   "scale_memory": true,
   "map": {
-    "retry": true
-  }
+    "retry": true,
+    "retry_radii": [
+      0.1,
+      0.0
+    ]
+  },
+  "unstick_after": 6,
+  "unstick_clear_m": 0.5
 }
