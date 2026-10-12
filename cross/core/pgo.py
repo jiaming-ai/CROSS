@@ -106,6 +106,41 @@ class Vertex:
                 f"temporary={self.temporary})")
 
 
+def chain_poses(start_ids, twins: dict, successor: dict, odom_edges: dict, limit: int = 10000) -> dict:
+    """Poses of keyframes `start_ids` composed back from the first keyframe with a known pose (`twins`: id -> vertex,
+    its `pose` read when needed) that is
+    reached forward along the odometry chain (`successor`: the next keyframe; at most `limit` edges):
+    `T_twin @ e_k^-1 @ ... @ e_1^-1`.  Keyframes without such a keyframe are left out.  The composed pose of every
+    keyframe on a walk is memoised, so keyframes of one chain share their walk (one composition per edge instead of one
+    per edge and keyframe; the same products in the same order as composing each walk separately)."""
+    memo = {}            # keyframe -> (composed pose, edges to its twin), or None (no twin ahead)
+    out = {}
+    for start in start_ids:
+        path, cur, end, on_path = [], start, None, {start}
+        while True:
+            nxt = successor.get(cur)
+            if nxt is None or nxt in on_path:
+                break                              # the chain ends (or loops) without a twin
+            path.append((cur, nxt))
+            cur = nxt
+            if cur in twins:
+                end = (twins[cur].pose, 0)
+                break
+            if cur in memo:
+                end = memo[cur]
+                break
+            on_path.add(cur)
+        memo[start] = None
+        for (a, b) in reversed(path):
+            if end is not None:
+                end = (end[0] @ odom_edges[(a, b)].mean.Inv(), end[1] + 1)
+            memo[a] = end
+        got = memo[start]
+        if got is not None and got[1] <= limit:
+            out[start] = got[0]
+    return out
+
+
 class PoseGraph:
     """Pose Graph for Loop Closure
     """
@@ -617,35 +652,22 @@ class PoseGraph:
             sess_start = getattr(getattr(self.hypothesis_manager, "system", None), "_session_start_kf_id", 0) or start_idx
             start_idx = min(start_idx, sess_start) if sess_start > 0 else start_idx
             twin_of = {v.original_kf_id: v for v in vertices if v.id not in self.nodes}
-            successor = None
             # session keyframes without a twin (created before the hypothesis) are re-initialised by
             # composing the nearest twinned keyframe with the odometry chain
             for v in vertices:
                 if v.original_comp_id == 0 and v.id in self.nodes and v.id >= start_idx:
                     if v.id in twin_of:
                         v.pose = twin_of[v.id].pose
-            for v in vertices:
-                if v.original_comp_id == 0 and v.id in self.nodes and v.id >= start_idx and v.id not in twin_of:
-                    # walk forward along odometry edges to the first twinned keyframe
-                    chain, cur, ok = [], v.id, False
-                    if successor is None:      # first odometry edge out of each keyframe (edge insertion order)
-                        successor = {}
-                        for (a, b) in self.odom_edges:
-                            successor.setdefault(a, b)
-                    for _ in range(10000):
-                        nxt = successor.get(cur)
-                        if nxt is None:
-                            break
-                        chain.append((cur, nxt))
-                        cur = nxt
-                        if cur in twin_of:
-                            ok = True
-                            break
-                    if ok:
-                        T = twin_of[cur].pose
-                        for (a, b) in reversed(chain):
-                            T = T @ self.odom_edges[(a, b)].mean.Inv()
-                        v.pose = T
+            todo = [v for v in vertices
+                    if v.original_comp_id == 0 and v.id in self.nodes and v.id >= start_idx and v.id not in twin_of]
+            if todo:
+                successor = {}             # first odometry edge out of each keyframe (edge insertion order)
+                for (a, b) in self.odom_edges:
+                    successor.setdefault(a, b)
+                poses = chain_poses([v.id for v in todo], twin_of, successor, self.odom_edges)
+                for v in todo:
+                    if v.id in poses:
+                        v.pose = poses[v.id]
         self.vertices = vertices
         self.edges = edges
         self.vertex_map = {v.id: v for v in vertices}
