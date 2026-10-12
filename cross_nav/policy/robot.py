@@ -160,13 +160,13 @@ class NavigationAgent:
 
 class TrajectoryPlanner:
     """Direct trajectory head + frozen backbone in this process (CUDA)."""
-    def __init__(self, head_checkpoint, backbone_checkpoint, scale='odometry', grid=(12, 16), device='cuda'):
+    def __init__(self, head_checkpoint, backbone_checkpoint, scale='odometry', grid=(12, 16), device='cuda', flow_temp=.5):
         import torch
         from types import SimpleNamespace
         from .server import Policy
         self.torch = torch
         self.policy = Policy(SimpleNamespace(backbone=backbone_checkpoint, head=head_checkpoint, grid=grid, scale=scale,
-                                             flow_steps=10, seed=0))
+                                             flow_steps=10, seed=0, flow_temp=flow_temp))
         self.history_m = (0., .5, 1., 2.)
 
     def __call__(self, images, goal, hist_chord, trail=None):
