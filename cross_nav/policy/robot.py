@@ -61,8 +61,9 @@ def pure_pursuit(path, v_max=.5, w_max=1., lookahead=.4, turn_only=math.radians(
 
 class NavigationAgent:
     def __init__(self, planner, history_m=None, arrive_m=.2, v_max=.5, w_max=1., lookahead=.4, max_frames=1024,
-                 camera_height=.8, store_m=.1, store_deg=10., replan_every=1):
+                 camera_height=.8, store_m=.1, store_deg=10., replan_every=1, recovery=None):
         self.planner = planner
+        self.recovery = recovery                     # optional recovery.StuckRecovery (trajectory planner)
         self.history_m = tuple(history_m or getattr(planner, 'history_m', (0., .5, 1., 2.)))
         self.history_rule = getattr(planner, 'history_rule', None) or {'type': 'distance', 'm': list(self.history_m)}
         self.arrive_m, self.v_max, self.w_max, self.lookahead = arrive_m, v_max, w_max, lookahead
@@ -81,6 +82,8 @@ class NavigationAgent:
 
     def reset(self):
         self.frames.clear(); self.cum = 0.; self.last = None; self.tick = 0; self.plan = None
+        if self.recovery is not None:
+            self.recovery.reset()
         if hasattr(self.planner, 'reset'):
             self.planner.reset()
 
@@ -124,6 +127,8 @@ class NavigationAgent:
                                 window_odom=np.array([frames[i][1] for i in ids], np.float64))
         else:
             path = self.planner(imgs, goal_rel.astype(np.float32), hist, trail=self.trail(pose, frames))
+            if self.recovery is not None:
+                path = self.recovery(pose, path)
         path = np.asarray(path, np.float64)
         self.plan = np.vstack((np.asarray(pose[:2], np.float64)[None], to_odom_2d(path, pose)))
         v, w = pure_pursuit(path, self.v_max, self.w_max, self.lookahead)

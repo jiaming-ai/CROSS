@@ -24,6 +24,7 @@ from torch.nn import functional as F
 
 from .backbone import FrozenMetricTokens, sha256
 from .head import TrajectoryHead
+from .recovery import StuckRecovery
 from .sim import wire
 
 
@@ -113,6 +114,9 @@ def main():
     p.add_argument('--record'); p.add_argument('--tag', default='rec'); p.add_argument('--shard', type=int, default=512)
     p.add_argument('--grid', type=int, nargs=2, default=(12, 16)); p.add_argument('--scale', choices=['mono', 'odometry'], default='mono')
     p.add_argument('--max-batch', type=int, default=32); p.add_argument('--flow-steps', type=int, default=10)
+    p.add_argument('--recover-window', type=int, default=0, help='stuck recovery (recovery.py) after this many planning '
+                   'steps with < --recover-disp m displacement; 0 = off')
+    p.add_argument('--recover-disp', type=float, default=.3); p.add_argument('--recover-turn', type=float, default=90.)
     p.add_argument('--seed', type=int, default=0); p.add_argument('--workers', type=int, default=0,
                                                                   help='exit after this many workers have connected and left')
     a = p.parse_args()
@@ -127,7 +131,7 @@ def main():
         os.unlink(a.socket)
     listener = Listener(a.socket, family='AF_UNIX')
     listener._listener._socket.setblocking(False)
-    conns, frames, odoms, seen, done = [], {}, {}, 0, 0
+    conns, frames, odoms, recover, seen, done = [], {}, {}, {}, 0, 0
     info = {'head': a.head, 'head_cfg': policy.head.cfg if policy.head else None, 'grid': list(policy.grid), 'scale': a.scale,
             'history_m': list(bev.history_m) if bev else [0., .5, 1., 2.], 'bev': a.bev,
             'history_rule': getattr(bev, 'history_rule', None) if bev else None}
@@ -156,7 +160,7 @@ def main():
             if cmd == 'info':
                 wire.send(c, info)
             elif cmd == 'end':
-                frames.pop(m['ep'], None); odoms.pop(m['ep'], None)
+                frames.pop(m['ep'], None); odoms.pop(m['ep'], None); recover.pop(m['ep'], None)
                 if bev is not None:
                     bev.end_episode(m['ep'])
                 wire.send(c, {})
@@ -195,6 +199,12 @@ def main():
             else:
                 feat = policy(imgs, hist)
                 paths = policy.predict(feat, goal, hist, torch.from_numpy(trails).cuda()).cpu().numpy() if policy.head is not None and any(m['predict'] for _, m in part) else None
+                if paths is not None and a.recover_window:
+                    for j, (_, m) in enumerate(part):
+                        pose = odoms.get(m['ep'], {}).get(m['frame_idx'])
+                        if m.get('predict') and pose is not None:
+                            rec = recover.setdefault(m['ep'], StuckRecovery(a.recover_window, a.recover_disp, a.recover_turn))
+                            paths[j] = rec(pose, paths[j])
             if writer is not None and feat is not None:
                 cpu = {k: v.cpu() for k, v in feat.items()}
                 for j, (_, m) in enumerate(part):

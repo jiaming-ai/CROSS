@@ -186,3 +186,18 @@ def test_odometry_step_integrates_and_drifts():
     np.testing.assert_allclose(o, [.8, .5, math.pi / 2], atol=1e-12)
     o2 = odometry_step(np.zeros(3), (1., 0.), 0., rng, .05, np.array([.05, 0.]))
     assert not np.allclose(o2[:2], [1., 0.])
+
+
+def test_stuck_recovery_turns_in_place_then_returns_control():
+    from cross_nav.policy.recovery import StuckRecovery
+    rec, path = StuckRecovery(window=5, min_disp=.3, turn_deg=90.), np.array([[.5 * (i + 1), 0.] for i in range(16)])
+    for k in range(4):                                       # moving normally: the policy path passes through
+        assert rec((.25 * k, 0., 0.), path) is path
+    for _ in range(5):                                       # stuck at one spot
+        out = rec((1., 0., 0.), path)
+    assert out[0, 0] == 0 and out[0, 1] > 0                  # turn left in place
+    assert rec((1., 0., math.radians(45)), path)[0, 1] > 0   # still turning
+    assert rec((1., 0., math.radians(90)), path) is path     # turned: control back to the policy
+    for _ in range(5):
+        out = rec((1., 0., math.radians(90)), path)
+    assert out[0, 1] < 0                                     # second recovery turns the other way
