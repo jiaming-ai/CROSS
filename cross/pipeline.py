@@ -53,6 +53,15 @@ MONO_ESTIMATORS = ("da3", "ff")
 NAMED_ODOMETRY = ("external", "basalt", "visual", "vio", "vgio")
 BASALT_ODOM_FILE = "odom_vio.txt"
 PROFILES = ("local", "cloud")
+# the shipped modes by the name of their file (configs/<profile>/<name>.yaml): --mode <name> selects the sensor mode,
+# the odometry and the mono back end in one word (the same as --mode <sensor> --odometry ... --mono-estimator ...)
+MODE_FILES = {
+    "stereo_wheel": ("stereo", "external", "da3"), "stereo_basalt": ("stereo", "basalt", "da3"),
+    "stereo_imu": ("stereo", "vgio", "da3"), "stereo_dpvo": ("stereo", "visual", "da3"),
+    "rgbd_wheel": ("rgbd", "external", "da3"), "rgbd_basalt": ("rgbd", "basalt", "da3"), "rgbd_dpvo": ("rgbd", "visual", "da3"),
+    "mono_wheel": ("mono", "external", "ff"), "mono_basalt": ("mono", "basalt", "ff"), "mono_imu": ("mono", "vgio", "ff"),
+    "mono_vio": ("mono", "vio", "ff"), "mono_dpvo": ("mono", "visual", "da3"),
+}
 # deprecated profile name: --profile local-fast = --profile local --fast
 
 
@@ -353,6 +362,7 @@ def mode_config_files(mode: str, odometry: str, profile: str = "local", mono_est
 
 def shipped_config_files(args) -> list:
     """mode_config_files for a runner's parsed session arguments (add_session_args; finish_session_args)."""
+    finish_session_args(args)
     mono_estimator = getattr(args, "mono_estimator", None) if args.mode == "mono" else None
     return mode_config_files(args.mode, getattr(args, "odometry_name", args.odometry), getattr(args, "profile", "local"),
                              mono_estimator, fast=getattr(args, "fast", False))
@@ -610,18 +620,22 @@ def server_session(open_msg, device="cuda"):
 def add_session_args(ap):
     """Mode / odometry options shared by the map-and-relocalize runners."""
     import os
-    ap.add_argument("--mode", choices=MODES, default=None,
-                    help="sensor mode (default: the runner's own: rgbd for posed RGB-D, stereo / rgbd for --estimator ff / pnp)")
-    ap.add_argument("--odometry", choices=NAMED_ODOMETRY, default="external",
+    ap.add_argument("--mode", choices=tuple(MODE_FILES) + MODES, default=None, metavar="MODE",
+                    help="a shipped mode by its file name (configs/<profile>/<mode>.yaml): " + ", ".join(MODE_FILES) +
+                         "; or a sensor mode (rgbd, stereo, mono) with --odometry / --mono-estimator (default: the runner's "
+                         "own: rgbd for posed RGB-D, stereo for stereo sequences)")
+    ap.add_argument("--odometry", choices=NAMED_ODOMETRY, default=None,
                     help="external: the dataset's odometry (wheel, INS); basalt: external odometry from the sequence's "
                          f"Basalt stereo-inertial VIO file ({BASALT_ODOM_FILE}, or --odom-file); "
                          "visual: DPVO visual odometry scaled by the mode's depth; "
                          "vio (mono mode): DPVO scaled by the IMU (imu.txt / imu.json next to the images); "
                          "vgio (mono mode with --mono-estimator ff, or stereo mode): IMU odometry corrected by "
-                         "VGGT-Omega relative poses in a local pose graph (stereo: metric scale from the stereo pair)")
-    ap.add_argument("--mono-estimator", choices=MONO_ESTIMATORS, default="da3",
+                         "VGGT-Omega relative poses in a local pose graph (stereo: metric scale from the stereo pair); "
+                         "default external (set by --mode <mode file>)")
+    ap.add_argument("--mono-estimator", choices=MONO_ESTIMATORS, default=None,
                     help="mono mode back end: da3 (learned metric depth, cross/mono) or ff (the stereo mode's "
-                         "VGGT-Omega multi-view estimator, metric scale from the odometry and the map)")
+                         "VGGT-Omega multi-view estimator, metric scale from the odometry and the map); default da3 "
+                         "(set by --mode <mode file>)")
     ap.add_argument("--dpvo-checkpoint", default=os.environ.get("CROSS_DPVO_CHECKPOINT", "models/dpvo.pth"))
     ap.add_argument("--mono-profile", default="configs/mono_benchmark_10hz.json",
                     help="mono mode (and the IMU options of --odometry vgio): cross.mono.run arguments (JSON with an "
@@ -738,9 +752,27 @@ def confirm_config_risks(risks, accept: bool = False):
 
 
 def finish_session_args(args):
-    """(In place) the runners' session arguments after parsing: --odometry basalt is external odometry from the
-    Basalt VIO file (args.odom_file, default BASALT_ODOM_FILE; args.odometry_name keeps the name for the shipped
-    configuration); the deprecated --profile local-fast is --profile local --fast."""
+    """(In place) the runners' session arguments after parsing: --mode <mode file> sets the sensor mode, the odometry
+    and the mono back end (an explicit --odometry / --mono-estimator must agree); --odometry basalt is external
+    odometry from the Basalt VIO file (args.odom_file, default BASALT_ODOM_FILE; args.odometry_name keeps the name for
+    the shipped configuration); the deprecated --profile local-fast is --profile local --fast.  Idempotent."""
+    if hasattr(args, "odometry_name"):
+        return args
+    if args.mode in MODE_FILES:
+        name = args.mode
+        args.mode, odometry, estimator = MODE_FILES[name]
+        for key, want in (("odometry", odometry), ("mono_estimator", estimator)):
+            given = getattr(args, key, None)
+            if given is not None and given != want and not (key == "mono_estimator" and args.mode != "mono"):
+                raise ValueError(f"--mode {name} is --{key.replace('_', '-')} {want}, not {given}")
+            setattr(args, key, want)
+    if getattr(args, "odometry", None) is None:
+        args.odometry = "external"
+    if getattr(args, "mono_estimator", None) is None:
+        # the VGGT-inertial odometry runs on the VGGT-Omega (feed-forward) back end only
+        args.mono_estimator = "ff" if args.odometry == "vgio" else "da3"
+    elif args.mode == "mono" and args.odometry == "vgio" and args.mono_estimator != "ff":
+        raise ValueError("--odometry vgio runs on the VGGT-Omega back end (--mono-estimator ff), not da3")
     args.odometry_name = args.odometry
     if args.odometry == "basalt":
         args.odometry = "external"

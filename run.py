@@ -3,12 +3,13 @@
 CROSS — Run topological mapping on an RGB-D dataset.
 
 Usage:
-    python run.py <dataset_path> [options]                  # RGB-D mode (PnP on depth)
-    python run.py <stereo_sequence> --mode stereo [options] # stereo mode (feed-forward estimator, stereo scale)
-    python run.py <dataset_path> --mode mono [options]      # mono mode (RGB only: DPVO, learned metric depth)
+    python run.py <dataset_path> [options]                        # RGB-D with the dataset's odometry (rgbd_wheel)
+    python run.py <stereo_sequence> --mode stereo_wheel [options] # stereo mode (VGGT-Omega, stereo scale)
+    python run.py <dataset_path> --mode mono_imu [options]        # one camera + IMU
 
-Every mode runs with the dataset's odometry (--odometry external, default) or without it (--odometry visual: DPVO
-visual odometry, metric scale from the mode's depth; needs install.sh --mono).
+--mode takes one of the twelve shipped modes (configs/<profile>/<mode>.yaml): stereo_{wheel,basalt,imu,dpvo},
+rgbd_{wheel,basalt,dpvo}, mono_{wheel,basalt,imu,vio,dpvo} (docs/USAGE.md section 1); or a sensor mode (rgbd, stereo,
+mono) with --odometry / --mono-estimator.
 
 Examples:
     python run.py data/r3d/lab2.r3d
@@ -16,8 +17,8 @@ Examples:
     python run.py data/rosbag/topomap_ssi_1 --loader rosbag
     python run.py data/posed/home1-1 --loader posed                       # posed RGB-D folder (e.g. OpenLORIS)
     python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/overlays/outdoor.yaml
-    python run.py data/posed/home1-1 --loader posed --odometry visual --no-viz            # RGB-D, visual odometry
-    python run.py data/posed/home1-1 --loader posed --mode mono --odometry visual         # RGB only
+    python run.py data/posed/home1-1 --loader posed --mode rgbd_dpvo --no-viz             # RGB-D, visual odometry
+    python run.py data/posed/home1-1 --loader posed --mode mono_dpvo                      # RGB only
 """
 
 import argparse
