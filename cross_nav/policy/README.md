@@ -50,7 +50,7 @@ Two navigation systems share one robot interface (`cross_nav/policy/robot.py`) a
 in Habitat (`cross_nav/policy/sim/`, HSSD scenes, point goals 1.5-20 m, success within 0.2 m):
 
 - **Trajectory policy** (`TrajectoryPlanner`): this direct head, trained on expert, DAgger and real-robot data, with an
-  odometry trail (past positions) as memory and stuck recovery (`recovery.py`, on by default).
+  odometry trail (past positions) as memory, stuck recovery (`recovery.py`) and flow temperature 0.5 (both defaults).
 - **BEV + planner** (`BEVPlanner`): the BEV occupancy and observability heads, an episode map in the odometry frame
   (fusion + A*) and the closed-loop rules in `configs/policy/bev_planner_best.json` (`bev_planner.json` is the
   frozen planner without them).
@@ -67,6 +67,10 @@ for rgb, pose, t in camera_and_odometry():      # pose (x, y, yaw), REP-103; t i
         break
     publish(out['cmd'])                         # (v m/s, omega rad/s); out['path_odom'] for display
 ```
+
+Final simulation test (10 held-out HSSD scenes, 497 point-goal episodes, success within 0.2 m): BEV + planner 96.2%
+(95.6% with random camera mounts), trajectory policy 94.0% (92.6%) with shorter routes but about twice the obstacle
+contacts.
 
 Requirements and behaviour on a robot:
 
