@@ -13,8 +13,8 @@ import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
-import yaml
 
+from vggt_ft import load_yaml
 from vggt_ft.dataio.transforms import target_shape
 from vggt_ft.dataio.windows import DatasetPool, WindowSampler, materialise
 from vggt_ft.evaluate import load_model
@@ -128,7 +128,7 @@ def main():
                     help="symmetric: the head's training target (min of both directions); oneway: the overlap of one view "
                          "in the other (CROSS's geometric gate measures reference -> current), both directions per pair")
     a = ap.parse_args()
-    cfg = yaml.safe_load(open(a.config))
+    cfg = load_yaml(a.config)
     dc = cfg["data"]
     pools = []
     for n, c in dc["datasets"].items():

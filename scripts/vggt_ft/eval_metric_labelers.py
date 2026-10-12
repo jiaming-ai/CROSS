@@ -19,8 +19,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 
+from vggt_ft import load_yaml
 from vggt_ft.dataio.scene import load_scene
 from vggt_ft.dataio.transforms import target_shape
 from vggt_ft.dataio.windows import materialise
@@ -98,7 +98,7 @@ def main():
     ap.add_argument("--max_windows", type=int, default=40)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
-    suite = yaml.safe_load(open(a.suite))
+    suite = load_yaml(a.suite)
     model = load_model(a.ckpt)
     labelers = load_labelers(a.labelers, a.weights)
     wdir = Path(suite.get("windows_dir", Path(a.suite).with_suffix("")))

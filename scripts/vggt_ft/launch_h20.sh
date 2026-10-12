@@ -8,6 +8,7 @@ set -e
 CFG=$1; shift
 cd ${CODE_DIR:-/mnt/datasets-livsyn/jz/code/CROSS-ft}     # CODE_DIR: another deployed copy
 . /mnt/datasets-livsyn/jz/envs/ft/bin/activate
+export VGGT_FT_ROOT=${VGGT_FT_ROOT:-/mnt/datasets-livsyn/jz}   # ${VGGT_FT_ROOT} in configs/vggt_ft/*.yaml
 export CUDA_VISIBLE_DEVICES=${GPUS:-0,1,2,3,4,5,6,7}
 NPROC=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
 export NCCL_IB_DISABLE=0 NCCL_IB_HCA=mlx5_1,mlx5_2,mlx5_3,mlx5_4 NCCL_IB_GID_INDEX=7 NCCL_SOCKET_IFNAME=eth0

@@ -2,9 +2,10 @@
    Gauge of the released VGGT-Omega vs our GT normalisation (unit mean point distance of the window, frame 0 at the
 origin): per window, median of predicted depth / normalised GT depth, and median of |t_pred| / |t_gt| over frames > 0."""
 import json, sys
-import numpy as np, torch, yaml
+import numpy as np, torch
 from pathlib import Path
 from vggt_omega.utils.pose_enc import encoding_to_camera
+from vggt_ft import load_yaml
 from vggt_ft.dataio.scene import load_scene
 from vggt_ft.dataio.windows import materialise
 from vggt_ft.dataio.transforms import target_shape
@@ -12,7 +13,7 @@ from vggt_ft.geometry import normalize_window, gt_covisibility, connected_to_ref
 from vggt_ft.evaluate import load_model
 
 model = load_model(sys.argv[1])
-suite = yaml.safe_load(open("configs/vggt_ft/eval_suite.yaml"))
+suite = load_yaml("configs/vggt_ft/eval_suite.yaml")
 wd = Path(suite["windows_dir"])
 out = {}
 for name in ["eth3d", "nrgbd", "dtu", "hiroom", "7scenes", "openloris_seq", "simchange_seq", "tum_dynamic"]:

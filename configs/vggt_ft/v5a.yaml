@@ -12,13 +12,13 @@
 # windows (TartanAir variant / trajectory sessions, Map-free, VKITTI2 variants, Hypersim cameras) and grouped negatives.
 # Distances in the sampler are in units of the sequence's median depth (cross_radius, neg_dist).
 exp_name: v5a
-pretrained: /mnt/datasets-livsyn/jz/ckpt/vggt_omega_1b_512.pt
-out_dir: /mnt/datasets-livsyn/jz/runs
+pretrained: ${VGGT_FT_ROOT}/ckpt/vggt_omega_1b_512.pt
+out_dir: ${VGGT_FT_ROOT}/runs
 resume: auto
 seed: 0
 log_every: 20
 data:
-  root: /mnt/datasets-livsyn/jz/cache
+  root: ${VGGT_FT_ROOT}/cache
   val_mod: 20
   frames: [2, 24]
   images_per_gpu: 64

@@ -43,13 +43,13 @@
 # Distances in the sampler are in units of the sequence's median depth (cross_radius, neg_dist).
 exp_name: vdl2_s1
 scale_head_cfg: {arch: dense, dropout: 0.1, context: local, canonical_hfov: 60}
-pretrained: /mnt/datasets-livsyn/jz/runs/vfin2_s0/ckpt_003000_ema_bf16.pt
-out_dir: /mnt/datasets-livsyn/jz/runs
+pretrained: ${VGGT_FT_ROOT}/runs/vfin2_s0/ckpt_003000_ema_bf16.pt
+out_dir: ${VGGT_FT_ROOT}/runs
 resume: auto
 seed: 1
 log_every: 20
 data:
-  root: /mnt/datasets-livsyn/jz/cache
+  root: ${VGGT_FT_ROOT}/cache
   val_mod: 20
   zoom: [0.5, 1.0]
   frames: [1, 24]
@@ -98,4 +98,4 @@ train:
   keep_every: 1000
 loss: {w_camera: 5.0, w_depth: 1.0, w_point: 1.0, w_scale: 1.0, w_covis: 0.0, mask_unobservable: unconnected_other_session,
        distill: false, w_scale_dense: 1.0,
-       da3_teacher: {weights: /mnt/datasets-livsyn/jz/ckpt/labelers, datasets: [dl3dv], w: 0.5}, w_distill_pose: 1.0, w_distill_depth: 0.5}
+       da3_teacher: {weights: "${VGGT_FT_ROOT}/ckpt/labelers", datasets: [dl3dv], w: 0.5}, w_distill_pose: 1.0, w_distill_depth: 0.5}

@@ -5,6 +5,7 @@
 GPU=$1; shift
 RUNS=${RUNS:-/mnt/datasets-livsyn/jz/runs}; EVAL=${EVAL:-/mnt/datasets-livsyn/jz/eval}
 cd "$(dirname "$0")/../.." && . /mnt/datasets-livsyn/jz/envs/ft/bin/activate
+export VGGT_FT_ROOT=${VGGT_FT_ROOT:-/mnt/datasets-livsyn/jz}   # ${VGGT_FT_ROOT} in configs/vggt_ft/*.yaml
 while true; do
   for run in "$@"; do
     for ck in $(ls $RUNS/$run/${CKPT_GLOB:-ckpt_*_bf16.pt} 2>/dev/null); do

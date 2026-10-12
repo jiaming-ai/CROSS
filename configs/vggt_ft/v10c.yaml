@@ -7,14 +7,14 @@
 # {"model": ...} teacher-load bug does not apply); the student starts from `init`. 4 GPUs x 48 images (= v5a's 3 x 64).
 # The final model is the 0.7 blend with the released model, then heads only as vfin_s0 (-> vfin2).
 exp_name: v10c
-pretrained: /mnt/datasets-livsyn/jz/ckpt/vggt_omega_1b_512.pt
-init: /mnt/datasets-livsyn/jz/runs/v5a/ckpt_010000_ema_bf16.pt
-out_dir: /mnt/datasets-livsyn/jz/runs
+pretrained: ${VGGT_FT_ROOT}/ckpt/vggt_omega_1b_512.pt
+init: ${VGGT_FT_ROOT}/runs/v5a/ckpt_010000_ema_bf16.pt
+out_dir: ${VGGT_FT_ROOT}/runs
 resume: auto
 seed: 0
 log_every: 20
 data:
-  root: /mnt/datasets-livsyn/jz/cache
+  root: ${VGGT_FT_ROOT}/cache
   val_mod: 20
   frames: [2, 24]
   images_per_gpu: 48

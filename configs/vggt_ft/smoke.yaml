@@ -1,11 +1,11 @@
 # Smoke test of the trainer on whatever is converted (TartanAir v2 first).
 exp_name: smoke
-pretrained: /mnt/datasets-livsyn/jz/ckpt/vggt_omega_1b_512.pt
-out_dir: /data0/jz/runs
+pretrained: ${VGGT_FT_ROOT}/ckpt/vggt_omega_1b_512.pt
+out_dir: ${VGGT_FT_ROOT}/runs
 seed: 0
 log_every: 5
 data:
-  root: /mnt/datasets-livsyn/jz/cache
+  root: ${VGGT_FT_ROOT}/cache
   frames: [2, 24]
   images_per_gpu: 48
   aspect: [0.5, 1.33]

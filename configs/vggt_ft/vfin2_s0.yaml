@@ -1,3 +1,7 @@
+# Recipe of the released checkpoint (Jamie-nus/VGGT-Omega-CROSS): v5a.yaml -> v10c.yaml (init v5a@10000 EMA) ->
+# scripts/vggt_ft/interpolate.py --alpha 0.7 on v10c@3000 EMA (= `pretrained` below) -> this config (heads only) ->
+# scripts/vggt_ft/calibrate_covis.py --map_geo (covis_head_map).  Paths: ${VGGT_FT_ROOT} (cache/, ckpt/, runs/, test/).
+# The earlier experiment configs named in these comments are in the tag vggt-ft-configs-2026-10-12.
 # vfin2_s0: vfin_s0 (multi-layer scale head + covisibility head, heads only, same data and steps) on the vfin2 pose
 # backbone = the 0.7 blend of v10c@3000 EMA (v5a@10000 EMA + close-range / people data) and the released model.
 # vfin_s0: final heads (multi-layer scale head + covisibility head) on the final pose backbone, the 0.7 blend of
@@ -27,13 +31,13 @@
 # Distances in the sampler are in units of the sequence's median depth (cross_radius, neg_dist).
 exp_name: vfin2_s0
 scale_head_cfg: {arch: multilayer, dropout: 0.1}
-pretrained: /mnt/datasets-livsyn/jz/runs/wise_v10c/ckpt_s3000a070_bf16.pt
-out_dir: /mnt/datasets-livsyn/jz/runs
+pretrained: ${VGGT_FT_ROOT}/runs/wise_v10c/ckpt_s3000a070_bf16.pt
+out_dir: ${VGGT_FT_ROOT}/runs
 resume: auto
 seed: 0
 log_every: 20
 data:
-  root: /mnt/datasets-livsyn/jz/cache
+  root: ${VGGT_FT_ROOT}/cache
   val_mod: 20
   zoom: [0.5, 1.0]
   frames: [2, 24]
