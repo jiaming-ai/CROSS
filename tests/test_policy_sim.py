@@ -273,3 +273,14 @@ def test_real_cache_skips_incomplete_episodes(tmp_path):
     assert windows('x', episode('cut', 30), rng, 400) == []           # frames missing
     bad = episode('badnpz', 40); (bad / 'trajectory.npz').write_bytes(b'xx')
     assert windows('x', bad, rng, 400) == []
+
+
+def test_stuck_recovery_time_window_ignores_planning_rate():
+    from cross_nav.policy.recovery import StuckRecovery
+    path = np.array([[.5 * (i + 1), 0.] for i in range(16)])
+    rec = StuckRecovery(window=100, window_s=10.)
+    for k in range(95):                                      # 9.4 s turning in place at 10 Hz: not yet stuck
+        assert rec((0., 0., .05 * k), path, stamp=.1 * k) is path
+    for k in range(95, 101):
+        out = rec((0., 0., 0.), path, stamp=.1 * k)
+    assert out is not path and out[0, 0] == 0                # 10 s without displacement: turn in place

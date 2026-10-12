@@ -153,7 +153,8 @@ class SocketPlanner:
                 self.on_server.add(keys[j])
         reply = self._send({**base, 'frame_idx': window[0], 'frame': images[0], 'predict': True, 'goal': goal,
                             'hist_chord': hist, 'trail': trail if trail is not None else np.zeros((5, 3), np.float32),
-                            'odom': odom, 'expect': expect, 'debug': self.debug, 'expert_dist': np.nan})
+                            'odom': odom, 'expect': expect, 'debug': self.debug, 'expert_dist': np.nan,
+                            'recover': False})                   # the agent applies its own stuck recovery
         self.on_server.add(keys[0])
         lo = min(window)                                   # the server drops frames older than the window
         self.on_server = {k for k in self.on_server if self.sent[k] >= lo}

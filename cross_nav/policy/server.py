@@ -114,8 +114,8 @@ def main():
     p.add_argument('--record'); p.add_argument('--tag', default='rec'); p.add_argument('--shard', type=int, default=512)
     p.add_argument('--grid', type=int, nargs=2, default=(12, 16)); p.add_argument('--scale', choices=['mono', 'odometry'], default='mono')
     p.add_argument('--max-batch', type=int, default=32); p.add_argument('--flow-steps', type=int, default=10)
-    p.add_argument('--recover-window', type=int, default=0, help='stuck recovery (recovery.py) after this many planning '
-                   'steps with < --recover-disp m displacement; 0 = off')
+    p.add_argument('--recover-window', type=int, default=20, help='stuck recovery (recovery.py) after this many planning '
+                   'steps with < --recover-disp m displacement; 0 = off (trajectory head only)')
     p.add_argument('--recover-disp', type=float, default=.3); p.add_argument('--recover-turn', type=float, default=90.)
     p.add_argument('--seed', type=int, default=0); p.add_argument('--workers', type=int, default=0,
                                                                   help='exit after this many workers have connected and left')
@@ -203,7 +203,7 @@ def main():
                 if paths is not None and a.recover_window:
                     for j, (_, m) in enumerate(part):
                         pose = odoms.get(m['ep'], {}).get(m['frame_idx'])
-                        if m.get('predict') and pose is not None:
+                        if m.get('predict') and pose is not None and m.get('recover', True):
                             rec = recover.setdefault(m['ep'], StuckRecovery(a.recover_window, a.recover_disp, a.recover_turn))
                             paths[j] = rec(pose, paths[j])
             if writer is not None and feat is not None:
