@@ -56,7 +56,7 @@ in Habitat (`cross_nav/policy/sim/`, HSSD scenes, point goals 1.5-20 m, success 
   frozen planner without them).
 - **Hybrid** (`HybridPlanner`, option): both on one backbone; the BEV planner drives and the trajectory head takes over
   for 20 s after a 15 s stall or less than 1 m of goal progress in 40 s (`configs/policy/hybrid_best.json`, time
-  windows when `step` gets stamps). HSSD val240 98.1% vs 97.3% for the BEV planner alone (mean of two runs).
+  windows when `step` gets stamps). HSSD val240 98.1% vs 97.3% for the BEV planner alone (mean of two runs); test above.
 
 ```python
 from cross_nav.policy.robot import NavigationAgent, TrajectoryPlanner, BEVPlanner
@@ -72,9 +72,9 @@ for rgb, pose, t in camera_and_odometry():      # pose (x, y, yaw), REP-103; t i
     publish(out['cmd'])                         # (v m/s, omega rad/s); out['path_odom'] for display
 ```
 
-Final simulation test (10 held-out HSSD scenes, 497 point-goal episodes, success within 0.2 m): BEV + planner 96.2%
-(95.6% with random camera mounts), trajectory policy 94.0% (92.6%) with shorter routes but about twice the obstacle
-contacts.
+Final simulation test (10 held-out HSSD scenes, 497 point-goal episodes, success within 0.2 m): hybrid 97.2% (95.8% with
+random camera mounts), BEV + planner 96.2% (95.6%), trajectory policy 94.0% (92.6%) with shorter routes but about twice
+the obstacle contacts.
 
 Requirements and behaviour on a robot:
 
