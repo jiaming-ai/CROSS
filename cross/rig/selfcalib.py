@@ -9,8 +9,8 @@ optionally LiDAR depth (cross/rig/recording.py).  From one or more recordings th
    motions over the same interval satisfy dA = X^-1 dB X.  R aligns A's rotation axes to B's; T from the linear system
    (R_dB - I) T = R t_dA - t_dB.  Metric, since ARKit is.
 3. Image refinement: SIFT matches between a B image and the A image nearest in time; the relative pose of the two
-   exposures is X composed with B's own motion between them (ARKit), so timing differences are compensated.  R, the
-   direction of T and d are refined by minimising the Sampson epipolar error (robust loss).
+   exposures is X composed with B's own motion between them (ARKit), so timing differences are compensated.  R and the
+   direction of T are refined by minimising the Sampson epipolar error (robust loss).
 4. LiDAR scale check: the inlier matches are triangulated with the refined rig and compared with B's LiDAR depth; the
    median ratio is the correction of the baseline length (an independent metric reference).
 
@@ -190,9 +190,11 @@ def collect_matches(recA: Recording, recB: Recording, d: float, n_frames: int = 
 
 
 def refine_with_images(recB: Recording, matches: List[ImageMatches], R: np.ndarray, T: np.ndarray, d: float,
-                       refine_offset: bool = True, f_px: float = 1300.0):
-    """(R, T, d, stats): rotation, translation direction (length kept) and clock offset minimising the Sampson
-    error of the matches, each pair compensated for B's motion between its two exposures."""
+                       refine_offset: bool = False, f_px: float = 1300.0):
+    """(R, T, d, stats): rotation and translation direction (length kept) minimising the Sampson error of the
+    matches, each pair compensated for B's motion between its two exposures.  refine_offset also refines the clock
+    offset; off by default: the matched frames are the calm ones (little blur / rolling shutter), where a few ms of
+    timing hardly change the geometry, so the angular-speed estimate stays the better one."""
     from scipy.optimize import least_squares
     if not matches:
         raise ValueError("no image matches")

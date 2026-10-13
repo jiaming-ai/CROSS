@@ -518,7 +518,7 @@ Phone B is the left camera, A the right one.  Per recording (`cross/rig/selfcali
    tracks over thousands of motion pairs; the walk has to turn.
 3. **Image refinement**: SIFT matches between a B image and the A image nearest in time; the relative pose of the two
    exposures includes the camera motion between them (from ARKit), so imperfect synchronisation does not bias it.
-   Rotation, translation direction and clock offset minimise the epipolar (Sampson) error.  `--no-images` skips it.
+   Rotation and translation direction minimise the epipolar (Sampson) error.  `--no-images` skips it.
 4. **Baseline length** from LiDAR: matches triangulated with the rig against phone B's LiDAR depth.
    `--no-lidar` keeps the hand-eye length.
 
