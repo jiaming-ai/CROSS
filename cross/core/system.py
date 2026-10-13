@@ -752,7 +752,7 @@ class System:
             "camera": self.cameras[0],
             "cameras": self._camera_columns(),
         }
-        if self._gravity_up_map is not None:
+        if getattr(self, "_gravity_up_map", None) is not None:
             save_data["gravity_up_map"] = [float(x) for x in self._gravity_up_map]
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
@@ -2098,10 +2098,11 @@ class System:
     def _gravity_attach(self, kf):
         """The keyframe keeps the current gravity (up in its camera frame); the map session's first one fixes the map
         frame's up direction (stored with the map)."""
-        if self._gravity_now is None:
+        g = getattr(self, "_gravity_now", None)
+        if g is None:
             return
-        kf.gravity = self._gravity_now.copy()
-        if self._gravity_up_map is None and self._session_start_kf_id == 0:
+        kf.gravity = g.copy()
+        if getattr(self, "_gravity_up_map", None) is None and self._session_start_kf_id == 0:
             R = kf.pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)[:3, :3]
             up = R @ kf.gravity
             self._gravity_up_map = up / np.linalg.norm(up)
