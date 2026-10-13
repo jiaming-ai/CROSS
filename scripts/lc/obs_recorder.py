@@ -3,6 +3,7 @@
 Non-invasive hooks on a `System` instance write one JSON line per observation step:
     step        System._processed_frame_num of the observation (1 = first frame of the session)
     retrieved   ids of the retrieved keyframes that entered the forward pass (after max_refs), with their scores
+    pass        the forward pass's references in order: [keyframe id, verified]; raw["T"] holds the verified ones' poses
     raw         the estimator's output for those references: valid mask, confidence, relative pose T_ref_cur
                 (7: x y z qx qy qz qw) for the valid ones, the metric-scale correction it applied, and the metric
                 camera-to-world poses of all views of the pass (feed-forward estimator: index 0 = current view)
@@ -89,7 +90,9 @@ class ObsRecorder:
             ret = orig_cod(*a, **kw)
             try:
                 kept = [int(k.id) for k in ret.get("valid_keyframes", [])]
+                audit = ret.get("retrieval_audit") or []
                 rec = {"step": int(system._processed_frame_num), "retrieved": self._retrieved, "raw": self._raw,
+                       "pass": [[int(x["keyframe_id"]), bool(x["verified"])] for x in audit],
                        "kept": kept,
                        "h0_ok": ret.get("h0_ok"), "h0_chi2": [None if c is None else round(float(c), 3) for c in (ret.get("h0_chi2") or [])],
                        "h0_loop": [bool(x) for x in (ret.get("h0_loop") or [])],
