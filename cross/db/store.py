@@ -345,6 +345,18 @@ def _to_numpy_image(t: torch.Tensor) -> np.ndarray:
 # live spool: images of a running session beyond the newest N are encoded and dropped from memory
 # --------------------------------------------------------------------------------------------------------------------
 
+_SPOOL_DIRS = set()             # spool directories not removed yet: the exit hook removes what close() did not
+
+
+def _remove_spool_dirs():
+    for d in list(_SPOOL_DIRS):
+        shutil.rmtree(d, True)
+    _SPOOL_DIRS.clear()
+
+
+atexit.register(_remove_spool_dirs)
+
+
 class ImageSpool:
     """Live-run handling of keyframe images (format v2), in background threads:
     - encode_ahead: every new keyframe's images are encoded right away into a spool pack; the keyframe keeps its
@@ -352,8 +364,9 @@ class ImageSpool:
       session saves in seconds, not minutes).  Results are unchanged: the tensors stay what they were.
     - max_ram > 0: only the newest max_ram keyframes keep their images as tensors; older ones are replaced by their
       encoded references (decoded again on access) and dropped from memory.
-    The spool lives in `spill_dir` (default: a temporary directory removed at exit); after a save the encoded images
-    are re-pointed to the map's pack and later ones are written there (retarget)."""
+    The spool lives in `spill_dir` (default: a temporary directory), removed by close() when its session is released
+    (a runner such as T3 makes hundreds of sessions in one process) or at exit; after a save the encoded images are
+    re-pointed to the map's pack and later ones are written there (retarget)."""
 
     def __init__(self, cfg, max_ram: int, encode_ahead: bool = True):
         self.cfg = cfg
@@ -365,7 +378,7 @@ class ImageSpool:
             self.dir = Path(tempfile.mkdtemp(prefix="cross_spool_", dir=root))
         else:
             self.dir = Path(tempfile.mkdtemp(prefix="cross_spool_"))
-        atexit.register(shutil.rmtree, str(self.dir), True)
+        _SPOOL_DIRS.add(str(self.dir))
         self.pack = ImagePack.create(self.dir)
         self.resident = OrderedDict()              # kf id -> (keyframe whose images are still tensors, its encoding)
         # FIFO: a keyframe's encoding is taken before its eviction, so an eviction waiting for it cannot deadlock
@@ -407,6 +420,26 @@ class ImageSpool:
         for p in self.pending:
             p.result()
         self.pending = []
+
+    def close(self) -> None:
+        """Remove the spool directory (the session is done: its keyframes go with it).  A pack it re-pointed to by a
+        save (retarget) lives in the map's directory and stays."""
+        try:
+            self.flush()
+        except Exception:
+            pass
+        self.pool.shutdown(wait=True)
+        self.resident.clear()
+        d = str(self.dir)
+        if d in _SPOOL_DIRS:
+            with ImagePack._open_lock:
+                for key in [k for k, p in ImagePack._open.items() if Path(k).parent == Path(os.path.realpath(d))]:
+                    p = ImagePack._open.pop(key)
+                    if p._fd is not None and p._pid == os.getpid():
+                        os.close(p._fd)
+                        p._fd = None
+            shutil.rmtree(d, True)
+            _SPOOL_DIRS.discard(d)
 
     def retarget(self, pack: ImagePack) -> None:
         """Spill into a saved map's pack from now on (after save_map re-pointed the spooled images to it): later saves

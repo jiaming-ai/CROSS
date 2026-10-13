@@ -264,6 +264,12 @@ class KeyframeDatabase:
         self._id_to_row[int(self._row_kf[buffer_idx].id)] = buffer_idx
         self.spatial.remap_row(last_idx, buffer_idx)
 
+    def close(self) -> None:
+        """Release the session's image spool (its temporary directory); the database is not used afterwards."""
+        if self._spool is not None:
+            self._spool.close()
+            self._spool = None
+
     def get_size(self):
         return self._current_size
     

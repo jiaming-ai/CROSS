@@ -287,6 +287,7 @@ class Pipeline:
             if hasattr(system, name):
                 setattr(system, name, None)
         if getattr(system, "db", None) is not None:
+            system.db.close()
             system.db.vpr_model = None
             system.db = None
         self.frontend = self.mapper = None
