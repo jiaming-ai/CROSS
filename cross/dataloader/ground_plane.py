@@ -65,8 +65,9 @@ class GroundPlaneGravity:
     """Per-frame up direction from floor fits every `every` frames, carried by the odometry's rotation in between (and
     blended with each new fit)."""
 
-    def __init__(self, every: int = 20, blend: float = 0.5, **fit_kw):
+    def __init__(self, every: int = 20, blend: float = 0.5, max_jump_deg: float = 15.0, **fit_kw):
         self.every, self.blend, self.fit_kw = int(every), float(blend), fit_kw
+        self.cos_jump = float(np.cos(np.radians(max_jump_deg)))   # a fit this far from the carried estimate is a wall
         self.up_c: Optional[np.ndarray] = None       # current up direction in the current camera frame
         self.n = 0
 
@@ -78,7 +79,7 @@ class GroundPlaneGravity:
         if self.n % self.every == 0:
             hint = self.up_c if self.up_c is not None else np.array([0.0, -1.0, 0.0])
             n, frac = floor_normal(depth_fn(), K, up_hint=hint, **self.fit_kw)
-            if n is not None:
+            if n is not None and (self.up_c is None or float(n @ self.up_c) >= self.cos_jump):
                 if self.up_c is None:
                     self.up_c = n
                 else:
