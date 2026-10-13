@@ -724,6 +724,19 @@ class FeedForwardConfig:
     # focal of a canonical-camera scale head (vggt_ft DenseScaleHead with canonical_hfov): "calibrated" (the camera's
     # intrinsics, set by the system) or "predicted" (the model's own FoV). Heads without a canonical camera ignore it.
     scale_focal: str = "calibrated"
+    # RGB-D mode with this estimator (configs/modes/rgbd_ff_*.yaml): the metric scale of a pass from the measured depth
+    # (sensor depth of the current frame and, with depth_scale_views "all", the stored depth of the references): median
+    # ratio of measured to predicted depth over pixels with measured depth in [depth_scale_min_depth,
+    # depth_scale_max_depth] and model confidence in the top (1 - depth_scale_conf_quantile) (cross/cv/depth_scale.py).
+    # It replaces the anchors when valid (a view needs depth_scale_min_pixels such pixels); otherwise the anchors /
+    # scale_source decide as without it.  Off: the stereo / mono modes (no depth)
+    depth_scale: bool = False
+    depth_scale_views: str = "current"   # current | all (current frame and references with stored depth)
+    depth_scale_min_depth: float = 0.2
+    depth_scale_max_depth: float = 10.0
+    depth_scale_conf_quantile: float = 0.5
+    depth_scale_min_pixels: int = 200
+    depth_scale_std_floor: float = 0.02
     # cross_nav BEV traversability head (heads file of cross_nav.train, trained on this checkpoint's backbone; "" = off):
     # after the pass's metric scale is solved, P(occupied) on a gravity-aligned grid around the current view
     # (PoseEstFeedForward.last_bev; gravity from set_gravity, e.g. the IMU, else the head's estimate); every n-th pass
