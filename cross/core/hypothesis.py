@@ -251,6 +251,9 @@ class HypothesisManager:
         self.reloc_unique_evidence = cfg.reloc_unique_evidence
         self.reloc_unique_min_dist = cfg.reloc_unique_min_dist
         self.reloc_min_frames = cfg.reloc_min_frames
+        self.reloc_placement_min_steps = int(getattr(cfg, "reloc_placement_min_steps", 3))
+        self.placement_stats = {"waited": 0, "disagreed": 0}
+        self._placement_pending: Dict[int, Any] = {}
         self.h0_innovation_gate = cfg.h0_innovation_gate
         self.reloc_association_evidence = cfg.reloc_association_evidence
         self.reloc_detection_prob = cfg.reloc_detection_prob
@@ -1430,6 +1433,7 @@ class HypothesisManager:
                 & (log_c_pos_hit_rate >= self.detect_overlap_hitrate_thresh) \
                 & (log_conf_hit_rate >= self.detect_conf_hitrate_thresh) \
                 & separation_gate & enough & heavy & not_rejected
+            self._placement_gate(realized_ids, detected_mask)
 
             for j, component in enumerate(realized_ids.tolist()):
                 self.last_loop_audit["candidates"].append({
@@ -1465,6 +1469,25 @@ class HypothesisManager:
 
         return { 'loop_closure': False, 'loop_closure_hypo_id': None }
     
+    def _placement_gate(self, realized_ids, detected_mask):
+        """Placement hypotheses (hypothesis.reloc_placement), relocalization sessions: a detected merge candidate is
+        merged only when its implied session placement dominates the competing ones, or agrees with the placement the
+        session already joined with (in place on detected_mask)."""
+        tracker = getattr(self.system, "_placement", None)
+        if tracker is None or int(getattr(self.system, "_session_start_kf_id", 0)) == 0 or not bool(detected_mask.any()):
+            return
+        for j, comp in enumerate(realized_ids.tolist()):
+            if not bool(detected_mask[j]):
+                continue
+            T_k = pp.SE3(self.dist[0][comp].detach().double().cpu()).matrix().numpy()
+            ok, why, tr = tracker.decide(tracker.implied(T_k), min_steps=self.reloc_placement_min_steps)
+            if ok:
+                self._placement_pending[int(comp)] = tr
+                continue
+            detected_mask[j] = False
+            self.placement_stats["disagreed" if "disagrees" in why else "waited"] += 1
+            logger.debug(f"merge candidate {comp} held ({why}); placements {tracker.summary(3)}")
+
     def handle_loop_closure(
         self, hypo_id: int, target_node_id: Optional[int] = None, apply: bool = True, global_opt: bool = False,
         window_ref: Optional[int] = None,
@@ -1673,6 +1696,11 @@ class HypothesisManager:
 
         # Step 3: Apply updates via unified method (also used by async engine); apply=False returns the solution without
         # writing it back (the verified loop closure tests it first and discards it when new edges turn out outliers)
+        if apply and hypo_id != 0 and int(hypo_id) in self._placement_pending:
+            tracker = getattr(self.system, "_placement", None)
+            if tracker is not None and tracker.current is None:
+                tracker.commit(self._placement_pending[int(hypo_id)])
+                logger.info(f"placement: session joined the map with {tracker.summary(1)}")
         if apply:
             applied = self.apply_pgo_result({
                 "success": True,
