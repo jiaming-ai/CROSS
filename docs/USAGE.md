@@ -497,6 +497,36 @@ Gravity from an IMU: `pose_est.set_gravity(up_in_camera)` before the step whose 
 Labels for training come from the scene cache of `vggt_ft` (`python -m cross_nav.labels`: all frames of a place
 accumulated, free-space carving) and from simulated HSSD scenes with mesh labels (`cross_nav/sim/`).
 
+## Calibrating a two-iPhone stereo rig
+
+Two phones mounted side by side, each recording images, ARKit poses and (optionally) LiDAR depth with the capture
+app, can be calibrated from their own recordings, without a calibration target:
+
+```bash
+python scripts/rig/calibrate_iphone_rig.py \
+    --pair walk1/recording_1_A walk1/recording_1_B \
+    --pair walk2/recording_2_A walk2/recording_2_B \
+    --out rig.yaml [--compare stereo_extrinsics.yaml]
+```
+
+A recording can also be read from inside the capture zip: `capture.zip::capture_1/<...>/data/recording_<...>_B`.
+Phone B is the left camera, A the right one.  Per recording (`cross/rig/selfcalib.py`):
+
+1. **Clock offset** between the phones: both turn at the same angular speed at every instant, so the offset is the
+   shift that best aligns the two ARKit tracks' angular speed (a few ms).
+2. **Extrinsic** (rotation and metric translation between the cameras) by hand-eye calibration of the two ARKit
+   tracks over thousands of motion pairs; the walk has to turn.
+3. **Image refinement**: SIFT matches between a B image and the A image nearest in time; the relative pose of the two
+   exposures includes the camera motion between them (from ARKit), so imperfect synchronisation does not bias it.
+   Rotation and translation direction minimise the epipolar (Sampson) error.  `--no-images` skips it.
+4. **Baseline length** from LiDAR: matches triangulated with the rig against phone B's LiDAR depth.
+   `--no-lidar` keeps the hand-eye length.
+
+The recordings are combined into one calibration (rotations averaged, median baseline); the YAML keeps every
+recording's clock offset and its rotation difference from the combined one, which shows whether the rig moved
+between recordings.  The output uses the layout of `stereo_extrinsics.yaml` (`R`, `T`: x_B = R x_A + T in OpenCV
+camera axes of the raw images; camera matrices from ARKit).
+
 ## 9. Programmatic use
 
 ```python
