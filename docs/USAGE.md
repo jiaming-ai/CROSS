@@ -17,6 +17,8 @@ section 3) and sets the sensors, the odometry and the back end in one word:
 | `rgbd_wheel` (default of `run.py`) | colour + depth + external odometry | the dataset's odometry | `install.sh` |
 | `rgbd_basalt` | colour + depth, stereo + IMU for the VIO | Basalt VIO file | `install.sh`, Basalt |
 | `rgbd_dpvo` | colour + depth | DPVO, scale from the depth | `install.sh --mono` |
+| `rgbd_ff_wheel` | colour + depth + external odometry; VGGT-Omega relative poses scaled by the depth | the dataset's odometry | `install.sh --stereo` |
+| `rgbd_ff_basalt` | as `rgbd_ff_wheel`, stereo + IMU for the VIO | Basalt VIO file | `install.sh --stereo`, Basalt |
 | `mono_wheel` | one colour camera + external odometry | the dataset's odometry | `install.sh --mono --stereo` |
 | `mono_basalt` | one colour camera, stereo + IMU for the VIO | Basalt VIO file | `install.sh --mono --stereo`, Basalt |
 | `mono_imu` | one colour camera + IMU | VGGT-Omega + IMU local pose graph, scale from learned depth | `install.sh --mono --stereo` |
@@ -25,11 +27,15 @@ section 3) and sets the sensors, the odometry and the back end in one word:
 
 How a retrieved keyframe is registered: stereo and mono modes run VGGT-Omega (one forward pass over the current image
 and the retrieved keyframes; metric scale from the stereo baseline, or in mono from the odometry and the map); rgbd
-modes match XFeat + LightGlue features and solve PnP-RANSAC on the keyframe depth; `mono_dpvo` uses the older
+modes match XFeat + LightGlue features and solve PnP-RANSAC on the keyframe depth, except `rgbd_ff_*`, which run the
+stereo mode's VGGT-Omega passes on the colour image and take each pass's metric scale from the measured depth (median
+ratio of measured to predicted depth over the current frame's confident pixels; `pose_est.ff.depth_scale`, dense or
+sparse depth such as a phone's LiDAR); `mono_dpvo` uses the older
 monocular back end of `cross/mono/` (metric two-view matching, Depth Anything 3 as fallback).
 
 **Sensor mode + options (other combinations).** `--mode rgbd | stereo | mono` with `--odometry external | basalt |
-visual | vio | vgio` and, in the mono mode, `--mono-estimator ff | da3` select the same twelve files and a few
+visual | vio | vgio`, in the mono mode `--mono-estimator ff | da3` and in the rgbd mode `--rgbd-estimator pnp | ff`
+(default pnp; ff with external / basalt odometry only) select the same fourteen files and a few
 reference combinations without a file of their own (e.g. the DA3 mono back end with DPVO + IMU, `--mode mono --odometry
 vio`). `ff` (feed-forward) = VGGT-Omega, `da3` = the Depth Anything 3 back end (the default with a sensor mode, except
 that `--odometry vgio` implies `ff`). A mode name and a conflicting `--odometry` / `--mono-estimator` is an error.
@@ -136,6 +142,7 @@ session runs is chosen by the runner's `--remote-server` / the `cross-edge` clie
 |---|---|
 | `stereo_wheel`, `stereo_basalt`, `stereo_imu`, `stereo_dpvo` | `stereo` / `external`, `basalt`, `vgio`, `visual` |
 | `rgbd_wheel`, `rgbd_basalt`, `rgbd_dpvo` | `rgbd` / `external`, `basalt`, `visual` |
+| `rgbd_ff_wheel`, `rgbd_ff_basalt` | `rgbd` / `external`, `basalt` (`--rgbd-estimator ff`) |
 | `mono_wheel`, `mono_basalt`, `mono_imu` | `mono` / `external`, `basalt`, `vgio` (`--mono-estimator ff`; implied by `vgio`) |
 | `mono_dpvo` | `mono` / `visual` (the DA3 back end) |
 | `mono_vio` | `mono` / `vio` (`--mono-estimator ff`: VGGT-Omega + DPVO + IMU, a reference system; merges in mapping sessions and hypothesis 0 updated by every observation: ROVER T3 +360 trials; no adoption in mapping sessions (it broke the KITTI 10 map)) |
@@ -262,7 +269,8 @@ start without a pose; a trial succeeds when the final estimate is within `--r-d`
 # RGB-D / mono on posed folders
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home
 python scripts/map_and_reloc_rgbd.py --map ... --query ... --out outputs/home_mono --mode mono_dpvo
-# stereo sequences: stereo mode (VGGT-Omega) by default; --mode rgbd_wheel --pnp-depth gt|sgbm gives the PnP baseline on the same data
+# stereo sequences: stereo mode (VGGT-Omega) by default; --mode rgbd_wheel --pnp-depth gt|sgbm gives the PnP baseline on the same data,
+# --mode rgbd_ff_wheel --pnp-depth gt|sgbm VGGT-Omega scaled by that depth (posed RGB-D folders: --pnp-depth gt reads depth/)
 python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/hssd_house/light_night \
     --out outputs/house --baseline 0.3 --snr 10 --trial-len 100 --trial-stride 50
 ```
@@ -474,7 +482,61 @@ python -m cross_world.cli build --map runs/k07/map.pkl --source $SEQ --out world
 python -m cross_world.cli export --world worlds/k07/world.pt --map runs/k07/map.pkl --source $SEQ --out web/k07
 ```
 
-## 8. Programmatic use
+## 8. Navigation: BEV traversability maps
+
+Optional (`bash install.sh --nav`). Closed-loop navigation with the BEV planner, the trajectory policy or their hybrid
+(`NavigationAgent`) is described in `cross_nav/policy/README.md`.
+
+`cross_nav/` adds a head to the VGGT-Omega pass that predicts a bird's-eye-view grid around the current view
+(400 x 400 cells of 5 cm, camera at the centre, gravity-aligned, heading = optical axis): P(occupied) per cell, where
+flat walkable ground is free and anything 0.1-1.8 m above it is occupied whatever its height. It reads the backbone's
+multi-layer tokens and lifts them with the pass's own depth and cameras, the pass's metric scale (stereo, odometry or
+the scale head) and gravity (IMU or the head's own estimate). It also predicts cells no view sees, from scene priors.
+A heads file is trained for one backbone checkpoint (`python -m cross_nav.train --config cross_nav/configs/train/<run>.yaml`).
+
+```bash
+# online, every pass of a session: PoseEstFeedForward.last_bev (prob, up_cam, R_bev_from_cam, log_scale)
+python run.py ... --set pose_est.ff.nav_bev_head=models/nav/heads.pt [--set pose_est.ff.nav_bev_every=2]
+# offline, a fused navigation map of a saved map (one BEV per keyframe, anchored to the keyframes)
+python -m cross_nav.navmap --map runs/office/map.pkl --heads models/nav/heads.pt --backbone $CKPT --out nav/office
+```
+
+Gravity from an IMU: `pose_est.set_gravity(up_in_camera)` before the step whose pass should use it. The head adds
+~12 ms per pass (RTX 5090, 6-10 views) and makes the depth head cover the current view and the references.
+Labels for training come from the scene cache of `vggt_ft` (`python -m cross_nav.labels`: all frames of a place
+accumulated, free-space carving) and from simulated HSSD scenes with mesh labels (`cross_nav/sim/`).
+
+## Calibrating a two-iPhone stereo rig
+
+Two phones mounted side by side, each recording images, ARKit poses and (optionally) LiDAR depth with the capture
+app, can be calibrated from their own recordings, without a calibration target:
+
+```bash
+python scripts/rig/calibrate_iphone_rig.py \
+    --pair walk1/recording_1_A walk1/recording_1_B \
+    --pair walk2/recording_2_A walk2/recording_2_B \
+    --out rig.yaml [--compare stereo_extrinsics.yaml]
+```
+
+A recording can also be read from inside the capture zip: `capture.zip::capture_1/<...>/data/recording_<...>_B`.
+Phone B is the left camera, A the right one.  Per recording (`cross/rig/selfcalib.py`):
+
+1. **Clock offset** between the phones: both turn at the same angular speed at every instant, so the offset is the
+   shift that best aligns the two ARKit tracks' angular speed (a few ms).
+2. **Extrinsic** (rotation and metric translation between the cameras) by hand-eye calibration of the two ARKit
+   tracks over thousands of motion pairs; the walk has to turn.
+3. **Image refinement**: SIFT matches between a B image and the A image nearest in time; the relative pose of the two
+   exposures includes the camera motion between them (from ARKit), so imperfect synchronisation does not bias it.
+   Rotation and translation direction minimise the epipolar (Sampson) error.  `--no-images` skips it.
+4. **Baseline length** from LiDAR: matches triangulated with the rig against phone B's LiDAR depth.
+   `--no-lidar` keeps the hand-eye length.
+
+The recordings are combined into one calibration (rotations averaged, median baseline); the YAML keeps every
+recording's clock offset and its rotation difference from the combined one, which shows whether the rig moved
+between recordings.  The output uses the layout of `stereo_extrinsics.yaml` (`R`, `T`: x_B = R x_A + T in OpenCV
+camera axes of the raw images; camera matrices from ARKit).
+
+## 9. Programmatic use
 
 ```python
 from cross.pipeline import build_session, mono_config_from_files
@@ -490,7 +552,7 @@ For the back end alone (any mode, external odometry), use `System(camera=camera,
 `T_right_in_left=` on the constructor. Other tools: `scripts/viz/record_trace.py` and `build_trace_page.py` (replay of
 how a map is built), `scripts/eval_relpose.py` (relative-pose accuracy of the estimators).
 
-## 9. Fine-tuning VGGT-Omega (`vggt_ft/`)
+## 10. Fine-tuning VGGT-Omega (`vggt_ft/`)
 
 The fine-tuned checkpoint (`Jamie-nus/VGGT-Omega-CROSS`) adds a metric-scale head and a pairwise covisibility head to
 the released VGGT-Omega and is trained with multi-session windows. You do not need this section to run CROSS. It

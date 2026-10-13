@@ -86,17 +86,20 @@ def seq_baseline(root, requested):
     return float(key)
 
 
-def estimator_of(mode: str) -> str:
+def estimator_of(mode: str, rgbd_estimator: str = None) -> str:
     """The relative-pose estimator of a sensor mode on stereo sequences: VGGT-Omega (ff) in the stereo and mono modes,
-    PnP on stereo-matched depth in the rgbd mode (RGB-D*)."""
-    return "pnp" if mode == "rgbd" else "ff"
+    PnP on the depth in the rgbd mode (RGB-D*; stereo-matched or the sequence's depth, --pnp-depth), or VGGT-Omega with
+    the metric scale from that depth (--rgbd-estimator ff, modes rgbd_ff_*)."""
+    if mode == "rgbd":
+        return "ff" if rgbd_estimator == "ff" else "pnp"
+    return "ff"
 
 
 def make_config(args) -> SystemConfig:
     # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/modes/<mode>.yaml), then the
     # user's --config; explicit options below win
     configs = shipped_config_files(args) + list(args.config or [])
-    args.estimator = estimator_of(args.mode)
+    args.estimator = estimator_of(args.mode, getattr(args, "rgbd_estimator", None))
     # the feed-forward model goes in with the overrides: the fine-tuned VGGT-Omega's settings (the files' vggt_finetuned
     # sections) follow the checkpoint in use (cross.core.config.load_config); without --backend / --checkpoint the
     # configuration's (--backend da3 without --checkpoint: the DA3 weights)
@@ -161,7 +164,7 @@ def depth_source(args) -> str:
     metric scale of visual odometry in the stereo mode."""
     if args.mode == "mono":
         return "none"
-    if args.estimator == "pnp":
+    if args.mode == "rgbd":              # PnP, or the feed-forward estimator's metric scale (--rgbd-estimator ff)
         return args.pnp_depth
     if args.odometry == "visual" and args.depth_source == "none":
         return "sgbm"
@@ -573,7 +576,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "DA3: models/DA3-LARGE-1.1)")
     ap.add_argument("--config", nargs="*", default=[])
     ap.add_argument("--depth-source", default="none", help="depth for keyframes when using ff (none|sgbm|gt)")
-    ap.add_argument("--pnp-depth", default="sgbm", help="depth source for the PnP baseline (sgbm|gt)")
+    ap.add_argument("--pnp-depth", default="sgbm", help="depth source of the rgbd mode, PnP or the feed-forward "
+                    "estimator's scale (sgbm|gt; gt = the sequence's depth/ folder, e.g. an RGB-D sensor)")
     ap.add_argument("--baseline", type=float, default=None, help="stereo baseline to use for SimChange sequences with several rendered right cameras")
     ap.add_argument("--trial-len", type=int, default=0, help="split the query into independent relocalization trials of this many frames (0: one trial)")
     ap.add_argument("--trial-stride", type=int, default=None, help="start offset between trials (default: trial length)")
@@ -637,7 +641,7 @@ def main():
     if args.snr is not None and args.snr <= 0:
         args.snr = None        # perfect odometry
     args.mode = args.mode or "stereo"
-    args.estimator = estimator_of(args.mode)
+    args.estimator = estimator_of(args.mode, getattr(args, "rgbd_estimator", None))
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

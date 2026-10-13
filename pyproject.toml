@@ -93,6 +93,21 @@ world = [
     "lpips",
     "plyfile",
 ]
+# navigation (cross_nav/, cross_nav/README.md): BEV traversability head, direct trajectory policy, planners and the robot
+# navigation agent on the VGGT-Omega backbone (install.sh --nav). The Habitat simulator for closed-loop evaluation is a
+# separate Python 3.9 environment (install.sh --nav-sim). nav-data adds the real-robot dataset converters for training.
+nav = [
+    "cross[stereo]",
+    "numba>=0.59,<0.62",
+]
+nav-data = [
+    "cross[nav]",
+    "pandas",
+    "tfrecord",
+    "rosbags",
+    "av",
+    "requests",
+]
 all = [
     "cross[detection,recording,dev]",
 ]
@@ -103,7 +118,7 @@ Repository = "https://github.com/jiaming-ai/CROSS"
 Issues = "https://github.com/jiaming-ai/CROSS/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["cross", "cross_world", "vggt_ft"]
+packages = ["cross", "cross_world", "vggt_ft", "cross_nav"]
 
 # the edge package (edge/, its own distribution cross-edge) ships inside the full package too: the server and the CROSS
 # runners' edge use its wire format, cadence copy and session

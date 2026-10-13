@@ -95,6 +95,7 @@ bash install.sh --stereo                   # RGB-D + stereo mode, fine-tuned VGG
 bash install.sh --stereo --vggt=released   # the released VGGT-Omega checkpoint instead
 bash install.sh --stereo --da3             # + Depth Anything 3 backend
 bash install.sh --mono                     # + mono mode and visual odometry (builds DPVO; needs nvcc matching PyTorch's CUDA)
+bash install.sh --nav                      # + navigation (cross_nav); --nav-sim adds the Habitat simulator
 ```
 
 CROSS uses the fine-tuned checkpoint when it is installed, together with its settings (`configs/base/vggt_finetuned.yaml`:
@@ -161,9 +162,10 @@ Options:
 | `--no-viz` | Disable Rerun visualization |
 | `--frames N` | Process only the first N frames |
 | `--start N` | Start from frame N |
-| `--mode NAME` | One of the twelve shipped modes (`configs/modes/<name>.yaml`: `stereo_wheel`, `mono_imu`, `rgbd_dpvo`, ...), or a sensor mode `rgbd` (default) / `stereo` / `mono` with the two options below |
+| `--mode NAME` | One of the fourteen shipped modes (`configs/modes/<name>.yaml`: `stereo_wheel`, `mono_imu`, `rgbd_dpvo`, ...), or a sensor mode `rgbd` (default) / `stereo` / `mono` with the options below |
 | `--odometry {external,basalt,visual,vio,vgio}` | Motion source: the dataset's odometry (default; wheel / INS), the sequence's Basalt VIO file (`odom_vio.txt`), DPVO visual odometry, (mono) DPVO with IMU scale, or (mono ff, stereo) VGGT-Omega + IMU |
 | `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
+| `--rgbd-estimator {pnp,ff}` | RGB-D relative poses: PnP on the depth (default) or VGGT-Omega scaled by the measured depth (`rgbd_ff_*` modes) |
 | `--fast` | Constrained compute: the mode's fast overlay `configs/overlays/fast/<mode>.yaml` on top (stereo + Basalt and stereo DPVO: 416 px passes; the other modes have none) |
 | `--config A.yaml B.yaml` | Config layers on top of the mode's shipped file, merged left to right (e.g. `configs/overlays/outdoor.yaml`) |
 | `--reproducible` | Synchronous pose-graph optimisation (the shipped default optimises long loop closures in the background; the benchmark always passes it) |
@@ -232,7 +234,7 @@ pose the map implies, 2 m indoors), plus the keyframe ATE of the map:
 - `scripts/map_and_reloc.py`: stereo sequences (SimChange, KITTI raw, TartanAir V2, Virtual KITTI 2) or posed RGB-D
   folders, in the stereo mode (default) or `--mode rgbd_* --pnp-depth gt|sgbm` (PnP on ground-truth / stereo depth).
 
-Both take `--mode <name>` (one of the twelve shipped modes, e.g. `mono_imu`, `rgbd_dpvo`; see
+Both take `--mode <name>` (one of the fourteen shipped modes, e.g. `mono_imu`, `rgbd_dpvo`; see
 [docs/USAGE.md](docs/USAGE.md#1-modes) and [Mono mode and visual odometry](#mono-mode-and-visual-odometry)).  The full benchmark protocol (T1 mapping ATE, T2
 multi-session localization, T3 relocalization success; KITTI, OpenLORIS-Scene, ROVER, SimChange; baselines) is in
 [`benchmark/`](benchmark/README.md).
@@ -379,6 +381,14 @@ The GPU work (the back end, VGGT-Omega) can run on a server while the robot runs
 cadence, the uplink, the map-frame pose). Both sides use the same mode files (`configs/modes/`); there is no separate
 cloud configuration.
 
+## Navigation (optional)
+
+`cross_nav/` (installed with `bash install.sh --nav`) turns one forward RGB camera and odometry into local navigation on
+the same VGGT-Omega backbone: a BEV traversability head with a closed-loop planner, a direct trajectory policy, and a
+hybrid of the two, behind one robot interface (`cross_nav.policy.robot.NavigationAgent`). In closed-loop Habitat tests
+on held-out HSSD scenes they reach 96-97% point-goal success. See [`cross_nav/README.md`](cross_nav/README.md); the BEV
+head can also run inside a CROSS session (`pose_est.ff.nav_bev_head`, `docs/USAGE.md`).
+
 ## Datasets
 
 ### OpenLORIS
@@ -422,6 +432,7 @@ Place processed ROS bag directories in `data/rosbag/`.
 | `cross.pipeline` | Modes (sensor setup x odometry source) and their configuration files (`configs/modes/`): sessions of the back end fed by external odometry, DPVO or the VGGT-Omega + IMU frontend |
 | `cross.mono` | Mono mode: DPVO frontend with learned metric scale, DA3 models, monocular two-view / feed-forward relocalization geometry, real-time runner (`python -m cross.mono.run`) |
 | `cross.visualization.viz_rr` | Rerun-based 3D visualization |
+| `cross_nav` | Optional navigation: BEV traversability head, trajectory policy, planners, robot agent, Habitat evaluation (`install.sh --nav`) |
 
 ## Citation
 

@@ -31,6 +31,7 @@ import torch.nn.functional as F
 from loguru import logger
 
 from cross.core.config import FeedForwardConfig, FFBackend, resolve_ff_checkpoint
+from cross.cv.depth_scale import depth_scale
 from cross.cv.stereo_scale import ScaleAnchor, ScaleEstimate, estimate_scale, invert_poses, scale_camera_centers
 from cross.utils.fingerprint import content_keys
 from cross.utils.profile import timeit
@@ -151,6 +152,8 @@ class _VGGTOmegaBackend(_Backend):
         self._graph_pool = None
         if self.cuda_graphs:
             self.token_cache.embed_missing = self._embed_graphed
+        self.nav = None            # BEV head (cross_nav) reads the cached layers: see enable_nav
+        self.last_nav = None
         self._compiled = []
         if compile_blocks:
             # torch.compile of every transformer block (frame, global and DINO blocks share one graph); dynamic shapes
@@ -162,6 +165,17 @@ class _VGGTOmegaBackend(_Backend):
             self._compiled = list(agg.frame_blocks) + list(agg.inter_frame_blocks) + list(getattr(embed, "blocks", []))
             for block in self._compiled:
                 block.compile(dynamic=True)
+
+    def enable_nav(self, heads_path: str):
+        """Load a cross_nav BEV head: every pass then also returns the cached aggregator layers and the DINO tokens
+        (kept in `last_nav`), from which the estimator predicts the BEV once the pass's metric scale is solved."""
+        try:
+            from cross_nav.infer import BEVPredictor
+        except ImportError as e:
+            raise ImportError(f"pose_est.ff.nav_bev_head needs the navigation package: bash install.sh --nav ({e})") from e
+        self.nav = BEVPredictor(heads_path, self.device)
+        self._graphs.clear()                     # captured graphs do not return the extra outputs
+        logger.info(f"cross_nav BEV head {heads_path}: {self.nav.size} x {self.nav.size} cells of {self.nav.res} m")
 
     def warmup(self, resolution: int):
         """Load / tune the compiled kernels now (a few seconds) rather than in the first observation.  The kernels
@@ -247,6 +261,9 @@ class _VGGTOmegaBackend(_Backend):
                 log_scale = (self.scale_head(final, start, pose_enc[:, 0, 8] if getattr(self.scale_head, "canonical_f",
                                                                                         None) else None)
                              if self.scale_head is not None else pose_enc.new_zeros(0))
+        if self.nav is not None:
+            from cross_nav.infer import LAYERS
+            return (pose_enc, depth.float(), conf.float(), covis, log_scale) + tuple(tokens[l] for l in LAYERS) + (dino,)
         return pose_enc, depth.float(), conf.float(), covis, log_scale
 
     def _forward(self, x: torch.Tensor, k: int, patch_tokens: Optional[torch.Tensor] = None):
@@ -255,7 +272,7 @@ class _VGGTOmegaBackend(_Backend):
         if patch_tokens is not None:
             self.token_cache.override = patch_tokens
         dino, hook = {}, None
-        if getattr(self, "_scale_multilayer", False):
+        if getattr(self, "_scale_multilayer", False) or self.nav is not None:
             hook = self.model.aggregator.patch_embed.register_forward_hook(
                 lambda mod, inp, out: dino.__setitem__("x", out["x_norm_patchtokens"] if isinstance(out, dict) else out))
         try:
@@ -357,8 +374,15 @@ class _VGGTOmegaBackend(_Backend):
                 if self.token_cache is not None:
                     self.token_cache.keys = keys
                 out = self._forward(x, k)
-        pose_enc, depth, conf, covis, log_scale = out
+        pose_enc, depth, conf, covis, log_scale = out[:5]
         hw = tuple(images.shape[-2:])
+        if self.nav is not None:
+            from cross_nav.infer import LAYERS
+            p = self.model.aggregator.patch_size
+            self.last_nav = {"tokens": dict(zip(LAYERS, out[5:5 + len(LAYERS)])), "dino": out[5 + len(LAYERS)],
+                             "pose_enc": pose_enc, "depth": depth[0][..., 0] if depth.dim() == 5 else depth[0],
+                             "conf": conf[0][..., 0] if conf.dim() == 5 else conf[0], "hw": hw,
+                             "patch_hw": (hw[0] // p, hw[1] // p), "pts": self.model.aggregator.patch_token_start}
         extr, intr = self._decode(pose_enc, hw)                  # (1,S,3,4) w2c, (1,S,3,3)
         w2c = extr[0].float().cpu().numpy().astype(np.float64)
         c2w = invert_poses(_to_h(w2c))
@@ -645,6 +669,13 @@ class PoseEstFeedForward:
         else:
             raise ValueError(f"Unknown feed-forward backend {config.backend}")
         logger.info(f"Loaded {config.backend.value} from {config.checkpoint} in {time.perf_counter() - t0:.1f}s")
+        # cross_nav BEV head (option, off by default): a traversability map around the current view from every
+        # n-th pass, in its gravity-aligned BEV frame (last_bev)
+        self.last_bev: Optional[dict] = None
+        self._gravity_cam: Optional[np.ndarray] = None
+        self._n_passes = 0
+        if getattr(config, "nav_bev_head", "") and isinstance(self.backend, _VGGTOmegaBackend):
+            self.backend.enable_nav(config.nav_bev_head)
         self._auto_covis = auto_covis_source(self.backend)
         if getattr(config, "covis_source", "auto") == "auto":
             logger.info(f"covisibility source: {self._auto_covis} (auto)")
@@ -661,6 +692,33 @@ class PoseEstFeedForward:
         """The configured covisibility source, "auto" resolved for the loaded checkpoint."""
         source = getattr(cfg, "covis_source", "auto")
         return getattr(self, "_auto_covis", "geometric") if source == "auto" else source
+
+    def set_gravity(self, up_cam: Optional[np.ndarray]):
+        """Gravity "up" unit vector in the current camera (OpenCV axes) for the next pass's BEV, e.g. from the IMU
+        attitude; None = the BEV head's own gravity estimate."""
+        self._gravity_cam = None if up_cam is None else np.asarray(up_cam, dtype=np.float64)
+
+    def _predict_bev(self, metric: float):
+        """BEV of the current view from the last pass's tensors and its solved metric scale (cross_nav)."""
+        nav = getattr(self.backend, "last_nav", None)
+        if nav is None:
+            return None
+        up = None
+        R = np.eye(3) if self._R_model_to_cam is None else self._R_model_to_cam[:3, :3]   # cam -> model directions
+        if self._gravity_cam is not None:
+            up = R @ self._gravity_cam                        # into the model's (principal-point-centred) camera
+        out = self.backend.nav(nav["tokens"], nav["pts"], nav["patch_hw"], nav["dino"], nav["depth"], nav["conf"],
+                               nav["pose_enc"], nav["hw"], self.backend.nav.log_metric_scale(metric), up)
+        from cross_nav.bev import bev_axes_np
+        up_model = out["up_cam"].float().cpu().numpy().astype(np.float64)
+        out["prob"] = out["prob"].half().cpu().numpy()
+        out["up_cam"] = R.T @ up_model                       # gravity in the camera
+        out["R_bev_from_cam"] = bev_axes_np(up_model) @ R    # BEV axes (right, forward, up) from camera coordinates
+        out["gravity_source"] = "given" if self._gravity_cam is not None else "head"
+        uh = out.pop("up_head").float().cpu().numpy().astype(np.float64)
+        out["gravity_head_deg"] = float(np.degrees(np.arccos(np.clip(uh @ up_model, -1.0, 1.0))))
+        self._gravity_cam = None
+        return out
 
     def set_stereo_calibration(self, T_right_in_left: np.ndarray):
         self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
@@ -720,6 +778,21 @@ class PoseEstFeedForward:
                 rig = None if rig is None else np.asarray(rig, dtype=np.float64)
             self._cameras[i] = {"M": M, "rig": rig}
 
+    @staticmethod
+    def _depth_scale_inputs(cfg, curr_depth, ref_depth, B: int) -> Optional[list]:
+        """Measured depth per view of the pass (current view first, then the B references; None where there is
+        none) when config.depth_scale is on and the current view has depth, else None.  ref_depth: (B, H, W) tensor or
+        a list with None entries (references stored without depth); used with depth_scale_views "all"."""
+        if not getattr(cfg, "depth_scale", False) or curr_depth is None:
+            return None
+        views = getattr(cfg, "depth_scale_views", "current")
+        if views not in ("current", "all"):
+            raise ValueError(f"pose_est.ff.depth_scale_views: current | all, not {views}")
+        out = [curr_depth]
+        if views == "all" and ref_depth is not None:
+            out += [ref_depth[i] if i < len(ref_depth) else None for i in range(B)]
+        return out
+
     def _ref_camera(self, ref_cam_ids, i: int) -> Optional[dict]:
         """Camera entry of reference i when it was taken with another camera than the session's, else None."""
         if ref_cam_ids is None or self._cameras is None:
@@ -747,9 +820,11 @@ class PoseEstFeedForward:
 
         Args:
             ref_image: (B, 3, H, W) reference (left) images in [0, 1]
-            ref_depth: unused (kept for interface compatibility)
+            ref_depth: (B, H, W) stored metric depth of the references (or a list with None entries), or None; used
+                with config.depth_scale and depth_scale_views "all"
             curr_image: (3, H, W) current left image
-            curr_depth: unused
+            curr_depth: (H, W) or (1, H, W) measured metric depth of the current view (0 = missing), or None; with
+                config.depth_scale it fixes the pass's metric scale (cross/cv/depth_scale.py)
             curr_image_right: (3, H, W) current right image (stereo anchor) or None
             ref_images_right: list of B entries, each (3, H, W) right image or None;
                 at most `config.n_ref_anchors` of them are used as extra anchors
@@ -827,6 +902,12 @@ class PoseEstFeedForward:
             n_depth = 0
         else:
             n_depth = 1 + B
+        # measured depth of the current view (and the references') fixes the scale: their predicted depth is needed
+        depth_meas = self._depth_scale_inputs(cfg, curr_depth, ref_depth, B)
+        if depth_meas is not None and n_depth is not None:
+            n_depth = max(n_depth, max(i for i, d in enumerate(depth_meas) if d is not None) + 1)
+        if getattr(self.backend, "nav", None) is not None and n_depth is not None:
+            n_depth = max(n_depth, 1 + B)                       # the BEV head lifts the current view and references
         focal = getattr(self, "_focal_norm", None) if getattr(cfg, "scale_focal", "calibrated") == "calibrated" else None
         pred = self.backend.infer(images, n_depth=n_depth, focal=focal)
         torch.cuda.synchronize()
@@ -868,6 +949,17 @@ class PoseEstFeedForward:
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
             weight_by_baseline=True,          # anchors weighted by their predicted baseline (precision of the ratio)
         )
+        if depth_meas is not None:
+            # the measured depth's scale replaces the anchors' when it is valid
+            depth_est = depth_scale(
+                [pred.depth[i] if i < pred.depth.shape[0] else None for i in range(len(depth_meas))], depth_meas,
+                None if pred.depth_conf is None else [pred.depth_conf[i] if i < pred.depth_conf.shape[0] else None
+                                                      for i in range(len(depth_meas))],
+                min_depth=cfg.depth_scale_min_depth, max_depth=cfg.depth_scale_max_depth,
+                conf_quantile=cfg.depth_scale_conf_quantile, min_pixels=cfg.depth_scale_min_pixels,
+                std_floor=cfg.depth_scale_std_floor)
+            if depth_est.valid:
+                scale_est = depth_est
         src = getattr(cfg, "scale_source", "anchors")
         if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
             # the scale head's metric scale of the model gauge (translations scale with it, frame 0 at the origin)
@@ -883,6 +975,11 @@ class PoseEstFeedForward:
         # calibrated metric-scale correction (the estimator's translations divided by their measured/true ratio)
         metric = scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0)
         c2w_metric = scale_camera_centers(c2w_model, metric, origin_index=0)
+        self.last_bev = None
+        if getattr(self.backend, "nav", None) is not None:
+            self._n_passes += 1
+            if (self._n_passes - 1) % max(1, int(getattr(cfg, "nav_bev_every", 1))) == 0:
+                self.last_bev = self._predict_bev(metric)
         if self._R_model_to_cam is not None and not mixed:
             c2w_metric = c2w_metric @ self._R_model_to_cam
 

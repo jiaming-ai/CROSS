@@ -266,6 +266,8 @@ class System:
                                                rival_min_steps=hcfg.reloc_placement_rival_min_steps,
                                                places_after_m=hcfg.reloc_placement_places_after_m,
                                                min_spread_m=hcfg.reloc_placement_min_spread_m)
+        self._gravity_now = None                 # up direction in the current camera frame (obs "gravity"), or None
+        self._gravity_up_map = None              # the map frame's up direction (set by the map session's first keyframe)
         self.place_projection = self._make_place_projection(self._projection_prior)
 
         # GNSS / compass anchoring of the map (cross/geo); None without `geo.enabled`: the system is unchanged
@@ -298,8 +300,10 @@ class System:
             # (with pose_est.ff.right_image "left" a pass's scale comes from the odometry and map pairs: not metric on its own)
             ff_cfg = getattr(getattr(self.config, "pose_est", None), "ff", None)
             stereo_anchors = str(getattr(ff_cfg, "right_image", "pair") or "pair") == "pair"
+            # (or with measured depth fixing each pass's scale: pose_est.ff.depth_scale, the RGB-D mode's feed-forward estimator)
             self._lc_verifier.guard_metric = self.pose_est_type == PoseEstType.PNP or (
-                self.pose_est_type == PoseEstType.FF and T_right_in_left is not None and stereo_anchors)
+                self.pose_est_type == PoseEstType.FF and T_right_in_left is not None and stereo_anchors) or (
+                self.pose_est_type == PoseEstType.FF and bool(getattr(ff_cfg, "depth_scale", False)))
             # calibrated metric scale of the feed-forward estimator (measured / true translation, from the odometry)
             if float(getattr(lc_cfg.noise, "visual_scale", 1.0) or 1.0) != 1.0 and hasattr(self, "pose_est"):
                 self.pose_est.metric_scale_correction = float(lc_cfg.noise.visual_scale)
@@ -499,6 +503,7 @@ class System:
         if self.cam_id:
             kf.cam_id = self.cam_id
         self.hypothesis_manager.add_node(kf)
+        self._gravity_attach(kf)
         self.last_added_kf_id = kf.id
         if getattr(self, "_geo", None) is not None:
             if self.loaded_node_ids:
@@ -762,6 +767,8 @@ class System:
             "camera": self.cameras[0],
             "cameras": self._camera_columns(),
         }
+        if getattr(self, "_gravity_up_map", None) is not None:
+            save_data["gravity_up_map"] = [float(x) for x in self._gravity_up_map]
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
             save_data["geo"] = self._geo.state()
@@ -1053,6 +1060,8 @@ class System:
         self._use_map_camera(save_data.get("camera"), save_data.get("cameras"))
         if getattr(self, "_world_capture", None) is not None:
             self._world_capture.load(load_path)
+        if save_data.get("gravity_up_map") is not None:
+            self._gravity_up_map = np.asarray(save_data["gravity_up_map"], dtype=np.float64)
         if getattr(self, "_geo", None) is not None and save_data.get("geo"):
             self._geo.load_state(save_data["geo"])
             if self._geo.anchored:
@@ -1215,6 +1224,8 @@ class System:
 
         rgb_image = last_obs["rgb"]
         self._frontend_anchor = last_obs.get("frontend_anchor")
+        g = last_obs.get("gravity")
+        self._gravity_now = None if g is None else np.asarray(g, dtype=np.float64).reshape(3)
         depth_image = last_obs.get("depth", None)
         rgb_right = last_obs.get("rgb_right", None)
         timestamp = last_obs.get("timestamp", None)
@@ -2106,6 +2117,18 @@ class System:
         
         return ret
 
+    def _gravity_attach(self, kf):
+        """The keyframe keeps the current gravity (up in its camera frame); the map session's first one fixes the map
+        frame's up direction (stored with the map)."""
+        g = getattr(self, "_gravity_now", None)
+        if g is None:
+            return
+        kf.gravity = g.copy()
+        if getattr(self, "_gravity_up_map", None) is None and self._session_start_kf_id == 0:
+            R = kf.pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)[:3, :3]
+            up = R @ kf.gravity
+            self._gravity_up_map = up / np.linalg.norm(up)
+
     @timeit
     def _add_new_kf(
         self,
@@ -2188,6 +2211,7 @@ class System:
         
         keyframe.step_created = int(self._processed_frame_num)
         self.hypothesis_manager.add_node(keyframe)
+        self._gravity_attach(keyframe)
         if getattr(self, "_geo", None) is not None:
             self._geo.on_keyframe(keyframe.id)
 
@@ -2871,7 +2895,8 @@ class System:
         from cross.db.db import as_float_image
         # stored images (host RAM by default) copied to the compute device for this pass only
         ref_rgbs = [as_float_image(p.raw_rgb_image.to(self.device)) for p in keyframes]
-        ref_depths = [as_float_image(p.depth_image.to(self.device)) for p in keyframes] if depth_image is not None else None
+        ref_depths = [as_float_image(p.depth_image.to(self.device)) for p in keyframes] \
+            if depth_image is not None and self.pose_est_type != PoseEstType.FF else None
 
         ref_rgbs = torch.stack(ref_rgbs)
         ref_depths = torch.cat(ref_depths, dim=0) if ref_depths is not None else None
@@ -2881,8 +2906,14 @@ class System:
         source_context = {'ref_loaded': [k.id in self.loaded_node_ids for k in keyframes],
                           'session_unanchored': bool(self.hypothesis_manager.reference_support.unanchored)}
         if self.pose_est_type == PoseEstType.FF:
+            # RGB-D with the feed-forward estimator (pose_est.ff.depth_scale): the measured depth fixes the metric scale
+            ff_depth = depth_image is not None and bool(getattr(self.config.pose_est.ff, "depth_scale", False))
+            ff_ref_depths = None
+            if ff_depth and getattr(self.config.pose_est.ff, "depth_scale_views", "current") == "all":
+                ff_ref_depths = [None if getattr(k, "depth_image", None) is None else
+                                 as_float_image(k.depth_image.to(self.device)) for k in keyframes]
             valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
-                ref_rgbs, None, rgb_image, None,
+                ref_rgbs, ff_ref_depths, rgb_image, depth_image if ff_depth else None,
                 curr_image_right=rgb_right,
                 ref_images_right=_LazyImages(keyframes, "raw_rgb_right", self.device),
                 odom_anchor=odom_anchor,

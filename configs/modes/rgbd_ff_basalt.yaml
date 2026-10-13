@@ -1,0 +1,6 @@
+# configs/modes/rgbd_ff_basalt.yaml: selected by --mode rgbd_ff_basalt.
+# RGB-D with VGGT-Omega relative poses scaled by the measured depth + Basalt stereo-inertial VIO as external odometry: --mode rgbd --rgbd-estimator ff --odometry basalt (odom_vio.txt).
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/rgbd_ff.yaml
+  - ../base/common.yaml

@@ -2,7 +2,9 @@
 
 Two independent choices define a run:
 
-  mode      rgbd | stereo | mono     what the back end observes.  rgbd: RGB + depth, PnP relative poses; stereo: stereo
+  mode      rgbd | stereo | mono     what the back end observes.  rgbd: RGB + depth, PnP relative poses (rgbd_estimator
+                                     pnp) or the feed-forward multi-view estimator with the metric scale from the
+                                     measured depth (rgbd_estimator ff, modes rgbd_ff_*); stereo: stereo
                                      pairs, feed-forward multi-view relative poses with stereo scale; mono: RGB only,
                                      learned metric depth and monocular two-view / feed-forward relative poses
   odometry  external | basalt | visual | vio | vgio
@@ -49,6 +51,9 @@ MODES = ("rgbd", "stereo", "mono")
 ODOMETRY = ("external", "visual", "vio", "vgio")
 INERTIAL = ("vio", "vgio")
 MONO_ESTIMATORS = ("da3", "ff")
+# the rgbd mode's relative poses: PnP on the depth (pnp, the default), or the feed-forward multi-view estimator
+# (VGGT-Omega) whose metric scale comes from the measured depth (ff: pose_est.ff.depth_scale, modes rgbd_ff_*)
+RGBD_ESTIMATORS = ("pnp", "ff")
 # --odometry also takes the named external odometry "basalt": the sequence folder's Basalt VIO file (--odom-file
 # overrides the name; the loaders fall back to odom_left.txt when it is absent, as with --odom-file)
 NAMED_ODOMETRY = ("external", "basalt", "visual", "vio", "vgio")
@@ -61,7 +66,10 @@ MODE_FILES = {
     "rgbd_wheel": ("rgbd", "external", "da3"), "rgbd_basalt": ("rgbd", "basalt", "da3"), "rgbd_dpvo": ("rgbd", "visual", "da3"),
     "mono_wheel": ("mono", "external", "ff"), "mono_basalt": ("mono", "basalt", "ff"), "mono_imu": ("mono", "vgio", "ff"),
     "mono_vio": ("mono", "vio", "ff"), "mono_dpvo": ("mono", "visual", "da3"),
+    "rgbd_ff_wheel": ("rgbd", "external", "da3"), "rgbd_ff_basalt": ("rgbd", "basalt", "da3"),
 }
+# the modes whose rgbd estimator is not PnP (--rgbd-estimator)
+MODE_RGBD_ESTIMATOR = {"rgbd_ff_wheel": "ff", "rgbd_ff_basalt": "ff"}
 
 
 def _inverse(T):
@@ -217,6 +225,11 @@ class Pipeline:
                 depth = cv2.resize(depth, (rgb.shape[1], rgb.shape[0]))
             if not self._left_only():
                 right = frame.get("rgb_right")
+        # the cross_nav BEV head of the back end's pass takes gravity from the IMU frontend when it has one
+        pose_est = getattr(self.mapper, "pose_est", None)
+        if map_now and getattr(getattr(pose_est, "backend", None), "nav", None) is not None \
+                and hasattr(frontend, "gravity_up_cam"):
+            pose_est.set_gravity(frontend.gravity_up_cam())
         # Every input increment is accumulated; image retrieval / filtering runs every mapping_interval frames.
         self.mapper.step({
             "rgb": rgb if map_now else None,
@@ -230,6 +243,7 @@ class Pipeline:
             "frontend_anchor": anchor,
             "gnss": frame.get("gnss"),
             "compass": frame.get("compass"),
+            "gravity": frame.get("gravity"),
         })
         if hasattr(frontend, "after_backend"):
             pose_est = getattr(self.mapper, "pose_est", None)
@@ -286,6 +300,7 @@ class Pipeline:
             if hasattr(system, name):
                 setattr(system, name, None)
         if getattr(system, "db", None) is not None:
+            system.db.close()
             system.db.vpr_model = None
             system.db = None
         self.frontend = self.mapper = None
@@ -356,9 +371,10 @@ def visual_odometry_config(dpvo_checkpoint, seed=0, mask_people=False):
                       seed=seed, mask_people=mask_people, mask_interval=3, scale=scale)
 
 
-def mode_file_name(mode: str, odometry: str, mono_estimator: str = None) -> str:
+def mode_file_name(mode: str, odometry: str, mono_estimator: str = None, rgbd_estimator: str = None) -> str:
     """The name of a mode's file (configs/modes/<name>.yaml).  odometry: the named odometry
-    (external = wheel, basalt, visual = dpvo, vgio = imu).  Combinations without a file of their own (reference systems)
+    (external = wheel, basalt, visual = dpvo, vgio = imu); rgbd_estimator ff: the rgbd_ff_<odometry> files (external
+    odometry only).  Combinations without a file of their own (reference systems)
     use the file of their back end: the mono DA3 back end any odometry -> mono_dpvo (its MonoConfig and
     MonocularSystem's presets), the feed-forward back end with DPVO -> mono_wheel (mono_imu's settings are the
     VGGT-inertial odometry's); with DPVO + IMU (vio) it has its own file, mono_vio."""
@@ -366,18 +382,26 @@ def mode_file_name(mode: str, odometry: str, mono_estimator: str = None) -> str:
         if (mono_estimator or "da3") == "da3":
             return "mono_dpvo"
         return {"basalt": "mono_basalt", "vgio": "mono_imu", "vio": "mono_vio"}.get(odometry, "mono_wheel")
+    if mode == "rgbd" and (rgbd_estimator or "pnp") == "ff":
+        names = {"external": "wheel", "basalt": "basalt"}
+        if odometry not in names:
+            raise ValueError(f"No shipped configuration for --mode rgbd --rgbd-estimator ff --odometry {odometry}")
+        return f"rgbd_ff_{names[odometry]}"
+    if mode == "rgbd" and rgbd_estimator not in (None,) + RGBD_ESTIMATORS:
+        raise ValueError(f"Unknown rgbd estimator {rgbd_estimator}")
     names = {"external": "wheel", "basalt": "basalt", "visual": "dpvo"} | ({"vgio": "imu"} if mode == "stereo" else {})
     if mode not in MODES or odometry not in names:
         raise ValueError(f"No shipped configuration for --mode {mode} --odometry {odometry}")
     return f"{mode}_{names[odometry]}"
 
 
-def mode_config_files(mode: str, odometry: str, mono_estimator: str = None, fast: bool = False) -> list:
+def mode_config_files(mode: str, odometry: str, mono_estimator: str = None, fast: bool = False,
+                      rgbd_estimator: str = None) -> list:
     """The configuration files shipped for a mode (layered in this order, before the user's --config): its file
     configs/modes/<mode_file_name>.yaml, then with `fast` (constrained compute) its fast overlay
     configs/overlays/fast/<mode_file_name>.yaml.  Opt-in overlays go in --config (configs/overlays/stereo_lowband.yaml:
     left image, half the rate; not a default because it blinds the odometry scale guard)."""
-    name = mode_file_name(mode, odometry, mono_estimator) + ".yaml"
+    name = mode_file_name(mode, odometry, mono_estimator, rgbd_estimator) + ".yaml"
     return [os.path.join(CONFIG_DIR, "modes", name)] + ([os.path.join(CONFIG_DIR, "overlays", "fast", name)] if fast else [])
 
 
@@ -385,8 +409,9 @@ def shipped_config_files(args) -> list:
     """mode_config_files for a runner's parsed session arguments (add_session_args; finish_session_args)."""
     finish_session_args(args)
     mono_estimator = getattr(args, "mono_estimator", None) if args.mode == "mono" else None
+    rgbd_estimator = getattr(args, "rgbd_estimator", None) if args.mode == "rgbd" else None
     return mode_config_files(args.mode, getattr(args, "odometry_name", args.odometry), mono_estimator,
-                             fast=getattr(args, "fast", False))
+                             fast=getattr(args, "fast", False), rgbd_estimator=rgbd_estimator)
 
 
 def apply_right_image(cfg):
@@ -649,6 +674,9 @@ def add_session_args(ap):
                     help="mono mode back end: da3 (learned metric depth, cross/mono) or ff (the stereo mode's "
                          "VGGT-Omega multi-view estimator, metric scale from the odometry and the map); default da3 "
                          "(set by --mode <mode file>)")
+    ap.add_argument("--rgbd-estimator", choices=RGBD_ESTIMATORS, default=None,
+                    help="rgbd mode relative poses: pnp (PnP on the depth) or ff (VGGT-Omega multi-view passes, metric "
+                         "scale from the measured depth); default pnp (set by --mode <mode file>: rgbd_ff_* are ff)")
     ap.add_argument("--dpvo-checkpoint", default=os.environ.get("CROSS_DPVO_CHECKPOINT", "models/dpvo.pth"))
     ap.add_argument("--mono-args", default="",
                     help="mono mode / --odometry vio, vgio: overrides of the mode file's frontend settings (one quoted "
@@ -774,6 +802,14 @@ def finish_session_args(args):
             if given is not None and given != want and not (key == "mono_estimator" and args.mode != "mono"):
                 raise ValueError(f"--mode {name} is --{key.replace('_', '-')} {want}, not {given}")
             setattr(args, key, want)
+        if args.mode == "rgbd":
+            want = MODE_RGBD_ESTIMATOR.get(name, "pnp")
+            given = getattr(args, "rgbd_estimator", None)
+            if given is not None and given != want:
+                raise ValueError(f"--mode {name} is --rgbd-estimator {want}, not {given}")
+            args.rgbd_estimator = want
+    if getattr(args, "rgbd_estimator", None) is None:
+        args.rgbd_estimator = "pnp"
     if getattr(args, "odometry", None) is None:
         args.odometry = "external"
     if getattr(args, "mono_estimator", None) is None:

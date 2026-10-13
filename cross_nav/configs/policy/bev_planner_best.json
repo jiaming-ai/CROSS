@@ -1,0 +1,79 @@
+{
+  "_comment": "BEV occupancy + observability heads with the closed-loop planner selected on HSSD validation (outputs/2026-10-12_sim_nav/bev_closed_loop.md): keyframe windows, episode map (odometry-frame fusion + A*, retry over the whole grid / relaxed blocking), hard occupancy limit, near-goal approach, route memory, turn hysteresis, bump memory, relaxed fallback, scale memory, unstick (forget bumps + nearby map evidence after 6 no-route windows) and narrow-passage retry (map.retry_radii). cross_nav/configs/policy/bev_planner.json is the frozen planner. Set CROSS_NAV_ROOT to the directory holding the checkpoints.",
+  "backbone": "${CROSS_NAV_ROOT}/data/runs/vdl_s1/ckpt_004000_ema_bf16.pt",
+  "occupancy": "${CROSS_NAV_ROOT}/experiments/2026-10-11_causal_training/causal8_route_s7/heads_004000_ema.pt",
+  "visibility": "${CROSS_NAV_ROOT}/experiments/2026-10-11_visibility_head/visibility/visibility_final.pt",
+  "visibility_gravity": "${CROSS_NAV_ROOT}/experiments/2026-10-11_long_context/short_error_s3/heads_004000_ema.pt",
+  "history_m": [
+    0.0,
+    0.5,
+    1.0,
+    2.0,
+    4.0,
+    8.0,
+    16.0,
+    32.0
+  ],
+  "image_hw": null,
+  "area": 262144,
+  "gravity": "imu",
+  "scale": "odometry",
+  "min_baseline_m": 0.2,
+  "dedupe_views": true,
+  "planner": {
+    "thresholds": [
+      0.75,
+      0.625,
+      0.5,
+      0.375,
+      0.25
+    ],
+    "risk_weight": 128.0,
+    "visibility_weight": 16.0,
+    "radius": 0.2,
+    "min_travel": 1.0,
+    "min_progress": 0.5
+  },
+  "goal_margin_m": 0.25,
+  "blind_zone": "fallback",
+  "blind_zone_m": 1.3,
+  "blind_zone_hfov_deg": 90.0,
+  "no_path": "rotate_hold",
+  "turn_point_m": 0.3,
+  "horizon": 16,
+  "spacing": 0.5,
+  "debug_cells": 100,
+  "max_chunk": 16,
+  "history_rule": {
+    "type": "keyframe",
+    "trans": 0.5,
+    "rot_deg": 30,
+    "lags": [
+      0,
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64
+    ]
+  },
+  "occ_block": 0.6,
+  "near_goal_m": 1.0,
+  "near_goal_occ": 0.5,
+  "near_goal_clear_m": 0.1,
+  "memory_steps": 4,
+  "relax_after": 8,
+  "bump": true,
+  "scale_memory": true,
+  "map": {
+    "retry": true,
+    "retry_radii": [
+      0.1,
+      0.0
+    ]
+  },
+  "unstick_after": 6,
+  "unstick_clear_m": 0.5
+}

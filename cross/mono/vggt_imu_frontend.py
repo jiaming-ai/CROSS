@@ -410,6 +410,17 @@ class VggtImuFrontend:
         self._log = [e for e in self._log if e[0] >= min(oldest, self.index - 1)]
 
     # ------------------------------------------------------------------ back-end coupling (a local service)
+    def gravity_up_cam(self):
+        """Gravity "up" (unit) in the current camera once the IMU estimator has started (None before): the gravity of
+        the estimator's frame rotated into the camera (for consumers such as the cross_nav BEV head)."""
+        f = self.scale_filter
+        if not getattr(f, "started", False):
+            return None
+        g = self.g_rep if self.g_rep is not None else getattr(f, "g", None)
+        if g is None or not np.all(np.isfinite(g)) or np.linalg.norm(g) < 1e-6:
+            return None
+        return -(self.R_wc.T @ np.asarray(g, np.float64)) / np.linalg.norm(g)
+
     def backend_anchor(self, observing=True):
         """The temporal anchor for the back end's forward pass at this frame: the last measured frame with the
         frontend's relative pose to it (metric once the scale is known).  The pipeline asks on the frames it hands to

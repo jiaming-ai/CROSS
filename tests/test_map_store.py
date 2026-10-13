@@ -241,6 +241,30 @@ def test_spooled_images_are_repointed_to_the_saved_map(monkeypatch, tmp_path):
     assert torch.equal(back["db_data"]["keyframes"][-1]["raw_rgb_image"].load(), kf_new.raw_rgb_image)
 
 
+def test_closed_spool_leaves_no_directory_and_the_saved_map(monkeypatch, tmp_path):
+    """DB.close (a released session): the spool directory goes, also after a save re-pointed it; the map stays
+    readable.  A runner making many sessions in one process (T3 trials) filled /tmp before (2026-10-12)."""
+    scfg = StorageConfig(max_ram_images=2, spill_dir=str(tmp_path / "spool"), image_codec="png")
+    data, db = _state(monkeypatch, n=5, scfg=scfg)
+    db._spool.flush()
+    sdir = db._spool.dir
+    assert sdir.is_dir() and str(sdir) in store._SPOOL_DIRS
+    p = tmp_path / "m" / "map.pkl"
+    st = store.write_map(p, dict(data, db_data=db.save_state()), scfg)
+    db._spool.retarget(st["pack"])
+    db.close()
+    db.close()                                                                   # idempotent
+    assert db._spool is None and not sdir.exists() and str(sdir) not in store._SPOOL_DIRS
+    assert not any(Path(k).parent == sdir.resolve() for k in store.ImagePack._open)
+    back = store.read_map(p)
+    assert torch.is_tensor(back["db_data"]["keyframes"][0]["raw_rgb_image"].load())
+    _, db2 = _state(monkeypatch, n=3, scfg=scfg)                       # an unsaved session: its spool goes too
+    db2._spool.flush()
+    sdir2 = db2._spool.dir
+    db2.close()
+    assert not sdir2.exists()
+
+
 def test_depth_drop_bits_bounds_the_relative_error():
     rng = np.random.default_rng(1)
     d = (rng.random((1, 40, 50)) * 30 + 0.01).astype(np.float16)

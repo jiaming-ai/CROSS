@@ -1,0 +1,284 @@
+"""GPU policy server for closed-loop simulation: one frozen VGGT pass per causal window, batched over workers.
+
+    python -m cross_nav.policy.server --socket /tmp/nav0.sock --backbone ckpt.pt [--head best.pt] \
+        [--record DIR] [--grid 12 16] [--scale mono|odometry] [--max-batch 32]
+    python -m cross_nav.policy.server ... --bev BEV.json --head best.pt --scale odometry --hybrid HYBRID.json   (hybrid.py)
+
+Workers (cross_nav.policy.sim.rollout) send the newest rendered frame of an episode and the indices of the causal
+window; the server keeps each episode's recent frames, so a step transfers one image. With --head, it returns the
+predicted (forward, left) path; with --record, it stores last-layer tokens (pooled to --grid), metric geometry, goal,
+and the expert label sent by the worker, in shards of --shard windows.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import time
+from multiprocessing.connection import Listener, wait
+from pathlib import Path
+
+import numpy as np
+import torch
+from torch.nn import functional as F
+
+from .backbone import FrozenMetricTokens, sha256
+from .head import TrajectoryHead
+from .recovery import StuckRecovery
+from .sim import wire
+
+
+class ShardWriter:
+    def __init__(self, root, tag, size):
+        self.root, self.tag, self.size = Path(root), tag, size
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.k = len(list(self.root.glob(f'{tag}_*.npz')))
+        self.buf = []
+
+    def add(self, row):
+        self.buf.append(row)
+        if len(self.buf) >= self.size:
+            self.flush()
+
+    def flush(self):
+        if not self.buf:
+            return
+        name = self.root / f'{self.tag}_{self.k:05d}'
+        tok = torch.stack([r.pop('tokens') for r in self.buf]).to(torch.bfloat16).view(torch.int16).numpy()   # bf16 bits
+        np.save(str(name) + '.tok.tmp.npy', tok)
+        small = {k: np.stack([r[k] for r in self.buf]) for k in ('xyz', 'log_scale', 'pred_chord', 'hist_chord', 'goal',
+                                                                 'label', 'step', 'expert_dist')}
+        small['trail'] = np.stack([r.get('trail', np.zeros((5, 3), np.float32)) for r in self.buf])   # unavailable by default
+        small['meta'] = np.array([json.dumps(r['meta']) for r in self.buf])
+        np.savez(str(name) + '.tmp.npz', **small)
+        os.replace(str(name) + '.tok.tmp.npy', str(name) + '.tok.npy')
+        os.replace(str(name) + '.tmp.npz', str(name) + '.npz')  # the .npz marks a complete shard
+        self.k += 1
+        self.buf = []
+
+
+def odometry_or_mono(pred_chord, hist_chord, mono):
+    """Median metric/predicted camera-centre baseline ratio when a baseline exceeds 0.2 m, else the scale head."""
+    valid = (pred_chord > 1e-3) & (hist_chord > .2)
+    ratio = torch.where(valid, hist_chord / pred_chord.clamp_min(1e-3), torch.nan)
+    odo = ratio.nanmedian(dim=1).values.log()
+    return torch.where(valid.any(1) & torch.isfinite(odo), odo, mono)
+
+
+class Policy:
+    def __init__(self, a):
+        self.dev = torch.device('cuda')
+        self.backbone = FrozenMetricTokens(a.backbone).to(self.dev).eval()
+        self.grid = tuple(a.grid)
+        self.head = None
+        self.scale = a.scale
+        if a.head:
+            ck = torch.load(a.head, map_location='cpu', weights_only=True)
+            self.head = TrajectoryHead(**ck['head_cfg']).to(self.dev).eval()
+            self.head.load_state_dict(ck['model'])
+            self.head_pool = int(ck['train_cfg'].get('token_pool', 1))
+            self.steps = a.flow_steps
+            self.flow_temp = getattr(a, 'flow_temp', .5)
+            self.gen = torch.Generator(device=self.dev).manual_seed(a.seed)
+            self.head_sha = sha256(a.head)
+
+    @torch.no_grad()
+    def __call__(self, images, hist_chord):
+        f = self.backbone(images.to(self.dev, non_blocking=True), pool=self.grid)
+        tokens = f['tokens'][:, -1]                                          # B,S,h,w,C last layer
+        out = {'tokens': tokens, 'xyz': f['xyz_unit'], 'log_scale': f['log_scale'], 'pred_chord': f['pred_history_chord']}
+        return out
+
+    @torch.no_grad()
+    def predict(self, feat, goal, hist_chord, trail=None):
+        tok, xyz = feat['tokens'], feat['xyz']
+        if self.head_pool > 1:
+            k = self.head_pool
+            B, S, h, w, C = tok.shape
+            tok = F.avg_pool2d(tok.permute(0, 1, 4, 2, 3).reshape(B * S, C, h, w).float(), k).to(tok.dtype)
+            tok = tok.reshape(B, S, C, h // k, w // k).permute(0, 1, 3, 4, 2)
+            xyz = F.avg_pool2d(xyz.permute(0, 1, 4, 2, 3).reshape(B * S, 3, h, w), k).reshape(B, S, 3, h // k, w // k).permute(0, 1, 3, 4, 2)
+        log_scale = feat['log_scale']
+        if self.scale == 'odometry':
+            log_scale = odometry_or_mono(feat['pred_chord'], hist_chord, log_scale)
+        geometry = {'log_scale': log_scale, 'xyz_unit': xyz} if self.head.geometry != 'none' else None
+        noise = torch.randn(goal.shape[0], self.head.horizon, 2, device=self.dev, generator=self.gen) * self.flow_temp
+        with torch.autocast('cuda', dtype=torch.bfloat16):
+            return self.head.predict(tok[:, None].contiguous(), goal, steps=self.steps, noise=noise, geometry=geometry,
+                                     trail=trail if getattr(self.head, 'trail', 0) else None).float()
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--socket', required=True); p.add_argument('--backbone', required=True); p.add_argument('--head')
+    p.add_argument('--bev', help='JSON config of the BEV head + planner policy (cross_nav.policy.bev_policy); replaces --head')
+    p.add_argument('--hybrid', help='JSON config of cross_nav.policy.hybrid.Switch: with --bev and --head, switch per step '
+                   'between the BEV planner and the trajectory head (workers then send a second window for the head)')
+    p.add_argument('--record'); p.add_argument('--tag', default='rec'); p.add_argument('--shard', type=int, default=512)
+    p.add_argument('--grid', type=int, nargs=2, default=(12, 16)); p.add_argument('--scale', choices=['mono', 'odometry'], default='mono')
+    p.add_argument('--max-batch', type=int, default=32); p.add_argument('--flow-steps', type=int, default=10)
+    p.add_argument('--flow-temp', type=float, default=.5, help='scale of the flow initial noise (0: deterministic paths); '
+                   '0.5 vs 1 on HSSD val240: success 92.1 vs 90.4% (mean of 2 runs), SPL 0.79 vs 0.76')
+    p.add_argument('--recover-window', type=int, default=20, help='stuck recovery (recovery.py) after this many planning '
+                   'steps with < --recover-disp m displacement; 0 = off (trajectory head only)')
+    p.add_argument('--recover-disp', type=float, default=.3); p.add_argument('--recover-turn', type=float, default=90.)
+    p.add_argument('--seed', type=int, default=0); p.add_argument('--workers', type=int, default=0,
+                                                                  help='exit after this many workers have connected and left')
+    a = p.parse_args()
+    torch.backends.cuda.matmul.allow_tf32 = True
+    policy = Policy(a)
+    bev, hyb = None, None
+    if a.hybrid:
+        if not (a.bev and a.head):
+            raise SystemExit('--hybrid needs --bev and --head')
+        hyb = json.loads(Path(a.hybrid).read_text())
+    if a.bev:
+        from .bev_policy import BEVPlannerPolicy
+        bev = BEVPlannerPolicy(json.loads(Path(a.bev).read_text()), backbone=policy.backbone)
+    writer = ShardWriter(a.record, a.tag, a.shard) if a.record else None
+    if os.path.exists(a.socket):
+        os.unlink(a.socket)
+    listener = Listener(a.socket, family='AF_UNIX')
+    listener._listener._socket.setblocking(False)
+    conns, frames, odoms, recover, switches, seen, done = [], {}, {}, {}, {}, 0, 0
+    info = {'head': a.head, 'head_cfg': policy.head.cfg if policy.head else None, 'grid': list(policy.grid), 'scale': a.scale,
+            'history_m': list(bev.history_m) if bev else [0., .5, 1., 2.], 'bev': a.bev,
+            'history_rule': getattr(bev, 'history_rule', None) if bev else None,
+            'history_rule2': {'type': 'distance', 'm': [0., .5, 1., 2.]} if hyb else None, 'hybrid': hyb}
+    t0, n_windows, n_batches, t_bev = time.time(), 0, 0, {}
+
+    def hybrid_step(part, paths, debug):
+        """Per episode, the Switch picks the BEV path (already in paths) or the trajectory head's path for this step."""
+        from .hybrid import Switch
+        from .sim.geom import control
+        traj = []
+        for j, (_, m) in enumerate(part):
+            pose = odoms.get(m['ep'], {}).get(m['frame_idx'])
+            if not m.get('predict') or pose is None or not m.get('window2'):
+                continue
+            sw = switches.setdefault(m['ep'], Switch(hyb))
+            st = bev.episodes.get(m['ep'])
+            if sw(pose, m['goal'], st.no_route if st is not None else 0) == 'traj':
+                if sw.fresh or m['ep'] not in recover:
+                    recover[m['ep']] = StuckRecovery(a.recover_window, a.recover_disp, a.recover_turn) if a.recover_window else None
+                traj.append(j)
+            if debug[j] is not None:
+                debug[j]['controller'] = np.asarray(np.int8(len(traj) and traj[-1] == j))
+                debug[j]['switches'] = np.asarray(np.int16(sw.n_switch))
+        if not traj:
+            return traj
+        sub = [part[j][1] for j in traj]
+        imgs2 = np.stack([np.stack([frames[m['ep']][i] for i in m['window2']]) for m in sub])
+        imgs2 = torch.from_numpy(imgs2).to('cuda').permute(0, 1, 4, 2, 3).float().div_(255)
+        hist2 = torch.from_numpy(np.stack([m['hist_chord2'] for m in sub]).astype(np.float32)).cuda()
+        goal2 = torch.from_numpy(np.stack([m['goal'] for m in sub]).astype(np.float32)).cuda()
+        trail2 = torch.from_numpy(np.stack([m.get('trail', np.zeros((5, 3), np.float32)) for m in sub]).astype(np.float32)).cuda()
+        tp = policy.predict(policy(imgs2, hist2), goal2, hist2, trail2).cpu().numpy()
+        c = bev.cfg['control']
+        for k, j in enumerate(traj):
+            m = sub[k]
+            rec = recover.get(m['ep'])
+            p = rec(odoms[m['ep']][m['frame_idx']], tp[k]) if rec is not None else tp[k]
+            paths[j] = p
+            st = bev.episodes.get(m['ep'])
+            if st is not None:          # the bump rule compares the executed path's forward motion with odometry
+                st.expect = float(control(p, c['lookahead'], c['step'])[1])
+        return traj
+    stop = []
+    signal.signal(signal.SIGTERM, lambda *_: stop.append(1))      # flush recorded shards, then exit
+    print(json.dumps({'listening': a.socket, **info}), flush=True)
+    while not stop:
+        try:
+            while True:
+                c = listener.accept(); conns.append(c); seen += 1
+        except (BlockingIOError, OSError):
+            pass
+        if not conns:
+            if a.workers and seen >= a.workers:
+                break
+            time.sleep(.01); continue
+        ready = wait(conns, timeout=.05)
+        batch = []
+        for c in ready:
+            try:
+                m = wire.recv(c)
+            except (EOFError, OSError):
+                conns.remove(c); done += 1; continue
+            cmd = m['cmd']
+            if cmd == 'info':
+                wire.send(c, info)
+            elif cmd == 'end':
+                frames.pop(m['ep'], None); odoms.pop(m['ep'], None); recover.pop(m['ep'], None); switches.pop(m['ep'], None)
+                if bev is not None:
+                    bev.end_episode(m['ep'])
+                wire.send(c, {})
+            elif cmd == 'step':
+                buf = frames.setdefault(m['ep'], {})
+                buf[m['frame_idx']] = m['frame']
+                lo = min(min(m['window']), min(m.get('window2') or m['window']))
+                for k in [k for k in buf if k < lo]:
+                    del buf[k]
+                if m.get('odom') is not None:     # odometry pose (x, y, yaw) of each frame, for the BEV policy's rules
+                    ob = odoms.setdefault(m['ep'], {})
+                    ob[m['frame_idx']] = np.asarray(m['odom'], np.float64)
+                    for k in [k for k in ob if k < lo]:
+                        del ob[k]
+                if m.get('predict') or (m.get('record') and writer is not None):
+                    batch.append((c, m))
+                else:
+                    wire.send(c, {'path': None, 'debug': None})   # expert step, not recorded: no backbone pass
+        for i in range(0, len(batch), a.max_batch):
+            part = batch[i:i + a.max_batch]
+            imgs = np.stack([np.stack([frames[m['ep']][j] for j in m['window']]) for _, m in part])
+            imgs = torch.from_numpy(imgs).pin_memory().to('cuda', non_blocking=True).permute(0, 1, 4, 2, 3).float().div_(255)
+            hist = torch.from_numpy(np.stack([m['hist_chord'] for _, m in part]).astype(np.float32)).cuda()
+            goal = torch.from_numpy(np.stack([m['goal'] for _, m in part]).astype(np.float32)).cuda()
+            trails = np.stack([m.get('trail', np.zeros((5, 3), np.float32)) for _, m in part]).astype(np.float32)
+            debug = [None] * len(part)
+            traj = []
+            if bev is not None:
+                feat = None
+                eps = []
+                for _, m in part:
+                    ob = odoms.get(m['ep'], {})
+                    wo = np.stack([ob[j] for j in m['window']]) if all(j in ob for j in m['window']) else None
+                    eps.append({'ep': m['ep'], 'step': m.get('step'), 'odom': ob.get(m['frame_idx']), 'window_odom': wo,
+                                'expect': m.get('expect')})
+                paths, debug = bev(imgs, goal, hist, want_debug=[bool(m.get('debug')) for _, m in part], episodes=eps)
+                for k, v in bev.timing.items():
+                    t_bev[k] = t_bev.get(k, 0.) + v
+                if hyb is not None:
+                    traj = hybrid_step(part, paths, debug)
+            else:
+                feat = policy(imgs, hist)
+                paths = policy.predict(feat, goal, hist, torch.from_numpy(trails).cuda()).cpu().numpy() if policy.head is not None and any(m['predict'] for _, m in part) else None
+                if paths is not None and a.recover_window:
+                    for j, (_, m) in enumerate(part):
+                        pose = odoms.get(m['ep'], {}).get(m['frame_idx'])
+                        if m.get('predict') and pose is not None and m.get('recover', True):
+                            rec = recover.setdefault(m['ep'], StuckRecovery(a.recover_window, a.recover_disp, a.recover_turn))
+                            paths[j] = rec(pose, paths[j])
+            if writer is not None and feat is not None:
+                cpu = {k: v.cpu() for k, v in feat.items()}
+                for j, (_, m) in enumerate(part):
+                    if m.get('record') and m.get('label') is not None:
+                        writer.add({'tokens': cpu['tokens'][j].to(torch.bfloat16), 'xyz': cpu['xyz'][j].half().numpy(),
+                                    'log_scale': cpu['log_scale'][j].float().numpy(), 'pred_chord': cpu['pred_chord'][j].float().numpy(),
+                                    'hist_chord': m['hist_chord'].astype(np.float32), 'goal': m['goal'].astype(np.float32),
+                                    'label': m['label'].astype(np.float32), 'step': np.int32(m['step']),
+                                    'expert_dist': np.float32(m.get('expert_dist', np.nan)), 'trail': trails[j], 'meta': m['meta']})
+            for j, (c, m) in enumerate(part):
+                wire.send(c, {'path': paths[j] if paths is not None else None, 'debug': debug[j], 'traj': j in traj})
+            n_windows += len(part); n_batches += 1
+            if n_batches % 200 == 0:
+                print(json.dumps({'windows': n_windows, 'batches': n_batches, 'mean_batch': round(n_windows / n_batches, 1),
+                                  'windows_per_s': round(n_windows / (time.time() - t0), 1), 'clients': len(conns),
+                                  **{k: round(v / n_windows, 3) for k, v in t_bev.items()}}), flush=True)
+    if writer is not None:
+        writer.flush()
+    print(json.dumps({'exit': True, 'windows': n_windows, 'seconds': round(time.time() - t0)}), flush=True)
+
+
+if __name__ == '__main__':
+    main()

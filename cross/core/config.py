@@ -309,6 +309,11 @@ class LoopClosureConfig:
     # long drive (KITTI 00 at step 2403: 1108 of 2340 keyframes in the graph) otherwise bends only the latest part and
     # leaves a jump where the optimised window meets the frozen one.
     full_session_pgo: bool = True
+    # gravity prior: every optimised keyframe that carries gravity (the up direction in its camera frame, from odometry in a
+    # gravity-aligned world, calib.json odom_world_up, or a ground-plane fit) gets a prior on its roll and pitch with this
+    # standard deviation (degrees), centred on its pose levelled to the map's up direction; heading and position stay
+    # free.  Visual edges otherwise tilt chains of the map (a VIO's roll / pitch hardly drift).  0: off.  Being evaluated.
+    gravity_prior_deg: float = 0.0
     # large maps: a verified loop-closure optimisation of a session without a loaded map covers only the keyframes from
     # the oldest keyframe of the triggering loop edges (minus pgo_window_margin keyframes) to the latest one; older
     # keyframes that share a factor with that window enter as fixed vertices.  A loop back to the start still optimises
@@ -740,6 +745,24 @@ class FeedForwardConfig:
     # focal of a canonical-camera scale head (vggt_ft DenseScaleHead with canonical_hfov): "calibrated" (the camera's
     # intrinsics, set by the system) or "predicted" (the model's own FoV). Heads without a canonical camera ignore it.
     scale_focal: str = "calibrated"
+    # RGB-D mode with this estimator (configs/modes/rgbd_ff_*.yaml): the metric scale of a pass from the measured depth
+    # (sensor depth of the current frame and, with depth_scale_views "all", the stored depth of the references): median
+    # ratio of measured to predicted depth over pixels with measured depth in [depth_scale_min_depth,
+    # depth_scale_max_depth] and model confidence in the top (1 - depth_scale_conf_quantile) (cross/cv/depth_scale.py).
+    # It replaces the anchors when valid (a view needs depth_scale_min_pixels such pixels); otherwise the anchors /
+    # scale_source decide as without it.  Off: the stereo / mono modes (no depth)
+    depth_scale: bool = False
+    depth_scale_views: str = "current"   # current | all (current frame and references with stored depth)
+    depth_scale_min_depth: float = 0.2
+    depth_scale_max_depth: float = 10.0
+    depth_scale_conf_quantile: float = 0.5
+    depth_scale_min_pixels: int = 200
+    depth_scale_std_floor: float = 0.02
+    # cross_nav BEV traversability head (heads file of cross_nav.train, trained on this checkpoint's backbone; "" = off):
+    # after the pass's metric scale is solved, P(occupied) on a gravity-aligned grid around the current view
+    # (PoseEstFeedForward.last_bev; gravity from set_gravity, e.g. the IMU, else the head's estimate); every n-th pass
+    nav_bev_head: str = ""
+    nav_bev_every: int = 1
     max_rel_distance: float = 40.0       # reject relative poses further than this (m)
     kf_conf_threshold_new_kf: float = 0.35  # covis below this -> current view is novel -> permanent keyframe
     scale_std_inflation: bool = True     # inflate translation std by |t| * relative scale std

@@ -1,0 +1,49 @@
+# nav_v5: ground-level large scenes (user, 2026-10-10): nav_v4 data without TartanAir2 (drone) + Waymo / PandaSet (driving,
+# LiDAR labels with carving) + GrandTour (denser labels), later TartanGround / NCLT; init nav_v4 heads_009000_ema.
+exp_name: nav_v5
+init: ${CROSS_NAV_ROOT}/nav/runs/nav_v4/heads_009000_ema.pt
+backbone: ${CROSS_NAV_ROOT}/runs/vdl_s1/ckpt_004000_ema_bf16.pt
+out_dir: ${CROSS_NAV_ROOT}/nav/runs
+resume: auto
+seed: 0
+log_every: 20
+bev_head: {size: 400, res: 0.05, feat: 256, dim: 384, depth: 8, heads: 8}
+gravity_head: {}
+data:
+  root: ${CROSS_NAV_ROOT}/cache
+  bev_root: ${CROSS_NAV_ROOT}/nav/bev_v3
+  bev: {size: 400, res: 0.05}
+  val_mod: 20
+  zoom: [0.6, 1.0]
+  frames: [1, 8]
+  images_per_gpu: 32
+  max_windows: 10
+  aspect: [0.56, 1.0]
+  area: 262144
+  cam_h_range: [0.1, 2.4]
+  num_workers: 10
+  prefetch: 2
+  aug: {p_color: 0.8, color: 1.0, p_gray: 0.05, p_blur: 0.1, blur_k: [3, 5], p_noise: 0.1, p_jpeg: 0.2, jpeg_q: [40, 90]}
+  datasets:
+    scannet:     {weight: 0.14, stride: [2, 10], p_cross: 0.0, p_neg: 0.1}
+    scannetpp:   {weight: 0.14, stride: [1, 4], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 60, p_neg: 0.1}
+    arkitscenes: {weight: 0.12, stride: [2, 10], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 60, p_neg: 0.1}
+    hypersim:    {weight: 0.08, stride: [1, 3], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 60, p_neg: 0.1}
+    grandtour:   {weight: 0.06, stride: [1, 3], p_cross: 0.0, p_neg: 0.1}
+    hssd_nav:    {weight: 0.16, stride: [1, 4], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 60, p_neg: 0.1}
+    waymo:       {weight: 0.10, stride: [1, 3], p_cross: 0.3, cross_radius: [0.0, 0.3], cross_max_rot: 45, p_neg: 0.1}
+    pandaset:    {weight: 0.04, stride: [1, 3], p_cross: 0.0, p_neg: 0.1}
+    tartanground: {weight: 0.16, stride: [1, 4], p_cross: 0.3, cross_radius: [0.0, 0.5], cross_max_rot: 45, p_neg: 0.1,
+                   label_dataset: tartanground_mix}   # sim ground robots, large indoor + outdoor; complete point-cloud labels
+    nclt:        {weight: 0.12, stride: [1, 3], p_cross: 0.0, p_neg: 0.1}   # real Segway campus (outdoor + halls), LiDAR labels
+train:
+  steps: 8000
+  lr: 1.5e-4
+  warmup: 200
+  weight_decay: 0.05
+  clip: 1.0
+  ema: 0.999
+  save_every: 500
+  keep_every: 1000
+loss: {w_dice: 0.5, pos_weight: 1.0, scale_noise: 0.1, p_scale_head: 0.2, gravity_noise_deg: 2.0, p_gravity_pred: 0.3,
+       w_gravity: 1.0}

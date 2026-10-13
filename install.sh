@@ -12,6 +12,10 @@ set -euo pipefail
 #   bash install.sh --stereo --da3   # + the optional Depth Anything 3 backend of the stereo mode
 #   bash install.sh --mono       # + mono mode and visual odometry (DPVO built from source with the CUDA toolkit of
 #                                #   PyTorch, Depth Anything 3, LightGlue); implies --stereo --da3
+#   bash install.sh --nav        # + navigation (cross_nav: BEV head, trajectory policy, planners, robot agent); implies
+#                                #   --stereo
+#   bash install.sh --nav-sim    # + the Habitat simulator for closed-loop navigation tests (its own Python 3.9
+#                                #   environment in third_party/install/habitat; needs micromamba, mamba or conda)
 #   bash install.sh --cpu        # CPU-only (no CUDA)
 #   CUDA_VERSION=cu121 bash install.sh  # Specify CUDA version
 
@@ -20,6 +24,8 @@ CPU_ONLY=false
 STEREO=false
 DA3=false
 MONO=false
+NAV=false
+NAV_SIM=false
 VGGT=finetuned      # VGGT-Omega checkpoint: finetuned | released | both
 
 for arg in "$@"; do
@@ -28,6 +34,8 @@ for arg in "$@"; do
         --stereo) STEREO=true ;;
         --da3) DA3=true; STEREO=true ;;
         --mono) MONO=true; DA3=true; STEREO=true ;;
+        --nav) NAV=true; STEREO=true ;;
+        --nav-sim) NAV_SIM=true; NAV=true; STEREO=true ;;
         --vggt=*) VGGT="${arg#--vggt=}" ;;
     esac
 done
@@ -152,6 +160,25 @@ if [ "$MONO" = true ]; then
     echo "    Add DPVO to the path when running: export PYTHONPATH=$(pwd)/$DPVO_DIR:\$PYTHONPATH"
 fi
 
+# ── Navigation (optional) ─────────────────────────────────────
+if [ "$NAV" = true ]; then
+    echo "==> Installing navigation (cross_nav)..."
+    uv pip install -e ".[nav]"
+fi
+if [ "$NAV_SIM" = true ]; then
+    # the simulator runs in its own environment (habitat-sim's conda build) and talks to the policy server of this
+    # environment over a socket (cross_nav/policy/README.md)
+    MM=$(command -v micromamba || command -v mamba || command -v conda || true)
+    if [ -z "$MM" ]; then
+        echo "    !! --nav-sim needs micromamba, mamba or conda on the PATH"
+    else
+        echo "==> Creating the Habitat simulator environment (third_party/install/habitat)..."
+        "$MM" create -y -p "$(pwd)/third_party/install/habitat" -c conda-forge -c aihabitat \
+            habitat-sim=0.3.3 headless python=3.9 numpy pillow \
+            || echo "    !! habitat-sim install failed"
+    fi
+fi
+
 echo ""
 echo "==> Installation complete!"
 echo ""
@@ -166,6 +193,7 @@ echo "    Stereo mode (after install.sh --stereo):"
 echo "      uv run python run.py <stereo sequence> --mode stereo"
 echo "    Mono mode, visual odometry (after install.sh --mono):"
 echo "      uv run python run.py <sequence> --mode mono --odometry visual"
+echo "    Navigation (after install.sh --nav / --nav-sim): cross_nav/README.md"
 echo ""
 echo "    Examples:"
 echo "      uv run python examples/demo.py"

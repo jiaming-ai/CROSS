@@ -1,0 +1,13 @@
+# RGB-D mode with the feed-forward estimator (the rgbd_ff_* modes): the stereo mode's VGGT-Omega multi-view passes on
+# the RGB image, with the metric scale of each pass from the measured depth instead of a stereo pair: the median ratio of
+# the measured to the predicted depth over the current view's pixels with measured depth in 0.2-10 m and model confidence
+# in its top half (pose_est.ff.depth_scale, cross/cv/depth_scale.py).  A pass whose current depth has fewer than 200 such
+# pixels gives no observation (no anchors: the odometry does not set the scale).  Observation cadence, references and
+# the fine-tuned checkpoint's settings of the stereo mode.  Study: outputs/2026-10-13_rgbd_ff (iPhone RGB + LiDAR).
+include: stereo.yaml
+pose_est:
+  ff:
+    use_curr_anchor: false
+    n_ref_anchors: 0
+    depth_scale: true
+    depth_scale_views: current
