@@ -1,3 +1,4 @@
+import math
 import bisect
 import collections
 import weakref
@@ -211,6 +212,12 @@ class PoseGraph:
         # with a Cauchy kernel of scale robust_c; soft_priors {vertex id: 6x6 covariance (gtsam order r, t)} replace the
         # hard prior of a gauge vertex whose position and heading the GNSS factors determine
         self.unary_position_factors: List = []
+        # gravity prior (mapping.loop_closure.gravity_prior_deg): {vertex id: up direction in its camera frame}, the map
+        # frame's up direction, and the roll / pitch standard deviation (rad)
+        self.gravity_priors: Dict[int, np.ndarray] = {}
+        self.gravity_up = None
+        self.gravity_sigma = 0.0
+        self.n_gravity = 0
         self.unary_robust_c: Optional[float] = None
         self.soft_priors: Dict[int, np.ndarray] = {}
     
@@ -906,6 +913,29 @@ class PoseGraph:
             if node_id in all_node_ids:
                 graph.add(gtsam.PriorFactorPose3(node_id, initial.atPose3(node_id),
                                                  gtsam.noiseModel.Gaussian.Covariance(np.asarray(cov, dtype=np.float64))))
+        self.n_gravity = 0
+        if self.gravity_priors and self.gravity_up is not None and self.gravity_sigma > 0:
+            # roll / pitch prior: the pose levelled to the map's up direction (heading and position as estimated), with a
+            # covariance that is tight only for rotations tilting the keyframe's up axis (body frame, gtsam order r, t)
+            up_map = np.asarray(self.gravity_up, dtype=np.float64)
+            up_map = up_map / np.linalg.norm(up_map)
+            for node_id, g in self.gravity_priors.items():
+                if node_id not in optim_node_ids:
+                    continue
+                g = np.asarray(g, dtype=np.float64)
+                g = g / np.linalg.norm(g)
+                P = initial.atPose3(node_id)
+                R = P.rotation().matrix()
+                a = R @ g
+                axis = np.cross(a, up_map)
+                ang = math.atan2(np.linalg.norm(axis), float(a @ up_map))
+                Ra = gtsam.Rot3.Rodrigues(axis / np.linalg.norm(axis) * ang) if np.linalg.norm(axis) > 1e-12 else gtsam.Rot3()
+                target = gtsam.Pose3(gtsam.Rot3(Ra.matrix() @ R), P.translation())
+                cov = np.zeros((6, 6))
+                cov[:3, :3] = self.gravity_sigma ** 2 * (np.eye(3) - np.outer(g, g)) + 1e4 * np.outer(g, g)
+                cov[3:, 3:] = 1e8 * np.eye(3)
+                graph.add(gtsam.PriorFactorPose3(node_id, target, gtsam.noiseModel.Gaussian.Covariance(cov)))
+                self.n_gravity += 1
         self.n_unary = 0
         for (node_id, target, cov) in self.unary_position_factors:
             if node_id not in all_node_ids:

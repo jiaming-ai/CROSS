@@ -309,6 +309,11 @@ class LoopClosureConfig:
     # long drive (KITTI 00 at step 2403: 1108 of 2340 keyframes in the graph) otherwise bends only the latest part and
     # leaves a jump where the optimised window meets the frozen one.
     full_session_pgo: bool = True
+    # gravity prior: every optimised keyframe that carries gravity (the up direction in its camera frame, from odometry in a
+    # gravity-aligned world, calib.json odom_world_up, or a ground-plane fit) gets a prior on its roll and pitch with this
+    # standard deviation (degrees), centred on its pose levelled to the map's up direction; heading and position stay
+    # free.  Visual edges otherwise tilt chains of the map (a VIO's roll / pitch hardly drift).  0: off.  Being evaluated.
+    gravity_prior_deg: float = 0.0
     # large maps: a verified loop-closure optimisation of a session without a loaded map covers only the keyframes from
     # the oldest keyframe of the triggering loop edges (minus pgo_window_margin keyframes) to the latest one; older
     # keyframes that share a factor with that window enter as fixed vertices.  A loop back to the start still optimises

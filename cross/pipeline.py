@@ -230,6 +230,7 @@ class Pipeline:
             "frontend_anchor": anchor,
             "gnss": frame.get("gnss"),
             "compass": frame.get("compass"),
+            "gravity": frame.get("gravity"),
         })
         if hasattr(frontend, "after_backend"):
             pose_est = getattr(self.mapper, "pose_est", None)

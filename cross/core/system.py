@@ -253,6 +253,8 @@ class System:
         pcfg = self.config.mapping.projection
         self._projection_prior = vertical_vector(pcfg.vertical)
         self._projection_n_nodes = -1
+        self._gravity_now = None                 # up direction in the current camera frame (obs "gravity"), or None
+        self._gravity_up_map = None              # the map frame's up direction (set by the map session's first keyframe)
         self.place_projection = self._make_place_projection(self._projection_prior)
 
         # GNSS / compass anchoring of the map (cross/geo); None without `geo.enabled`: the system is unchanged
@@ -486,6 +488,7 @@ class System:
         if self.cam_id:
             kf.cam_id = self.cam_id
         self.hypothesis_manager.add_node(kf)
+        self._gravity_attach(kf)
         self.last_added_kf_id = kf.id
         if getattr(self, "_geo", None) is not None:
             if self.loaded_node_ids:
@@ -749,6 +752,8 @@ class System:
             "camera": self.cameras[0],
             "cameras": self._camera_columns(),
         }
+        if self._gravity_up_map is not None:
+            save_data["gravity_up_map"] = [float(x) for x in self._gravity_up_map]
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
             save_data["geo"] = self._geo.state()
@@ -1038,6 +1043,8 @@ class System:
         self._use_map_camera(save_data.get("camera"), save_data.get("cameras"))
         if getattr(self, "_world_capture", None) is not None:
             self._world_capture.load(load_path)
+        if save_data.get("gravity_up_map") is not None:
+            self._gravity_up_map = np.asarray(save_data["gravity_up_map"], dtype=np.float64)
         if getattr(self, "_geo", None) is not None and save_data.get("geo"):
             self._geo.load_state(save_data["geo"])
             if self._geo.anchored:
@@ -1200,6 +1207,8 @@ class System:
 
         rgb_image = last_obs["rgb"]
         self._frontend_anchor = last_obs.get("frontend_anchor")
+        g = last_obs.get("gravity")
+        self._gravity_now = None if g is None else np.asarray(g, dtype=np.float64).reshape(3)
         depth_image = last_obs.get("depth", None)
         rgb_right = last_obs.get("rgb_right", None)
         timestamp = last_obs.get("timestamp", None)
@@ -2086,6 +2095,17 @@ class System:
         
         return ret
 
+    def _gravity_attach(self, kf):
+        """The keyframe keeps the current gravity (up in its camera frame); the map session's first one fixes the map
+        frame's up direction (stored with the map)."""
+        if self._gravity_now is None:
+            return
+        kf.gravity = self._gravity_now.copy()
+        if self._gravity_up_map is None and self._session_start_kf_id == 0:
+            R = kf.pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)[:3, :3]
+            up = R @ kf.gravity
+            self._gravity_up_map = up / np.linalg.norm(up)
+
     @timeit
     def _add_new_kf(
         self,
@@ -2168,6 +2188,7 @@ class System:
         
         keyframe.step_created = int(self._processed_frame_num)
         self.hypothesis_manager.add_node(keyframe)
+        self._gravity_attach(keyframe)
         if getattr(self, "_geo", None) is not None:
             self._geo.on_keyframe(keyframe.id)
 
