@@ -2,4 +2,5 @@
 # RGB-D + Basalt stereo-inertial VIO as external odometry: --mode rgbd --odometry basalt (odom_vio.txt).
 # The shared pieces it includes come first (configs/base/); keys below override them.
 include:
+  - ../base/odometry_vio.yaml
   - ../base/common.yaml

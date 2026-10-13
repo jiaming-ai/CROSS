@@ -4,4 +4,5 @@
 # The shared pieces it includes come first (configs/base/); keys below override them.
 include:
   - ../base/mono_ff.yaml
+  - ../base/odometry_vio.yaml
   - ../base/common.yaml
