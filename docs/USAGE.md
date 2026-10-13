@@ -163,7 +163,7 @@ imu:
 
 ```bash
 python run.py <seq> --mode stereo_wheel --fast --config configs/overlays/outdoor.yaml my_overrides.yaml
-python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=configs/noise/my_robot.yaml  pose_est.obs_max_interval_steps=2
+python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.confidence=0.9995  pose_est.obs_max_interval_steps=2
 ```
 
 | file | use |
@@ -171,7 +171,6 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.noise_file=c
 | `configs/base/vggt_finetuned.yaml` | the fine-tuned VGGT-Omega's settings (included by the bases of every mode that runs VGGT-Omega; applies only with a fine-tuned checkpoint, see below): the learned covisibility head |
 | `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius) and, with the fine-tuned VGGT-Omega, a looser covisibility gate (0.10); the benchmark adds it on outdoor datasets |
 | `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away); not tested with `--fast` |
-| `configs/noise/<robot>.yaml` | your robot's calibrated loop-closure noise model, written by `scripts/lc/calibrate_noise.py` (see below; nothing is shipped there, the defaults are in `cross/core/config.py` `NoiseModelConfig`) |
 | `configs/base/mono_frontend.yaml` | the monocular frontends' shared `mono:` settings (DPVO frontend, people masking, a learned-depth scale observation every 10 frames), included by the mono modes and `stereo_imu`. The DA3 back end's own lines are in `modes/mono_dpvo.yaml`; with external odometry or `vio` it drops their odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
 
 Override one value with `--set section.key=value` (`run.py` and the `scripts/` runners) or put it in a small
@@ -251,13 +250,6 @@ ignored. For other robots:
 - places stacked vertically (multi-floor buildings, 3D terrain): `vertical_weight` (0–1) adds the weighted height to
   the clustering coordinates, and `vertical_gate` (metres) keeps proposals apart when their heights differ by more than
   the gate.
-
-**Noise calibration for a new robot** (optional, no ground truth needed; the defaults suit wheeled indoor robots):
-
-```bash
-python scripts/map_and_reloc_rgbd.py --map <seq> --query <seq> --out outputs/calib --map-end 600 --skip-reloc --dump-graph
-python scripts/lc/calibrate_noise.py --graph outputs/calib/graph_s0.json --out configs/noise/my_robot.yaml
-```
 
 ## 4. Multi-session: map one session, relocalize in another
 

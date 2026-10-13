@@ -10,9 +10,9 @@ export CUDA_VISIBLE_DEVICES=$GPU MPLBACKEND=Agg
 PY=.venv/bin/python
 FF="--obs-min-translation 0.3 --obs-min-rotation 0.15 --obs-max-interval 3"
 D=data/sim/$SCENE; R=outputs/lcstudy_rs/$SCENE/$MODE; mkdir -p $R logs
-ND=${LC_NOISE_DIR:-outputs/2026-09-12_loop_closure_verified/noise}   # the study's calibrated noise models
-if [ $SCENE = lonemonk ]; then M=$D/map_loop; NOISE=$ND/lonemonk_full.yaml; else M=$D/map; NOISE=$ND/${SCENE}_600.yaml; fi
-if [ $MODE = heuristic ]; then LC="--lc-mode heuristic"; else LC="--lc-mode verified --noise-config $NOISE"; fi
+# (the September study used per-scene calibrated noise models: tag opt-noise-calibration; now the default noise model)
+if [ $SCENE = lonemonk ]; then M=$D/map_loop; else M=$D/map; fi
+if [ $MODE = heuristic ]; then LC="--lc-mode heuristic"; else LC="--lc-mode verified"; fi
 VARS="$*"; [ -z "$VARS" ] && VARS="map"
 log() { echo "[$(date +%F_%T)] $*" | tee -a logs/lcstudy_rs.log; }
 # the map first (built once per mode), then the variants against it

@@ -274,16 +274,10 @@ class System:
         )
         self.topo_map: SimpleTopo = SimpleTopo(system=self, config=topo_cfg)
 
-        # Verified loop closure (consistency tests + calibrated noise model), or the heuristic intra-hypothesis PGO
+        # Verified loop closure (consistency tests + noise model), or the heuristic intra-hypothesis PGO
         lc_cfg = self.config.mapping.loop_closure
         self._lc_verifier = None
         if lc_cfg.mode == "verified":
-            if lc_cfg.noise_file:
-                import yaml as _yaml
-                from cross.core.config import NoiseModelConfig, _from_dict
-                with open(lc_cfg.noise_file) as _f:
-                    lc_cfg.noise = _from_dict(NoiseModelConfig, _yaml.safe_load(_f) or {})
-                logger.info(f"Loop closure noise model loaded from {lc_cfg.noise_file}")
             from cross.core.lc_verify import LoopClosureVerifier
             self._lc_verifier = LoopClosureVerifier(self, lc_cfg)
             # the odometry scale guard needs translations that are metric without the odometry: PnP on depth, or the

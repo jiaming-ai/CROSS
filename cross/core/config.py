@@ -158,8 +158,9 @@ class NoiseModelConfig:
     sigma_visual = a + b * |t| (relative pose of a visual edge), sigma_odom = k * motion / sqrt(n) + floor (n integrated
     readings), sigma_pair (two references registered in one feed-forward pass) and sigma_map (relative pose of two
     stored map keyframes) are linear in the distance as well.  Rotations in radians, translations in metres.
-    Defaults are conservative values from the simulator (indoor and outdoor scenes); scripts/lc/calibrate_noise.py
-    estimates all of them without ground truth from about a minute of the robot's own data (`noise_file`)."""
+    Defaults are conservative values from the simulator (indoor and outdoor scenes).  Calibrating them on a minute of the
+    robot's own data without ground truth gave no benefit (outputs/2026-10-12_noise_calibration; code in tag
+    opt-noise-calibration)."""
     visual_scale: float = 1.0      # metric scale of the estimator's translations relative to the odometry (measured / true); calibrated, translations are divided by it
     visual_t_a: float = 0.03
     visual_t_b: float = 0.02
@@ -206,7 +207,6 @@ class LoopClosureConfig:
     mode: str = "verified"
     confidence: float = 0.999
     noise: NoiseModelConfig = field(default_factory=NoiseModelConfig)
-    noise_file: Optional[str] = None      # YAML written by scripts/lc/calibrate_noise.py (overrides `noise`)
     use_inpass: bool = True               # ablations of the three tests
     use_prior: bool = True
     use_posterior: bool = True           # (a new edge that remains an outlier after the robust optimisation is

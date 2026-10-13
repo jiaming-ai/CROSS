@@ -45,7 +45,7 @@ it is still being extended.
 - **Visual place recognition** — Keyframe database with embedding-based retrieval for relocalization.
 - **Semantic memory** — Text-conditioned object search across the map using open-vocabulary detectors.
 - **3D reconstruction of a map** — `cross_world/` trains a Gaussian-splatting scene from a saved map's posed keyframes (chunked for large maps, anchored to the keyframes so it follows later map updates) and exports it to a web viewer; `mapping.world_capture` keeps the keyframes' full-resolution frames for it ([guide](docs/WORLD.md)).
-- **Verified loop closure** — prior, in-pass and posterior consistency tests at one chi-square level, with a noise model calibrated without ground truth from about a minute of the robot's own data.
+- **Verified loop closure** — prior, in-pass and posterior consistency tests at one chi-square level, with a fixed measurement noise model.
 - **Stereo and mono modes** — learned multi-view relative poses with stereo scale anchors; colour-only operation with learned metric depth.
 - **Visual odometry** — optional DPVO motion source for every mode, so no odometry input is needed; with an IMU, the mono mode gets its metric scale from it (visual-inertial odometry, `cross/imu/`).
 - **Benchmark** — one protocol (T1 / T2 / T3) over KITTI, OpenLORIS-Scene, ROVER and SimChange, with ORB-SLAM3, RTAB-Map, MASt3R-SLAM and VGGT-SLAM 2.0 baselines.
@@ -252,18 +252,6 @@ python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/h
 # TUM RGB-D: scripts/datasets/convert_tum.py (simulated noisy odometry: --snr 10 --seed 0)
 ```
 
-### Noise calibration for a new robot (optional)
-
-The verified loop closure uses a noise model of the relative-pose estimator and the odometry.  The defaults work for
-wheeled indoor robots; for another platform, record about a minute of data and calibrate without ground truth:
-
-```bash
-python scripts/map_and_reloc_rgbd.py --map <seq> --query <seq> --out outputs/calib --map-end 600 --skip-reloc --dump-graph
-python scripts/lc/calibrate_noise.py --graph outputs/calib/graph_s0.json --out configs/noise/my_robot.yaml
-# stereo mode: record with scripts/viz/record_trace.py (graph + pass-internal poses) and pass --trace as well
-# then: mapping.loop_closure.noise_file: configs/noise/my_robot.yaml
-```
-
 Main defaults: verified loop closure (consistency tests at one chi-square level), hypothesis 0 updated only by
 measurements that are more informative than the odometry chain, keyframe images stored as uint8.  Observation gating
 (`pose_est.obs_min_translation: 0.3`, `obs_min_rotation: 0.15`, `obs_max_interval_steps: 3`) is on in the stereo preset
@@ -429,7 +417,7 @@ Place processed ROS bag directories in `data/rosbag/`.
 | `cross.cv.pose_est_pnp` | PnP-based relative pose estimation (RGB-D mode) |
 | `cross.cv.pose_est_ff` | Feed-forward multi-view relative pose estimation with stereo / odometry / map scale anchors (stereo mode) |
 | `cross.cv.stereo_scale` | Robust metric scale from calibrated anchors (stereo mode) |
-| `cross.core.lc_verify` | Verified loop closure: consistency tests, calibrated noise model, odometry-chain predictor |
+| `cross.core.lc_verify` | Verified loop closure: consistency tests, noise model, odometry-chain predictor |
 | `cross.dataloader.stereo_loader` | Stereo sequences (KITTI raw, TartanAir V2, Virtual KITTI 2, SimChange) and posed RGB-D folders |
 | `cross.pipeline` | Modes (sensor setup x odometry source) and their configuration files (`configs/modes/`): sessions of the back end fed by external odometry, DPVO or the VGGT-Omega + IMU frontend |
 | `cross.mono` | Mono mode: DPVO frontend with learned metric scale, DA3 models, monocular two-view / feed-forward relocalization geometry, real-time runner (`python -m cross.mono.run`) |
