@@ -1,5 +1,5 @@
-"""Odometry noise presets: the VIO mode files include configs/base/odometry_vio.yaml, the wheel modes keep the generic
-values, and configs/overlays/odometry_vio.yaml gives external VIO odometry the VIO values (CPU, config only)."""
+"""Odometry noise presets: the Basalt mode files include configs/base/odometry_vio.yaml, the wheel and CROSS-IMU modes keep the
+generic values, and configs/overlays/odometry_vio.yaml gives external VIO odometry the VIO values (CPU, config only)."""
 import os
 
 import pytest
@@ -7,8 +7,8 @@ import pytest
 from cross.core.config import NoiseModelConfig, load_config
 
 ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "configs")
-VIO = ["stereo_basalt", "stereo_imu", "mono_imu", "mono_vio", "mono_basalt", "rgbd_basalt", "rgbd_ff_basalt"]
-WHEEL = ["stereo_wheel", "mono_wheel", "rgbd_wheel", "rgbd_ff_wheel"]
+VIO = ["stereo_basalt", "mono_basalt", "rgbd_basalt", "rgbd_ff_basalt"]
+WHEEL = ["stereo_wheel", "mono_wheel", "rgbd_wheel", "rgbd_ff_wheel", "stereo_imu", "mono_imu", "mono_vio"]
 
 
 def noise(*files):

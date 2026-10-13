@@ -4,7 +4,6 @@
 include:
   - ../base/stereo.yaml
   - ../base/mono_frontend.yaml
-  - ../base/odometry_vio.yaml
   - ../base/common.yaml
 # The geometric covisibility score with the VGGT-inertial odometry instead of the learned head (base/vggt_finetuned.yaml:
 # covis_source "auto" with the fine-tuned checkpoint; the code default is geometric).  Full benchmark v6 (2026-10-09), mono + IMU on ROVER, two runs each: with vfin2's mapped head

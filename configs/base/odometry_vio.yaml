@@ -1,6 +1,6 @@
-# Odometry noise of visual-inertial odometry (VIO: Basalt, the VGGT / DPVO-inertial front ends, ARKit / ARCore-class
-# phone VIO), included by the VIO mode files (stereo_basalt, stereo_imu, mono_imu, mono_vio, mono_basalt, rgbd_basalt,
-# rgbd_ff_basalt); external VIO odometry in a *_wheel mode: --config configs/overlays/odometry_vio.yaml.
+# Odometry noise of low-drift visual-inertial odometry (Basalt; ARKit / ARCore-class phone VIO), included by the Basalt
+# mode files (stereo_basalt, mono_basalt, rgbd_basalt, rgbd_ff_basalt); external VIO odometry in a *_wheel mode:
+# --config configs/overlays/odometry_vio.yaml.
 # The verified loop closure's prior test and the pose graph weigh the odometry chain with
 # sigma_odom = k * motion / sqrt(n) + floor per edge.  The generic values (code defaults: k_t 0.06, floor_t 0.002,
 # k_r 0.07, floor_r 0.001; wheel-class) allow several degrees of heading drift over a walk; with VIO, whose heading drifts
@@ -9,7 +9,10 @@
 # closure joining the start and end of one straight street (33 m apart) was accepted with the generic values; with these
 # the 9-walk map matches every walk's own odometry to 0.0-0.6 m (was 2.6-11.3 m), scale 1.00 (was 0.80-0.94), with the
 # same relocalization.  ARKit's own drift there was ~0.1 %, so these still leave a margin of 10-40x.
-# Wheel odometry (*_wheel) keeps the generic values, vision-only DPVO (*_dpvo) its own looser ones.
+# Not for odometry that drifts more: the benchmark screen (outputs/2026-10-13_odom_noise_bench) was neutral for
+# stereo_basalt (ROVER, KITTI) but rejected genuine loop closures with CROSS's own IMU fusion and DPVO + IMU
+# (stereo_imu, mono_imu, mono_vio: ROVER T3 -161 to -447 trials), which keep the generic values like wheel odometry
+# (*_wheel); vision-only DPVO (*_dpvo) keeps its own looser ones.
 mapping:
   loop_closure:
     noise:

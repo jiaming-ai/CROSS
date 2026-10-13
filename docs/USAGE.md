@@ -125,12 +125,12 @@ configs/
     mono_frontend.yaml            the monocular frontends' MonoConfig (DPVO, people masking, learned-depth cadence)
     vggt_finetuned.yaml           settings that apply only with the fine-tuned VGGT-Omega checkpoint
     common.yaml                   every mode: background pose-graph optimisation
-    odometry_vio.yaml             odometry noise of visual-inertial odometry (included by the VIO modes)
+    odometry_vio.yaml             odometry noise of low-drift VIO (included by the Basalt modes)
   overlays/
     fast/<mode>.yaml              --fast: constrained compute
     outdoor.yaml                  outdoor scale (the benchmark adds it on outdoor datasets)
     stereo_lowband.yaml           opt-in: left image only, half the rate
-    odometry_vio.yaml             opt-in: external odometry from a VIO (ARKit / ARCore, a robot's VIO)
+    odometry_vio.yaml             opt-in: external odometry from a low-drift VIO (ARKit / ARCore, Basalt-class)
 ```
 
 Every run loads one shipped file, `configs/modes/<mode>.yaml`, chosen by `--mode <name>` (or the sensor mode with
@@ -180,8 +180,8 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.confidence=0
 | `configs/base/vggt_finetuned.yaml` | the fine-tuned VGGT-Omega's settings (included by the bases of every mode that runs VGGT-Omega; applies only with a fine-tuned checkpoint, see below): the learned covisibility head |
 | `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius) and, with the fine-tuned VGGT-Omega, a looser covisibility gate (0.10); the benchmark adds it on outdoor datasets |
 | `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away); not tested with `--fast` |
-| `configs/base/odometry_vio.yaml` | how far the odometry may drift, for the loop-closure consistency test and the pose graph (`mapping.loop_closure.noise.odom_*`), set for visual-inertial odometry: included by the VIO modes (`stereo_basalt`, `stereo_imu`, `mono_imu`, `mono_vio`, `mono_basalt`, `rgbd_basalt`, `rgbd_ff_basalt`). The generic code defaults suit wheel odometry (`*_wheel`); the vision-only `*_dpvo` modes set their own, looser values. Too loose for a VIO, the generic values let look-alike loop closures through and the pose graph bends the map |
-| `configs/overlays/odometry_vio.yaml` | opt-in: the same values for external odometry that comes from a VIO (a phone's ARKit / ARCore, a VIO on the robot) in a `*_wheel` mode |
+| `configs/base/odometry_vio.yaml` | how far the odometry may drift, for the loop-closure consistency test and the pose graph (`mapping.loop_closure.noise.odom_*`), set for low-drift visual-inertial odometry: included by the Basalt modes (`stereo_basalt`, `mono_basalt`, `rgbd_basalt`, `rgbd_ff_basalt`). Too loose for such a VIO, the generic values let look-alike loop closures through and the pose graph bends the map. The generic code defaults stay for wheel odometry (`*_wheel`) and for CROSS's own IMU fusion (`stereo_imu`, `mono_imu`, `mono_vio`), whose odometry drifts more: there the preset rejects genuine loop closures; the vision-only `*_dpvo` modes set their own, looser values |
+| `configs/overlays/odometry_vio.yaml` | opt-in: the same values for external odometry from a low-drift VIO (a phone's ARKit / ARCore, a Basalt-class VIO on the robot) in a `*_wheel` mode |
 | `configs/base/mono_frontend.yaml` | the monocular frontends' shared `mono:` settings (DPVO frontend, people masking, a learned-depth scale observation every 10 frames), included by the mono modes and `stereo_imu`. The DA3 back end's own lines are in `modes/mono_dpvo.yaml`; with external odometry or `vio` it drops their odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
 
 Override one value with `--set section.key=value` (`run.py` and the `scripts/` runners) or put it in a small
