@@ -31,6 +31,7 @@ import torch.nn.functional as F
 from loguru import logger
 
 from cross.core.config import FeedForwardConfig, FFBackend, resolve_ff_checkpoint
+from cross.cv.depth_scale import depth_scale
 from cross.cv.stereo_scale import ScaleAnchor, ScaleEstimate, estimate_scale, invert_poses, scale_camera_centers
 from cross.utils.fingerprint import content_keys
 from cross.utils.profile import timeit
@@ -777,6 +778,21 @@ class PoseEstFeedForward:
                 rig = None if rig is None else np.asarray(rig, dtype=np.float64)
             self._cameras[i] = {"M": M, "rig": rig}
 
+    @staticmethod
+    def _depth_scale_inputs(cfg, curr_depth, ref_depth, B: int) -> Optional[list]:
+        """Measured depth per view of the pass (current view first, then the B references; None where there is
+        none) when config.depth_scale is on and the current view has depth, else None.  ref_depth: (B, H, W) tensor or
+        a list with None entries (references stored without depth); used with depth_scale_views "all"."""
+        if not getattr(cfg, "depth_scale", False) or curr_depth is None:
+            return None
+        views = getattr(cfg, "depth_scale_views", "current")
+        if views not in ("current", "all"):
+            raise ValueError(f"pose_est.ff.depth_scale_views: current | all, not {views}")
+        out = [curr_depth]
+        if views == "all" and ref_depth is not None:
+            out += [ref_depth[i] if i < len(ref_depth) else None for i in range(B)]
+        return out
+
     def _ref_camera(self, ref_cam_ids, i: int) -> Optional[dict]:
         """Camera entry of reference i when it was taken with another camera than the session's, else None."""
         if ref_cam_ids is None or self._cameras is None:
@@ -804,9 +820,11 @@ class PoseEstFeedForward:
 
         Args:
             ref_image: (B, 3, H, W) reference (left) images in [0, 1]
-            ref_depth: unused (kept for interface compatibility)
+            ref_depth: (B, H, W) stored metric depth of the references (or a list with None entries), or None; used
+                with config.depth_scale and depth_scale_views "all"
             curr_image: (3, H, W) current left image
-            curr_depth: unused
+            curr_depth: (H, W) or (1, H, W) measured metric depth of the current view (0 = missing), or None; with
+                config.depth_scale it fixes the pass's metric scale (cross/cv/depth_scale.py)
             curr_image_right: (3, H, W) current right image (stereo anchor) or None
             ref_images_right: list of B entries, each (3, H, W) right image or None;
                 at most `config.n_ref_anchors` of them are used as extra anchors
@@ -884,6 +902,10 @@ class PoseEstFeedForward:
             n_depth = 0
         else:
             n_depth = 1 + B
+        # measured depth of the current view (and the references') fixes the scale: their predicted depth is needed
+        depth_meas = self._depth_scale_inputs(cfg, curr_depth, ref_depth, B)
+        if depth_meas is not None and n_depth is not None:
+            n_depth = max(n_depth, max(i for i, d in enumerate(depth_meas) if d is not None) + 1)
         if getattr(self.backend, "nav", None) is not None and n_depth is not None:
             n_depth = max(n_depth, 1 + B)                       # the BEV head lifts the current view and references
         focal = getattr(self, "_focal_norm", None) if getattr(cfg, "scale_focal", "calibrated") == "calibrated" else None
@@ -927,6 +949,17 @@ class PoseEstFeedForward:
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
             weight_by_baseline=True,          # anchors weighted by their predicted baseline (precision of the ratio)
         )
+        if depth_meas is not None:
+            # the measured depth's scale replaces the anchors' when it is valid
+            depth_est = depth_scale(
+                [pred.depth[i] if i < pred.depth.shape[0] else None for i in range(len(depth_meas))], depth_meas,
+                None if pred.depth_conf is None else [pred.depth_conf[i] if i < pred.depth_conf.shape[0] else None
+                                                      for i in range(len(depth_meas))],
+                min_depth=cfg.depth_scale_min_depth, max_depth=cfg.depth_scale_max_depth,
+                conf_quantile=cfg.depth_scale_conf_quantile, min_pixels=cfg.depth_scale_min_pixels,
+                std_floor=cfg.depth_scale_std_floor)
+            if depth_est.valid:
+                scale_est = depth_est
         src = getattr(cfg, "scale_source", "anchors")
         if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
             # the scale head's metric scale of the model gauge (translations scale with it, frame 0 at the origin)

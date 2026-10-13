@@ -287,8 +287,10 @@ class System:
             # (with pose_est.ff.right_image "left" a pass's scale comes from the odometry and map pairs: not metric on its own)
             ff_cfg = getattr(getattr(self.config, "pose_est", None), "ff", None)
             stereo_anchors = str(getattr(ff_cfg, "right_image", "pair") or "pair") == "pair"
+            # (or with measured depth fixing each pass's scale: pose_est.ff.depth_scale, the RGB-D mode's feed-forward estimator)
             self._lc_verifier.guard_metric = self.pose_est_type == PoseEstType.PNP or (
-                self.pose_est_type == PoseEstType.FF and T_right_in_left is not None and stereo_anchors)
+                self.pose_est_type == PoseEstType.FF and T_right_in_left is not None and stereo_anchors) or (
+                self.pose_est_type == PoseEstType.FF and bool(getattr(ff_cfg, "depth_scale", False)))
             # calibrated metric scale of the feed-forward estimator (measured / true translation, from the odometry)
             if float(getattr(lc_cfg.noise, "visual_scale", 1.0) or 1.0) != 1.0 and hasattr(self, "pose_est"):
                 self.pose_est.metric_scale_correction = float(lc_cfg.noise.visual_scale)
@@ -2873,7 +2875,8 @@ class System:
         from cross.db.db import as_float_image
         # stored images (host RAM by default) copied to the compute device for this pass only
         ref_rgbs = [as_float_image(p.raw_rgb_image.to(self.device)) for p in keyframes]
-        ref_depths = [as_float_image(p.depth_image.to(self.device)) for p in keyframes] if depth_image is not None else None
+        ref_depths = [as_float_image(p.depth_image.to(self.device)) for p in keyframes] \
+            if depth_image is not None and self.pose_est_type != PoseEstType.FF else None
 
         ref_rgbs = torch.stack(ref_rgbs)
         ref_depths = torch.cat(ref_depths, dim=0) if ref_depths is not None else None
@@ -2883,8 +2886,14 @@ class System:
         source_context = {'ref_loaded': [k.id in self.loaded_node_ids for k in keyframes],
                           'session_unanchored': bool(self.hypothesis_manager.reference_support.unanchored)}
         if self.pose_est_type == PoseEstType.FF:
+            # RGB-D with the feed-forward estimator (pose_est.ff.depth_scale): the measured depth fixes the metric scale
+            ff_depth = depth_image is not None and bool(getattr(self.config.pose_est.ff, "depth_scale", False))
+            ff_ref_depths = None
+            if ff_depth and getattr(self.config.pose_est.ff, "depth_scale_views", "current") == "all":
+                ff_ref_depths = [None if getattr(k, "depth_image", None) is None else
+                                 as_float_image(k.depth_image.to(self.device)) for k in keyframes]
             valid_poses, valid_masks, confidences = self.pose_est.estimate_pose(
-                ref_rgbs, None, rgb_image, None,
+                ref_rgbs, ff_ref_depths, rgb_image, depth_image if ff_depth else None,
                 curr_image_right=rgb_right,
                 ref_images_right=_LazyImages(keyframes, "raw_rgb_right", self.device),
                 odom_anchor=odom_anchor,

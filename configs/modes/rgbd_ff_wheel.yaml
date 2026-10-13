@@ -1,0 +1,6 @@
+# configs/modes/rgbd_ff_wheel.yaml: selected by --mode rgbd_ff_wheel.
+# RGB-D with VGGT-Omega relative poses scaled by the measured depth + external odometry (wheel, INS, a phone's VIO): --mode rgbd --rgbd-estimator ff --odometry external.
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/rgbd_ff.yaml
+  - ../base/common.yaml
