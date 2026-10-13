@@ -58,13 +58,19 @@ def _ns(t):
     return int(round(float(t) * 1e9))
 
 
+# the benchmark's Basalt settings over the EuRoC configuration: a 4-level image pyramid (EuRoC: 3), which tracks the large
+# image motion of fast turns and the weak texture at night (benchmark/datasets/prepare_vio.py DEFAULT_BASALT_OVERRIDES)
+DEFAULT_OVERRIDES = {"optical_flow_levels": 4}
+
+
 class BasaltOdometry:
     """Live Basalt for a sensor source with an IMU stream (cross_edge.sensors.StereoFolder or a robot driver giving
     the same fields: K, width, height, baseline, imu (N x 7: t gyro accel), imu_calib, frames with t_imu and gray /
     gray_right images).
 
     binary    basalt_live (default $BASALT_LIVE)
-    config    Basalt configuration JSON (default: Basalt's data/euroc_config.json next to the binary's source tree)
+    config    Basalt configuration JSON (default: Basalt's data/euroc_config.json next to the binary's source tree), over which
+              DEFAULT_OVERRIDES and `overrides` (config keys without "config.") are applied
     threads   Basalt's worker threads (TBB)
     wait      seconds to wait for a frame's state before reporting no estimate for it"""
 
@@ -85,7 +91,7 @@ class BasaltOdometry:
         if config is None:
             config = Path(self.binary if os.sep in self.binary else _which(self.binary)).resolve().parents[2] / "data" / "euroc_config.json"
         cfg = json.loads(Path(config).read_text())
-        cfg["value0"].update({f"config.{k}": v for k, v in (overrides or {}).items()})
+        cfg["value0"].update({f"config.{k}": v for k, v in {**DEFAULT_OVERRIDES, **(overrides or {})}.items()})
         cfg_path = self.work / "config.json"
         cfg_path.write_text(json.dumps(cfg, indent=1))
         self.log = open(log or (self.work / "basalt_live.log"), "w")

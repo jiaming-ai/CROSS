@@ -1,0 +1,27 @@
+# Stereo mode base (included by every folder's stereo_*.yaml): relative poses from a feed-forward multi-view model
+# (VGGT-Omega by default, DA3 optional) with metric scale from the stereo pair(s).  Needs the optional stereo
+# dependencies and weights: bash install.sh --stereo.
+include: vggt_finetuned.yaml
+pose_est:
+  type: ff
+  # the feed-forward observation (retrieval + one multi-view forward pass) costs ~0.2-0.3 s: observe after 0.3 m or 0.15
+  # rad of motion, at least every third frame (all stereo-mode results were obtained with these values).  Opt-in
+  # low-bandwidth overlay with trusted external odometry: configs/overlays/stereo_lowband.yaml (left image, half the
+  # rate)
+  obs_min_translation: 0.3
+  obs_min_rotation: 0.15
+  obs_max_interval_steps: 3
+  ff:
+    backend: vggt_omega
+    # checkpoint "auto" (the default): the fine-tuned VGGT-Omega when installed, else the released one; with the
+    # fine-tuned one the vggt_finetuned sections apply (base/vggt_finetuned.yaml; cross.core.config.load_config)
+    # 8 images per pass: the current pair and 6 retrieved references, no reference right images (10 before: + the
+    # stored right images of the best 2 references as extra anchors; stereo DPVO keeps them, modes/stereo_dpvo.yaml).
+    # Full benchmark 2026-10-11 (outputs/2026-10-11_config_confirm), against the 10 images: ROVER T3 of 1142 wheel 1077 ->
+    # 1074, Basalt 1064 -> 1068, IMU 1023 -> 1045, T1 equal; OpenLORIS T3 equal, T2 at 1 m 0.689 -> 0.657 / 0.801 ->
+    # 0.795.  With 4 references (6 images) ROVER held too but the OpenLORIS corridors lost T2 at 1 m (stereo 0.689 ->
+    # 0.538, every corridor query).  RTX 4000 Ada pass 236 ms (8 images) vs 167 ms (6 images).  The keyframes' right
+    # images are still stored with the map (cross_world's stereo depth when the map is reconstructed without its source
+    # frames).
+    max_refs: 6
+    n_ref_anchors: 0

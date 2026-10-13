@@ -1,4 +1,22 @@
-# CROSS Nav uncertainty and soft planning
+# CROSS Nav: navigation from one camera and odometry
+
+Optional package of CROSS (`bash install.sh --nav`; `--nav-sim` adds the Habitat simulator in its own Python 3.9
+environment). Everything runs on the frozen VGGT-Omega backbone of the stereo mode.
+
+| Part | Where | What |
+|---|---|---|
+| BEV head | `cross_nav/{model,head,train,infer}.py`, `cross_nav/configs/train/` | occupancy (and observability / error) on a gravity-aligned metric grid around the camera; `BEVPredictor`; also usable inside a CROSS session (`pose_est.ff.nav_bev_head`) |
+| Planners | `cross_nav/{plan,local_plan,observed_plan}.py`, `cross_nav/policy/bev_policy.py`, `cross_nav/configs/policy/` | local planning on the BEV, closed-loop rules and episode map (`bev_planner_best.json`) |
+| Trajectory policy | `cross_nav/policy/{head,train_sim,server,recovery}.py` | direct 16-waypoint path from four views, the goal and an odometry trail (flow head) |
+| Robot agent | `cross_nav/policy/robot.py` | `NavigationAgent` with `TrajectoryPlanner`, `BEVPlanner` or `HybridPlanner` (`hybrid_best.json`) |
+| Simulation | `cross_nav/policy/sim/` | Habitat closed-loop rollouts (HSSD, AI2-THOR), expert / DAgger data, side-by-side viewer |
+| Data | `cross_nav/sim/`, `cross_nav/policy/{data,real_cache,prepare_gnm}.py`, `cross_nav/policy/datasets/` | BEV labels from rendered scenes; real-robot demonstrations (GNM mixture, SCAND, FrodoBots-2K, CAST, ...; `pip install -e ".[nav-data]"`) |
+
+Usage and deployment: [`cross_nav/policy/README.md`](policy/README.md). Paths to data and checkpoints come from arguments or the
+`CROSS_NAV_ROOT` environment variable (training configs and the shipped planner configs use `${CROSS_NAV_ROOT}`).
+
+## BEV uncertainty and soft planning
+
 
 The BEV head predicts occupancy on a gravity-aligned metric grid. Set
 `bev_head.uncertainty: true` to add a learned **occupancy decision error** output.

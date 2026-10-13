@@ -445,7 +445,7 @@ def test_loop_closure_skips_a_graph_that_cannot_be_built(monkeypatch):
 
     monkeypatch.setattr(hyp, "PoseGraph", _Graph)
     hm = hyp.HypothesisManager.__new__(hyp.HypothesisManager)
-    hm.hypotheses, hm.nodes, hm.no_pgo_for_lc = {0: object(), 1: object()}, {0: object(), 1: object()}, False
+    hm.hypotheses, hm.nodes = {0: object(), 1: object()}, {0: object(), 1: object()}
     hm.graph_lock, hm.device = threading.RLock(), "cpu"
     hm.system = types.SimpleNamespace(config=types.SimpleNamespace(mapping=types.SimpleNamespace(loop_closure=LoopClosureConfig())),
                                       _session_start_kf_id=0)

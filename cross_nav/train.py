@@ -1,6 +1,6 @@
 """Train the BEV head (and the gravity head) on the frozen VGGT-Omega backbone.
 
-    torchrun --nproc_per_node=4 -m cross_nav.train --config configs/cross_nav/<run>.yaml [key.sub=value ...]
+    torchrun --nproc_per_node=4 -m cross_nav.train --config cross_nav/configs/train/<run>.yaml [key.sub=value ...]
 
 Per step: the backbone runs without gradients on the batch's windows; the metric scale given to the head is the GT
 scale of the pass (median GT / predicted depth of frame 0) with a random log-normal error, or with probability
@@ -34,6 +34,15 @@ from .model import NavModel
 from .uncertainty import error_loss, attenuated_bce
 from .footprint_loss import footprint_bce
 from .route_loss import route_bce
+
+
+def expand_env(cfg):
+    """Environment variables (e.g. ${CROSS_NAV_ROOT}, the data / checkpoint root) in every string of the config."""
+    if isinstance(cfg, dict):
+        return {k: expand_env(v) for k, v in cfg.items()}
+    if isinstance(cfg, list):
+        return [expand_env(v) for v in cfg]
+    return os.path.expandvars(cfg) if isinstance(cfg, str) else cfg
 
 
 def gt_log_scale(depth_pred: torch.Tensor, depth_gt: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
@@ -105,7 +114,7 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
-    cfg = apply_overrides(yaml.safe_load(open(args.config)), args.overrides)
+    cfg = expand_env(apply_overrides(yaml.safe_load(open(args.config)), args.overrides))   # ${CROSS_NAV_ROOT} in paths
     world = int(os.environ.get("WORLD_SIZE", 1))
     rank = int(os.environ.get("RANK", 0))
     local_rank = int(os.environ.get("LOCAL_RANK", 0))

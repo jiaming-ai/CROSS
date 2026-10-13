@@ -71,7 +71,7 @@ def test_edge_slots_meta_and_np_cache():
     assert e.mean_np is m                             # cached (the PGO caches key on its identity)
     e.mean = pp.randn_SE3()                           # as before: the cache keeps the first value
     assert e.mean_np is m
-    c = copy.copy(e)                                  # conditional PGO path: a shallow copy shares the cache
+    c = copy.copy(e)                                  # a shallow copy shares the cache
     assert c.mean_np is m and c.n_frames == 3 and c.anything == "x" and c.odom_fault == 0.2
     assert abs(e.cost - float(np.linalg.norm(m[:3]))) < 1e-12
     v = VisualEdge(pp.randn_SE3(), pp.se3(torch.rand(6)), EdgeType.VISUAL, 1, 2)

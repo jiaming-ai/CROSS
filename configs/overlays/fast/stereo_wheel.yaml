@@ -1,0 +1,4 @@
+# Fast overlay of the stereo_wheel mode (--fast; layered on configs/modes/stereo_wheel.yaml):
+# nothing.  Tested (outputs/2026-10-11_config_confirm): 6 images at 416 px, 1.45x the query frame rate on an RTX 4000
+# Ada, lost OpenLORIS T3 204 -> 192 of 294 (-5.9 %, +7 / -19) beyond the 5 % limit (ROVER subset -2.0 %).
+{}

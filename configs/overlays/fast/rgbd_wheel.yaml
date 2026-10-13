@@ -1,0 +1,4 @@
+# Fast overlay of the rgbd_wheel mode (--fast; layered on configs/modes/rgbd_wheel.yaml):
+# nothing.  The RGB-D mode already runs at ~39 query FPS on an RTX 4000 Ada; half the observation rate cost T3 -7 % on
+# the development split (outputs/2026-10-09_config_profiles H6).
+{}

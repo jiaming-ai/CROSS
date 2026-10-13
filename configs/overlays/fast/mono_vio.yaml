@@ -1,0 +1,4 @@
+# Fast overlay of the mono_vio mode (--fast; layered on configs/modes/mono_vio.yaml): nothing.
+# Not tested on its own; the same back end with DPVO alone (mono_wheel's file) ran at 9.9 query FPS on an RTX 4000 Ada
+# and 11.8 at 416 px, and mono_wheel's 416 px overlay lost OpenLORIS T2 at 1 m -14 % (outputs/2026-10-11_config_confirm).
+{}

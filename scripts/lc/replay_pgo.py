@@ -4,7 +4,7 @@ the real factor objects with their metadata) and the graph dump (ground truth), 
 code path.  Reports the map ATE of the online result, of the exact replay, and of controlled variants, and compares
 the stored `informative` flags with the information criterion evaluated offline.
 
-usage: python scripts/lc/replay_pgo.py outputs/lcstudy/<scene>/<run> [--noise configs/noise/x.yaml]
+usage: python scripts/lc/replay_pgo.py outputs/lcstudy/<scene>/<run> [--noise <noise model .yaml>]
 """
 from __future__ import annotations
 

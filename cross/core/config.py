@@ -12,18 +12,19 @@ Usage::
     # Pure defaults
     cfg = SystemConfig()
 
-    # From YAML
-    cfg = load_config("configs/default.yaml")
+    # The shipped configuration of a mode (cross.pipeline.mode_config_files), layered with an overlay
+    cfg = load_config("configs/modes/stereo_wheel.yaml", "configs/overlays/outdoor.yaml")
 
-    # Layered: base + experiment + CLI overrides
-    cfg = load_config("configs/default.yaml", "configs/experiments/indoor_vio.yaml",
-                      tracking={"filter_mode": "adaptive"})
+    # Layered: files + section overrides
+    cfg = load_config("configs/modes/rgbd_wheel.yaml", pose_est={"obs_max_interval_steps": 2})
 """
 
 from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -35,15 +36,8 @@ import yaml
 # Enums for string-valued choices
 # ---------------------------------------------------------------------------
 
-class FilterMode(str, Enum):
-    FULL = "full"
-    SKIP_ACTIVE = "skip_active"
-    ADAPTIVE = "adaptive"
-
-
 class PoseEstType(str, Enum):
     PNP = "pnp"
-    VGGT = "vggt"
     FF = "ff"  # stereo mode: feed-forward multi-view model with stereo scale anchors (cross/cv/pose_est_ff.py)
     # mono mode: the relative-pose estimator is injected by the monocular pipeline (System(pose_estimator=...))
     DA3 = "da3"
@@ -80,28 +74,12 @@ class RobustKernelType(str, Enum):
 # ---------------------------------------------------------------------------
 
 @dataclass
-class AdaptiveFilterConfig:
-    trans_thresh: float = 0.10  # meters
-    rot_thresh: float = 0.10   # radians
-
-
-@dataclass
 class TrackingConfig:
-    use_VO: bool = False
-    use_odometry: bool = True
     new_kf_after_n_unsuccessful_steps: int = 5
     odom_std_per_meter: float = 0.5
     odom_std_per_radian: float = 0.5
     odom_min_std_translation: float = 0.1
     odom_min_std_rotation: float = 0.1
-    # take the four odometry constants above from the calibrated noise model of the verified loop closure
-    # (NoiseModelConfig.odom_k_t / odom_k_r / odom_floor_t / odom_floor_r, fitted without ground truth by
-    # scripts/lc/calibrate_noise.py) instead of the hand-set defaults, so that the belief's motion uncertainty describes
-    # the odometry actually used.  The defaults (0.5 per metre / radian, floors 0.1 m / 0.1 rad per step) are 5-50x wider
-    # than a typical wheel / VIO odometry and hand every visual measurement a large gain.  Needs loop_closure.mode verified.
-    odom_std_from_noise_model: bool = False
-    filter_mode: FilterMode = FilterMode.FULL
-    adaptive_filter: AdaptiveFilterConfig = field(default_factory=AdaptiveFilterConfig)
 
 
 @dataclass
@@ -160,35 +138,11 @@ class RetrievalConfig:
     vpr_model_type: VPRModelType = VPRModelType.BOQ
     top_k: int = 10
     own_session_slots: int = 2   # retrieval slots for keyframes of the current session; the rest go to map keyframes
-    # mapping (no map loaded): reserve the same number of slots for recent keyframes and give the rest to
-    # keyframes older than recent_window_steps, so that loop-closure candidates are not crowded out by the
-    # keyframes just behind the robot (0 disables the split)
-    # 0 = disabled (default).  All reported results were produced with this split inactive: its keyframe-age test
-    # compared keyframe ids with step counts and never triggered after ~200 steps.  Enabling it (e.g. 150) gives the
-    # keyframes just behind the robot only `own_session_slots` slots, which weakens local tracking and, in scenes with
-    # repetitive structure (Lone Monk arcades), lets aliased old keyframes spawn false loop closures.
-    recent_window_steps: int = 0
-    # when the split is enabled: keyframes older than the window are admitted only with a VPR score of at least
-    # recent_split_min_score and at least recent_split_rel_score times the best score of the query, and the recent
-    # keyframes keep at least recent_split_recent_slots slots (rank-only admission of old keyframes fed aliased
-    # places to the pose estimator and starved local tracking)
-    recent_split_min_score: float = 0.45
-    recent_split_rel_score: float = 0.85
-    recent_split_recent_slots: int = 4
     map_score_threshold: float = 0.0   # VPR score threshold for map keyframes (rank-based retrieval; geometry verifies)
-    # pose-guided retrieval (relocalization sessions): once the session is anchored to the map (a verified map edge),
-    # up to pose_guided_k map keyframes whose viewed region overlaps the current one are added in front of the VPR
-    # results.  The viewed region of a camera is the point pose_guided_depth metres along its optical axis; overlap =
-    # those points within pose_guided_radius and optical axes within pose_guided_max_angle_deg.  Appearance retrieval
-    # across sessions under strong appearance change is weak, the tracked pose is not.
     # keyframe images stored as uint8 and depth as fp16 instead of float32: 4x less memory per keyframe and per saved map
     # (images come from 8-bit sensors, so the round trip is lossless; fp16 depth resolution is < 0.1 % of the range);
     # every consumer converts with cross.db.db.as_float_image
     store_images_uint8: bool = True
-    pose_guided_k: int = 0
-    pose_guided_depth: float = 2.0
-    pose_guided_radius: float = 1.0
-    pose_guided_max_angle_deg: float = 60.0
     vpr_score_threshold_high: float = 0.3
     vpr_score_threshold_low: float = 0.3
     initial_buffer_size: int = 1000
@@ -204,8 +158,9 @@ class NoiseModelConfig:
     sigma_visual = a + b * |t| (relative pose of a visual edge), sigma_odom = k * motion / sqrt(n) + floor (n integrated
     readings), sigma_pair (two references registered in one feed-forward pass) and sigma_map (relative pose of two
     stored map keyframes) are linear in the distance as well.  Rotations in radians, translations in metres.
-    Defaults are conservative values from the simulator (indoor and outdoor scenes); scripts/lc/calibrate_noise.py
-    estimates all of them without ground truth from about a minute of the robot's own data (`noise_file`)."""
+    Defaults are conservative values from the simulator (indoor and outdoor scenes).  Calibrating them on a minute of the
+    robot's own data without ground truth gave no benefit (outputs/2026-10-12_noise_calibration; code in tag
+    opt-noise-calibration)."""
     visual_scale: float = 1.0      # metric scale of the estimator's translations relative to the odometry (measured / true); calibrated, translations are divided by it
     visual_t_a: float = 0.03
     visual_t_b: float = 0.02
@@ -229,8 +184,6 @@ class NoiseModelConfig:
 
 @dataclass
 class LoopClosureConfig:
-    async_: bool = False
-    queue_size: int = 1
     # the optimisation of a verified loop closure runs in a forked process while the front end keeps processing frames
     # (cross/core/async_pgo.py); its result is applied when it arrives, to the state of that moment.  Needs the state on
     # the CPU (state_device); otherwise, and for chart-aware graphs, the optimisation stays synchronous.
@@ -254,14 +207,10 @@ class LoopClosureConfig:
     mode: str = "verified"
     confidence: float = 0.999
     noise: NoiseModelConfig = field(default_factory=NoiseModelConfig)
-    noise_file: Optional[str] = None      # YAML written by scripts/lc/calibrate_noise.py (overrides `noise`)
     use_inpass: bool = True               # ablations of the three tests
     use_prior: bool = True
-    use_posterior: bool = True
-    # what the posterior test does with new edges that remain outliers after the optimisation: "flag" (statistics
-    # only; the robust optimisation keeps every prior-consistent edge, so a poor early solution is overturned by later
-    # evidence) or "remove" (quarantine them and re-optimise; first-come lock-in observed on Lone Monk seed 2)
-    posterior_action: str = "remove"   # a new edge that remains an outlier after the robust optimisation is quarantined and the graph re-optimised
+    use_posterior: bool = True           # (a new edge that remains an outlier after the robust optimisation is
+                                         # quarantined and the graph re-optimised)
     # degrees of freedom of the consistency tests: "translation" (3 dof: the marginal test on the translation
     # residual, whose covariance includes the rotation-induced position uncertainty; wrong-place references are a
     # translation phenomenon and the rotation noise of the estimator is the least well calibrated quantity) or
@@ -345,17 +294,6 @@ class LoopClosureConfig:
     # minimum odometry-chain length (m) of a span used for the online metric-scale ratio (measured / odometry
     # translation over chains of <= 5 edges); 1 m for driving / indoor scenes, less for slow platforms
     scale_min_span_m: float = 1.0
-    # Intra-hypothesis loop closure.  The multi-hypothesis detector (HypothesisConfig.detect_*) only fires when a
-    # *second* realized hypothesis out-scores hypothesis 0, i.e. when the revisit is inconsistent with the tracked
-    # belief by more than the measurement noise (and its candidate is > 3 m away).  A revisit with sub-metre drift
-    # is absorbed by hypothesis 0 as an ordinary measurement update: visual edges to the old keyframes are stored
-    # but no pose-graph optimisation runs and the accumulated drift stays in the map.  With this option, hypothesis 0
-    # is optimised (earliest keyframe fixed; map keyframes fixed in a relocalization session) as soon as enough
-    # accepted visual edges to keyframes of the current session older than RetrievalConfig.recent_window_steps
-    # have been added.
-    # relocalization sessions: a new edge to a stored-map keyframe whose residual against the session graph exceeds the
-    # calibrated noise triggers the optimisation of the session against the fixed map (like a loop candidate)
-    map_edges_trigger: bool = False
     # write an optimisation back only after its new edges passed the posterior test (else quarantine them and re-solve
     # from the unmodified graph); False: apply first, test, re-solve from the applied solution (original behaviour)
     test_before_apply: bool = False
@@ -366,10 +304,6 @@ class LoopClosureConfig:
     corroborate_window: int = 0
     corroborate_tol_t: float = 0.5
     corroborate_tol_r_deg: float = 5.0
-    # the optimisation run when a map is saved covers every keyframe of every session with only the first keyframe fixed
-    # (False: the neighbourhood of the latest keyframe, earlier sessions fixed), so a merged multi-session map is made
-    # consistent before the next session registers to it
-    global_final_opt: bool = False
     # in a session without a loaded map, a loop-closure optimisation covers every keyframe of the session (False: the
     # 1000 keyframes before the latest one, plus their visual neighbours, the rest fixed).  A loop back to the start of a
     # long drive (KITTI 00 at step 2403: 1108 of 2340 keyframes in the graph) otherwise bends only the latest part and
@@ -424,43 +358,21 @@ class LoopClosureConfig:
 
 
 @dataclass
-class LocalSmoothingConfig:
-    enabled: bool = False
-    window_kfs: int = 30
-    period_steps: int = 10
-    k_hop: int = 1
-
-
-@dataclass
 class ClusterStdConfig:
     use_conf_weight: bool = True
     min_std_translation: float = 0.01  # meters
     min_std_rotation: float = 0.01     # radians
-    # the std of a multi-member cluster is at least the smallest member std: the references of one forward pass share
-    # the pass's gauge and scale errors, so their agreement (dispersion) says little about the error of the cluster;
-    # False keeps the original dispersion-only std (floored at min_std_*), which lets correlated, biased measurements
-    # dominate the belief
-    floor_by_member_std: bool = False
 
 
 @dataclass
 class HypothesisConfig:
     """All tuning parameters for HypothesisManager."""
 
-    conditional_sources: bool = False
-    schmidt_map_geometry: bool = False  # experimental shared map uncertainty
-    map_geometry_basis: str = 'epoch'  # 'factor' retains raw factor identities across solves
     # --- Observation update ---
     # process noise (std, metres / radians per axis) added to the prior of every component before it is fused with
     # an observation.  0.05 is the original CROSS value: it keeps the Kalman gain away from zero but, with good
     # odometry, lets every (possibly biased) measurement pull the belief by a large fraction of its residual.
     filter_process_std: float = 0.05
-    # how the odometry std of a step is added to the belief std in the motion update: "linear" (original: sigma +=
-    # sigma_step, i.e. n steps give n sigma_step) or "variance" (sigma^2 += sigma_step^2, independent increments: sqrt(n)
-    # sigma_step).  The linear rule inflates the belief between observations (at 10 Hz with an observation every few
-    # frames it settles at ~6 cm / 0.7 deg for mm-level odometry), which hands every visual measurement a 20-30 % gain and
-    # lets the small biases of the feed-forward estimator accumulate into metres of drift.
-    motion_std_accumulation: str = "linear"
     # hypothesis 0's pose (and covariance) is updated only by informative proposals (verified-LC loop candidates, map
     # references of a relocalization session); measurements to the keyframes just behind the robot only weigh the
     # hypotheses and become graph edges (their keyframe poses came from the same belief, so fusing them re-applies the
@@ -470,16 +382,6 @@ class HypothesisConfig:
     # relocalization unchanged.  Known weakness: abrupt on-the-spot turns with noisy odometry (Lone Monk, 23 deg per
     # frame): the lagging hypothesis 0 is out-scored and replaced repeatedly.
     h0_informative_only: bool = True
-    # with h0_informative_only, a skipped pose update still takes the fused variance: the measurement is consistent with
-    # hypothesis 0 (it is explained by the odometry chain), only its mean is not re-applied.  Without it the belief
-    # std grows with every frame (0.1 m and 0.1 rad per step from the tracking odometry model; 20 m after 200 steps on
-    # OpenLORIS cafe1-2, RGB-D) until any aliased hypothesis out-scores hypothesis 0.  Sessions without a loaded map only
-    # (in a relocalization session an unsupported hypothesis 0 must be able to lose to the map hypotheses)
-    h0_skip_keeps_variance: bool = True
-    # measurements to keyframes of previous sessions (the loaded map) count as informative pose-graph constraints (they are
-    # independent of the session's odometry drift); for the pose update of hypothesis 0: "always", or "belief" = only while hypothesis 0 is less certain
-    # than the measurement (translation), "off" / False = the loop-candidate test alone
-    map_refs_informative: object = False
     # evidence of a component without an aligned proposal: "self" scores its keep-alive self-match (zero residual, i.e.
     # the component's own peak density; original behaviour); "miss" scores it below the weakest supported component
     # (by unmatched_miss_margin nats)
@@ -592,14 +494,6 @@ class HypothesisConfig:
     reloc_min_verified_frames: int = 3
     reloc_realize_nats: float = 2.0
     detect_reject_cooldown_steps: int = 30   # steps a candidate is ignored after a rejected merge
-    # strong passes (0 = off): a proposal backed by at least strong_pass_min_refs references, each with covisibility
-    # >= strong_pass_min_covis, is a multi-view check by itself; such a pass counts as strong_pass_frames valid evidence
-    # frames in the frame-count gates of realization (realize_min_frames) and detection (detect_min_frames). Without
-    # it, a short real overlap after non-overlapping views (rightly rejected) gives too few frames, and the passes split
-    # over several components (OpenLORIS office1-7, mono: relocalization ~175 frames late)
-    strong_pass_frames: int = 0
-    strong_pass_min_refs: int = 2
-    strong_pass_min_covis: float = 0.3
     # geometric verification of a merge: fraction of the candidate's visual edges that remain outliers
     # (Mahalanobis norm > verify_outlier_sigma) after the loop-closure optimisation
     verify_outlier_sigma: float = 4.0
@@ -609,9 +503,6 @@ class HypothesisConfig:
     self_lc_conf_thresh: float = 0.55
     self_lc_cooldown_steps: int = 300
     self_lc_min_kf_id_gap: int = 30
-
-    # --- Misc ---
-    no_pgo_for_lc: bool = False
 
     # --- Comp 0 keep-alive (observability) ---
     comp0_keepalive_score: float = 1e-2
@@ -691,11 +582,17 @@ class KeyframeQualityConfig:
 
 @dataclass
 class WorldCaptureConfig:
-    """Input frames kept for a later 3D reconstruction of the map (cross/core/world_capture.py, cross_world): every
-    `min_translation` m / `min_rotation_deg` deg, at the input resolution and uncropped, posed relative to their nearest
-    permanent keyframes, saved next to the map (map.pkl.capture/), not in its database.  Off by default: it only
-    costs disk (KITTI 07 stereo, every frame: 0.38 GB of JPEG) and a synchronous image encode per captured frame."""
+    """Input frames kept for a later 3D reconstruction of the map (cross/core/world_capture.py, cross_world): the frame
+    of every new permanent keyframe at the input resolution and uncropped (stereo maps store <= 512 px centre crops:
+    KITTI 07 +2.4 dB held-out with the uncropped frames), posed relative to their nearest permanent keyframes, saved
+    next to the map (map.pkl.capture/), not in its database.  Off by default: it costs disk and a synchronous image
+    encode per captured frame."""
     enabled: bool = False
+    # also frames between keyframes, every min_translation m / min_rotation_deg deg (0 / 0: every frame), for
+    # `cross_world build --capture`.  KITTI 07 against keyframes only with the same Gaussian budget and steps: +1.2 dB
+    # at held-out keyframes (2.3 m from the nearest training keyframe), +0.15 dB between keyframes but blurrier (LPIPS
+    # 0.262 vs 0.225); no gain on home1-1; 3.5x the training time, 0.38 GB for every KITTI 07 frame
+    between: bool = False
     min_translation: float = 0.25
     min_rotation_deg: float = 5.0
     max_side: int = 0                   # downscale the longer side to this (0: input resolution)
@@ -715,7 +612,6 @@ class MappingConfig:
     cluster_eps: float = 1.0             # DBSCAN radius in the place coordinates (`projection`) for proposal clustering
     projection: ProjectionConfig = field(default_factory=ProjectionConfig)
     loop_closure: LoopClosureConfig = field(default_factory=LoopClosureConfig)
-    local_smoothing: LocalSmoothingConfig = field(default_factory=LocalSmoothingConfig)
     cluster_std: ClusterStdConfig = field(default_factory=ClusterStdConfig)
     hypothesis: HypothesisConfig = field(default_factory=HypothesisConfig)
     topo: TopoConfig = field(default_factory=TopoConfig)
@@ -745,13 +641,24 @@ class KPMatcherConfig:
     allow_batch_inference: bool = True
 
 
+# VGGT-Omega checkpoints installed by install.sh --stereo: the fine-tuned CROSS checkpoint (the default; public,
+# huggingface.co/Jamie-nus/VGGT-Omega-CROSS) and the released one (install.sh --vggt=released; gated,
+# huggingface.co/facebook/VGGT-Omega)
+FINETUNED_VGGT_CHECKPOINT = "models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt"
+RELEASED_VGGT_CHECKPOINT = "models/VGGT-Omega/vggt_omega_1b_512.pt"
+DA3_CHECKPOINT = "models/DA3-LARGE-1.1"
+
+
 @dataclass
 class FeedForwardConfig:
     """Stereo mode: feed-forward (learned multi-view) relative pose estimation with stereo scale anchors
     (pose_est.type = ff; needs the optional stereo dependencies, see install.sh --stereo).  Observation gating and
     the calibrated measurement noise are estimator-generic options of PoseEstConfig."""
     backend: FFBackend = FFBackend.VGGT_OMEGA
-    checkpoint: str = "models/VGGT-Omega/vggt_omega_1b_512.pt"
+    # "auto": the fine-tuned VGGT-Omega when it is installed, else the released one (DA3 backend: DA3_CHECKPOINT);
+    # "finetuned" / "released": that checkpoint of install.sh; or a path.  A fine-tuned checkpoint (one with a
+    # covis_head_map) turns on the vggt_finetuned sections of the configuration files (load_config)
+    checkpoint: str = "auto"
     image_resolution: int = 512          # longest side fed to the model (multiple of patch size)
     da3_process_res: int = 504
     half_precision_weights: bool = True  # keep the transformer weights in bf16 (halves memory, ~1cm difference)
@@ -761,27 +668,19 @@ class FeedForwardConfig:
     # torch.compile the transformer blocks (~25 % faster; a few seconds per process once the kernels are tuned and
     # cached, ~1 min the first time).  Falls back to eager execution if compilation fails.
     compile: bool = True
-    # torch.compile mode of the blocks.  "default" is deterministic (two runs give identical results);
-    # "max-autotune-no-cudagraphs" is ~4 % faster but picks kernels by timing them, so runs differ in rounding.
-    compile_mode: str = "default"
     # depth head under bf16 autocast (half its time; depth changes by ~0.1 %, the covisibility test allows 15 %)
     dense_head_bf16: bool = True
     # run each pass as CUDA graphs (one per input shape, captured on first use, ~0.3 s each): removes the kernel-launch
     # and Python overhead of a pass; the kernels and results are the same.  Needs token_cache.
     cuda_graphs: bool = True
-    # round the current images to 8 bits (as keyframes are stored, <= 0.2 % per pixel): a keyframe's tokens are then
-    # reused when it is retrieved later.  Off: this small input change alone moved the OpenLORIS home1-1 map from 1 to 4
-    # verified loop closures (map ATE 0.109 -> 0.237 m), and it saves only one embedding per new keyframe.
-    quantize_input: bool = False
     max_refs: int = 6                    # at most this many retrieved references per forward pass
     n_ref_anchors: int = 2               # stored right images of the best references used as extra anchors
     use_curr_anchor: bool = True         # include the current right image (ablation switch)
-    store_right_images: bool = False     # keep right images of keyframes even when n_ref_anchors == 0
     # the right image in the stereo mode's back end: "pair" anchors each pass's metric scale (the current pair, stored
     # right images of the references: use_curr_anchor, n_ref_anchors); "left": the back end observes on the left image
     # alone, with the metric scale from the previous observation and the odometry between them (use_odom_anchor) and
     # from pairs of map references (use_map_anchors), set by cross.pipeline.apply_right_image; the right image is not
-    # stored and, in remote sessions, not sent.  The opt-in profile configs/stereo_lowband.yaml sets it (with trusted
+    # stored and, in remote sessions, not sent.  The opt-in overlay configs/overlays/stereo_lowband.yaml sets it (with trusted
     # external odometry: half the uplink on the development split) - not the default: with the left image no
     # translation is metric without the odometry, and the odometry scale guard cannot see an odometry failure (ROVER
     # night with a VIO runaway: map ATE 36-38 m vs 11 m with the pair; outputs/2026-10-07_remote_cadence)
@@ -790,9 +689,6 @@ class FeedForwardConfig:
     odom_anchor_min_translation: float = 0.15
     odom_anchor_weight: float = 0.5
     scale_method: str = "adaptive"       # adaptive | huber_log | median | mean | norm_ls
-    # the model predicts cameras with the principal point at the image centre; the relative poses are rotated into the
-    # calibrated camera frame (KITTI: 13 px off centre = 1.06 deg of yaw in every measured translation direction)
-    principal_point_correction: bool = True
     # map-consistency anchors: pairs of retrieved keyframes whose metric relative pose is known from the map act as
     # long-baseline scale anchors in the same forward pass (the stereo pair alone has a baseline that is tiny
     # relative to large scenes, which biases the recovered scale by several percent)
@@ -806,15 +702,16 @@ class FeedForwardConfig:
     # places a reference that overlaps nothing else in the pass arbitrarily; every anchor through it shares that error,
     # so the anchors agree and a wrong scale looks certain (mono passes whose only anchors are map pairs)
     map_anchor_min_pair_covis: float = 0.0
-    anchor_weight_by_baseline: bool = True   # weight anchors by predicted baseline length (precision of the ratio)
     anchor_max_rot_err_deg: float = 20.0
     anchor_min_dir_cos: float = 0.5
     covis_grid: int = 48
     covis_depth_tol: float = 0.15
-    covis_symmetric: bool = False
     min_covis: float = 0.15              # validity threshold on the covisibility confidence
     # covisibility of the current view with each reference: "geometric" (reprojection consistency of the predicted
-    # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint) or "min" of the two
+    # depth and poses), "head" (learned overlap fraction of a vggt_ft checkpoint), "min" of the two, or "auto": the head
+    # when the checkpoint has a covisibility head with a covis_head_map (calibrate_covis.py --map_geo; the head on the
+    # geometric score's scale), else geometric.  The fine-tuned checkpoint's overlay (configs/base/vggt_finetuned.yaml)
+    # sets auto
     covis_source: str = "geometric"
     # metric scale of a pass: "anchors" (stereo / odometry anchors), "head" (scale head of a vggt_ft checkpoint) or
     # "head_fallback" (the head only when no anchor is valid, e.g. monocular passes without odometry)
@@ -843,11 +740,6 @@ class PoseEstConfig:
     kf_match_threshold: int = 10
     inlier_count_threshold: int = 10
     max_depth: float = 30.0
-    # measurement std of the observation update from the calibrated noise model of the verified loop closure
-    # (sigma = visual_*_a + visual_*_b |t|, times the online noise scale of the reference type; see
-    # scripts/lc/calibrate_noise.py) instead of the heuristic 0.2 / (4 inlier ratio retrieval score).  Needs
-    # mapping.loop_closure.mode = verified.
-    meas_std_from_noise_model: bool = False
     # observation cadence: retrieval + relative pose estimation are skipped until the robot moved at least
     # obs_min_translation (m) or turned obs_min_rotation (rad) since the last observation, or obs_max_interval_steps
     # frames elapsed; the motion model carries the belief in between (odometry is cheap, the observation is not).
@@ -867,11 +759,6 @@ class PoseEstConfig:
     obs_confident_min_rotation: float = 0.3
     obs_confident_weight: float = 0.9
     ff: FeedForwardConfig = field(default_factory=FeedForwardConfig)
-
-
-@dataclass
-class DepthPredConfig:
-    use_depth_pred: bool = False
 
 
 @dataclass
@@ -993,7 +880,6 @@ class SystemConfig:
     mapping: MappingConfig = field(default_factory=MappingConfig)
     pgo: PGOConfig = field(default_factory=PGOConfig)
     pose_est: PoseEstConfig = field(default_factory=PoseEstConfig)
-    depth_pred: DepthPredConfig = field(default_factory=DepthPredConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     geo: GeoConfig = field(default_factory=GeoConfig)
@@ -1084,21 +970,143 @@ def _to_dict(obj) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# VGGT-Omega checkpoint: install.sh's two, and the settings of the fine-tuned one
+# ---------------------------------------------------------------------------
+
+# top-level section of a configuration file with the settings of the fine-tuned VGGT-Omega (load_config)
+FINETUNED_SECTION = "vggt_finetuned"
+
+
+def resolve_ff_checkpoint(checkpoint: Optional[str], backend=FFBackend.VGGT_OMEGA) -> str:
+    """The path of pose_est.ff.checkpoint: "auto" = the fine-tuned VGGT-Omega when it is installed, else the released
+    one when that is, else the fine-tuned one's path (install.sh's default; loading it then fails with its path);
+    "finetuned" / "released" = their paths; any other value is a path.  The DA3 backend's "auto" is DA3_CHECKPOINT."""
+    if FFBackend(backend) != FFBackend.VGGT_OMEGA:
+        return DA3_CHECKPOINT if checkpoint in (None, "auto") else checkpoint
+    if checkpoint == "finetuned":
+        return FINETUNED_VGGT_CHECKPOINT
+    if checkpoint == "released":
+        return RELEASED_VGGT_CHECKPOINT
+    if checkpoint in (None, "auto"):
+        if not Path(FINETUNED_VGGT_CHECKPOINT).is_file() and Path(RELEASED_VGGT_CHECKPOINT).is_file():
+            return RELEASED_VGGT_CHECKPOINT
+        return FINETUNED_VGGT_CHECKPOINT
+    return checkpoint
+
+
+@functools.lru_cache(maxsize=16)
+def _has_covis_head_map(path: str, mtime: float) -> bool:
+    import torch
+    # older vggt_ft checkpoints hold numpy objects (weights_only=False); legacy (non-zip) files cannot be memory-mapped
+    for mmap, weights_only in ((True, True), (True, False), (False, False)):
+        try:
+            ckpt = torch.load(path, map_location="cpu", mmap=mmap, weights_only=weights_only)
+        except Exception:
+            continue
+        return isinstance(ckpt, dict) and ckpt.get("covis_head_map") is not None
+    logging.getLogger(__name__).warning(f"could not read {path}: the fine-tuned VGGT-Omega settings stay off")
+    return False
+
+
+def is_finetuned_vggt(checkpoint: str) -> bool:
+    """Whether a VGGT-Omega checkpoint (a path) is a fine-tuned CROSS checkpoint: one with a covis_head_map (vggt_ft +
+    calibrate_covis.py --map_geo), like install.sh's default.  install.sh's two checkpoints are known by their file
+    names, so a missing one is classified too; another missing file is not fine-tuned."""
+    name = Path(checkpoint).name
+    if name == Path(FINETUNED_VGGT_CHECKPOINT).name:
+        return True
+    if name == Path(RELEASED_VGGT_CHECKPOINT).name:
+        return False
+    path = Path(checkpoint)
+    if not path.is_file():
+        return False
+    return _has_covis_head_map(str(path.resolve()), path.stat().st_mtime)
+
+
+def apply_settings(cfg, items):
+    """(In place) configuration overrides "section.sub.key=value" (YAML-parsed values; enums by their value)."""
+    for kv in items or []:
+        key, val = kv.split("=", 1)
+        obj = cfg
+        parts = key.split(".")
+        for part in parts[:-1]:
+            obj = getattr(obj, part)
+        cur = getattr(obj, parts[-1])
+        v = yaml.safe_load(val)
+        if hasattr(cur, "value") and not isinstance(v, type(cur)):   # enums
+            v = type(cur)(v)
+        setattr(obj, parts[-1], v)
+    return cfg
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def load_config(*yaml_paths: Union[str, Path], **overrides) -> SystemConfig:
+def yaml_layers(*yaml_paths: Union[str, Path]) -> list:
+    """The layers of YAML files, in merge order: (settings, vggt_finetuned section or None) per file.  A file may name
+    others under the top-level key `include` (a path or a list, relative to the file): their layers come first, in
+    order, then the file's own (the folder configs include a mode base and a folder base, configs/base/)."""
+    layers = []
+    for path in yaml_paths:
+        layers += _load_yaml(Path(path))
+    return layers
+
+
+def load_yaml_layers(*yaml_paths: Union[str, Path], vggt_finetuned: bool = False) -> dict:
+    """Deep-merge YAML files left to right into one dict (yaml_layers; `vggt_finetuned`: with the files'
+    vggt_finetuned sections, each right after the rest of its file)."""
+    merged: dict = {}
+    for data, finetuned in yaml_layers(*yaml_paths):
+        merged = _deep_merge(merged, data)
+        if vggt_finetuned and finetuned:
+            merged = _deep_merge(merged, finetuned)
+    return merged
+
+
+def _load_yaml(path: Path, _parents: tuple = ()) -> list:
+    path = path.resolve()
+    if path in _parents:
+        raise ValueError(f"{path}: include cycle")
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    includes = data.pop("include", None) or []
+    layers = []
+    for inc in [includes] if isinstance(includes, str) else includes:
+        layers += _load_yaml(path.parent / inc, _parents + (path,))
+    return layers + [(data, data.pop(FINETUNED_SECTION, None))]
+
+
+def load_config(*yaml_paths: Union[str, Path], sets: Optional[List[str]] = None,
+                vggt_finetuned: Optional[bool] = None, **overrides) -> SystemConfig:
     """Load and deep-merge one or more YAML files into a :class:`SystemConfig`.
 
     Parameters
     ----------
     *yaml_paths
         Zero or more paths to YAML config files.  Files are merged left to
-        right (later files override earlier ones).
+        right (later files override earlier ones), each after the files it
+        includes (`include`, see yaml_layers).  Sections that are not
+        SystemConfig fields (`imu`: the VGGT-inertial frontend's ImuConfig,
+        read by cross.pipeline) are ignored here.
+    sets
+        "section.sub.key=value" overrides (:func:`apply_settings`), applied
+        after the files and the keyword overrides.
+    vggt_finetuned
+        Whether the files' ``vggt_finetuned`` sections apply (None: when the
+        checkpoint is a fine-tuned VGGT-Omega, below).
     **overrides
         Top-level section overrides as dicts, e.g.
-        ``tracking={"filter_mode": "adaptive"}``.  Merged last (highest
-        priority).
+        ``pose_est={"obs_max_interval_steps": 2}``.  Merged after the files.
+
+    A file's top-level ``vggt_finetuned`` section holds settings for the
+    fine-tuned VGGT-Omega (configs/base/vggt_finetuned.yaml, included by the
+    VGGT-Omega modes' bases; configs/overlays/outdoor.yaml).  It is merged
+    right after the rest of its file when the backend is VGGT-Omega and the
+    checkpoint the files, overrides and sets select is fine-tuned
+    (:func:`is_finetuned_vggt`); with the released checkpoint the files'
+    other settings apply alone.  ``pose_est.ff.checkpoint`` is returned as a
+    path (:func:`resolve_ff_checkpoint`).
 
     Returns
     -------
@@ -1107,23 +1115,34 @@ def load_config(*yaml_paths: Union[str, Path], **overrides) -> SystemConfig:
 
     Examples
     --------
-    >>> cfg = load_config("configs/default.yaml")
-    >>> cfg = load_config("configs/default.yaml", "configs/exp/indoor.yaml",
-    ...                   tracking={"filter_mode": "adaptive"})
+    >>> cfg = load_config("configs/modes/stereo_wheel.yaml")
+    >>> cfg = load_config("configs/modes/rgbd_wheel.yaml", "configs/overlays/outdoor.yaml",
+    ...                   pose_est={"obs_max_interval_steps": 2})
     """
-    merged: dict = {}
+    layers = yaml_layers(*yaml_paths)
 
-    for path in yaml_paths:
-        path = Path(path)
-        with open(path) as f:
-            data = yaml.safe_load(f) or {}
-        merged = _deep_merge(merged, data)
+    def build(with_finetuned: bool) -> SystemConfig:
+        merged: dict = {}
+        for data, finetuned in layers:
+            merged = _deep_merge(merged, data)
+            if with_finetuned and finetuned:
+                merged = _deep_merge(merged, finetuned)
+        # Apply keyword overrides (each key is a top-level section name or scalar)
+        if overrides:
+            merged = _deep_merge(merged, overrides)
+        cfg = _from_dict(SystemConfig, merged) if merged else SystemConfig()
+        apply_settings(cfg, sets)
+        ff = cfg.pose_est.ff
+        ff.checkpoint = resolve_ff_checkpoint(ff.checkpoint, ff.backend)
+        return cfg
 
-    # Apply keyword overrides (each key is a top-level section name or scalar)
-    if overrides:
-        merged = _deep_merge(merged, overrides)
-
-    return _from_dict(SystemConfig, merged) if merged else SystemConfig()
+    cfg = build(False)
+    if not any(finetuned for _, finetuned in layers):
+        return cfg
+    if vggt_finetuned is None:
+        ff = cfg.pose_est.ff
+        vggt_finetuned = ff.backend == FFBackend.VGGT_OMEGA and is_finetuned_vggt(ff.checkpoint)
+    return build(True) if vggt_finetuned else cfg
 
 
 def config_to_yaml(cfg: SystemConfig) -> str:

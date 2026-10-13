@@ -30,7 +30,7 @@ import torch
 import torch.nn.functional as F
 from loguru import logger
 
-from cross.core.config import FeedForwardConfig, FFBackend
+from cross.core.config import FeedForwardConfig, FFBackend, resolve_ff_checkpoint
 from cross.cv.stereo_scale import ScaleAnchor, ScaleEstimate, estimate_scale, invert_poses, scale_camera_centers
 from cross.utils.fingerprint import content_keys
 from cross.utils.profile import timeit
@@ -105,8 +105,7 @@ class _PatchEmbedCache(torch.nn.Module):
 
 class _VGGTOmegaBackend(_Backend):
     def __init__(self, checkpoint: str, device: str, half_weights: bool = True, token_cache: int = 0,
-                 compile_blocks: bool = False, dense_head_bf16: bool = False,
-                 compile_mode: str = "default", cuda_graphs: bool = False):
+                 compile_blocks: bool = False, dense_head_bf16: bool = False, cuda_graphs: bool = False):
         from vggt_omega.models import VGGTOmega
         from vggt_omega.utils.pose_enc import encoding_to_camera
         self._decode = encoding_to_camera
@@ -118,6 +117,10 @@ class _VGGTOmegaBackend(_Backend):
             self.model = VGGTOmega().eval()
         sd = torch.load(ckpt, map_location="cpu", mmap=True, weights_only=False)
         head_cfg = sd.get("scale_head_cfg") if isinstance(sd, dict) else None
+        # covis_head_map (scripts/vggt_ft/calibrate_covis.py --map_geo): the head's probability -> the expected one-way
+        # geometric score, the scale CROSS's covisibility thresholds and fix weights were tuned on
+        cmap = sd.get("covis_head_map") if isinstance(sd, dict) else None
+        self.covis_map = None if cmap is None else (np.asarray(cmap["x"], dtype=np.float64), np.asarray(cmap["y"], dtype=np.float64))
         sd = sd["model"] if "model" in sd and isinstance(sd["model"], dict) else sd
         missing, unexpected = self.model.load_state_dict(sd, strict=False)
         if missing:
@@ -153,17 +156,22 @@ class _VGGTOmegaBackend(_Backend):
         self._compiled = []
         if compile_blocks:
             # torch.compile of every transformer block (frame, global and DINO blocks share one graph); dynamic shapes
-            # cover any number of views.  The kernels are tuned once and cached on disk (TORCHINDUCTOR_CACHE_DIR).
+            # cover any number of views.  The kernels are tuned once and cached on disk (TORCHINDUCTOR_CACHE_DIR).  The
+            # default mode is deterministic (two runs give identical results); "max-autotune-no-cudagraphs" was ~4 % faster
+            # but picks kernels by timing them, so runs differed in rounding.
             agg = self.model.aggregator
             embed = self.token_cache.embed if self.token_cache is not None else agg.patch_embed
             self._compiled = list(agg.frame_blocks) + list(agg.inter_frame_blocks) + list(getattr(embed, "blocks", []))
             for block in self._compiled:
-                block.compile(dynamic=True, mode=None if compile_mode == "default" else compile_mode)
+                block.compile(dynamic=True)
 
     def enable_nav(self, heads_path: str):
         """Load a cross_nav BEV head: every pass then also returns the cached aggregator layers and the DINO tokens
         (kept in `last_nav`), from which the estimator predicts the BEV once the pass's metric scale is solved."""
-        from cross_nav.infer import BEVPredictor
+        try:
+            from cross_nav.infer import BEVPredictor
+        except ImportError as e:
+            raise ImportError(f"pose_est.ff.nav_bev_head needs the navigation package: bash install.sh --nav ({e})") from e
         self.nav = BEVPredictor(heads_path, self.device)
         self._graphs.clear()                     # captured graphs do not return the extra outputs
         logger.info(f"cross_nav BEV head {heads_path}: {self.nav.size} x {self.nav.size} cells of {self.nav.res} m")
@@ -192,6 +200,11 @@ class _VGGTOmegaBackend(_Backend):
     def fingerprints(self, images: torch.Tensor) -> list:
         """Content keys of the views (the same image always gets the same key, whatever the batch)."""
         return content_keys(images.float())
+
+    def _covis_probs(self, logits: torch.Tensor) -> np.ndarray:
+        """(S, S) covisibility of the head: sigmoid of its logits, on the geometric score's scale when the checkpoint
+        has a covis_head_map."""
+        return _map_covis(torch.sigmoid(logits).cpu().numpy(), getattr(self, "covis_map", None))
 
     def _heads(self, x: torch.Tensor, tokens: list, start: int, k: int, dino: Optional[torch.Tensor] = None):
         """Camera head (all views) and depth head (first k views); the camera head runs on a side stream, concurrently
@@ -379,8 +392,13 @@ class _VGGTOmegaBackend(_Backend):
         if conf.dim() == 4:
             conf = conf[..., 0]
         return FFPrediction(c2w=c2w, K=intr[0].float().cpu().numpy(), depth=depth, depth_conf=conf, hw=hw,
-                            covis=torch.sigmoid(covis[0]).cpu().numpy() if covis.numel() else None,
+                            covis=self._covis_probs(covis[0]) if covis.numel() else None,
                             log_scale=float(log_scale[0]) if log_scale.numel() else None)
+
+
+def _map_covis(p: np.ndarray, cmap) -> np.ndarray:
+    """The head's probabilities on the geometric score's scale (covis_head_map knots), or unchanged without a map."""
+    return p if cmap is None else np.interp(p, cmap[0], cmap[1]).astype(p.dtype)
 
 
 def _load_ft_heads(sd: dict, device: str, scale_head_cfg: Optional[dict] = None):
@@ -624,6 +642,13 @@ def principal_point_rotation(K: np.ndarray, width: int, height: int) -> np.ndarr
     return np.eye(3) + Vx + Vx @ Vx * ((1 - c) / s ** 2)
 
 
+def auto_covis_source(backend) -> str:
+    """covis_source "auto": the learned head when the checkpoint has one on the geometric score's scale (a
+    covis_head_map), else the geometric score."""
+    mapped = getattr(backend, "covis_head", None) is not None and getattr(backend, "covis_map", None) is not None
+    return "head" if mapped else "geometric"
+
+
 class PoseEstFeedForward:
     """Relative pose estimation with a feed-forward geometry model and stereo scale anchors."""
 
@@ -632,11 +657,11 @@ class PoseEstFeedForward:
         self.config = config
         self.T_right_in_left = None if T_right_in_left is None else np.asarray(T_right_in_left, dtype=np.float64)
         t0 = time.perf_counter()
+        config.checkpoint = resolve_ff_checkpoint(config.checkpoint, config.backend)     # "auto" / "finetuned" / "released"
         if config.backend == FFBackend.VGGT_OMEGA:
             self.backend = _VGGTOmegaBackend(config.checkpoint, device, half_weights=config.half_precision_weights,
                                              token_cache=config.token_cache, compile_blocks=config.compile,
-                                             dense_head_bf16=config.dense_head_bf16, compile_mode=config.compile_mode,
-                                             cuda_graphs=config.cuda_graphs)
+                                             dense_head_bf16=config.dense_head_bf16, cuda_graphs=config.cuda_graphs)
             self.backend.warmup(config.image_resolution)
         elif config.backend == FFBackend.DA3:
             self.backend = _DA3Backend(config.checkpoint, device, process_res=config.da3_process_res)
@@ -650,10 +675,22 @@ class PoseEstFeedForward:
         self._n_passes = 0
         if getattr(config, "nav_bev_head", "") and isinstance(self.backend, _VGGTOmegaBackend):
             self.backend.enable_nav(config.nav_bev_head)
+        self._auto_covis = auto_covis_source(self.backend)
+        if getattr(config, "covis_source", "auto") == "auto":
+            logger.info(f"covisibility source: {self._auto_covis} (auto)")
         self.last_info: dict = {}
         self.last_scale: Optional[ScaleEstimate] = None
         self.last_frontend_obs: Optional[dict] = None   # raw output for a frontend's anchor (vgio)
         self._R_model_to_cam: Optional[np.ndarray] = None    # (4, 4) right-multiplied onto model camera poses
+        # cameras of a map made with several cameras (set_cameras): id -> {"M": principal-point correction, "rig":
+        # its stereo rig or None}; the session's camera id.  None: every view is the session's camera
+        self._cameras: Optional[dict] = None
+        self._session_cam = 0
+
+    def _covis_source(self, cfg) -> str:
+        """The configured covisibility source, "auto" resolved for the loaded checkpoint."""
+        source = getattr(cfg, "covis_source", "auto")
+        return getattr(self, "_auto_covis", "geometric") if source == "auto" else source
 
     def set_gravity(self, up_cam: Optional[np.ndarray]):
         """Gravity "up" unit vector in the current camera (OpenCV axes) for the next pass's BEV, e.g. from the IMU
@@ -685,21 +722,10 @@ class PoseEstFeedForward:
     def set_stereo_calibration(self, T_right_in_left: np.ndarray):
         self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
 
-    def set_camera(self, K: np.ndarray, width: int, height: int):
-        """Calibrated intrinsics at the model's input resolution (the system calls this after its transforms):
-        the focal of a canonical-camera scale head (config.scale_focal = "calibrated")."""
-        self._focal_norm = float(np.asarray(K)[0, 0]) / max(1, int(width))
-        if getattr(self.config, "scale_focal", "calibrated") == "calibrated":
-            self.backend.calib_focal = self._focal_norm      # also for passes made outside estimate_pose
-
     def _as_model_input(self, views: List[torch.Tensor]) -> torch.Tensor:
         images = torch.stack([v.to(self.device) for v in views], dim=0).float()
         if images.max() > 1.5:
             images = images / 255.0
-        if self.config.quantize_input:
-            # the 8-bit grid keyframes are stored on (cross.db.db.to_uint8_image): a keyframe made from this image then
-            # comes back as a reference with the same pixels, and its tokens are found in the token cache
-            images = (images.clamp(0, 1) * 255.0).round() / 255.0
         return images
 
     @torch.inference_mode()
@@ -720,15 +746,43 @@ class PoseEstFeedForward:
         logger.info(f"token cache: {cache.misses - n0} map images embedded in {time.perf_counter() - t0:.1f}s")
 
     def set_camera(self, K: np.ndarray, width: int, height: int):
-        """Intrinsics of the images given to the model (after its crop / resize): the principal-point correction."""
-        if not getattr(self.config, "principal_point_correction", True):
-            self._R_model_to_cam = None
-            return
+        """Calibrated intrinsics of the images given to the model (after its crop / resize; the system calls this after
+        its transforms): the focal of a canonical-camera scale head (config.scale_focal = "calibrated") and the
+        principal-point correction.  The model predicts cameras with the principal point at the image centre; the
+        relative poses are rotated into the calibrated camera frame (KITTI: 13 px off centre = 1.06 deg of yaw in every
+        measured translation direction)."""
+        self._focal_norm = float(np.asarray(K)[0, 0]) / max(1, int(width))
+        if getattr(self.config, "scale_focal", "calibrated") == "calibrated":
+            self.backend.calib_focal = self._focal_norm      # also for passes made outside estimate_pose
         R = principal_point_rotation(K, width, height)
         M = np.eye(4)
         M[:3, :3] = R.T            # c2w_cam = c2w_model @ [R^T 0; 0 1]
         self._R_model_to_cam = M
         logger.info(f"FF principal-point correction: {np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))):.2f} deg")
+
+    def set_cameras(self, cameras: List[dict], session_id: int):
+        """The camera table of the map (System.cameras: per camera id the intrinsics K, width, height of its stored
+        images and its stereo rig T_right_in_left or None) and the session's camera id.  References taken with another
+        camera (estimate_pose ref_cam_ids) get their own principal-point correction, and their stored right images
+        their own rig.  Call set_camera first (the session's camera)."""
+        self._session_cam = int(session_id)
+        self._cameras = {}
+        for i, c in enumerate(cameras):
+            if i == self._session_cam:
+                M, rig = self._R_model_to_cam, self.T_right_in_left
+            else:
+                M = np.eye(4)
+                M[:3, :3] = principal_point_rotation(c["K"], c["width"], c["height"]).T
+                rig = c.get("T_right_in_left")
+                rig = None if rig is None else np.asarray(rig, dtype=np.float64)
+            self._cameras[i] = {"M": M, "rig": rig}
+
+    def _ref_camera(self, ref_cam_ids, i: int) -> Optional[dict]:
+        """Camera entry of reference i when it was taken with another camera than the session's, else None."""
+        if ref_cam_ids is None or self._cameras is None:
+            return None
+        cid = int(ref_cam_ids[i])
+        return None if cid == self._session_cam else self._cameras[cid]
 
     # ------------------------------------------------------------------ #
     @timeit
@@ -743,6 +797,7 @@ class PoseEstFeedForward:
         ref_images_right: Optional[List[Optional[torch.Tensor]]] = None,
         odom_anchor: Optional[dict] = None,
         ref_rel_poses: Optional[List[Tuple[int, int, np.ndarray]]] = None,
+        ref_cam_ids: Optional[List[int]] = None,
         **kwargs,
     ):
         """Estimate T_ref_cam for every reference image in one forward pass.
@@ -757,6 +812,7 @@ class PoseEstFeedForward:
                 at most `config.n_ref_anchors` of them are used as extra anchors
             odom_anchor: {"image": (3,H,W) previous left image, "T_prev_curr": (4,4) metric}
                 optional temporal anchor from odometry
+            ref_cam_ids: camera id of every reference (set_cameras); None: all the session's camera
         Returns:
             poses: pp.SE3 (B_valid, 7) T_ref_cam (metric), valid_masks (B,) np.bool, confidences (B_valid,)
         """
@@ -787,23 +843,28 @@ class PoseEstFeedForward:
                     anchors.append(ScaleAnchor(idx_a=prev_idx, idx_b=0, T_ab=T_pc, kind="odom",
                                                weight=cfg.odom_anchor_weight))
 
-        # stereo anchors: current pair first, then stored right images of the best references
-        if self.T_right_in_left is not None:
-            if curr_image_right is not None and cfg.use_curr_anchor:
-                views.append(curr_image_right)
-                view_tags.append("curr_R")
-                anchors.append(ScaleAnchor(idx_a=0, idx_b=len(views) - 1, T_ab=self.T_right_in_left, kind="stereo"))
-            if ref_images_right is not None and cfg.n_ref_anchors > 0:
-                n_added = 0
-                for i, img_r in enumerate(ref_images_right):
-                    if img_r is None:
-                        continue
-                    views.append(img_r)
-                    view_tags.append(f"ref{i}_R")
-                    anchors.append(ScaleAnchor(idx_a=1 + i, idx_b=len(views) - 1, T_ab=self.T_right_in_left, kind="stereo"))
-                    n_added += 1
-                    if n_added >= cfg.n_ref_anchors:
-                        break
+        # stereo anchors: current pair first, then stored right images of the best references (each with the rig of
+        # the camera that took it: a reference of another camera has its own, set_cameras)
+        if self.T_right_in_left is not None and curr_image_right is not None and cfg.use_curr_anchor:
+            views.append(curr_image_right)
+            view_tags.append("curr_R")
+            anchors.append(ScaleAnchor(idx_a=0, idx_b=len(views) - 1, T_ab=self.T_right_in_left, kind="stereo"))
+        if ref_images_right is not None and cfg.n_ref_anchors > 0:
+            n_added = 0
+            for i in range(len(ref_images_right)):
+                other = self._ref_camera(ref_cam_ids, i)
+                rig = self.T_right_in_left if other is None else other["rig"]
+                if rig is None:
+                    continue
+                img_r = ref_images_right[i]
+                if img_r is None:
+                    continue
+                views.append(img_r)
+                view_tags.append(f"ref{i}_R")
+                anchors.append(ScaleAnchor(idx_a=1 + i, idx_b=len(views) - 1, T_ab=rig, kind="stereo"))
+                n_added += 1
+                if n_added >= cfg.n_ref_anchors:
+                    break
 
         # map anchors: known metric relative poses between pairs of references (from the map)
         if ref_rel_poses and cfg.use_map_anchors:
@@ -819,7 +880,7 @@ class PoseEstFeedForward:
         # view; with the learned covisibility head and no frontend observation the depth head is not run at all
         if frontend_anchor and prev_idx is not None:
             n_depth = None
-        elif getattr(cfg, "covis_source", "geometric") == "head" and getattr(self.backend, "covis_head", None) is not None:
+        elif self._covis_source(cfg) == "head" and getattr(self.backend, "covis_head", None) is not None:
             n_depth = 0
         else:
             n_depth = 1 + B
@@ -842,15 +903,29 @@ class PoseEstFeedForward:
             if "curr_R" in view_tags:            # the current stereo pair: the frontend's metric scale of the pass
                 self.last_frontend_obs["c2w_right"] = pred.c2w[view_tags.index("curr_R")]
 
+        # ---- per-view principal-point corrections ----
+        # a pass with references of another camera: every view's model pose is rotated into its own calibrated camera
+        # frame before the scale anchors are compared with their calibrated relative poses (X_cal = X_model M_view);
+        # with one camera the session's correction is applied after the scale, as before
+        c2w_model = pred.c2w
+        mixed = ref_cam_ids is not None and any(self._ref_camera(ref_cam_ids, i) is not None for i in range(B))
+        if mixed:
+            Ms = []
+            for tag in view_tags:
+                other = self._ref_camera(ref_cam_ids, int(tag[3:tag.index("_")])) if tag.startswith("ref") else None
+                M = self._R_model_to_cam if other is None else other["M"]
+                Ms.append(np.eye(4) if M is None else M)
+            c2w_model = pred.c2w @ np.stack(Ms)
+
         # ---- metric scale ----
         if getattr(cfg, "map_anchor_min_pair_covis", 0.0) > 0:
             anchors = filter_map_anchors(pred, anchors, cfg.map_anchor_min_pair_covis, cfg.map_anchor_max_pairs,
-                                         source=getattr(cfg, "covis_source", "geometric"), grid=cfg.covis_grid,
+                                         source=self._covis_source(cfg), grid=cfg.covis_grid,
                                          rel_depth_tol=cfg.covis_depth_tol)
         scale_est = estimate_scale(
-            pred.c2w, anchors, method=cfg.scale_method,
+            c2w_model, anchors, method=cfg.scale_method,
             max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
-            weight_by_baseline=cfg.anchor_weight_by_baseline,
+            weight_by_baseline=True,          # anchors weighted by their predicted baseline (precision of the ratio)
         )
         src = getattr(cfg, "scale_source", "anchors")
         if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
@@ -866,18 +941,18 @@ class PoseEstFeedForward:
 
         # calibrated metric-scale correction (the estimator's translations divided by their measured/true ratio)
         metric = scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0)
-        c2w_metric = scale_camera_centers(pred.c2w, metric, origin_index=0)
+        c2w_metric = scale_camera_centers(c2w_model, metric, origin_index=0)
         self.last_bev = None
         if getattr(self.backend, "nav", None) is not None:
             self._n_passes += 1
             if (self._n_passes - 1) % max(1, int(getattr(cfg, "nav_bev_every", 1))) == 0:
                 self.last_bev = self._predict_bev(metric)
-        if self._R_model_to_cam is not None:
+        if self._R_model_to_cam is not None and not mixed:
             c2w_metric = c2w_metric @ self._R_model_to_cam
 
         # ---- per-reference confidence (covisibility / geometric consistency) ----
         ref_idx = list(range(1, 1 + B))
-        source = getattr(cfg, "covis_source", "geometric")
+        source = self._covis_source(cfg)
         if source != "geometric" and pred.covis is None:
             raise ValueError(f"covis_source={source} needs a checkpoint with a covisibility head (vggt_ft)")
         if source == "head":
@@ -885,10 +960,6 @@ class PoseEstFeedForward:
             covis = np.asarray(pred.covis[0, ref_idx], dtype=np.float64)
         else:
             covis = covisibility_scores(pred, ref_idx, 0, grid=cfg.covis_grid, rel_depth_tol=cfg.covis_depth_tol)
-            if cfg.covis_symmetric:
-                covis_back = np.asarray([covisibility_scores(pred, [0], r, grid=cfg.covis_grid,
-                                                             rel_depth_tol=cfg.covis_depth_tol)[0] for r in ref_idx])
-                covis = np.minimum(covis, covis_back)
             if source == "min":
                 covis = np.minimum(covis, np.asarray(pred.covis[0, ref_idx], dtype=np.float64))
 

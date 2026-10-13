@@ -7,9 +7,9 @@
     # one scene, in-process (debugging):
     python -m cross_nav.sim.pipeline run --stage prep --scene 102344022
 
-Environment: NAVSIM_ROOT (default /mnt/datasets-livsyn/jz/navsim: blend/, work/<scene>/, state/, logs/), HSSD_RAW
-(downloaded HSSD, default /mnt/datasets-livsyn/jz/hssd/raw), NAV_CACHE (scene cache root, default
-/mnt/datasets-livsyn/jz/cache), NAV_BEV (label root, default /mnt/datasets-livsyn/jz/nav/bev), BPY_PYTHON (python of
+Environment: NAVSIM_ROOT (default $CROSS_NAV_ROOT/navsim: blend/, work/<scene>/, state/, logs/), HSSD_RAW
+(downloaded HSSD, default $CROSS_NAV_ROOT/hssd/raw), NAV_CACHE (scene cache root, default
+$CROSS_NAV_ROOT/cache), NAV_BEV (label root, default $CROSS_NAV_ROOT/nav/bev), BPY_PYTHON (python of
 the bpy environment), SIMCHANGE_ROOT (SimChange repo copy), NAVSIM_TMP (local scratch for frames).
 Claims: state/<stage>/<scene>/ is created atomically (mkdir); `done` / `fail` files inside mark the result.
 """
@@ -27,12 +27,13 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(os.environ.get("NAVSIM_ROOT", "/mnt/datasets-livsyn/jz/navsim"))
-RAW = Path(os.environ.get("HSSD_RAW", "/mnt/datasets-livsyn/jz/hssd/raw"))
-CACHE = Path(os.environ.get("NAV_CACHE", "/mnt/datasets-livsyn/jz/cache"))
-BEV = Path(os.environ.get("NAV_BEV", "/mnt/datasets-livsyn/jz/nav/bev"))
-BPY = os.environ.get("BPY_PYTHON", "/mnt/datasets-livsyn/jz/envs/bpy/bin/python")
-SIMCHANGE = os.environ.get("SIMCHANGE_ROOT", "/mnt/datasets-livsyn/jz/code/SimChange")
+_DATA = os.environ.get("CROSS_NAV_ROOT", ".")       # data root: navsim/, hssd/raw, cache, nav/bev, envs/bpy
+ROOT = Path(os.environ.get("NAVSIM_ROOT", f"{_DATA}/navsim"))
+RAW = Path(os.environ.get("HSSD_RAW", f"{_DATA}/hssd/raw"))
+CACHE = Path(os.environ.get("NAV_CACHE", f"{_DATA}/cache"))
+BEV = Path(os.environ.get("NAV_BEV", f"{_DATA}/nav/bev"))
+BPY = os.environ.get("BPY_PYTHON", f"{_DATA}/envs/bpy/bin/python")
+SIMCHANGE = os.environ.get("SIMCHANGE_ROOT", "")
 DATASET = os.environ.get("NAV_DATASET", "hssd_nav")
 NO_ROUTE = ("outdoor", "driveway", "swimming pool")         # HSSD region names the camera routes avoid
 

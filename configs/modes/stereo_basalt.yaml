@@ -1,0 +1,7 @@
+# configs/modes/stereo_basalt.yaml: selected by --mode stereo_basalt.
+# Stereo + Basalt stereo-inertial VIO as external odometry: --mode stereo --odometry basalt (the sequence
+# folder's odom_vio.txt, benchmark/datasets/prepare_vio.py; --odom-file NAME for another file).
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/stereo.yaml
+  - ../base/common.yaml

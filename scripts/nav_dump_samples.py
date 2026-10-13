@@ -1,6 +1,6 @@
 """Dump a few training windows (frame 0 image, BEV label, visibility) as PNGs to check the labels by eye.
 
-    python scripts/nav_dump_samples.py --config configs/cross_nav/nav_v1.yaml --out <dir> [--n 12] [--dataset scannet]
+    python scripts/nav_dump_samples.py --config cross_nav/configs/train/nav_v1.yaml --out <dir> [--n 12] [--dataset scannet]
 """
 import argparse
 from pathlib import Path

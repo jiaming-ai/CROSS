@@ -3,7 +3,7 @@
 
 Inputs: outputs/lcstudy/<scene>/cur/study_s0/{study.json,edges.json} (offline study of the baseline mapping graphs),
 outputs/lcstudy/inpass_map.json (in-pass pair statistics), outputs/lcstudy/eval_all.json (A/B evaluation of the runs),
-configs/noise/*_600.json (calibration vs ground truth).
+outputs/2026-09-12_loop_closure_verified/noise/*_600.json (calibration vs ground truth).
 
 usage: python scripts/lc/make_lc_figures.py [--out report/figures]
 """

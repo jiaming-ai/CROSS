@@ -123,28 +123,20 @@ class ImuConfig:
     vgio_depth_bias_std: float = 0.05            # prior std of the learned-depth log bias in the graph
     vgio_depth_bias_drift: float = 0.005         # its random walk (log per sqrt(s))
     vgio_rot_rel: float = 0.05                   # graph: rotation noise also grows with the angle (fraction)
-    # adaptive measurement times (vgio_adaptive): after the camera moved / turned this much, within these frame counts
     vgio_rot_scale: bool = True                  # graph: calibrate the rotation scale of the passes against the gyro
     vgio_rot_scale_std: float = 0.05             # its prior std (log)
-    vgio_online_noise: bool = False              # graph: the passes' rotation noise from their disagreement with the gyro
     vgio_time_offset: float = 0.0                # s, initial camera - IMU time offset (calibrated online from it)
     vgio_graph_time_offset: bool = False         # graph: the time offset as a variable of the graph (no separate
                                                  # calibration)
     vgio_time_offset_std: float = 0.05           # its prior std (s)
     vgio_pp_correction: bool = True              # the passes' camera poses corrected for the principal point offset
-    vgio_noise_hat: bool = False                 # rotation noise of gyro, corners and passes from their disagreements
-    vgio_calib_gyro_walk: bool = False           # graph: the gyro bias random walk of the sensor's calibration (else 1e-4)
     vgio_klt: bool = True                        # graph: rotation factors from tracked corners (optional, gated)
     # pipeline: measure on the back end's forward passes (at least vgio_align_min frames apart); a pass of the
     # frontend's own only after vgio_align_max frames without one.  Off: every visual_interval frames, on the back
-    # end's pass when it observes at that frame, else a pass of its own (3 views).  None: by the mode
-    # (cross.pipeline._vgio_config): on in the stereo mode, off in the mono mode.  Mono: the back end's passes carry
-    # map references, and measured on them alone the indoor scale came out 6 % short (development maps, 5090: office
-    # 0.11 -> 0.06 m, KITTI 07 2.76 -> 1.79, home 0.46 -> 0.36, cafe 0.24 -> 0.17; time +0-14 %).  Stereo (the scale
-    # from the pair), development split: T1 0.33 -> 0.31 m, odometry 0.66 -> 0.53 m, T3 29/33 both, 20 % fewer uploads
-    # in remote sessions; one relocalization (office1-7) locks on 78 frames later (T2 0.87 -> 0.67), the other six T2
-    # sessions within 0.02 (outputs/2026-10-07_remote_cadence)
-    vgio_align: bool | None = None
+    # end's pass when it observes at that frame, else a pass of its own (3 views).  Set by the mode files (imu section):
+    # on in the stereo mode (configs/modes/stereo_imu.yaml), off in the mono mode (mono_imu.yaml), with the evidence there
+    # (in remote stereo sessions: 20 % fewer uploads; office1-7 relocalized 78 frames later, T2 0.87 -> 0.67)
+    vgio_align: bool = False
     vgio_align_min: int = 2
     vgio_align_max: int = 4
     # graph: a pass's translation must agree with the IMU's prediction in length within this factor or in velocity
@@ -154,7 +146,7 @@ class ImuConfig:
     # IMU (which only measures changes of velocity) kept the wrong speed: map scale 0.3, ATE 411 m
     vgio_trans_gate: float = 1.5
     vgio_trans_gate_max_gap: float = 15.0        # s: the longest the IMU may outvote the passes' translations
-    # graph: random walk of the gyro bias (rad/s per sqrt(s)) when vgio_calib_gyro_walk is off.  The window's visual
+    # graph: random walk of the gyro bias (rad/s per sqrt(s)).  The window's visual
     # rotations carry small systematic errors that a loose walk lets the bias follow: on ROVER the gyro alone, with the
     # bias of the initial standstill, turns 1079.9 deg for a true 1080.2 deg, while the graph's bias wandered 0.05-0.07
     # deg/s off with 1e-4 (heading drift 26 deg over 600 s, the integrated bias error 21 deg).  1e-5: drift 18 deg, front
@@ -176,11 +168,6 @@ class ImuConfig:
     vgio_trans_sigma_bound: bool = True
     vgio_gyro_dt_noise: float = 0.0              # graph: preintegration noise growing with the IMU sampling interval
     vgio_accel_dt_noise: float = 0.0
-    vgio_adaptive: bool = False
-    vgio_min_interval: int = 2
-    vgio_max_interval: int = 4
-    vgio_min_translation: float = 0.5
-    vgio_min_rotation_deg: float = 3.0
     # stereo + IMU (the stereo mode with --odometry vgio).  The stereo pair observes each pass's metric scale
     # (VggtImuFrontend._stereo_scale; no bias state).  Source "depth": classical stereo depth (SGBM; pixels with >=
     # vgio_stereo_min_disparity px) against the pass's depth of the current frame, std floored at vgio_stereo_std.
@@ -200,11 +187,7 @@ class ImuConfig:
     # place of their rotation-only factor.  Front end: OpenLORIS office 0.055 -> 0.026 m, cafe 0.36 -> 0.26 m, SimChange
     # 0.057 -> 0.024 m, KITTI 07 relative error 2.5 -> 1.4 %; it locks onto vehicles alongside on a highway (KITTI 01),
     # which the translation tests catch
-    vgio_stereo_pnp: bool = True
-    # ... with its rotation: False (its translation only, the corners' rotation from the essential matrix as without it),
-    # True (its full pose, analytic covariance), "calibrated" (full pose, the rotation's noise floored by its own
-    # disagreement with the gyro)
-    vgio_stereo_pnp_rotation: object = False
+    vgio_stereo_pnp: bool = True                 # (its translation only: the corners' rotation from the essential matrix)
     # stereo + IMU: the translation tests with the IMU as the arbiter (VggtImuFrontend._stereo_gate): the pass and the
     # corners' motion must agree with the IMU's prediction (vgio_stereo_gate_factor > 1 also accepts within that factor,
     # the monocular test's tolerance for the learned scale); vgio_stereo_gate_pairs: the pass's keyframe pairs (~2 s)

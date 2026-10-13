@@ -106,6 +106,41 @@ class Vertex:
                 f"temporary={self.temporary})")
 
 
+def chain_poses(start_ids, twins: dict, successor: dict, odom_edges: dict, limit: int = 10000) -> dict:
+    """Poses of keyframes `start_ids` composed back from the first keyframe with a known pose (`twins`: id -> vertex,
+    its `pose` read when needed) that is
+    reached forward along the odometry chain (`successor`: the next keyframe; at most `limit` edges):
+    `T_twin @ e_k^-1 @ ... @ e_1^-1`.  Keyframes without such a keyframe are left out.  The composed pose of every
+    keyframe on a walk is memoised, so keyframes of one chain share their walk (one composition per edge instead of one
+    per edge and keyframe; the same products in the same order as composing each walk separately)."""
+    memo = {}            # keyframe -> (composed pose, edges to its twin), or None (no twin ahead)
+    out = {}
+    for start in start_ids:
+        path, cur, end, on_path = [], start, None, {start}
+        while True:
+            nxt = successor.get(cur)
+            if nxt is None or nxt in on_path:
+                break                              # the chain ends (or loops) without a twin
+            path.append((cur, nxt))
+            cur = nxt
+            if cur in twins:
+                end = (twins[cur].pose, 0)
+                break
+            if cur in memo:
+                end = memo[cur]
+                break
+            on_path.add(cur)
+        memo[start] = None
+        for (a, b) in reversed(path):
+            if end is not None:
+                end = (end[0] @ odom_edges[(a, b)].mean.Inv(), end[1] + 1)
+            memo[a] = end
+        got = memo[start]
+        if got is not None and got[1] <= limit:
+            out[start] = got[0]
+    return out
+
+
 class PoseGraph:
     """Pose Graph for Loop Closure
     """
@@ -617,43 +652,27 @@ class PoseGraph:
             sess_start = getattr(getattr(self.hypothesis_manager, "system", None), "_session_start_kf_id", 0) or start_idx
             start_idx = min(start_idx, sess_start) if sess_start > 0 else start_idx
             twin_of = {v.original_kf_id: v for v in vertices if v.id not in self.nodes}
-            successor = None
             # session keyframes without a twin (created before the hypothesis) are re-initialised by
             # composing the nearest twinned keyframe with the odometry chain
             for v in vertices:
                 if v.original_comp_id == 0 and v.id in self.nodes and v.id >= start_idx:
                     if v.id in twin_of:
                         v.pose = twin_of[v.id].pose
-            for v in vertices:
-                if v.original_comp_id == 0 and v.id in self.nodes and v.id >= start_idx and v.id not in twin_of:
-                    # walk forward along odometry edges to the first twinned keyframe
-                    chain, cur, ok = [], v.id, False
-                    if successor is None:      # first odometry edge out of each keyframe (edge insertion order)
-                        successor = {}
-                        for (a, b) in self.odom_edges:
-                            successor.setdefault(a, b)
-                    for _ in range(10000):
-                        nxt = successor.get(cur)
-                        if nxt is None:
-                            break
-                        chain.append((cur, nxt))
-                        cur = nxt
-                        if cur in twin_of:
-                            ok = True
-                            break
-                    if ok:
-                        T = twin_of[cur].pose
-                        for (a, b) in reversed(chain):
-                            T = T @ self.odom_edges[(a, b)].mean.Inv()
-                        v.pose = T
+            todo = [v for v in vertices
+                    if v.original_comp_id == 0 and v.id in self.nodes and v.id >= start_idx and v.id not in twin_of]
+            if todo:
+                successor = {}             # first odometry edge out of each keyframe (edge insertion order)
+                for (a, b) in self.odom_edges:
+                    successor.setdefault(a, b)
+                poses = chain_poses([v.id for v in todo], twin_of, successor, self.odom_edges)
+                for v in todo:
+                    if v.id in poses:
+                        v.pose = poses[v.id]
         self.vertices = vertices
         self.edges = edges
         self.vertex_map = {v.id: v for v in vertices}
         if self.chart_aware:
             self._retain_connected_chart_graph(target_node_id, other_hypothesis_id)
-        if self.hypothesis_manager.source_states is not None:
-            from cross.core.conditional_pgo import prepare
-            prepare(self,other_hypothesis_id)
 
     def construct_window(self, first_free_id: int) -> Set[int]:
         """Hypothesis-0 graph for a windowed loop-closure optimisation: the keyframes with id >= first_free_id (free)
@@ -715,45 +734,6 @@ class PoseGraph:
         if not anchors:
             raise ValueError("Graph does not connect to its proposed reference chart")
         self.preferred_fixed_node = min(anchors)
-
-    def construct_for_local_smoothing(
-        self,
-        target_node_id: int,
-        window_kfs: int = 30,
-        k_hop: int = 1,
-    ) -> None:
-        """
-        Construct a local pose graph within hypothesis 0 around recent keyframes.
-        Expands odometry nodes within a window and includes visual edges up to k-hop.
-        """
-        # Step 1: Expand odometry nodes around target
-        odom_node_ids, _odom_nodes = self._expand_odom_nodes(
-            target_node_id, hypothesis_id=0, depth=window_kfs, with_vertices=False
-        )
-
-        # Step 2: Expand visual edges based on these nodes
-        hypothesis_0 = self.hypothesis_manager.hypotheses[0]
-        visual_node_ids, visual_edges, nodes = self._expand_visual_edges(
-            target_node_ids=odom_node_ids,
-            k_hop=k_hop,
-            hypothesis_id=0,
-            from_hypothesis_id=0,
-            hypothesis_visual_edges=hypothesis_0.visual_edges,
-            hypothesis_visual_adjacency=hypothesis_0.visual_adjacency,
-        )
-
-        # Step 3: Collect odometry edges among the expanded node set
-        odom_edges = self._expand_odom_edges(visual_node_ids)
-
-        # Store
-        self.vertices = nodes
-        self.edges = visual_edges + odom_edges
-        self.vertex_map = {v.id: v for v in self.vertices}
-        if self.chart_aware:
-            self._retain_connected_chart_graph(target_node_id)
-        if self.hypothesis_manager.source_states is not None:
-            from cross.core.conditional_pgo import prepare
-            prepare(self,0)
 
     def validate_edge_uncertainties(
         self,
@@ -938,8 +918,6 @@ class PoseGraph:
 
         # 3. Add between factors for all edges
         has_edges = False
-        conditional_factors = []
-        record_conditional = hasattr(self, 'conditional_belief')
         noise_key = self._noise_cache_key()
         self.n_factors = {"used_visual": 0, "skipped_visual": 0, "odometry": 0, "loop_closure": 0}
         skip_fn, counts = self.skip_fn, self.n_factors
@@ -970,8 +948,6 @@ class PoseGraph:
                     graph.add(nonlinear)
                     used.add(id1)
                     used.add(id2)
-                    if record_conditional:
-                        conditional_factors.append((nonlinear,factor))
 
         # Log edge statistics for debugging
         if has_edges and logger.level("DEBUG").no >= 100:   # disabled: costs a device sync per factor
@@ -1039,9 +1015,3 @@ class PoseGraph:
             with _plain_tensor_ops():
                 for i, node_id in enumerate(kept_ids):
                     self.optimized_poses[node_id] = as_se3(poses[i].clone())
-        if hasattr(self,'conditional_belief'):
-            from cross.core.conditional_pgo import solve_responses
-            solve_responses(self,result,conditional_factors,optim_node_ids,fixed_node_ids)
-            # Fixed nodes also need their bias-centered pose/model persisted.
-            for node_id in fixed_node_ids:
-                self.optimized_poses[node_id] = gtsam_to_pypose_pose3(result.atPose3(node_id),self.device)

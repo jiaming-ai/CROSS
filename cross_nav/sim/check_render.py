@@ -10,6 +10,7 @@ grid offset shows up as low fractions.
 """
 from __future__ import annotations
 
+import os
 import argparse
 import json
 from pathlib import Path
@@ -66,9 +67,9 @@ def check_scene(L: dict, frames, png=None):
 def main():
     from vggt_ft.dataio.scene import list_scenes, load_scene
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cache", default="/mnt/datasets-livsyn/jz/cache")
+    ap.add_argument("--cache", default=os.path.join(os.environ.get("CROSS_NAV_ROOT", "."), "cache"))
     ap.add_argument("--dataset", default="hssd_nav")
-    ap.add_argument("--bev", default="/mnt/datasets-livsyn/jz/nav/bev")
+    ap.add_argument("--bev", default=os.path.join(os.environ.get("CROSS_NAV_ROOT", "."), "nav/bev"))
     ap.add_argument("--scenes", nargs="*", default=None)
     ap.add_argument("--n", type=int, default=12)
     ap.add_argument("--png-dir", default=None)

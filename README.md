@@ -21,7 +21,7 @@ National University of Singapore
 
 CROSS builds probabilistic topological maps from RGB-D, stereo or monocular camera streams. It maintains a Gaussian mixture belief over SE(3) poses, tracks multiple hypotheses, detects loop closures, and optimizes pose graphs — enabling robust long-term navigation in indoor environments.
 
-Three sensor modes share one back end (belief, hypotheses, verified loop closure, pose graph, retrieval). Each runs with the dataset's odometry (`--odometry external`) or with DPVO visual odometry (`--odometry visual`); the mono mode also with visual-inertial odometry (`--odometry vio`: DPVO with its metric scale from the camera's IMU):
+Three sensor modes share one back end (belief, hypotheses, verified loop closure, pose graph, retrieval). Each runs with the dataset's odometry (`--odometry external`) or with DPVO visual odometry (`--odometry visual`); the mono mode also with visual-inertial odometry (`--odometry vio`: DPVO with its metric scale from the camera's IMU). Each combination is one shipped mode, selected by name (`--mode mono_imu`, `--mode stereo_basalt`, ...; [Configuration](#configuration)):
 
 | mode | relative pose estimator | input | install / run |
 |---|---|---|---|
@@ -44,8 +44,8 @@ it is still being extended.
 - **Topological planning** — Lightweight graph over keyframes with odometry and proximity edges; supports A\* and Dijkstra path planning.
 - **Visual place recognition** — Keyframe database with embedding-based retrieval for relocalization.
 - **Semantic memory** — Text-conditioned object search across the map using open-vocabulary detectors.
-- **3D reconstruction of a map** — `cross_world/` trains a Gaussian-splatting scene from a saved map's posed keyframes (chunked for large maps, anchored to the keyframes so it follows later map updates) and exports it to a web viewer; `mapping.world_capture` keeps extra full-resolution frames for it ([guide](docs/WORLD.md)).
-- **Verified loop closure** — prior, in-pass and posterior consistency tests at one chi-square level, with a noise model calibrated without ground truth from about a minute of the robot's own data.
+- **3D reconstruction of a map** — `cross_world/` trains a Gaussian-splatting scene from a saved map's posed keyframes (chunked for large maps, anchored to the keyframes so it follows later map updates) and exports it to a web viewer; `mapping.world_capture` keeps the keyframes' full-resolution frames for it ([guide](docs/WORLD.md)).
+- **Verified loop closure** — prior, in-pass and posterior consistency tests at one chi-square level, with a fixed measurement noise model.
 - **Stereo and mono modes** — learned multi-view relative poses with stereo scale anchors; colour-only operation with learned metric depth.
 - **Visual odometry** — optional DPVO motion source for every mode, so no odometry input is needed; with an IMU, the mono mode gets its metric scale from it (visual-inertial odometry, `cross/imu/`).
 - **Benchmark** — one protocol (T1 / T2 / T3) over KITTI, OpenLORIS-Scene, ROVER and SimChange, with ORB-SLAM3, RTAB-Map, MASt3R-SLAM and VGGT-SLAM 2.0 baselines.
@@ -65,7 +65,9 @@ cross/
 └── visualization/  # Rerun-based 3D visualization, graph plotting
 cross_world/        # 3D Gaussian-splatting reconstruction of a saved map, export, web viewer (docs/WORLD.md)
 benchmark/          # Evaluation protocol, dataset converters, system runners, results page
-configs/            # Default, stereo, outdoor, noise and mono-profile configs
+configs/            # Shipped configs: modes/ (one file per mode), base/ (shared pieces), overlays/ (fast/, outdoor, lowband)
+vggt_ft/            # Fine-tuning of VGGT-Omega: metric-scale and covisibility heads, multi-session training, evaluation;
+                    # configs/ = the recipe of the released checkpoint (paths from $VGGT_FT_ROOT; docs/USAGE.md section 9)
 docs/               # Usage guide
 scripts/            # Map-and-relocalize harnesses, dataset converters, baselines, figures
 ```
@@ -82,15 +84,23 @@ bash install.sh
 
 The install script handles everything: creates a virtual environment via [uv](https://docs.astral.sh/uv/), installs PyTorch with CUDA, installs CROSS and its dependencies, and builds GTSAM.
 
-For the **stereo mode** add `--stereo` (installs the vendored VGGT-Omega and downloads its weights to
-`models/VGGT-Omega/`; the checkpoint is gated: request access at [facebook/VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega)
-and `huggingface-cli login` first) and optionally `--da3` for the Depth Anything 3 backend:
+For the **stereo mode** add `--stereo`. It installs the vendored VGGT-Omega and downloads our fine-tuned checkpoint
+([Jamie-nus/VGGT-Omega-CROSS](https://huggingface.co/Jamie-nus/VGGT-Omega-CROSS), public) to `models/VGGT-Omega-CROSS/`.
+`--vggt=released` downloads the released checkpoint to `models/VGGT-Omega/` instead (gated: request access at
+[facebook/VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega) and `huggingface-cli login` first); `--vggt=both`
+downloads both. Add `--da3` for the optional Depth Anything 3 backend:
 
 ```bash
-bash install.sh --stereo          # RGB-D + stereo mode
-bash install.sh --stereo --da3    # + Depth Anything 3 backend
-bash install.sh --mono            # + mono mode and visual odometry (builds DPVO; needs nvcc matching PyTorch's CUDA)
+bash install.sh --stereo                   # RGB-D + stereo mode, fine-tuned VGGT-Omega
+bash install.sh --stereo --vggt=released   # the released VGGT-Omega checkpoint instead
+bash install.sh --stereo --da3             # + Depth Anything 3 backend
+bash install.sh --mono                     # + mono mode and visual odometry (builds DPVO; needs nvcc matching PyTorch's CUDA)
+bash install.sh --nav                      # + navigation (cross_nav); --nav-sim adds the Habitat simulator
 ```
+
+CROSS uses the fine-tuned checkpoint when it is installed, together with its settings (`configs/base/vggt_finetuned.yaml`:
+the learned covisibility head), and otherwise the released one with the default settings. With both installed,
+`--set pose_est.ff.checkpoint=released` selects the released one.
 
 <details>
 <summary><strong>Install options</strong></summary>
@@ -152,14 +162,45 @@ Options:
 | `--no-viz` | Disable Rerun visualization |
 | `--frames N` | Process only the first N frames |
 | `--start N` | Start from frame N |
-| `--mode {rgbd,stereo,mono}` | Sensor mode: PnP on depth (default), the stereo mode (layers `configs/stereo.yaml`), or colour only |
-| `--odometry {external,visual,vio}` | Motion source: the dataset's odometry (default), DPVO visual odometry, or (mono) DPVO with IMU scale |
+| `--mode NAME` | One of the twelve shipped modes (`configs/modes/<name>.yaml`: `stereo_wheel`, `mono_imu`, `rgbd_dpvo`, ...), or a sensor mode `rgbd` (default) / `stereo` / `mono` with the two options below |
+| `--odometry {external,basalt,visual,vio,vgio}` | Motion source: the dataset's odometry (default; wheel / INS), the sequence's Basalt VIO file (`odom_vio.txt`), DPVO visual odometry, (mono) DPVO with IMU scale, or (mono ff, stereo) VGGT-Omega + IMU |
 | `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
-| `--config A.yaml B.yaml` | Config layers on top of the defaults, merged left to right |
+| `--fast` | Constrained compute: the mode's fast overlay `configs/overlays/fast/<mode>.yaml` on top (stereo + Basalt and stereo DPVO: 416 px passes; the other modes have none) |
+| `--config A.yaml B.yaml` | Config layers on top of the mode's shipped file, merged left to right (e.g. `configs/overlays/outdoor.yaml`) |
+| `--reproducible` | Synchronous pose-graph optimisation (the shipped default optimises long loop closures in the background; the benchmark always passes it) |
 | `--loader {r3d,rosbag,loris,tum,posed,stereo}` | Force dataset loader (default: auto-detect) |
 | `--baseline B` | Stereo mode, SimChange sequences: which rendered stereo baseline to use |
 | `--snr FLOAT` | Signal-to-noise ratio for R3D datasets |
 | `--async` | Enable async step pipeline |
+
+### Configuration
+
+One file per mode, plus optional layers on top:
+
+```
+configs/
+  modes/<mode>.yaml       # the 12 modes: stereo_{wheel,basalt,imu,dpvo}, rgbd_{wheel,basalt,dpvo}, mono_{wheel,basalt,imu,vio,dpvo}
+  base/*.yaml             # shared pieces the mode files include (stereo, mono_ff, mono_frontend, vggt_finetuned, common)
+  overlays/fast/<mode>.yaml   # --fast: constrained compute (only stereo_basalt and stereo_dpvo change anything)
+  overlays/outdoor.yaml       # outdoor scale (the benchmark adds it on outdoor datasets)
+  overlays/stereo_lowband.yaml  # opt-in: left image only, half the rate
+```
+
+A run resolves its configuration in this order: `configs/modes/<mode>.yaml` (chosen by `--mode`), the fast overlay
+with `--fast`, your `--config` files (left to right), then `--set section.key=value`. A mode file holds the back end's
+settings (`SystemConfig`, `cross/core/config.py`) and, for the modes with a monocular frontend, its settings in the
+sections `mono:` (`MonoConfig`, `cross/mono/config.py`) and `imu:` (`ImuConfig`). To change something, put the keys in
+a small YAML file and pass it with `--config`:
+
+```bash
+python run.py <seq> --mode mono_imu --config my_robot.yaml --set pose_est.obs_max_interval_steps=2
+```
+
+The same files serve local and remote sessions: where a session runs is chosen at start-up (`--remote-server` / the
+`cross-edge` client with `scripts/remote/serve.py` on the GPU server), not by a configuration file. The shipped files
+optimise long loop-closure pose graphs in a background worker (`mapping.loop_closure.async_pgo`), so results depend
+slightly on the machine's speed; experiments pass `--reproducible` (synchronous optimisation, as the benchmark harness
+`benchmark/run.py` always does). Details: [docs/USAGE.md](docs/USAGE.md#3-configuration).
 
 ### Interactive demo
 
@@ -190,10 +231,10 @@ pose the map implies, 2 m indoors), plus the keyframe ATE of the map:
 - `scripts/map_and_reloc_rgbd.py`: RGB-D mode on posed RGB-D folders (`rgb/`, `depth/`, `poses_left.txt`, optional
   `odom_left.txt` with the robot's own odometry, `calib.json`);
 - `scripts/map_and_reloc.py`: stereo sequences (SimChange, KITTI raw, TartanAir V2, Virtual KITTI 2) or posed RGB-D
-  folders, with `--estimator ff` (stereo mode) or `--estimator pnp --pnp-depth gt|sgbm`.
+  folders, in the stereo mode (default) or `--mode rgbd_* --pnp-depth gt|sgbm` (PnP on ground-truth / stereo depth).
 
-Both take `--mode mono` (colour / left image only) and `--odometry visual` (no odometry input, see
-[Mono mode and visual odometry](#mono-mode-and-visual-odometry)).  The full benchmark protocol (T1 mapping ATE, T2
+Both take `--mode <name>` (one of the twelve shipped modes, e.g. `mono_imu`, `rgbd_dpvo`; see
+[docs/USAGE.md](docs/USAGE.md#1-modes) and [Mono mode and visual odometry](#mono-mode-and-visual-odometry)).  The full benchmark protocol (T1 mapping ATE, T2
 multi-session localization, T3 relocalization success; KITTI, OpenLORIS-Scene, ROVER, SimChange; baselines) is in
 [`benchmark/`](benchmark/README.md).
 
@@ -204,24 +245,12 @@ python scripts/datasets/convert_openloris.py data/openloris/home1-2 data/posed/h
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home
 # the same in the stereo mode on the left image alone (metric scale from the wheel odometry and map keyframe pairs:
 # pose_est.ff.right_image=left), so a posed RGB-D folder without a right camera works
-python scripts/map_and_reloc.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_ff --estimator ff \
+python scripts/map_and_reloc.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_ff \
     --set pose_est.ff.right_image=left
 # stereo mode on a SimChange scene (0.3 m baseline)
 python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/hssd_house/light_night --out outputs/house_ff \
-    --estimator ff --baseline 0.3 --snr 10 --trial-len 100 --trial-stride 50 --noise-config configs/noise/hssd_house_600.yaml
+    --baseline 0.3 --snr 10 --trial-len 100 --trial-stride 50
 # TUM RGB-D: scripts/datasets/convert_tum.py (simulated noisy odometry: --snr 10 --seed 0)
-```
-
-### Noise calibration for a new robot (optional)
-
-The verified loop closure uses a noise model of the relative-pose estimator and the odometry.  The defaults work for
-wheeled indoor robots; for another platform, record about a minute of data and calibrate without ground truth:
-
-```bash
-python scripts/map_and_reloc_rgbd.py --map <seq> --query <seq> --out outputs/calib --map-end 600 --skip-reloc --dump-graph
-python scripts/lc/calibrate_noise.py --graph outputs/calib/graph_s0.json --out configs/noise/my_robot.yaml
-# stereo mode: record with scripts/viz/record_trace.py (graph + pass-internal poses) and pass --trace as well
-# then: mapping.loop_closure.noise_file: configs/noise/my_robot.yaml
 ```
 
 Main defaults: verified loop closure (consistency tests at one chi-square level), hypothesis 0 updated only by
@@ -242,27 +271,28 @@ runs at a motion-gated cadence while odometry propagates the multi-hypothesis be
 camera the scale comes from the odometry (previous observed frame) and from pairs of map keyframes.
 
 ```bash
-python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/outdoor.yaml
-python run.py data/sim/lonemonk/map --mode stereo --baseline 0.3
+python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo_wheel --config configs/overlays/outdoor.yaml
+python run.py data/sim/lonemonk/map --mode stereo_wheel --baseline 0.3
 ```
 
 Programmatic use differs from the RGB-D mode only by the stereo calibration and the right image:
 
 ```python
-cfg = load_config("configs/stereo.yaml")          # pose_est.type = ff (+ observation gating)
+cfg = load_config("configs/modes/stereo_wheel.yaml")   # pose_est.type = ff (+ observation gating)
 system = System(camera=camera, config=cfg, T_right_in_left=dataset.T_right_in_left)
 system.step(obs={"rgb": left, "rgb_right": right, "depth": None, "conf": None,
                  "delta_pose": odom_delta, "timestamp": t})
 ```
 
-**Speed.** One observation with the default 10-image pass takes ~120 ms on an RTX 5090 (bf16, compute-bound); the
-frames in between take ~3 ms. The pass reuses the DINO patch tokens of every image seen before (`pose_est.ff.token_cache`;
+**Speed.** One observation is one forward pass over the current pair and the retrieved references: 8 images by default
+(6 references), 10 in the stereo DPVO mode (+ the stored right images of 2 references as extra anchors). On an RTX
+5090 (bf16, compute-bound) 10 images take ~120 ms and 6 images ~73 ms; on an RTX 4000 Ada 8 images take ~236 ms and 6
+~167 ms. The frames in between take ~3 ms. The pass reuses the DINO patch tokens of every image seen before (`pose_est.ff.token_cache`;
 a loaded map's keyframes are embedded once at load), runs compiled transformer blocks (`pose_est.ff.compile`; a few
 seconds of warm-up per process, kernels cached in `TORCHINDUCTOR_CACHE_DIR`) replayed as CUDA graphs
 (`pose_est.ff.cuda_graphs`), and the filter state lives on the CPU (`state_device`). None of these changes the estimate
-beyond floating-point rounding. The pass itself runs at the GPU's bf16 peak, so the number of images is the remaining
-lever: `--max-refs 4 --n-ref-anchors 1` (7 images) takes ~90 ms per observation and `--max-refs 4 --n-ref-anchors 0`
-(6 images) ~73 ms (p95 79 ms), with the same relocalization success on OpenLORIS office / home / cafe.
+beyond floating-point rounding. The pass itself runs at the GPU's bf16 peak, so the number and size of the images are the
+remaining levers: `--fast` passes 416 px images instead of 512 px in the modes where that keeps relocalization (stereo + Basalt, stereo DPVO).
 
 Module-level evaluation (relative pose accuracy vs. ground truth) and the report experiments:
 
@@ -274,13 +304,17 @@ bash scripts/run_experiments.sh all && python scripts/summarize.py && python scr
 
 ## Mono mode and visual odometry
 
-A run is defined by two independent choices (`cross/pipeline.py`):
+Each mode name combines a sensor setup with a motion source (`cross/pipeline.py`); with and without odometry input:
 
-| | `--odometry external` (default) | `--odometry visual` |
+| sensors | with the dataset's odometry | without odometry input (DPVO visual odometry) |
 |---|---|---|
-| `--mode rgbd` | dataset odometry; PnP on sensor depth | DPVO visual odometry, metric scale from the sensor depth |
-| `--mode stereo` | dataset odometry; feed-forward estimator with stereo scale | DPVO on the left image, metric scale from stereo (SGBM) depth |
-| `--mode mono` | dataset odometry; learned metric depth (Depth Anything 3) for keyframes | DPVO with a learned metric-scale prior (DA3-Metric) |
+| RGB-D | `rgbd_wheel`: PnP on sensor depth | `rgbd_dpvo`: DPVO, metric scale from the sensor depth |
+| stereo | `stereo_wheel`: VGGT-Omega with stereo scale | `stereo_dpvo`: DPVO on the left image, metric scale from stereo (SGBM) depth |
+| one camera | `mono_wheel`: VGGT-Omega, scale from the odometry and the map | `mono_dpvo`: DPVO with learned metric depth (Depth Anything 3 back end) |
+
+With an IMU: `stereo_imu` / `mono_imu` (VGGT-Omega + IMU odometry), `mono_vio` (DPVO + IMU); with a Basalt VIO file:
+`*_basalt`. The sensor-mode form (`--mode rgbd | stereo | mono` with `--odometry` and `--mono-estimator`) selects the
+same files and a few reference combinations without a file of their own.
 
 Every motion source feeds the same channel of the back end, the per-frame relative pose (and its covariance) that
 becomes the odometry chain of the pose graph; with external odometry in the RGB-D and stereo modes the frames reach
@@ -291,24 +325,22 @@ loaded map until it is joined, and the global observation runs every few frames 
 map frame by the last observation, is reported in between).
 
 ```bash
-python run.py data/posed/home1-1 --loader posed --odometry visual            # RGB-D, no odometry input
-python run.py data/posed/home1-1 --loader posed --mode mono --odometry visual # RGB only
+python run.py data/posed/home1-1 --loader posed --mode rgbd_dpvo            # RGB-D, no odometry input
+python run.py data/posed/home1-1 --loader posed --mode mono_dpvo            # RGB only
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home_mono \
-    --mode mono --odometry visual                                             # mono profile: configs/mono_benchmark_10hz.json
+    --mode mono_dpvo                                                          # settings: configs/modes/mono_dpvo.yaml
 ```
 
 The DPVO weights are read from `models/dpvo.pth` (or `--dpvo-checkpoint`, `CROSS_DPVO_CHECKPOINT`); DPVO itself must be
 importable (`install.sh --mono` builds it under `thirdparty/DPVO`).  With sensor or stereo depth the DPVO scale is
-observed every frame and the back end keeps the mode's odometry noise model; the mono mode uses the DPVO noise model of
-its profile.  `python -m cross.mono.run` is the real-time monocular runner (paced input, a
-separate mapping process, streaming metric depth); its recommended profile is
-`configs/mono_streaming_dpvo_v2_20hz.json`, and `configs/mono_benchmark_10hz.json` is the same profile for offline
-runs at 10 Hz.
+observed every frame and the back end keeps the mode's odometry noise model; the mono DA3 back end uses the DPVO noise
+model of its mode file (`configs/modes/mono_dpvo.yaml`, section `mono`).  `python -m cross.mono.run` is the standalone
+monocular runner of the DA3 back end, configured by its own command-line flags.
 
 ```python
-from cross.pipeline import build_session, mono_config_from_profile
+from cross.pipeline import build_session, mono_config_from_files
 session = build_session("mono", "visual", camera, SystemConfig(),
-                        mono_config=mono_config_from_profile("configs/mono_benchmark_10hz.json", "models/dpvo.pth"))
+                        mono_config=mono_config_from_files(["configs/modes/mono_dpvo.yaml"], "models/dpvo.pth"))
 for frame in dataset.replay_data():          # dict: rgb (uint8), timestamp[, depth, rgb_right, delta_pose]
     session.process(frame)
     T_c0, T_best, weights = session.belief(to_matrix)
@@ -345,7 +377,16 @@ python scripts/viz/build_trace_page.py --viz-root outputs/viz --scenes lonemonk 
 The GPU work (the back end, VGGT-Omega) can run on a server while the robot runs only its odometry: see
 `docs/USAGE.md` (section 6) for the simulated and real (gRPC) links, and [`edge/README.md`](edge/README.md) for
 `cross-edge`, the robot's side as a separate, torch-free package (live Basalt stereo-inertial VIO, the observation
-cadence, the uplink, the map-frame pose).
+cadence, the uplink, the map-frame pose). Both sides use the same mode files (`configs/modes/`); there is no separate
+cloud configuration.
+
+## Navigation (optional)
+
+`cross_nav/` (installed with `bash install.sh --nav`) turns one forward RGB camera and odometry into local navigation on
+the same VGGT-Omega backbone: a BEV traversability head with a closed-loop planner, a direct trajectory policy, and a
+hybrid of the two, behind one robot interface (`cross_nav.policy.robot.NavigationAgent`). In closed-loop Habitat tests
+on held-out HSSD scenes they reach 96-97% point-goal success. See [`cross_nav/README.md`](cross_nav/README.md); the BEV
+head can also run inside a CROSS session (`pose_est.ff.nav_bev_head`, `docs/USAGE.md`).
 
 ## Datasets
 
@@ -377,7 +418,7 @@ Place processed ROS bag directories in `data/rosbag/`.
 | `cross.core.system` | Main pipeline: motion prior, observation, GMM filtering, keyframe insertion |
 | `cross.core.hypothesis` | Multi-hypothesis GMM belief, evidence tracking, loop-closure detection |
 | `cross.core.pgo` | Pose graph construction and GTSAM optimization |
-| `cross.core.lc_engine` | Asynchronous loop-closure engine (background thread) |
+| `cross.core.async_pgo` | Background pose-graph optimisation of verified loop closures (forked worker) |
 | `cross.core.simple_topo` | Topological planning graph with proximity edges |
 | `cross.core.planner` | A\*/Dijkstra path planning over sparse graph |
 | `cross.core.mem` | Text-conditioned semantic memory search |
@@ -385,11 +426,12 @@ Place processed ROS bag directories in `data/rosbag/`.
 | `cross.cv.pose_est_pnp` | PnP-based relative pose estimation (RGB-D mode) |
 | `cross.cv.pose_est_ff` | Feed-forward multi-view relative pose estimation with stereo / odometry / map scale anchors (stereo mode) |
 | `cross.cv.stereo_scale` | Robust metric scale from calibrated anchors (stereo mode) |
-| `cross.core.lc_verify` | Verified loop closure: consistency tests, calibrated noise model, odometry-chain predictor |
+| `cross.core.lc_verify` | Verified loop closure: consistency tests, noise model, odometry-chain predictor |
 | `cross.dataloader.stereo_loader` | Stereo sequences (KITTI raw, TartanAir V2, Virtual KITTI 2, SimChange) and posed RGB-D folders |
-| `cross.pipeline` | Sensor mode x odometry source: sessions of the back end fed by external odometry or DPVO visual odometry |
+| `cross.pipeline` | Modes (sensor setup x odometry source) and their configuration files (`configs/modes/`): sessions of the back end fed by external odometry, DPVO or the VGGT-Omega + IMU frontend |
 | `cross.mono` | Mono mode: DPVO frontend with learned metric scale, DA3 models, monocular two-view / feed-forward relocalization geometry, real-time runner (`python -m cross.mono.run`) |
 | `cross.visualization.viz_rr` | Rerun-based 3D visualization |
+| `cross_nav` | Optional navigation: BEV traversability head, trajectory policy, planners, robot agent, Habitat evaluation (`install.sh --nav`) |
 
 ## Citation
 

@@ -6,19 +6,17 @@ import torch
 from cross.utils.rotation import quaternion_to_euler_torch
 
 
-def normalize_se3(pose: pp.LieTensor, max_deviation: float = None) -> pp.LieTensor:
+def normalize_se3(pose: pp.LieTensor) -> pp.LieTensor:
     """Remove roundoff in a near-unit SE3 quaternion without changing position.
 
     Repeated float32 products otherwise drift off the group, making inverse
     and matrix conversion inconsistent. Reject invalid inputs instead of
     treating normalization as a repair for arbitrary poses: a non-finite pose or a (near-)zero quaternion raises.
-    Quaternions further from unit norm (e.g. odometry read from low-precision text files) are normalized too,
-    unless max_deviation is given: then | |q| - 1 | above it also raises (the conditional-source filter).
+    Quaternions further from unit norm (e.g. odometry read from low-precision text files) are normalized too.
     """
     data = pose.tensor().clone()
     norm = torch.linalg.vector_norm(data[..., 3:], dim=-1, keepdim=True)
-    limit = 0.5 if max_deviation is None else max_deviation
-    if not torch.isfinite(data).all() or torch.any((norm - 1).abs() > limit):
+    if not torch.isfinite(data).all() or torch.any((norm - 1).abs() > 0.5):
         raise ValueError('Pose mean has a non-unit or non-finite quaternion')
     data[..., 3:] /= norm
     return pp.SE3(data)

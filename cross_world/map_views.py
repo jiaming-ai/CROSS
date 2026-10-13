@@ -239,6 +239,15 @@ def load_map_views(map_path, source=None, *, max_side: Optional[int] = None, K: 
 
     K_map = np.asarray(cam["K"], np.float64) if cam.get("K") is not None else (np.asarray(K, np.float64) if K is not None else None)
     size_map = (int(cam["width"]), int(cam["height"])) if cam.get("width") else size
+    # maps made with several cameras (System.cameras): the stored images of keyframe k have the intrinsics of camera
+    # cam_of[k]; the stereo depth uses camera 0's rig (warned below when another camera has a different one)
+    cams = data.get("cameras") or {}
+    table = [c for c in cams.get("table", [])]
+    cam_of = {int(k): int(c) for k, c in zip(np.asarray(cams.get("kf", [])).tolist(), np.asarray(cams.get("cam", [])).tolist())}
+    if len(table) > 1 and any(c.get("T_right_in_left") is not None and c.get("T_right_in_left") != table[0].get("T_right_in_left")
+                              for c in table[1:]):
+        import warnings
+        warnings.warn(f"{map_path}: cameras with different stereo rigs; stereo depth uses camera 0's rig for all")
     if src is None and K_map is None:
         raise ValueError(f"{map_path}: the map does not hold its intrinsics (saved before the camera field); pass the "
                          f"source folder or K / size")
@@ -275,7 +284,8 @@ def load_map_views(map_path, source=None, *, max_side: Optional[int] = None, K: 
             if K_map is None:
                 raise ValueError(f"keyframe {rec['id']}: no source frame and no stored intrinsics")
             h, w = (img_ref.shape[-2:] if hasattr(img_ref, "shape") else (size_map[1], size_map[0]))
-            v = View(id=int(rec["id"]), T_wc=T, K=K_map, width=int(w), height=int(h), timestamp=ts,
+            K_kf = np.asarray(table[cam_of[int(rec["id"])]]["K"], np.float64) if int(rec["id"]) in cam_of else K_map
+            v = View(id=int(rec["id"]), T_wc=T, K=K_kf, width=int(w), height=int(h), timestamp=ts,
                      atlas=rec.get("atlas_id"), _image=_ref_loader(img_ref, "rgb"))
             if dep_ref is not None:
                 v._depth = _ref_loader(dep_ref, "depth")
@@ -406,9 +416,10 @@ def _blend_poses(Ts: List[np.ndarray], w: np.ndarray) -> np.ndarray:
 
 def load_capture_views(mv: MapViews, *, max_side: Optional[int] = None, exclude_times: Optional[np.ndarray] = None,
                        exclude_dt: float = 0.15) -> List[View]:
-    """The frames of the map's capture directory (cross/core/world_capture.py, mapping.world_capture) as views,
-    posed by their anchor keyframes' poses in the saved map (T_kf T_rel, blended).  Frames whose timestamp is within
-    `exclude_dt` of `exclude_times` (the evaluation frames) are left out."""
+    """The frames of the map's capture directory (cross/core/world_capture.py, mapping.world_capture) between the
+    keyframes as views, posed by their anchor keyframes' poses in the saved map (T_kf T_rel, blended).  Frames whose
+    timestamp is within `exclude_dt` of `exclude_times` (the evaluation frames) or of a keyframe (its own frame, which
+    the keyframe view already uses) are left out."""
     from cross.core.world_capture import capture_dir
     d = capture_dir(mv.map_path)
     f = d / "capture.json"
@@ -422,6 +433,7 @@ def load_capture_views(mv: MapViews, *, max_side: Optional[int] = None, exclude_
     poses = {v.id: v.T_wc for v in mv.views}
     poses.update(mv.temporary_poses)
     ex = np.asarray(exclude_times, np.float64) if exclude_times is not None and len(exclude_times) else None
+    kf_t = np.array([v.timestamp for v in mv.views if v.timestamp is not None], np.float64)
     fdir = d / "frames"
     out = []
 
@@ -436,7 +448,8 @@ def load_capture_views(mv: MapViews, *, max_side: Optional[int] = None, exclude_
         return load
     for fr in idx["frames"]:
         t = fr.get("timestamp")
-        if ex is not None and t is not None and np.min(np.abs(ex - t)) < exclude_dt:
+        if t is not None and ((ex is not None and np.min(np.abs(ex - t)) < exclude_dt)
+                              or (len(kf_t) and np.min(np.abs(kf_t - t)) < 1e-6)):
             continue
         an = [a for a in fr["anchors"] if a["kf"] in poses]
         if not an:

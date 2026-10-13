@@ -77,7 +77,6 @@ def make_system(test_before_apply=False, outlier=True, async_lag=None, n=240, se
     sys_.state_device = "cpu"
     sys_._processed_frame_num = 100
     sys_._last_pgo_step = -1
-    sys_.use_odometry = True
     v = LoopClosureVerifier(sys_, sys_.config.mapping.loop_closure)
     v.stats["pgo_time"] = 0.0
     sys_._lc_verifier = v
@@ -373,14 +372,25 @@ def test_provisional_window_optimisation_only_in_the_modes_that_process_frames_o
     assert stats == {0: 0, 1: 0, 2: 1}
 
 
-def test_realtime_profile_switches_the_adaptive_background_optimisation_on_and_nothing_else():
-    from cross.core.config import load_config
-    from cross.pipeline import CONFIG_DIR, mode_config_files
-    base = load_config(*mode_config_files("stereo", "external"))
-    rt = load_config(*mode_config_files("stereo", "external"), os.path.join(CONFIG_DIR, "realtime.yaml"))
-    assert not base.mapping.loop_closure.async_pgo and rt.mapping.loop_closure.async_pgo
-    assert rt.mapping.loop_closure.async_pgo_lag_steps == -1          # adaptive, free-running
+def test_mode_files_switch_the_adaptive_background_optimisation_on_and_reproducible_runs_off():
+    """Every mode file ships the adaptive background optimisation; --reproducible (the benchmark harness) makes the
+    session synchronous and changes nothing else."""
+    import argparse
     import dataclasses
-    a, b = dataclasses.asdict(base), dataclasses.asdict(rt)
-    b["mapping"]["loop_closure"]["async_pgo"] = False
+    from cross.core.config import load_config
+    from cross.pipeline import mode_config_files
+    rt = load_config(*mode_config_files("stereo", "external"))
+    assert rt.mapping.loop_closure.async_pgo and rt.mapping.loop_closure.async_pgo_lag_steps == -1   # adaptive, free-running
+    import cross.pipeline as P
+    seen = {}
+    orig = P.build_session
+    try:
+        P.build_session = lambda mode, odometry, camera, cfg, **k: seen.setdefault("cfg", cfg)
+        args = argparse.Namespace(mode="stereo", odometry="external", reproducible=True, remote_server="", remote=False)
+        P.session_factory(args, None, rt)()
+    finally:
+        P.build_session = orig
+    a, b = dataclasses.asdict(rt), dataclasses.asdict(seen["cfg"])
+    assert not b["mapping"]["loop_closure"]["async_pgo"]
+    b["mapping"]["loop_closure"]["async_pgo"] = True
     assert a == b

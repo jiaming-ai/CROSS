@@ -156,7 +156,6 @@ class KeyframeDatabase:
         temporary: bool = False,
         last_pgo_step: int = -1,
         pose_charts: torch.Tensor = None,
-        metric_source: dict = None,
         raw_rgb_right: torch.Tensor = None,
     ) -> Keyframe:
         """Insert a Keyframe into the database.
@@ -196,7 +195,6 @@ class KeyframeDatabase:
             temporary=temporary,
             last_pgo_step=last_pgo_step,
             pose_charts=pose_charts,
-            metric_source=metric_source,
         )
         
         # Add to storage
@@ -293,7 +291,6 @@ class KeyframeDatabase:
         Returns:
             dict: Database state including keyframes, embeddings, and atlases
         """
-        from cross.core.conditional_pose import records
         self.index.finalize()            # map projection: refit on the whole map before its codes are stored
         if self._spool is not None:
             self._spool.flush()
@@ -323,8 +320,6 @@ class KeyframeDatabase:
                     "pose_std": kf.pose_std.cpu() if kf.pose_std is not None else None,
                     "pose_weights": kf.pose_weights.cpu() if kf.pose_weights is not None else None,
                     "pose_charts": kf.pose_charts.cpu() if kf.pose_charts is not None else None,
-                    "metric_source": kf.metric_source,
-                    "conditional_poses": records(kf.conditional_poses),
                     "atlas_id": kf.atlas.id if kf.atlas is not None else None,
                     "timestamp": kf.timestamp,
                     "temporary": kf.temporary,
@@ -352,7 +347,6 @@ class KeyframeDatabase:
         Returns:
             dict: Mapping from keyframe ID to Keyframe object
         """
-        from cross.core.conditional_pose import restore
         self._keyframe_by_atlas.clear()
         self._atlas_to_indices.clear()
         self._index_to_atlas_idx.clear()
@@ -395,8 +389,6 @@ class KeyframeDatabase:
                 temporary=kf_data["temporary"],
                 last_pgo_step=kf_data["last_pgo_step"],
                 pose_charts=kf_data["pose_charts"].to(pose_device or storage_device) if kf_data.get("pose_charts") is not None else None,
-                metric_source=kf_data.get("metric_source"),
-                conditional_poses=restore(kf_data.get("conditional_poses")),
             )
 
             # Manually set the ID to match the saved one
@@ -443,24 +435,6 @@ class KeyframeDatabase:
         else:
             self.index = self._new_index(self.index.projection)
         self.index.set_rows(codes, [int(kf.id) for kf in self._row_kf])
-
-    @timeit
-    def similarities(self, img: torch.Tensor, kf_ids) -> dict:
-        """VPR cosine similarity of the query image to the given keyframes (by id), {kf_id: score}."""
-        want = {int(k) for k in kf_ids}
-        if not want or self._current_size == 0:
-            return {}
-        q_full = self.vpr_model.get_embedding(img)
-        q = self.index.encode(q_full)
-        out = {}
-        rows = sorted(self._id_to_row[k] for k in want if k in self._id_to_row)
-        if self.index.projection is not None and rows:
-            sc = self.index.query_scores(q_full, torch.tensor(rows, device=self.device), shortlist=len(rows))
-            return {int(self._row_kf[bi].id): float(v) for bi, v in zip(rows, sc.tolist())}
-        for bi in rows:
-            kid = int(self._row_kf[bi].id)
-            out[kid] = float(self._embedding_buffer[bi] @ q)
-        return out
 
     def _reserved_rows(self, reserved_keyframe_ids) -> torch.Tensor:
         """Boolean mask over the descriptor rows of the given keyframe ids (cached for the same id collection)."""

@@ -5,11 +5,17 @@ set -euo pipefail
 #
 # Usage:
 #   bash install.sh              # Full install (CUDA 12.4), RGB-D mode
-#   bash install.sh --stereo     # + stereo mode (VGGT-Omega feed-forward estimator; weights need a Hugging Face login
-#                                #   with access to facebook/VGGT-Omega)
+#   bash install.sh --stereo     # + stereo mode (VGGT-Omega feed-forward estimator) with the fine-tuned VGGT-Omega
+#                                #   checkpoint (public: huggingface.co/Jamie-nus/VGGT-Omega-CROSS)
+#   bash install.sh --stereo --vggt=released  # the released VGGT-Omega checkpoint instead (gated: needs a Hugging Face
+#                                #   login with access to facebook/VGGT-Omega); --vggt=both downloads both
 #   bash install.sh --stereo --da3   # + the optional Depth Anything 3 backend of the stereo mode
 #   bash install.sh --mono       # + mono mode and visual odometry (DPVO built from source with the CUDA toolkit of
 #                                #   PyTorch, Depth Anything 3, LightGlue); implies --stereo --da3
+#   bash install.sh --nav        # + navigation (cross_nav: BEV head, trajectory policy, planners, robot agent); implies
+#                                #   --stereo
+#   bash install.sh --nav-sim    # + the Habitat simulator for closed-loop navigation tests (its own Python 3.9
+#                                #   environment in third_party/install/habitat; needs micromamba, mamba or conda)
 #   bash install.sh --cpu        # CPU-only (no CUDA)
 #   CUDA_VERSION=cu121 bash install.sh  # Specify CUDA version
 
@@ -18,6 +24,9 @@ CPU_ONLY=false
 STEREO=false
 DA3=false
 MONO=false
+NAV=false
+NAV_SIM=false
+VGGT=finetuned      # VGGT-Omega checkpoint: finetuned | released | both
 
 for arg in "$@"; do
     case "$arg" in
@@ -25,8 +34,15 @@ for arg in "$@"; do
         --stereo) STEREO=true ;;
         --da3) DA3=true; STEREO=true ;;
         --mono) MONO=true; DA3=true; STEREO=true ;;
+        --nav) NAV=true; STEREO=true ;;
+        --nav-sim) NAV_SIM=true; NAV=true; STEREO=true ;;
+        --vggt=*) VGGT="${arg#--vggt=}" ;;
     esac
 done
+case "$VGGT" in
+    finetuned|released|both) ;;
+    *) echo "!! --vggt=finetuned | released | both, not '$VGGT'"; exit 1 ;;
+esac
 
 echo "==> CROSS installer"
 
@@ -98,9 +114,15 @@ if [ "$STEREO" = true ]; then
     echo "==> Installing the stereo mode (feed-forward estimator, vendored under third_party/)..."
     uv pip install -e ".[stereo]"
     uv pip install --no-deps -e third_party/vggt-omega
-    mkdir -p models/VGGT-Omega
-    if [ ! -f models/VGGT-Omega/vggt_omega_1b_512.pt ]; then
-        echo "    Downloading VGGT-Omega-1B-512 (gated: request access at https://huggingface.co/facebook/VGGT-Omega)..."
+    # CROSS uses the fine-tuned checkpoint when it is installed (with its settings, configs/base/vggt_finetuned.yaml), else
+    # the released one with the default settings; --set pose_est.ff.checkpoint=released picks the released one
+    if [ "$VGGT" != released ] && [ ! -f models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt ]; then
+        echo "    Downloading the fine-tuned VGGT-Omega-1B-512 (https://huggingface.co/Jamie-nus/VGGT-Omega-CROSS, 2.3 GB)..."
+        .venv/bin/python -c "from huggingface_hub import hf_hub_download; hf_hub_download('Jamie-nus/VGGT-Omega-CROSS', 'vggt_omega_cross_1b_512.pt', local_dir='models/VGGT-Omega-CROSS')" \
+            || echo "    !! download failed: place the file at models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt"
+    fi
+    if [ "$VGGT" != finetuned ] && [ ! -f models/VGGT-Omega/vggt_omega_1b_512.pt ]; then
+        echo "    Downloading the released VGGT-Omega-1B-512 (gated: request access at https://huggingface.co/facebook/VGGT-Omega)..."
         .venv/bin/python -c "from huggingface_hub import hf_hub_download; hf_hub_download('facebook/VGGT-Omega', 'vggt_omega_1b_512.pt', local_dir='models/VGGT-Omega')" \
             || echo "    !! download failed: log in (huggingface-cli login) after access is granted, or place the file at models/VGGT-Omega/vggt_omega_1b_512.pt"
     fi
@@ -138,6 +160,25 @@ if [ "$MONO" = true ]; then
     echo "    Add DPVO to the path when running: export PYTHONPATH=$(pwd)/$DPVO_DIR:\$PYTHONPATH"
 fi
 
+# ── Navigation (optional) ─────────────────────────────────────
+if [ "$NAV" = true ]; then
+    echo "==> Installing navigation (cross_nav)..."
+    uv pip install -e ".[nav]"
+fi
+if [ "$NAV_SIM" = true ]; then
+    # the simulator runs in its own environment (habitat-sim's conda build) and talks to the policy server of this
+    # environment over a socket (cross_nav/policy/README.md)
+    MM=$(command -v micromamba || command -v mamba || command -v conda || true)
+    if [ -z "$MM" ]; then
+        echo "    !! --nav-sim needs micromamba, mamba or conda on the PATH"
+    else
+        echo "==> Creating the Habitat simulator environment (third_party/install/habitat)..."
+        "$MM" create -y -p "$(pwd)/third_party/install/habitat" -c conda-forge -c aihabitat \
+            habitat-sim=0.3.3 headless python=3.9 numpy pillow \
+            || echo "    !! habitat-sim install failed"
+    fi
+fi
+
 echo ""
 echo "==> Installation complete!"
 echo ""
@@ -152,6 +193,7 @@ echo "    Stereo mode (after install.sh --stereo):"
 echo "      uv run python run.py <stereo sequence> --mode stereo"
 echo "    Mono mode, visual odometry (after install.sh --mono):"
 echo "      uv run python run.py <sequence> --mode mono --odometry visual"
+echo "    Navigation (after install.sh --nav / --nav-sim): cross_nav/README.md"
 echo ""
 echo "    Examples:"
 echo "      uv run python examples/demo.py"

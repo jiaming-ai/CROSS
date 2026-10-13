@@ -52,17 +52,17 @@ in Habitat (`cross_nav/policy/sim/`, HSSD scenes, point goals 1.5-20 m, success 
 - **Trajectory policy** (`TrajectoryPlanner`): this direct head, trained on expert, DAgger and real-robot data, with an
   odometry trail (past positions) as memory, stuck recovery (`recovery.py`) and flow temperature 0.5 (both defaults).
 - **BEV + planner** (`BEVPlanner`): the BEV occupancy and observability heads, an episode map in the odometry frame
-  (fusion + A*) and the closed-loop rules in `configs/policy/bev_planner_best.json` (`bev_planner.json` is the
+  (fusion + A*) and the closed-loop rules in `cross_nav/configs/policy/bev_planner_best.json` (`bev_planner.json` is the
   frozen planner without them).
 - **Hybrid** (`HybridPlanner`, option): both on one backbone; the BEV planner drives and the trajectory head takes over
-  for 20 s after a 15 s stall or less than 1 m of goal progress in 40 s (`configs/policy/hybrid_best.json`, time
+  for 20 s after a 15 s stall or less than 1 m of goal progress in 40 s (`cross_nav/configs/policy/hybrid_best.json`, time
   windows when `step` gets stamps). HSSD val240 98.1% vs 97.3% for the BEV planner alone (mean of two runs); test above.
 
 ```python
 from cross_nav.policy.robot import NavigationAgent, TrajectoryPlanner, BEVPlanner
 
-planner = TrajectoryPlanner(head_checkpoint, backbone_checkpoint)          # or BEVPlanner("configs/policy/bev_planner_best.json")
-# or HybridPlanner("configs/policy/bev_planner_best.json", head_checkpoint, backbone_checkpoint, "configs/policy/hybrid_best.json")
+planner = TrajectoryPlanner(head_checkpoint, backbone_checkpoint)          # or BEVPlanner("cross_nav/configs/policy/bev_planner_best.json")
+# or HybridPlanner("cross_nav/configs/policy/bev_planner_best.json", head_checkpoint, backbone_checkpoint, "cross_nav/configs/policy/hybrid_best.json")
 agent = NavigationAgent(planner)                # recovery='auto': stuck recovery for the trajectory planner only
 agent.set_goal(goal_xy)                         # odometry frame, metres
 for rgb, pose, t in camera_and_odometry():      # pose (x, y, yaw), REP-103; t in seconds
@@ -97,10 +97,10 @@ Simulation tools:
 ```bash
 # Episodes, expert or policy rollouts against a planner server (one server per GPU, many rollout workers)
 python -m cross_nav.policy.server --socket "$SOCK" --backbone "$VGGT_CHECKPOINT" --head "$HEAD" --scale odometry
-python -m cross_nav.policy.server --socket "$SOCK" --backbone "$VGGT_CHECKPOINT" --bev configs/policy/bev_planner_best.json
+python -m cross_nav.policy.server --socket "$SOCK" --backbone "$VGGT_CHECKPOINT" --bev cross_nav/configs/policy/bev_planner_best.json
 # Hybrid (option): BEV drives, the trajectory head takes over for 40 steps when progress stalls (val240 98.1 vs 97.3%)
-python -m cross_nav.policy.server --socket "$SOCK" --backbone "$VGGT_CHECKPOINT" --bev configs/policy/bev_planner_best.json \
-  --head "$HEAD" --scale odometry --hybrid configs/policy/hybrid_best.json
+python -m cross_nav.policy.server --socket "$SOCK" --backbone "$VGGT_CHECKPOINT" --bev cross_nav/configs/policy/bev_planner_best.json \
+  --head "$HEAD" --scale odometry --hybrid cross_nav/configs/policy/hybrid_best.json
 python -m cross_nav.policy.sim.rollout --hssd "$SCENES" --episodes "$EPISODES" --socket "$SOCK" --mode policy \
   --out "$RUN" --camera nominal --max-steps 500 --viz-dir "$RUN/viz" --viz-every 5   # --control robot --stamps: the agent loop
 # Side-by-side viewer of saved runs

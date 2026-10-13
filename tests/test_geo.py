@@ -208,7 +208,7 @@ def test_manager_factors_correct_a_drifting_chain_in_the_pose_graph():
     geo.set_vertical(np.array([0, 1.0, 0]))
     nodes, odom_edges = {}, {}
     Keyframe._next_id = 0
-    hm = types.SimpleNamespace(nodes=nodes, odom_edges=odom_edges, chart_aware=False, source_states=None,
+    hm = types.SimpleNamespace(nodes=nodes, odom_edges=odom_edges, chart_aware=False,
                                component_charts=torch.zeros(1), component_generations=[0], system=None,
                                hypotheses={0: types.SimpleNamespace(visual_edges={}, visual_adjacency={})})
 
@@ -338,6 +338,7 @@ def test_geo_anchor_kept_when_a_map_is_saved_again_without_gnss(tmp_path, monkey
         assert cfg.geo.enabled
         s = System.__new__(System)
         s.config, s._lc_verifier, s.topo_map, s.visualize = cfg, None, None, False
+        s.cameras, s.cam_id = [None], 0
         s.state_device = s.storage_device = s.device = "cpu"
         s.pose_est_type, s.pose_est = PoseEstType.PNP, None
         s._anchor_pending, s._contra_pending, s.loaded_node_ids = [], [], frozenset()

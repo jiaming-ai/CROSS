@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 def _sc():
-    root = os.environ.get("SIMCHANGE_ROOT", "/data2/projects/cross_v2/SimChange")
+    root = os.environ["SIMCHANGE_ROOT"]      # SimChange checkout
     sys.path.insert(0, os.path.join(root, "simchange"))
     import glb_debasis                                  # noqa: E402
     return glb_debasis

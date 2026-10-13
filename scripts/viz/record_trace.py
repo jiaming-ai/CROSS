@@ -301,13 +301,9 @@ def make_config(args) -> SystemConfig:
     lc.mode = getattr(args, "lc_mode", None) or lc.mode
     if getattr(args, "lc_confidence", None) is not None:
         lc.confidence = args.lc_confidence
-    if getattr(args, "noise_config", None):
-        lc.noise_file = args.noise_config
     for name in ("inpass", "prior", "posterior"):
         if getattr(args, f"no_{name}", False):
             setattr(lc, f"use_{name}", False)
-    if getattr(args, "recent_window", None) is not None:
-        cfg.retrieval.recent_window_steps = args.recent_window
     if getattr(args, "legacy_lc", False):
         h = cfg.mapping.hypothesis
         h.detect_min_frames, h.detect_min_weight, h.verify_max_outlier_frac = 0, 0.0, 1.01
@@ -318,7 +314,7 @@ def make_config(args) -> SystemConfig:
     cfg.pose_est.type = PoseEstType.FF
     ff = cfg.pose_est.ff
     ff.backend = FFBackend(args.backend)
-    ff.checkpoint = args.checkpoint or ("models/VGGT-Omega/vggt_omega_1b_512.pt" if args.backend == "vggt_omega" else "models/DA3-LARGE-1.1")
+    ff.checkpoint = args.checkpoint or "auto"      # install.sh's VGGT-Omega (fine-tuned, else released) / DA3
     ff.max_refs = args.max_refs
     ff.n_ref_anchors = args.n_ref_anchors
     cfg.pose_est.obs_min_translation = args.obs_min_translation   # observation gating (generic option, set for the stereo estimator as before)
@@ -379,12 +375,10 @@ def main():
     ap.add_argument("--no-intra-lc", action="store_true", help="ablation: disable the intra-hypothesis loop closure (PGO of hypothesis 0)")
     ap.add_argument("--ff-meas-std", type=float, nargs=6, default=None, help="base measurement std [tx ty tz rx ry rz] of the FF estimator")
     ap.add_argument("--seed", type=int, default=None, help="seed of the odometry noise (reproducible runs)")
-    ap.add_argument("--recent-window", type=int, default=None, help="RetrievalConfig.recent_window_steps override (0 = split off)")
     ap.add_argument("--legacy-lc", action="store_true", help="ablation: old loop-closure test (no evidence validity / weight gate / verification)")
-    ap.add_argument("--config", nargs="*", default=[], help="YAML config file(s) applied before the command-line overrides (e.g. configs/outdoor.yaml)")
+    ap.add_argument("--config", nargs="*", default=[], help="YAML config file(s) applied before the command-line overrides (e.g. configs/overlays/outdoor.yaml)")
     ap.add_argument("--lc-mode", choices=["verified", "heuristic"], default=None, help="loop-closure mode (default: config, 'verified')")
     ap.add_argument("--lc-confidence", type=float, default=None, help="chi-square confidence of the verified loop closure (default 0.999)")
-    ap.add_argument("--noise-config", default=None, help="YAML from scripts/lc/calibrate_noise.py (calibrated noise model)")
     ap.add_argument("--odom-file", default=None, help="odometry file of the sequence folders (e.g. odom_vio.txt) instead of odom_left.txt")
     ap.add_argument("--no-inpass", action="store_true", help="ablation: disable the in-pass consistency test")
     ap.add_argument("--no-prior", action="store_true", help="ablation: disable the prior consistency test")

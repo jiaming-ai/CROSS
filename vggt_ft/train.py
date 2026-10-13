@@ -1,6 +1,6 @@
 """Fine-tune VGGT-Omega with the metric-scale and covisibility heads.
 
-    torchrun --nproc_per_node=8 -m vggt_ft.train --config configs/vggt_ft/<run>.yaml [key.sub=value ...]
+    torchrun --nproc_per_node=8 -m vggt_ft.train --config vggt_ft/configs/<run>.yaml [key.sub=value ...]
     (multi-node: add --nnodes / --node_rank / --rdzv_endpoint; images_per_gpu is per GPU)
 
 Per step: GT covisibility of every frame pair of each window (geometry.gt_covisibility); frames not connected to frame
@@ -27,6 +27,7 @@ import yaml
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 
+from . import load_yaml
 from .dataio.windows import TrainStream
 from .geometry import connected_to_ref, gt_covisibility, normalize_window
 from .losses import camera_loss, covis_loss, dense_scale_target, depth_loss, point_loss, scale_target
@@ -259,7 +260,7 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
-    cfg = apply_overrides(yaml.safe_load(open(args.config)), args.overrides)
+    cfg = apply_overrides(load_yaml(args.config), args.overrides)
     world = int(os.environ.get("WORLD_SIZE", 1))
     rank = int(os.environ.get("RANK", 0))
     local_rank = int(os.environ.get("LOCAL_RANK", 0))

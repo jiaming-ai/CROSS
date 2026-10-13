@@ -23,7 +23,7 @@ FREE = 1
 
 
 def _simchange():
-    root = os.environ.get("SIMCHANGE_ROOT", "/data2/projects/cross_v2/SimChange")
+    root = os.environ["SIMCHANGE_ROOT"]      # SimChange checkout
     p = os.path.join(root, "simchange")
     if p not in sys.path:
         sys.path.insert(0, p)

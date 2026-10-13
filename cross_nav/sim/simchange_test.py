@@ -13,6 +13,7 @@ axes; depth/*.png is uint16 millimetres.  The cache stores K with the principal 
 """
 from __future__ import annotations
 
+import os
 import argparse
 import json
 from pathlib import Path
@@ -134,11 +135,11 @@ def cmd_check(a):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["cache", "label", "check"])
-    ap.add_argument("--bench", default="/mnt/datasets-livsyn/jz/bench_data/simchange")
-    ap.add_argument("--cache", default="/mnt/datasets-livsyn/jz/cache")
+    ap.add_argument("--bench", default=os.path.join(os.environ.get("CROSS_NAV_ROOT", "."), "bench_data/simchange"))
+    ap.add_argument("--cache", default=os.path.join(os.environ.get("CROSS_NAV_ROOT", "."), "cache"))
     ap.add_argument("--dataset", default="simchange_test")
-    ap.add_argument("--geom-dir", default="/mnt/datasets-livsyn/jz/navsim/simchange_geom")
-    ap.add_argument("--out", default="/mnt/datasets-livsyn/jz/nav/bev/simchange_test")
+    ap.add_argument("--geom-dir", default=os.path.join(os.environ.get("CROSS_NAV_ROOT", "."), "navsim/simchange_geom"))
+    ap.add_argument("--out", default=os.path.join(os.environ.get("CROSS_NAV_ROOT", "."), "nav/bev/simchange_test"))
     ap.add_argument("--scenes", nargs="*", default=list(SCENES))
     ap.add_argument("--n", type=int, default=12)
     ap.add_argument("--json", default=None)

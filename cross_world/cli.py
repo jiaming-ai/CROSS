@@ -64,12 +64,15 @@ def cmd_build(args):
         print(line, flush=True)
         logf.write(line + "\n")
         logf.flush()
-    cfg = _set(BuildConfig(), args.set)
-    if args.config:
-        for k, v in (yaml.safe_load(Path(args.config).read_text()) or {}).items():
-            _set(cfg, [f"{k}={json.dumps(v)}"] if not isinstance(v, dict) else [f"{k}.{a}={json.dumps(b)}" for a, b in v.items()])
-    log(f"cross_world build {_commit()} map {args.map} source {args.source} cfg {cfg}")
     mv = _views(args)
+    # settings: the defaults of the map's mode (cross_world/configs/<mode>.yaml), then --config, then --set
+    cfg = BuildConfig()
+    mode_cfg = Path(__file__).parent / "configs" / f"{mv.mode}.yaml"
+    for f in ([mode_cfg] if mode_cfg.exists() and not args.no_mode_defaults else []) + ([Path(args.config)] if args.config else []):
+        for k, v in (yaml.safe_load(f.read_text()) or {}).items():
+            _set(cfg, [f"{k}={json.dumps(v)}"] if not isinstance(v, dict) else [f"{k}.{a}={json.dumps(b)}" for a, b in v.items()])
+    _set(cfg, args.set)
+    log(f"cross_world build {_commit()} map {args.map} source {args.source} mode {mv.mode} cfg {cfg}")
     only = [int(x) for x in args.chunks.split(",")] if args.chunks else None
     extra = None
     if args.capture:
@@ -94,17 +97,55 @@ def cmd_build(args):
     (out / "metrics.json").write_text(json.dumps(res, indent=1, default=float))
 
 
+def _stereo_depth_for(views, mv):
+    """Stereo test views without depth get their SGBM depth (cached), for the depth and floater metrics."""
+    from cross_world.depth import StereoDepth, view_depth
+    st = {}
+    for v in views:
+        if v.has_depth or not v.has_right or mv.T_right_in_left is None:
+            continue
+        def load(v=v, cache={}):
+            if "d" not in cache:
+                s = st.setdefault(v.width, StereoDepth(v.width))
+                cache["d"] = view_depth(v, mv, "sgbm", None, s)
+            return cache["d"]
+        v._depth = load
+    return views
+
+
+def _right_views(views, mv):
+    """The right camera of stereo test views (never trained: the right image only gives depth): a viewpoint the
+    stereo baseline (KITTI: 0.54 m) to the side of the path, with a photo to compare against."""
+    import copy
+    if mv.T_right_in_left is None:
+        return []
+    T_rl = np.asarray(mv.T_right_in_left, np.float64).reshape(4, 4)
+    out = []
+    for v in views:
+        if not v.has_right:
+            continue
+        r = copy.copy(v)
+        r.T_wc = v.T_wc @ T_rl
+        r._image, r._depth, r._right = v._right, None, None
+        out.append(r)
+    return out
+
+
 def run_eval(world, mv, args, out, log):
     from cross_world.map_views import source_test_views
     from cross_world.world import evaluate
     res = {}
+    seg = None
+    if getattr(args, "sky_metric", False):
+        from cross_world.sky import SkySegmenter
+        seg = SkySegmenter(world.meta.get("config", {}).get("sky_model", ""), args.device)
     by = mv.by_id()
     kf_times = {v.id: (v.timestamp if v.timestamp is not None else float(v.id)) for v in mv.views}
-    test = [by[i] for i in world.meta["test_ids"] if i in by]
+    test = _stereo_depth_for([by[i] for i in world.meta["test_ids"] if i in by], mv)
     if test:
         log(f"evaluating {len(test)} held-out keyframes")
         res["heldout_keyframes"] = evaluate(world, test, args.device, align=True, save_dir=out / "renders" / "heldout",
-                                            log=log, kf_times=kf_times)
+                                            log=log, kf_times=kf_times, sky_seg=seg)
     train = [by[i] for i in world.meta["train_ids"] if i in by]
     if train and args.eval_train:
         sel = train[:: max(1, len(train) // args.eval_train)]
@@ -112,10 +153,21 @@ def run_eval(world, mv, args, out, log):
                                           log=log, kf_times=kf_times)
     if args.novel and mv.source is not None:
         nv = source_test_views(mv, min_gap=args.novel_gap, max_side=args.max_side, limit=args.novel)
+        for v in nv:                     # the source frame's right image (source_test_views loads the left one only)
+            if not v.has_right and mv.source is not None and mv.source.right:
+                s_ = mv.source
+                v._right = (lambda q=v.source_index, w=v.width, h=v.height: s_.read_right(q, (w, h)))
+        nv = _stereo_depth_for(nv, mv)
         if nv:
             log(f"evaluating {len(nv)} novel source frames (>= {args.novel_gap} frames from any keyframe)")
             res["novel_frames"] = evaluate(world, nv, args.device, align=True, save_dir=out / "renders" / "novel",
-                                           log=log, kf_times=kf_times)
+                                           log=log, kf_times=kf_times, sky_seg=seg)
+        if getattr(args, "eval_right", 0) and nv:
+            rv = _right_views(nv[:: max(1, len(nv) // args.eval_right)], mv)
+            if rv:
+                log(f"evaluating the right camera of {len(rv)} novel source frames ({np.linalg.norm(np.asarray(mv.T_right_in_left).reshape(4, 4)[:3, 3]):.2f} m to the side)")
+                res["novel_right"] = evaluate(world, rv, args.device, align=True, save_dir=out / "renders" / "right",
+                                              log=log, kf_times=kf_times, sky_seg=seg)
     return res
 
 
@@ -123,6 +175,8 @@ def cmd_eval(args):
     from cross_world.world import World
     out = Path(args.out or Path(args.world).parent)
     world = World.load(args.world)
+    if args.render_sh is not None:          # e.g. 1: what the web viewer draws from an SH-1 export
+        world.meta["sh_degree"] = min(int(args.render_sh), world.sh_degree)
     mv = _views(args)
     res = run_eval(world, mv, args, out, print)
     (out / "metrics_eval.json").write_text(json.dumps(res, indent=1, default=float))
@@ -145,7 +199,14 @@ def cmd_clean(args):
     from cross_world.world import World, clean_world
     world = World.load(args.world)
     mv = _views(args)
-    clean_world(world, mv.views, min_views=args.min_views, needle_ratio=args.needle_ratio, device=args.device)
+    depths = None
+    if args.carve:
+        from cross_world.depth import StereoDepth, view_depth
+        st = StereoDepth(mv.views[0].width)
+        depths = {v.id: d for v in mv.views if v.id in set(world.meta["train_ids"])
+                  for d in [view_depth(v, mv, "auto", None, st)] if d is not None}
+    clean_world(world, mv.views, min_views=args.min_views, needle_ratio=args.needle_ratio, device=args.device,
+                depths=depths, carve_tol=args.carve_tol)
     world.save(args.out)
     if args.eval:
         res = run_eval(world, mv, args, Path(args.out).parent / "eval_clean", print)
@@ -173,9 +234,15 @@ def main(argv=None):
         p.add_argument("--device", default="cuda")
         p.add_argument("--novel", type=int, default=0, help="evaluate on up to N source frames that are not keyframes")
         p.add_argument("--novel-gap", type=int, default=2, help="... at least this many frames from any keyframe")
+        p.add_argument("--eval-right", type=int, default=0,
+                       help="stereo: also evaluate the right camera of up to N novel frames (a viewpoint beside the path)")
+        p.add_argument("--sky-metric", action="store_true",
+                       help="also measure the Gaussians' opacity on sky pixels (needs the sky segmenter)")
         p.add_argument("--eval-train", type=int, default=0, help="also evaluate ~N training keyframes")
     b = sub.add_parser("build")
     common(b)
+    b.add_argument("--no-mode-defaults", action="store_true",
+                   help="start from the code defaults, not cross_world/configs/<mode>.yaml")
     b.add_argument("--out", required=True)
     b.add_argument("--config", default=None, help="YAML of BuildConfig fields (train: {...} for TrainConfig)")
     b.add_argument("--set", nargs="*", default=[])
@@ -187,6 +254,7 @@ def main(argv=None):
     common(e)
     e.add_argument("--world", required=True)
     e.add_argument("--out", default=None)
+    e.add_argument("--render-sh", type=int, default=None, help="evaluate with the SH truncated to this degree")
     e.set_defaults(fn=cmd_eval)
     x = sub.add_parser("export")
     common(x)
@@ -204,6 +272,8 @@ def main(argv=None):
     cl.add_argument("--min-views", type=int, default=2)
     cl.add_argument("--needle-ratio", type=float, default=0.0)
     cl.add_argument("--eval", action="store_true")
+    cl.add_argument("--carve", action="store_true", help="also remove free-space violators (training views' depth)")
+    cl.add_argument("--carve-tol", type=float, default=0.15)
     cl.set_defaults(fn=cmd_clean)
     r = sub.add_parser("repose")
     common(r)

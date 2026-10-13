@@ -242,7 +242,7 @@ class BEVPlanner:
 
 class HybridPlanner:
     """BEV planner + trajectory head on one shared backbone, switched by cross_nav.policy.hybrid.Switch
-    (configs/policy/hybrid_best.json: BEV drives; the trajectory head takes over for block_s seconds after a stall or
+    (cross_nav/configs/policy/hybrid_best.json: BEV drives; the trajectory head takes over for block_s seconds after a stall or
     too little goal progress). Use with NavigationAgent and time stamps; out['controller'] says which one drove."""
     hybrid = True
 

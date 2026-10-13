@@ -2,7 +2,7 @@
 """LaTeX tables of the verified-loop-closure study (report/tables/lc_*.tex).
 
 Sources: outputs/lcstudy/<scene>/cur/study_s0/study.json (offline study of the baseline mapping graphs),
-configs/noise/<scene>_600.json (ground-truth-free calibration vs the ground-truth fit),
+outputs/2026-09-12_loop_closure_verified/noise/<scene>_600.json (ground-truth-free calibration vs the ground-truth fit),
 outputs/lcstudy/eval_all.json (A/B evaluation of the recorded runs, scripts/lc/eval_lc.py).
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ def table_offline():
 def table_calibration():
     rows = []
     for key, name in SCENES:
-        p = ROOT / "configs/noise" / f"{key}_600.json"
+        p = ROOT / "outputs/2026-09-12_loop_closure_verified/noise" / f"{key}_600.json"
         if not p.exists():
             continue
         d = json.loads(p.read_text()); gt = d.get("gt_fit", {}); v = d["visual"]; o = d["odom"]

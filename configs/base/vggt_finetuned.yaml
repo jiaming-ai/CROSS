@@ -1,0 +1,14 @@
+# The fine-tuned VGGT-Omega's overlay (huggingface.co/Jamie-nus/VGGT-Omega-CROSS, install.sh's default checkpoint).
+# The bases of every mode that runs VGGT-Omega include it (base/stereo.yaml, base/mono_ff.yaml), but its vggt_finetuned
+# section applies only when the checkpoint in use is fine-tuned: one with a covis_head_map (cross.core.config.load_config).
+# With the released checkpoint (install.sh --vggt=released, or --set pose_est.ff.checkpoint=released) CROSS keeps its
+# default settings.  Other files may have a vggt_finetuned section too (configs/overlays/outdoor.yaml).
+vggt_finetuned:
+  pose_est:
+    ff:
+      # the checkpoint's learned covisibility head, through its covis_head_map (the head's probability on the geometric
+      # score's scale), instead of the geometric score.  Full benchmark 2026-10-09/10 (outputs/2026-10-09_covis_head_gap),
+      # ROVER T3 vs the geometric score with the same checkpoint: stereo +49, stereo fast +25, mono + odometry +43,
+      # stereo + Basalt VIO +59 trials; neutral on OpenLORIS, SimChange and KITTI.  The VGGT-inertial odometry keeps the
+      # geometric score (modes/stereo_imu.yaml, modes/mono_imu.yaml, layered after this file)
+      covis_source: auto

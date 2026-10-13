@@ -66,7 +66,7 @@ The direction is fixed (not toward the goal side) because a stateless goal-side 
 when the goal is near the field-of-view edge and neither heading has a route. 'rotate_goal' turns toward the goal
 side instead; 'stop' returns zeros (the robot then stays put, the same window repeats, so it never recovers).
 
-Closed-loop rules (all off by default = the frozen behaviour; configs/policy/bev_planner_best.json enables the
+Closed-loop rules (all off by default = the frozen behaviour; cross_nav/configs/policy/bev_planner_best.json enables the
 selected set; outputs/2026-10-12_sim_nav/bev_closed_loop.md has the validation). Rules marked * keep per-episode
 state (Episode), keyed by the caller's episode id (`episodes=[{'ep', 'odom', 'window_odom'}]`, odometry pose
 (x, y, yaw) REP-103) and dropped by end_episode:

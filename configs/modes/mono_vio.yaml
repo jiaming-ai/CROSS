@@ -1,0 +1,20 @@
+# configs/modes/mono_vio.yaml: selected by --mode mono_vio.
+# Mono + DPVO-inertial odometry (VGGT-Omega + DPVO + IMU): --mode mono --mono-estimator ff --odometry vio.
+# The shared pieces it includes come first (configs/base/); keys below override them.
+include:
+  - ../base/mono_ff.yaml
+  - ../base/common.yaml
+mapping:
+  hypothesis:
+    # merge hypotheses in mapping sessions too, and update hypothesis 0 with every observation (the defaults are false /
+    # true since 2026-10-03).  Full benchmark 2026-10-12 (outputs/2026-10-11_config_confirm, "ob3", which also adopted in
+    # mapping sessions), against the defaults: ROVER T3 652 -> 1012 of 1159, T2 0.25 / 0.46 -> 0.41 / 0.69.
+    # No adoption in mapping sessions (outputs/2026-10-12_ob3_kitti10): with hypothesis 0 moved by every observation, the
+    # VGGT-Omega / DPVO scale disagreement on fast drives makes the session's own recent keyframes fail the prior test and
+    # be born as hypotheses 3-40 m away; adopting them teleported the map (KITTI 10 8.8 -> 39 / 86 m, keyframes left at
+    # the origin).  Without adoption (merges still verified): ROVER T3 1012 / 1159, T2 0.40 / 0.69 (ob3 1012, 0.41 / 0.69);
+    # KITTI 10 8.1-9.7 m (4 runs), 08 8.3-10.3 m (defaults 8.8 / 10.3); OpenLORIS T3 173 / 294, T2 0.34 / 0.45 (ob3 173,
+    # 0.29 / 0.43; defaults 169, 0.34 / 0.55)
+    adopt_in_mapping_session: false
+    merge_in_mapping_session: true
+    h0_informative_only: false
