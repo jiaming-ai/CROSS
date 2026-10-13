@@ -2,6 +2,7 @@
 
     python -m cross_nav.policy.server --socket /tmp/nav0.sock --backbone ckpt.pt [--head best.pt] \
         [--record DIR] [--grid 12 16] [--scale mono|odometry] [--max-batch 32]
+    python -m cross_nav.policy.server ... --bev BEV.json --head best.pt --scale odometry --hybrid HYBRID.json   (hybrid.py)
 
 Workers (cross_nav.policy.sim.rollout) send the newest rendered frame of an episode and the indices of the causal
 window; the server keeps each episode's recent frames, so a step transfers one image. With --head, it returns the

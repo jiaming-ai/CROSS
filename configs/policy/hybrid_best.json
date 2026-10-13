@@ -1,0 +1,10 @@
+{
+  "_comment": "Hybrid BEV + trajectory head (cross_nav.policy.hybrid.Switch), used by `python -m cross_nav.policy.server --bev configs/policy/bev_planner_best.json --head HEAD --scale odometry --hybrid configs/policy/hybrid_best.json`: the BEV planner drives; when the straight-line goal distance shrinks by less than 1 m over 80 planning steps, or the robot moves less than 0.5 m in 30 steps, the trajectory head (with its stuck recovery) drives for 40 steps. HSSD val240 (400 steps): 98.3 / 97.9% (two runs) vs BEV alone 97.5%; outputs/2026-10-12_sim_nav/hybrid.md. Step counts assume the simulator's 0.25 m / 45 deg steps.",
+  "primary": "bev",
+  "block": 40,
+  "stall_window": 30,
+  "stall_disp": 0.5,
+  "no_route": 0,
+  "progress_window": 80,
+  "progress_m": 1.0
+}

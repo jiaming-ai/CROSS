@@ -94,6 +94,9 @@ Simulation tools:
 # Episodes, expert or policy rollouts against a planner server (one server per GPU, many rollout workers)
 python -m cross_nav.policy.server --socket "$SOCK" --backbone "$VGGT_CHECKPOINT" --head "$HEAD" --scale odometry
 python -m cross_nav.policy.server --socket "$SOCK" --backbone "$VGGT_CHECKPOINT" --bev configs/policy/bev_planner_best.json
+# Hybrid (option): BEV drives, the trajectory head takes over for 40 steps when progress stalls (val240 98.1 vs 97.3%)
+python -m cross_nav.policy.server --socket "$SOCK" --backbone "$VGGT_CHECKPOINT" --bev configs/policy/bev_planner_best.json \
+  --head "$HEAD" --scale odometry --hybrid configs/policy/hybrid_best.json
 python -m cross_nav.policy.sim.rollout --hssd "$SCENES" --episodes "$EPISODES" --socket "$SOCK" --mode policy \
   --out "$RUN" --camera nominal --max-steps 500 --viz-dir "$RUN/viz" --viz-every 5   # --control robot --stamps: the agent loop
 # Side-by-side viewer of saved runs
