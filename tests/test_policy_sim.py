@@ -295,3 +295,14 @@ def test_hybrid_switch_hands_over_for_a_block_then_returns():
     assert [s((i, 0., 0.), (5., 0.), nr) for i, nr in enumerate([0, 1, 2, 0, 0, 0])] == ['bev', 'bev', 'traj', 'traj', 'traj', 'bev']
     s = Switch({'primary': 'traj', 'stall_window': 0, 'progress_window': 2, 'progress_m': 1., 'block': 1})
     assert [s((0., 0., 0.), (d, 0.)) for d in (10., 9.5, 9.2, 8., 5.)] == ['traj', 'traj', 'bev', 'traj', 'traj']
+
+
+def test_hybrid_switch_time_windows_with_stamps():
+    from cross_nav.policy.hybrid import Switch
+    s = Switch({'stall_window': 30, 'stall_s': 1., 'stall_disp': .5, 'block_s': 2.})
+    ts = [.5 * k for k in range(9)]
+    assert [s((0., 0., 0.), (5., 0.), 0, t) for t in ts] == ['bev', 'bev', 'traj', 'traj', 'traj', 'traj', 'bev', 'bev', 'traj']
+    s = Switch({'stall_window': 0, 'stall_s': 0., 'progress_s': 2., 'progress_m': 1., 'block_s': 1.})
+    assert [s((t, 0., 0.), (d, 0.), 0, t) for t, d in [(0, 10.), (1, 9.8), (2, 9.5), (3, 8.), (4, 6.)]] == \
+        ['bev', 'bev', 'traj', 'bev', 'bev']
+    assert Switch({'stall_window': 2, 'block_s': 5.})((0., 0., 0.), (5., 0.)) == 'bev'    # no stamp: step windows

@@ -7,6 +7,8 @@ distances) and the robot-frame goal to a planner, and follows the returned path.
 
 * `TrajectoryPlanner`  the direct trajectory head (cross_nav.policy.head) on the frozen VGGT backbone
 * `BEVPlanner`         the BEV occupancy + observability heads and the adaptive local planner
+* `HybridPlanner`      both on one backbone, switched by cross_nav.policy.hybrid (the BEV planner drives, the
+                       trajectory head takes over on a stall or too little goal progress)
 
     agent = NavigationAgent(TrajectoryPlanner(head_ckpt, backbone_ckpt))
     agent.set_goal(goal_xy)                                   # odometry frame, metres
@@ -133,6 +135,13 @@ class NavigationAgent:
             self.v_cmd = v
             return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': to_odom_2d(path, pose), 'goal_rel': goal_rel,
                     'replanned': False}
+        if getattr(self.planner, 'hybrid', False):
+            path = self.hybrid_plan(frames, pose, goal_rel, stamp)
+            self.plan = np.vstack((np.asarray(pose[:2], np.float64)[None], to_odom_2d(path, pose)))
+            v, w = pure_pursuit(path, self.v_max, self.w_max, self.lookahead)
+            self.v_cmd = v
+            return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': self.plan[1:], 'goal_rel': goal_rel,
+                    'replanned': True, 'controller': self.planner.controller}
         ids = window_ids([f[2] for f in frames], [f[1][2] for f in frames], self.history_rule)
         imgs = np.stack([frames[i][0] for i in ids])
         hist = np.array([math.hypot(pose[0] - frames[i][1][0], pose[1] - frames[i][1][1]) for i in ids], np.float32)
@@ -151,6 +160,25 @@ class NavigationAgent:
         self.v_cmd = v
         return {'arrived': False, 'cmd': (v, w), 'path': path, 'path_odom': self.plan[1:], 'goal_rel': goal_rel,
                 'window': ids, 'replanned': True}
+
+    def hybrid_plan(self, frames, pose, goal_rel, stamp):
+        """HybridPlanner: the BEV planner runs on every plan (its map and bump memory stay current); the switch picks its
+        path or the trajectory head's (with its own stuck recovery, reset at each hand-over)."""
+        hp, cum, yaw = self.planner, [f[2] for f in frames], [f[1][2] for f in frames]
+        hist = lambda ids: np.array([math.hypot(pose[0] - frames[i][1][0], pose[1] - frames[i][1][1]) for i in ids], np.float32)
+        ids = window_ids(cum, yaw, hp.bev.history_rule)
+        path = hp.bev(np.stack([frames[i][0] for i in ids]), goal_rel.astype(np.float32), hist(ids), odom=np.asarray(pose, np.float64),
+                      window_odom=np.array([frames[i][1] for i in ids], np.float64), expect=self.commanded if stamp is not None else None)
+        self.commanded = 0.
+        st = hp.bev.bev.episodes.get('robot')
+        hp.controller = hp.switch(pose, goal_rel, st.no_route if st is not None else 0, stamp)
+        if hp.controller == 'traj':
+            if hp.switch.fresh:
+                hp.recovery.reset()
+            ids = window_ids(cum, yaw, {'type': 'distance', 'm': list(hp.traj.history_m)})
+            path = hp.traj(np.stack([frames[i][0] for i in ids]), goal_rel.astype(np.float32), hist(ids), trail=self.trail(pose, frames))
+            path = hp.recovery(pose, path, stamp)
+        return np.asarray(path, np.float64)
 
     def remaining(self, pose):
         """The last plan after its point nearest to the robot, in the current robot frame."""
@@ -180,14 +208,13 @@ class TrajectoryPlanner:
 
 class BEVPlanner:
     """BEV occupancy/observability heads + adaptive local planner (cross_nav.policy.bev_policy)."""
-    def __init__(self, config, backbone_checkpoint=None):
+    def __init__(self, config, backbone_checkpoint=None, backbone=None):
         import json
         import torch
         from pathlib import Path
         from .bev_policy import BEVPlannerPolicy
         cfg = json.loads(Path(config).read_text()) if isinstance(config, (str, bytes)) or hasattr(config, 'read_text') else config
-        backbone = None
-        if backbone_checkpoint:
+        if backbone is None and backbone_checkpoint:
             from .backbone import FrozenMetricTokens
             backbone = FrozenMetricTokens(backbone_checkpoint).cuda().eval()
         self.torch, self.bev = torch, BEVPlannerPolicy(cfg, backbone=backbone)
@@ -211,3 +238,26 @@ class BEVPlanner:
                                 t.from_numpy(np.asarray(hist_chord, np.float32))[None].cuda(), want_debug=[True], episodes=ep)
         self.last_debug = debug[0]
         return paths[0]
+
+
+class HybridPlanner:
+    """BEV planner + trajectory head on one shared backbone, switched by cross_nav.policy.hybrid.Switch
+    (configs/policy/hybrid_best.json: BEV drives; the trajectory head takes over for block_s seconds after a stall or
+    too little goal progress). Use with NavigationAgent and time stamps; out['controller'] says which one drove."""
+    hybrid = True
+
+    def __init__(self, bev_config, head_checkpoint, backbone_checkpoint, hybrid_config, flow_temp=.5):
+        import json
+        from pathlib import Path
+        from .hybrid import Switch
+        from .recovery import StuckRecovery
+        self.traj = TrajectoryPlanner(head_checkpoint, backbone_checkpoint, flow_temp=flow_temp)
+        self.bev = BEVPlanner(bev_config, backbone=self.traj.policy.backbone)
+        cfg = json.loads(Path(hybrid_config).read_text()) if isinstance(hybrid_config, (str, bytes)) or hasattr(hybrid_config, 'read_text') else hybrid_config
+        self.cfg = {k: v for k, v in cfg.items() if not k.startswith('_')}
+        self.switch, self.recovery = Switch(self.cfg), StuckRecovery(window=100, window_s=10., max_turn_steps=50)
+        self.history_m, self.history_rule, self.uses_odometry, self.controller = self.bev.history_m, self.bev.history_rule, True, None
+
+    def reset(self):
+        from .hybrid import Switch
+        self.bev.reset(); self.recovery.reset(); self.switch = Switch(self.cfg); self.controller = None
