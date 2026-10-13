@@ -1,0 +1,6 @@
+# Opt-in overlay: the VIO odometry noise (configs/base/odometry_vio.yaml) for external odometry that comes from a
+# visual-inertial system (ARKit / ARCore on a phone, a VIO running on the robot) in a *_wheel mode, e.g.
+#   python run.py <seq> --mode stereo_wheel --config configs/overlays/odometry_vio.yaml
+# The VIO modes (stereo_basalt, stereo_imu, mono_imu, mono_vio, mono_basalt, rgbd_basalt, rgbd_ff_basalt) include it.
+include:
+  - ../base/odometry_vio.yaml

@@ -125,10 +125,12 @@ configs/
     mono_frontend.yaml            the monocular frontends' MonoConfig (DPVO, people masking, learned-depth cadence)
     vggt_finetuned.yaml           settings that apply only with the fine-tuned VGGT-Omega checkpoint
     common.yaml                   every mode: background pose-graph optimisation
+    odometry_vio.yaml             odometry noise of visual-inertial odometry (included by the VIO modes)
   overlays/
     fast/<mode>.yaml              --fast: constrained compute
     outdoor.yaml                  outdoor scale (the benchmark adds it on outdoor datasets)
     stereo_lowband.yaml           opt-in: left image only, half the rate
+    odometry_vio.yaml             opt-in: external odometry from a VIO (ARKit / ARCore, a robot's VIO)
 ```
 
 Every run loads one shipped file, `configs/modes/<mode>.yaml`, chosen by `--mode <name>` (or the sensor mode with
@@ -178,6 +180,8 @@ python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.confidence=0
 | `configs/base/vggt_finetuned.yaml` | the fine-tuned VGGT-Omega's settings (included by the bases of every mode that runs VGGT-Omega; applies only with a fine-tuned checkpoint, see below): the learned covisibility head |
 | `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius) and, with the fine-tuned VGGT-Omega, a looser covisibility gate (0.10); the benchmark adds it on outdoor datasets |
 | `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away); not tested with `--fast` |
+| `configs/base/odometry_vio.yaml` | how far the odometry may drift, for the loop-closure consistency test and the pose graph (`mapping.loop_closure.noise.odom_*`), set for visual-inertial odometry: included by the VIO modes (`stereo_basalt`, `stereo_imu`, `mono_imu`, `mono_vio`, `mono_basalt`, `rgbd_basalt`, `rgbd_ff_basalt`). The generic code defaults suit wheel odometry (`*_wheel`); the vision-only `*_dpvo` modes set their own, looser values. Too loose for a VIO, the generic values let look-alike loop closures through and the pose graph bends the map |
+| `configs/overlays/odometry_vio.yaml` | opt-in: the same values for external odometry that comes from a VIO (a phone's ARKit / ARCore, a VIO on the robot) in a `*_wheel` mode |
 | `configs/base/mono_frontend.yaml` | the monocular frontends' shared `mono:` settings (DPVO frontend, people masking, a learned-depth scale observation every 10 frames), included by the mono modes and `stereo_imu`. The DA3 back end's own lines are in `modes/mono_dpvo.yaml`; with external odometry or `vio` it drops their odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
 
 Override one value with `--set section.key=value` (`run.py` and the `scripts/` runners) or put it in a small
@@ -529,6 +533,10 @@ Phone B is the left camera, A the right one.  Per recording (`cross/rig/selfcali
    Rotation and translation direction minimise the epipolar (Sampson) error.  `--no-images` skips it.
 4. **Baseline length** from LiDAR: matches triangulated with the rig against phone B's LiDAR depth.
    `--no-lidar` keeps the hand-eye length.
+
+Prepare the stereo folders with `scripts/rig/prepare_iphone_stereo.py` (pairs by true time, rectifies each pair
+with its own relative pose; writes ARKit as the odometry). ARKit is a visual-inertial odometry: map with
+`--mode stereo_wheel --config configs/overlays/odometry_vio.yaml` (section 3).
 
 The recordings are combined into one calibration (rotations averaged, median baseline); the YAML keeps every
 recording's clock offset and its rotation difference from the combined one, which shows whether the rig moved
