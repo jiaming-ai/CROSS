@@ -112,8 +112,6 @@ def make_config(args) -> SystemConfig:
     lc.mode = getattr(args, "lc_mode", None) or lc.mode
     if getattr(args, "lc_confidence", None) is not None:
         lc.confidence = args.lc_confidence
-    if getattr(args, "noise_config", None):
-        lc.noise_file = args.noise_config
     if args.estimator == "ff":
         cfg.pose_est.type = PoseEstType.FF
         ff = cfg.pose_est.ff         # backend and checkpoint: above
@@ -618,7 +616,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_session_args(ap)
     ap.add_argument("--lc-mode", choices=["verified", "heuristic"], default=None, help="loop-closure mode (default: config, 'verified')")
     ap.add_argument("--lc-confidence", type=float, default=None, help="chi-square confidence of the verified loop closure (default 0.999)")
-    ap.add_argument("--noise-config", default=None, help="YAML from scripts/lc/calibrate_noise.py (calibrated noise model)")
     ap.add_argument("--set", nargs="*", action="extend", default=[],
                     help="config overrides section.sub.key=value (YAML-parsed values; repeatable)")
     ap.add_argument("--dump-obs", action="store_true", help="write every observation of the mapping run to obs.jsonl (scripts/lc/obs_recorder.py)")

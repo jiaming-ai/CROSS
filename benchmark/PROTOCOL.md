@@ -69,9 +69,7 @@ run so that runs are reproducible and comparable across machines.
 
 Outdoor sequences (KITTI, ROVER) add `configs/overlays/outdoor.yaml`. It is an environment preset that coarsens clustering and the
 hypothesis-alignment radius to the outdoor scale; it is not tuned per dataset. **No per-dataset or per-sequence tuning against ground truth is
-allowed.** A system may use a noise model calibrated without ground truth on the first minute (600 frames) of the map
-sequence (`scripts/lc/calibrate_noise.py`). Results using such a model are marked *calibrated*. The default rows use the
-shipped defaults.
+allowed.** Every row uses the shipped defaults.
 
 ## 3. Odometry
 

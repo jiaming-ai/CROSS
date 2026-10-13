@@ -211,7 +211,7 @@ def run_mapping(args, out: Path) -> dict:
     if hasattr(system, "remote_stats"):
         meta["remote"] = system.remote_stats()
     (out / "map_meta.json").write_text(json.dumps(meta, indent=1))
-    if args.dump_graph:          # pose graph with ground truth, input of scripts/lc/calibrate_noise.py (which ignores the gt)
+    if args.dump_graph:          # pose graph with ground truth (scripts/lc/replay_pgo.py)
         from graph_io import dump_graph
         dump_graph(system.mapper, out / "graph_s0.json", kf_gt, session_id=0, meta={"map": str(args.map), "seed": args.seed})
     logger.info(f"Map ATE vs GT (permanent kfs): {ate:.3f} m, map file {(meta['map_file_bytes'] or 0) / 2**20:.1f} MB")

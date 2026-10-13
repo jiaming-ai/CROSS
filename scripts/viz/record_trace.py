@@ -301,8 +301,6 @@ def make_config(args) -> SystemConfig:
     lc.mode = getattr(args, "lc_mode", None) or lc.mode
     if getattr(args, "lc_confidence", None) is not None:
         lc.confidence = args.lc_confidence
-    if getattr(args, "noise_config", None):
-        lc.noise_file = args.noise_config
     for name in ("inpass", "prior", "posterior"):
         if getattr(args, f"no_{name}", False):
             setattr(lc, f"use_{name}", False)
@@ -381,7 +379,6 @@ def main():
     ap.add_argument("--config", nargs="*", default=[], help="YAML config file(s) applied before the command-line overrides (e.g. configs/overlays/outdoor.yaml)")
     ap.add_argument("--lc-mode", choices=["verified", "heuristic"], default=None, help="loop-closure mode (default: config, 'verified')")
     ap.add_argument("--lc-confidence", type=float, default=None, help="chi-square confidence of the verified loop closure (default 0.999)")
-    ap.add_argument("--noise-config", default=None, help="YAML from scripts/lc/calibrate_noise.py (calibrated noise model)")
     ap.add_argument("--odom-file", default=None, help="odometry file of the sequence folders (e.g. odom_vio.txt) instead of odom_left.txt")
     ap.add_argument("--no-inpass", action="store_true", help="ablation: disable the in-pass consistency test")
     ap.add_argument("--no-prior", action="store_true", help="ablation: disable the prior consistency test")
