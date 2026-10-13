@@ -489,6 +489,12 @@ class HypothesisConfig:
     reloc_placement_drift: float = 0.1        # tolerance growth per metre walked since a placement's last measurement
     reloc_placement_dominance: float = 2.0
     reloc_placement_min_steps: int = 3
+    # rivals supported at fewer steps do not block (one-off look-alike views); the places part of the dominance test only
+    # after the session walked places_after_m (short walks cannot have separate places); the candidate's support must
+    # spread over min_spread_m of the walk.  Defaults = the rule as first built (d1e999b).
+    reloc_placement_rival_min_steps: int = 1
+    reloc_placement_places_after_m: float = 0.0
+    reloc_placement_min_spread_m: float = 0.0
     # adoption of a dominant hypothesis (adopt_*) also joins a relocalization session to the map: decided like a merge
     reloc_placement_gate_adoption: bool = False
     # Loaded-map recovery with sparse verification (monocular): while the session is not yet joined to the map, a

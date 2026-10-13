@@ -46,11 +46,12 @@ def _m(T) -> list:
 
 
 class _Track:
-    __slots__ = ("A", "yaw", "places", "steps", "n_meas", "last_step", "last_pos")
+    __slots__ = ("A", "yaw", "places", "pos", "steps", "n_meas", "last_step", "last_pos")
 
     def __init__(self, A, yaw, place, step):
         self.A, self.yaw = A, yaw
         self.places = [place]
+        self.pos = [place]                    # every supporting position (session odometry)
         self.steps = {step}
         self.n_meas = 1
         self.last_step = step
@@ -61,13 +62,20 @@ class PlacementTracker:
     """drift: the tolerances grow by this fraction of the distance walked (session odometry) since a track's last
     measurement (metres per metre, and the same number in degrees per metre), so that one placement stays one track
     over a long walk in a map that is slightly bent or scaled against the odometry.  dominance: a placement is confirmed
-    when it has at least `places` places and `dominance` times the places of every different placement."""
+    when it has at least `places` places and `dominance` times the places of every different placement.
+    Merge decisions (decide()): rival_min_steps: a different placement supported at fewer steps is no rival (one-off
+    look-alike views); places_after_m: the places part of the dominance test applies only once the session has walked
+    this far (a short walk cannot have separate places, there the supporting steps decide); min_spread_m: the
+    candidate's supporting positions must reach this far apart (support from more than one viewpoint)."""
 
     def __init__(self, places: int, sep_m: float, yaw_tol_deg: float, t_tol_m: float, up, drift: float = 0.1,
-                 dominance: float = 2.0, blend: float = 0.5):
+                 dominance: float = 2.0, blend: float = 0.5, rival_min_steps: int = 1, places_after_m: float = 0.0,
+                 min_spread_m: float = 0.0):
         self.min_places, self.sep = int(places), float(sep_m)
         self.yaw_tol, self.t_tol, self.blend = math.radians(yaw_tol_deg), float(t_tol_m), float(blend)
         self.drift, self.dominance = float(drift), float(dominance)
+        self.rival_min_steps, self.places_after_m = int(rival_min_steps), float(places_after_m)
+        self.min_spread_m = float(min_spread_m)
         u = np.asarray(up, float).reshape(3)
         u = u / max(np.linalg.norm(u), 1e-9)
         x = np.array([1.0, 0.0, 0.0]) if abs(u[0]) < 0.9 else np.array([0.0, 0.0, 1.0])
@@ -80,6 +88,7 @@ class PlacementTracker:
 
     def reset(self):
         self.T = np.eye(4)                    # session odometry (camera to session start)
+        self.walked = 0.0                     # path length of the session (odometry)
         self.tracks: List[_Track] = []
         self.confirmed_step: Optional[int] = None
         self.current: Optional[_Track] = None    # the placement the session joined the map with (commit())
@@ -91,7 +100,9 @@ class PlacementTracker:
     def odometry(self, delta, step: Optional[int] = None):
         """The step's odometry increment (4x4, T_current = T_previous @ delta)."""
         if delta is not None:
-            self.T = self.T @ np.asarray(delta, float)
+            T = self.T @ np.asarray(delta, float)
+            self.walked += float(np.linalg.norm(T[:3, 3] - self.T[:3, 3]))
+            self.T = T
         if self.rec is not None:
             self.rec.write(json.dumps({"e": "odo", "s": step, "T": _m(self.T)}) + "\n")
 
@@ -149,6 +160,7 @@ class PlacementTracker:
             for p in other.places:
                 if all(np.linalg.norm(p - q) > self.sep for q in tr.places):
                     tr.places.append(p)
+            tr.pos += other.pos
             tr.steps |= other.steps
             tr.n_meas += other.n_meas
             if other is self.current:
@@ -163,6 +175,7 @@ class PlacementTracker:
         tr.yaw = tr.yaw + self.blend * dy
         if all(np.linalg.norm(place - p) > self.sep for p in tr.places):
             tr.places.append(place)
+        tr.pos.append(place)
         tr.steps.add(step)
         tr.n_meas += 1
         tr.last_step = step
@@ -198,11 +211,18 @@ class PlacementTracker:
         self._conf_track = r[0]
         return r[0]
 
+    @staticmethod
+    def spread(tr: _Track) -> float:
+        """How far the track's supporting positions reach from its first one (m of the session's walk)."""
+        P = np.asarray(tr.pos)
+        return float(np.max(np.linalg.norm(P - P[0], axis=1))) if len(P) > 1 else 0.0
+
     def decide(self, A, min_steps: int = 3, min_places: int = 1):
         """Merge decision for a candidate whose implied session placement is A: (allowed, reason, track).
         - The session already joined the map (`current`): the candidate must agree with that placement.
-        - Otherwise: merge at once when the candidate's placement has at least min_steps supporting steps and
-          `dominance` times the steps of every different placement; wait while placements compete (look-alike places)."""
+        - Otherwise: merge at once when the candidate's placement has at least min_steps supporting steps (spread over
+          min_spread_m) and `dominance` times the steps of every different placement (and its places, once the session
+          walked places_after_m); wait while placements compete (look-alike places)."""
         tr = self.find(A)
         if tr is None:
             return False, "no support", None
@@ -210,12 +230,14 @@ class PlacementTracker:
             if tr is self.current or not self._apart(self.current, tr):
                 return True, "agrees with the joined placement", tr
             return False, "disagrees with the joined placement", tr
-        if len(tr.steps) < min_steps or len(tr.places) < min_places:
+        if len(tr.steps) < min_steps or len(tr.places) < min_places \
+                or (self.min_spread_m > 0 and self.spread(tr) < self.min_spread_m):
             return False, "too little support", tr
-        rivals = [o for o in self.tracks if o is not tr and self._apart(tr, o)]
+        rivals = [o for o in self.tracks if o is not tr and len(o.steps) >= self.rival_min_steps and self._apart(tr, o)]
         r_steps = max((len(o.steps) for o in rivals), default=0)
         r_places = max((len(o.places) for o in rivals), default=0)
-        if len(tr.steps) < self.dominance * r_steps or (r_places and len(tr.places) < self.dominance * r_places):
+        places_on = r_places > 0 and self.walked >= self.places_after_m
+        if len(tr.steps) < self.dominance * r_steps or (places_on and len(tr.places) < self.dominance * r_places):
             return False, "competing placements", tr
         return True, "dominant", tr
 

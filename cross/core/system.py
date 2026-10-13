@@ -262,7 +262,10 @@ class System:
             up_p = up_p.detach().cpu().numpy() if hasattr(up_p, "detach") else np.asarray(up_p, float)
             self._placement = PlacementTracker(3, hcfg.reloc_placement_sep_m, hcfg.reloc_placement_yaw_tol_deg,
                                                hcfg.reloc_placement_t_tol_m, up_p, drift=hcfg.reloc_placement_drift,
-                                               dominance=hcfg.reloc_placement_dominance)
+                                               dominance=hcfg.reloc_placement_dominance,
+                                               rival_min_steps=hcfg.reloc_placement_rival_min_steps,
+                                               places_after_m=hcfg.reloc_placement_places_after_m,
+                                               min_spread_m=hcfg.reloc_placement_min_spread_m)
         self.place_projection = self._make_place_projection(self._projection_prior)
 
         # GNSS / compass anchoring of the map (cross/geo); None without `geo.enabled`: the system is unchanged

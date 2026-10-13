@@ -100,3 +100,59 @@ def test_decide_waits_while_placements_compete_and_then_follows_the_joined_one()
     tr.commit(t)
     assert tr.decide(A2)[1] == "disagrees with the joined placement"
     assert tr.decide(A1)[0]
+
+
+def test_short_walk_steps_decide_and_one_off_rivals_do_not_block():
+    """A 4 m walk (no second place possible): as first built, any rival blocks (places clause); with places_after_m the
+    candidate's 3x more supporting steps win; a rival seen at one step is ignored with rival_min_steps=2."""
+    A, A_alias = rot_y(0.3, (5, 0, 7)), rot_y(-2.5, (40, 0, -12))
+
+    def walk(tr, alias_steps):
+        for k in range(12):
+            step_forward(tr, 0.33)
+            measure(tr, A, k)
+            if k in alias_steps:
+                measure(tr, A_alias, k)
+
+    tr = make()
+    walk(tr, (3, 4, 5, 6))
+    assert tr.decide(A)[1] == "competing placements"
+    tr = PlacementTracker(places=3, sep_m=10.0, yaw_tol_deg=10.0, t_tol_m=3.0, up=[0, 1, 0], places_after_m=20.0)
+    walk(tr, (3, 4, 5, 6))
+    assert tr.decide(A)[0]
+    tr = PlacementTracker(places=3, sep_m=10.0, yaw_tol_deg=10.0, t_tol_m=3.0, up=[0, 1, 0], places_after_m=20.0,
+                          dominance=4.0)
+    walk(tr, (3, 4, 5, 6))
+    assert tr.decide(A)[1] == "competing placements"
+    tr = PlacementTracker(places=3, sep_m=10.0, yaw_tol_deg=10.0, t_tol_m=3.0, up=[0, 1, 0], places_after_m=20.0,
+                          dominance=4.0, rival_min_steps=2)
+    walk(tr, (3,))
+    assert tr.decide(A)[0]
+
+
+def test_places_clause_applies_after_a_long_walk():
+    """After places_after_m of walk, a candidate seen from one place does not beat a rival with as many places."""
+    tr = PlacementTracker(places=3, sep_m=10.0, yaw_tol_deg=10.0, t_tol_m=3.0, up=[0, 1, 0], places_after_m=20.0)
+    A, A_alias = rot_y(0.3, (5, 0, 7)), rot_y(-2.5, (40, 0, -12))
+    for k in range(30):                      # 30 m: the alias seen at two spots, the candidate many times at one
+        step_forward(tr, 1.0)
+        if k in (2, 3, 20, 21):
+            measure(tr, A_alias, k)
+    for k in range(10):
+        step_forward(tr, 0.1)
+        measure(tr, A, 100 + k)
+    assert tr.walked > 20.0
+    assert tr.decide(A)[1] == "competing placements"
+
+
+def test_min_spread_needs_support_from_more_than_one_viewpoint():
+    A = rot_y(0.3, (5, 0, 7))
+    tr = PlacementTracker(places=3, sep_m=10.0, yaw_tol_deg=10.0, t_tol_m=3.0, up=[0, 1, 0], min_spread_m=1.5)
+    for k in range(8):                       # standing still: 8 steps, no spread
+        tr.odometry(np.eye(4))
+        measure(tr, A, k)
+    assert tr.decide(A)[1] == "too little support"
+    for k in range(8, 12):                   # then moving 2 m
+        step_forward(tr, 0.5)
+        measure(tr, A, k)
+    assert tr.decide(A)[0]
