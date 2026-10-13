@@ -149,6 +149,15 @@ class StereoSequenceLoader(Dataloader):
             self.rgb_width, self.rgb_height = self._resize_cfg["final_w"], self._resize_cfg["final_h"]
         self._sgbm = SGBMDepth(self.orig_width) if depth_source == "sgbm" else None
         self.odom_vertical_world = self._world_vertical()
+        # odometry in a gravity-aligned world (VIO / ARKit, calib.json "odom_world_up": its up axis): every frame then
+        # carries gravity (item "gravity", the up direction in the camera frame); None otherwise
+        self.odom_world_up = None
+        cj = self.root / "calib.json"
+        if cj.is_file():
+            import json as _json
+            up = _json.loads(cj.read_text()).get("odom_world_up")
+            if up is not None:
+                self.odom_world_up = np.asarray(up, dtype=np.float64) / np.linalg.norm(up)
         # the IMU rigidly attached to the left camera (imu.txt / imu.json of a prepared folder; cross/dataloader/imu.py)
         from cross.dataloader.imu import ImuStream
         self.imu = ImuStream.load(self.root, len(self.left_paths), self.fps) if (self.root / "calib.json").is_file() else None
@@ -374,12 +383,14 @@ class StereoSequenceLoader(Dataloader):
             delta = np.eye(4)
         else:
             delta = _invert(src[idx - 1]) @ src[idx]
+        up = self.odom_world_up
         return {
             "rgb": left,
             "rgb_right": right,
             "depth": depth,
             "conf": None,
             "delta_pose": delta,
+            "gravity": None if (up is None or self.odom_c2w is None) else self.odom_c2w[idx][:3, :3].T @ up,
             "world_pose": self.left_c2w[idx],
             "timestamp": float(self._timestamps[idx]),
             "frame_idx": idx,

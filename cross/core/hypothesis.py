@@ -1605,6 +1605,16 @@ class HypothesisManager:
                 show_interactive=False,
             )
 
+        # gravity prior (mapping.loop_closure.gravity_prior_deg) on the optimised keyframes that carry gravity, when
+        # hypothesis 0 is in the map frame (the map session, or a relocalization session anchored to the map)
+        g_deg = float(getattr(lc_cfg, "gravity_prior_deg", 0.0) or 0.0) if lc_cfg is not None else 0.0
+        up = getattr(self.system, "_gravity_up_map", None)
+        if g_deg > 0 and up is not None and (int(getattr(self.system, "_session_start_kf_id", 0)) == 0
+                                             or not self._h0_unlocalized()):
+            pg.gravity_up = up
+            pg.gravity_sigma = math.radians(g_deg)
+            pg.gravity_priors = {v.id: self.nodes[v.id].gravity for v in pg.vertices
+                                 if v.id in self.nodes and getattr(self.nodes[v.id], "gravity", None) is not None}
         try:
             pg.solve(
                 optim_node_ids=optim_node_ids,
