@@ -17,6 +17,8 @@ section 3) and sets the sensors, the odometry and the back end in one word:
 | `rgbd_wheel` (default of `run.py`) | colour + depth + external odometry | the dataset's odometry | `install.sh` |
 | `rgbd_basalt` | colour + depth, stereo + IMU for the VIO | Basalt VIO file | `install.sh`, Basalt |
 | `rgbd_dpvo` | colour + depth | DPVO, scale from the depth | `install.sh --mono` |
+| `rgbd_ff_wheel` | colour + depth + external odometry; VGGT-Omega relative poses scaled by the depth | the dataset's odometry | `install.sh --stereo` |
+| `rgbd_ff_basalt` | as `rgbd_ff_wheel`, stereo + IMU for the VIO | Basalt VIO file | `install.sh --stereo`, Basalt |
 | `mono_wheel` | one colour camera + external odometry | the dataset's odometry | `install.sh --mono --stereo` |
 | `mono_basalt` | one colour camera, stereo + IMU for the VIO | Basalt VIO file | `install.sh --mono --stereo`, Basalt |
 | `mono_imu` | one colour camera + IMU | VGGT-Omega + IMU local pose graph, scale from learned depth | `install.sh --mono --stereo` |
@@ -25,11 +27,15 @@ section 3) and sets the sensors, the odometry and the back end in one word:
 
 How a retrieved keyframe is registered: stereo and mono modes run VGGT-Omega (one forward pass over the current image
 and the retrieved keyframes; metric scale from the stereo baseline, or in mono from the odometry and the map); rgbd
-modes match XFeat + LightGlue features and solve PnP-RANSAC on the keyframe depth; `mono_dpvo` uses the older
+modes match XFeat + LightGlue features and solve PnP-RANSAC on the keyframe depth, except `rgbd_ff_*`, which run the
+stereo mode's VGGT-Omega passes on the colour image and take each pass's metric scale from the measured depth (median
+ratio of measured to predicted depth over the current frame's confident pixels; `pose_est.ff.depth_scale`, dense or
+sparse depth such as a phone's LiDAR); `mono_dpvo` uses the older
 monocular back end of `cross/mono/` (metric two-view matching, Depth Anything 3 as fallback).
 
 **Sensor mode + options (other combinations).** `--mode rgbd | stereo | mono` with `--odometry external | basalt |
-visual | vio | vgio` and, in the mono mode, `--mono-estimator ff | da3` select the same twelve files and a few
+visual | vio | vgio`, in the mono mode `--mono-estimator ff | da3` and in the rgbd mode `--rgbd-estimator pnp | ff`
+(default pnp; ff with external / basalt odometry only) select the same fourteen files and a few
 reference combinations without a file of their own (e.g. the DA3 mono back end with DPVO + IMU, `--mode mono --odometry
 vio`). `ff` (feed-forward) = VGGT-Omega, `da3` = the Depth Anything 3 back end (the default with a sensor mode, except
 that `--odometry vgio` implies `ff`). A mode name and a conflicting `--odometry` / `--mono-estimator` is an error.
@@ -136,6 +142,7 @@ session runs is chosen by the runner's `--remote-server` / the `cross-edge` clie
 |---|---|
 | `stereo_wheel`, `stereo_basalt`, `stereo_imu`, `stereo_dpvo` | `stereo` / `external`, `basalt`, `vgio`, `visual` |
 | `rgbd_wheel`, `rgbd_basalt`, `rgbd_dpvo` | `rgbd` / `external`, `basalt`, `visual` |
+| `rgbd_ff_wheel`, `rgbd_ff_basalt` | `rgbd` / `external`, `basalt` (`--rgbd-estimator ff`) |
 | `mono_wheel`, `mono_basalt`, `mono_imu` | `mono` / `external`, `basalt`, `vgio` (`--mono-estimator ff`; implied by `vgio`) |
 | `mono_dpvo` | `mono` / `visual` (the DA3 back end) |
 | `mono_vio` | `mono` / `vio` (`--mono-estimator ff`: VGGT-Omega + DPVO + IMU, a reference system; merges in mapping sessions and hypothesis 0 updated by every observation: ROVER T3 +360 trials; no adoption in mapping sessions (it broke the KITTI 10 map)) |
@@ -261,7 +268,8 @@ start without a pose; a trial succeeds when the final estimate is within `--r-d`
 # RGB-D / mono on posed folders
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home
 python scripts/map_and_reloc_rgbd.py --map ... --query ... --out outputs/home_mono --mode mono_dpvo
-# stereo sequences: stereo mode (VGGT-Omega) by default; --mode rgbd_wheel --pnp-depth gt|sgbm gives the PnP baseline on the same data
+# stereo sequences: stereo mode (VGGT-Omega) by default; --mode rgbd_wheel --pnp-depth gt|sgbm gives the PnP baseline on the same data,
+# --mode rgbd_ff_wheel --pnp-depth gt|sgbm VGGT-Omega scaled by that depth (posed RGB-D folders: --pnp-depth gt reads depth/)
 python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/hssd_house/light_night \
     --out outputs/house --baseline 0.3 --snr 10 --trial-len 100 --trial-stride 50
 ```

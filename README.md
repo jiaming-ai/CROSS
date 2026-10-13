@@ -162,9 +162,10 @@ Options:
 | `--no-viz` | Disable Rerun visualization |
 | `--frames N` | Process only the first N frames |
 | `--start N` | Start from frame N |
-| `--mode NAME` | One of the twelve shipped modes (`configs/modes/<name>.yaml`: `stereo_wheel`, `mono_imu`, `rgbd_dpvo`, ...), or a sensor mode `rgbd` (default) / `stereo` / `mono` with the two options below |
+| `--mode NAME` | One of the fourteen shipped modes (`configs/modes/<name>.yaml`: `stereo_wheel`, `mono_imu`, `rgbd_dpvo`, ...), or a sensor mode `rgbd` (default) / `stereo` / `mono` with the options below |
 | `--odometry {external,basalt,visual,vio,vgio}` | Motion source: the dataset's odometry (default; wheel / INS), the sequence's Basalt VIO file (`odom_vio.txt`), DPVO visual odometry, (mono) DPVO with IMU scale, or (mono ff, stereo) VGGT-Omega + IMU |
 | `--mono-estimator {da3,ff}` | Mono back end: Depth Anything 3 two-view (default) or the stereo mode's VGGT-Omega estimator |
+| `--rgbd-estimator {pnp,ff}` | RGB-D relative poses: PnP on the depth (default) or VGGT-Omega scaled by the measured depth (`rgbd_ff_*` modes) |
 | `--fast` | Constrained compute: the mode's fast overlay `configs/overlays/fast/<mode>.yaml` on top (stereo + Basalt and stereo DPVO: 416 px passes; the other modes have none) |
 | `--config A.yaml B.yaml` | Config layers on top of the mode's shipped file, merged left to right (e.g. `configs/overlays/outdoor.yaml`) |
 | `--reproducible` | Synchronous pose-graph optimisation (the shipped default optimises long loop closures in the background; the benchmark always passes it) |
@@ -233,7 +234,7 @@ pose the map implies, 2 m indoors), plus the keyframe ATE of the map:
 - `scripts/map_and_reloc.py`: stereo sequences (SimChange, KITTI raw, TartanAir V2, Virtual KITTI 2) or posed RGB-D
   folders, in the stereo mode (default) or `--mode rgbd_* --pnp-depth gt|sgbm` (PnP on ground-truth / stereo depth).
 
-Both take `--mode <name>` (one of the twelve shipped modes, e.g. `mono_imu`, `rgbd_dpvo`; see
+Both take `--mode <name>` (one of the fourteen shipped modes, e.g. `mono_imu`, `rgbd_dpvo`; see
 [docs/USAGE.md](docs/USAGE.md#1-modes) and [Mono mode and visual odometry](#mono-mode-and-visual-odometry)).  The full benchmark protocol (T1 mapping ATE, T2
 multi-session localization, T3 relocalization success; KITTI, OpenLORIS-Scene, ROVER, SimChange; baselines) is in
 [`benchmark/`](benchmark/README.md).
