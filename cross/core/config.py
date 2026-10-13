@@ -489,6 +489,8 @@ class HypothesisConfig:
     reloc_placement_drift: float = 0.1        # tolerance growth per metre walked since a placement's last measurement
     reloc_placement_dominance: float = 2.0
     reloc_placement_min_steps: int = 3
+    # adoption of a dominant hypothesis (adopt_*) also joins a relocalization session to the map: decided like a merge
+    reloc_placement_gate_adoption: bool = False
     # Loaded-map recovery with sparse verification (monocular): while the session is not yet joined to the map, a
     # component in another chart than hypothesis 0 is scored by map-association evidence instead of by its Gaussian
     # overlap relative to hypothesis 0 (whose own-session observations say nothing about map association). A frame
