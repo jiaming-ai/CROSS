@@ -1,5 +1,6 @@
 import bisect
 import math
+import os
 from cross.visualization.viz_graph import visualize_pose_graph
 from cross.utils.profile import timeit
 import pypose as pp
@@ -1433,7 +1434,7 @@ class HypothesisManager:
                 & (log_c_pos_hit_rate >= self.detect_overlap_hitrate_thresh) \
                 & (log_conf_hit_rate >= self.detect_conf_hitrate_thresh) \
                 & separation_gate & enough & heavy & not_rejected
-            self._placement_gate(realized_ids, detected_mask)
+            self._placement_gate(realized_ids, detected_mask, log_c_pos_sum)
 
             for j, component in enumerate(realized_ids.tolist()):
                 self.last_loop_audit["candidates"].append({
@@ -1469,13 +1470,24 @@ class HypothesisManager:
 
         return { 'loop_closure': False, 'loop_closure_hypo_id': None }
     
-    def _placement_gate(self, realized_ids, detected_mask):
+    def _placement_gate(self, realized_ids, detected_mask, scores=None):
         """Placement hypotheses (hypothesis.reloc_placement), relocalization sessions: a detected merge candidate is
         merged only when its implied session placement dominates the competing ones, or agrees with the placement the
         session already joined with (in place on detected_mask)."""
         tracker = getattr(self.system, "_placement", None)
         if tracker is None or int(getattr(self.system, "_session_start_kf_id", 0)) == 0 or not bool(detected_mask.any()):
             return
+        if tracker.rec is not None:             # debug recording (CROSS_PLACEMENT_RECORD): the detected candidates
+            from cross.core.placement import _m
+            step = int(getattr(self.system, "_processed_frame_num", -1))
+            for j, comp in enumerate(realized_ids.tolist()):
+                if bool(detected_mask[j]):
+                    T_k = pp.SE3(self.dist[0][comp].detach().double().cpu()).matrix().numpy()
+                    tracker.record(e="cand", s=step, comp=int(comp), Tk=_m(T_k),
+                                   score=None if scores is None else round(float(scores[j]), 4))
+            if os.environ.get("CROSS_PLACEMENT_HOLD_ALL"):   # recording run: never merge (whole pre-join streams)
+                detected_mask[:] = False
+                return
         for j, comp in enumerate(realized_ids.tolist()):
             if not bool(detected_mask[j]):
                 continue
@@ -1486,6 +1498,7 @@ class HypothesisManager:
                 continue
             detected_mask[j] = False
             self.placement_stats["disagreed" if "disagrees" in why else "waited"] += 1
+            logger.info(f"PLACEMENT_HOLD step {int(getattr(self.system, '_processed_frame_num', -1))} comp {comp} ({why})")
             logger.debug(f"merge candidate {comp} held ({why}); placements {tracker.summary(3)}")
 
     def handle_loop_closure(
@@ -1700,7 +1713,8 @@ class HypothesisManager:
             tracker = getattr(self.system, "_placement", None)
             if tracker is not None and tracker.current is None:
                 tracker.commit(self._placement_pending[int(hypo_id)])
-                logger.info(f"placement: session joined the map with {tracker.summary(1)}")
+                logger.info(f"PLACEMENT_JOIN step {int(getattr(self.system, '_processed_frame_num', -1))}; "
+                            f"placement: session joined the map with {tracker.summary(1)}")
         if apply:
             applied = self.apply_pgo_result({
                 "success": True,

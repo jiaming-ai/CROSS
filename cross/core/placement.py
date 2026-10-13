@@ -14,10 +14,35 @@ measurement on; merges into the stored map wait for a confirmed placement and mu
 """
 from __future__ import annotations
 
+import json
 import math
+import os
 from typing import List, Optional
 
 import numpy as np
+
+
+_REC = []
+
+
+def _recorder():
+    """Debug: CROSS_PLACEMENT_RECORD=<dir> writes every tracker input (odometry, map measurements, merge candidates) to
+    <dir>/placement_<pid>.jsonl for offline replay of decision rules (one file per process, shared by its sessions)."""
+    d = os.environ.get("CROSS_PLACEMENT_RECORD")
+    if not d:
+        return None
+    if not _REC:
+        import atexit, sys
+        os.makedirs(d, exist_ok=True)
+        f = open(os.path.join(d, f"placement_{os.getpid()}.jsonl"), "a", buffering=1 << 16)
+        f.write(json.dumps({"e": "argv", "argv": sys.argv}) + "\n")
+        atexit.register(f.close)
+        _REC.append(f)
+    return _REC[0]
+
+
+def _m(T) -> list:
+    return [round(float(x), 5) for x in np.asarray(T, float)[:3, :].reshape(-1)]
 
 
 class _Track:
@@ -49,6 +74,8 @@ class PlacementTracker:
         e1 = x - (x @ u) * u
         self.u, self.e1 = u, e1 / np.linalg.norm(e1)
         self.e2 = np.cross(self.u, self.e1)
+        self.rec = _recorder()
+        self.record(e="init", up=[float(x) for x in self.u])
         self.reset()
 
     def reset(self):
@@ -57,12 +84,20 @@ class PlacementTracker:
         self.confirmed_step: Optional[int] = None
         self.current: Optional[_Track] = None    # the placement the session joined the map with (commit())
         self._conf_track: Optional[_Track] = None  # confirmed() (analysis): kept until a different one overtakes it
+        if getattr(self, "rec", None) is not None:
+            self.rec.write('{"e": "reset"}\n')
 
     # ------------------------------------------------------------------ inputs
-    def odometry(self, delta):
+    def odometry(self, delta, step: Optional[int] = None):
         """The step's odometry increment (4x4, T_current = T_previous @ delta)."""
         if delta is not None:
             self.T = self.T @ np.asarray(delta, float)
+        if self.rec is not None:
+            self.rec.write(json.dumps({"e": "odo", "s": step, "T": _m(self.T)}) + "\n")
+
+    def record(self, **ev):
+        if self.rec is not None:
+            self.rec.write(json.dumps(ev) + "\n")
 
     def _yaw(self, R) -> float:
         v = R @ self.e1
@@ -98,8 +133,11 @@ class PlacementTracker:
         m = self._matches(A, self.T[:3, 3])
         return m[0][1] if m else None
 
-    def add(self, T_map_ref, T_ref_cur, step: int):
+    def add(self, T_map_ref, T_ref_cur, step: int, kf: Optional[int] = None):
         """A raw map measurement of the current frame."""
+        if self.rec is not None:
+            self.rec.write(json.dumps({"e": "meas", "s": step, "kf": kf, "Tmr": _m(T_map_ref), "Trc": _m(T_ref_cur),
+                                       "T": _m(self.T)}) + "\n")
         A = np.asarray(T_map_ref, float) @ np.asarray(T_ref_cur, float) @ np.linalg.inv(self.T)
         place = self.T[:3, 3].copy()
         m = self._matches(A, place)

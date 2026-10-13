@@ -1270,7 +1270,8 @@ class System:
             if self._placement is not None:
                 d = ret["delta_pose"]
                 self._placement.odometry(None if d is None else
-                                         d.matrix().detach().cpu().numpy().astype(np.float64).reshape(4, 4))
+                                         d.matrix().detach().cpu().numpy().astype(np.float64).reshape(4, 4),
+                                         step=int(self._processed_frame_num))
         
         else:
             # NOTE: we assumes that the system will always have some odom / imu readings
@@ -2919,7 +2920,8 @@ class System:
                     if k.id in self.loaded_node_ids:
                         Tr = pp.SE3(pose.tensor() if hasattr(pose, "tensor") else pose).matrix()
                         self._placement.add(k.pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64),
-                                            Tr.detach().cpu().numpy().astype(np.float64), int(self._processed_frame_num))
+                                            Tr.detach().cpu().numpy().astype(np.float64), int(self._processed_frame_num),
+                                            kf=int(k.id))
             except Exception as ex:          # the votes are advisory: never break the step
                 logger.debug(f"placement vote failed: {ex}")
 
