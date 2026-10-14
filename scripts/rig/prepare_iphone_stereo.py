@@ -128,6 +128,8 @@ def main():
                     help="rig: the combined calibration; walk: this recording's own rotation / translation direction")
     ap.add_argument("--rolling-shutter", type=float, default=0.0, metavar="S",
                     help="row readout time of the raw image (s; 0 = no compensation)")
+    ap.add_argument("--sample", type=int, default=0, metavar="N",
+                    help="only the pairs of N B frames spread over the walk (for checks; not a sequence for mapping)")
     a = ap.parse_args()
     cal = yaml.safe_load(a.calib.read_text())
     R, T = np.asarray(cal["R"], float), np.asarray(cal["T"], float).reshape(3)
@@ -144,6 +146,9 @@ def main():
         d, corr = estimate_clock_offset(recA, recB)
         print(f"clock offset estimated: {1000 * d:+.1f} ms (correlation {corr:.3f})")
     iB, jA, dt = pair_frames(recA, recB, float(d), max_dt=a.max_dt)
+    if a.sample:                                  # the same B frames whatever the clock offset
+        keep = np.isin(iB, np.linspace(0, len(recB) - 1, a.sample).astype(int))
+        iB, jA, dt = iB[keep], jA[keep], dt[keep]
     P = pair_pose(recB, R, T, float(d), recB.t[iB], recA.t[jA])          # A exposure in B exposure: x_B = R x_A + t
     Rr, how = ROTATIONS[a.rotate]
     W, H = recB.size
