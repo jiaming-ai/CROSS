@@ -11,7 +11,8 @@ axes; camera matrices; baseline) plus the clock offset of every recording and th
 
 Steps (cross/rig/selfcalib.py): clock offset from the phones' angular speed; extrinsic by hand-eye calibration of the
 two ARKit tracks (metric); refinement of rotation, translation direction and clock offset on SIFT matches between the
-phones' images with the motion between the two exposures compensated (ARKit); baseline length checked against LiDAR.
+phones' images with the motion between the two exposures compensated (ARKit); baseline length checked against LiDAR;
+clock offset refined on matches while the rig turns (angular speed gives the initial value and fallback).
 """
 import argparse
 import json
@@ -36,9 +37,6 @@ def main():
     ap.add_argument("--frames", type=int, default=120, help="image pairs used for the refinement per recording")
     ap.add_argument("--no-images", action="store_true", help="motion only (no image refinement, no LiDAR check)")
     ap.add_argument("--no-lidar", action="store_true", help="keep the hand-eye baseline length")
-    ap.add_argument("--clock-from-images", action="store_true",
-                    help="clock offset from image matches of the faster-turning frames (rig fixed) instead of the "
-                         "angular-speed correlation")
     a = ap.parse_args()
     results, recs = {}, {}
     for pa, pb in a.pair:
@@ -47,7 +45,7 @@ def main():
         recA, recB = Recording.load(pa), Recording.load(pb)
         recs[name] = (recA, recB)
         results[name] = calibrate_recording(recA, recB, images=not a.no_images, n_frames=a.frames,
-                                            lidar=not a.no_lidar, clock_from_images=a.clock_from_images, log=lambda s: print(s, flush=True))
+                                            lidar=not a.no_lidar, log=lambda s: print(s, flush=True))
     cal = combine(results, recs, use_lidar_scale=not a.no_lidar)
     out = cal.to_dict()
     if a.compare:

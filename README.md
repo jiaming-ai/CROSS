@@ -149,6 +149,15 @@ uv pip install -e ".[recording]"
 
 ## Usage
 
+### Calibrate a two-iPhone stereo rig
+
+`python scripts/rig/calibrate_iphone_rig.py --pair recording_A recording_B --out rig.yaml` estimates the rig from
+ARKit motion and image matches. The clock offset starts from angular-speed alignment, then is refined from image
+matches while the rig turns. `--no-images` keeps motion-only calibration. Prepare each stereo walk with
+`scripts/rig/prepare_iphone_stereo.py`; the combined rig rotation is the default, and `--rotation walk` opts into
+that recording's own rotation. Image-based clock refinement reduced median absolute vertical misalignment from
+1.78 to 1.60 pixels across nine walks while preserving map consistency against their ARKit odometry.
+
 ### Run mapping on a dataset
 
 ```bash

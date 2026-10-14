@@ -1,0 +1,10 @@
+[
+  {
+    "date": "2026-10-14",
+    "title": "iPhone stereo clock calibration",
+    "description": "Clock offsets are refined from image matches while the rig turns. Angular-speed alignment supplies the initial value and the fallback; per-walk rotation remains optional.",
+    "evidence": "Nine walks from one two-iPhone capture: pooled median absolute vertical misalignment fell from 1.78 to 1.60 pixels. Per-walk median map deviation against ARKit was 0.00–0.54 m, compared with 0.01–0.53 m for the control. Every walk localized. ARKit is the consistency reference, not independent ground truth.",
+    "scope": "Rig preparation only; the KITTI, OpenLORIS and ROVER tables are unchanged.",
+    "experiment_code": "c77800f / bb4d1e5"
+  }
+]

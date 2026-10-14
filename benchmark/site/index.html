@@ -155,6 +155,7 @@ table.heat tr.grp td { font-size: 12px; text-transform: uppercase; letter-spacin
 </main>
 <div id="tip" role="tooltip"></div>
 <script src="data.js"></script>
+<script src="default_changes.js"></script>
 <script>
 "use strict";
 const B = window.BENCH || {runs: {}, tables: {t1: {}, t2: {}, t3: {}}, failures: {}, summary: "", datasets: {}, systems: {}};
@@ -183,7 +184,15 @@ for (const [k, lab] of TABS) tabs.append($("button", {role: "tab", "aria-selecte
 let render = function () {
   for (const b of tabs.children) b.setAttribute("aria-selected", String(TABS[[...tabs.children].indexOf(b)][0] === state.tab));
   const v = document.getElementById("view"); v.replaceChildren();
-  if (state.tab === "summary") return renderSummary(v);
+  if (state.tab === "summary") {
+    for (const change of window.CROSS_DEFAULT_CHANGES || []) {
+      v.append($("div", {class: "card"},
+        $("h2", {}, change.title + " · default since " + change.date),
+        $("p", {}, change.description), $("p", {}, change.evidence),
+        $("p", {class: "note"}, change.scope)));
+    }
+    return renderSummary(v);
+  }
   if (state.tab === "fail") return renderFailures(v);
   if (state.tab === "metrics") return renderMetrics(v);
   if (state.tab === "data") return renderData(v);

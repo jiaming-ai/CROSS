@@ -30,6 +30,15 @@ ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "benchmark/site"
 
 
+def write_default_changes():
+    """Publish only changes adopted as defaults, separately from historical benchmark tables."""
+    src = ROOT / "benchmark/results/default_changes.json"
+    changes = json.loads(src.read_text()) if src.is_file() else []
+    SITE.mkdir(parents=True, exist_ok=True)
+    (SITE / "default_changes.js").write_text(
+        "window.CROSS_DEFAULT_CHANGES = " + json.dumps(changes, ensure_ascii=False) + ";\n")
+
+
 def run_id(r):
     """Stable id of a result cell (also names its failure-case images in site/assets/failures/)."""
     parts = [r.get("track"), r.get("dataset"), r.get("scene"), r.get("system"), r.get("setup"), f"s{r.get('seed', 0)}",
@@ -236,7 +245,11 @@ def main():
     ap.add_argument("--results", default=str(ROOT / "benchmark/results/results.json"))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--history", default=str(ROOT / "benchmark/results/history.json"))
+    ap.add_argument("--defaults-only", action="store_true", help="update adopted-default notes without rescoring tables")
     a = ap.parse_args()
+    write_default_changes()
+    if a.defaults_only:
+        return
     results = json.loads(Path(a.results).read_text())["results"] if Path(a.results).is_file() else []
     ds_cfg, sy_cfg = mt.load()
     results, sy_cfg = mt.odom_rows(results, sy_cfg, ds_cfg)    # runs with VIO odometry etc. as rows of their own

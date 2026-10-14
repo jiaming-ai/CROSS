@@ -326,7 +326,7 @@ class RigCalibration:
 
 
 def calibrate_recording(recA: Recording, recB: Recording, images: bool = True, n_frames: int = 120,
-                        lidar: bool = True, clock_from_images: bool = False, log=print) -> dict:
+                        lidar: bool = True, clock_from_images: bool = True, log=print) -> dict:
     d, corr = estimate_clock_offset(recA, recB)
     log(f"  clock offset {1000 * d:+.1f} ms (angular-speed correlation {corr:.3f})")
     R, T, he = handeye(recA, recB, d)
