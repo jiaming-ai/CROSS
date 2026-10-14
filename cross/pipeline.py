@@ -849,6 +849,15 @@ def session_mono_config(args, seed=0):
                                   seed=seed, file_imu=odometry in INERTIAL)
 
 
+def placement_odometry_ok(mode: str, odometry: str) -> bool:
+    """Whether the placement rule (mapping.hypothesis.reloc_placement) can work with a session's odometry: it treats the
+    odometry as one rigid placement away from the map, so it needs a metric scale.  Monocular DPVO (mono --odometry
+    visual) has none: one session's measurements imply scattered placements and the rule never lets it join
+    (VGGT + DPVO, outputs/2026-10-14_placement_full_bench: ROVER T3 387 -> 162).  That combination reuses
+    configs/modes/mono_wheel.yaml, so the rule is turned off in code."""
+    return not (mode == "mono" and odometry == "visual")
+
+
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):
     """A callable building fresh sessions for the runner's --mode / --odometry (one per map run or query trial)."""
     mode, odometry = args.mode, ("external" if args.odometry == "basalt" else args.odometry)
@@ -859,6 +868,11 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
         # configs/base/common.yaml; benchmark/run.py passes --reproducible)
         cfg.mapping.loop_closure.async_pgo = False
     # the documented caveats of the resolved configuration (mode file, overlays, --config, --set): warn, confirm
+    if cfg.mapping.hypothesis.reloc_placement and not placement_odometry_ok(mode, odometry):
+        from loguru import logger
+        logger.warning("mapping.hypothesis.reloc_placement off: the placement rule needs metric odometry, monocular "
+                       "DPVO has no scale (cross.pipeline.placement_odometry_ok)")
+        cfg.mapping.hypothesis.reloc_placement = False
     risks = config_risks(cfg, mode, getattr(args, "odometry_name", args.odometry), getattr(args, "odom_file", None))
     confirm_config_risks(risks, accept=getattr(args, "accept_config_risk", False))
     mono_config = vo_config = None

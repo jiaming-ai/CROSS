@@ -481,6 +481,25 @@ class HypothesisConfig:
     reloc_unique_evidence: bool = False
     reloc_unique_min_dist: float = 3.0
     reloc_min_frames: int = 0
+    # placement hypotheses (cross/core/placement.py): in a relocalization session every raw map measurement votes for a
+    # placement of the session in the map.  A merge into the stored map is made only when its placement dominates every
+    # different placement (reloc_placement_dominance times the supporting steps and the supporting places, places =
+    # spots >= reloc_placement_sep_m apart along the walk); while placements compete (look-alike places, e.g. the same
+    # corridor design on another floor) the session waits.  Once joined, later merges must agree with that placement.
+    # Off by default.  Being evaluated (iPhone capture 1: a 5th-floor walk joined to a ground-floor corridor).
+    reloc_placement: bool = False
+    reloc_placement_sep_m: float = 10.0
+    reloc_placement_yaw_tol_deg: float = 10.0
+    reloc_placement_t_tol_m: float = 3.0
+    reloc_placement_drift: float = 0.1        # tolerance growth per metre walked since a placement's last measurement
+    reloc_placement_dominance: float = 2.0
+    reloc_placement_min_steps: int = 3
+    # rivals supported at fewer steps do not block (one-off look-alike views); the places part of the dominance test only
+    # after the session walked places_after_m (short walks cannot have separate places); the candidate's support must
+    # spread over min_spread_m of the walk.  Defaults = the rule as first built (d1e999b).
+    reloc_placement_rival_min_steps: int = 1
+    reloc_placement_places_after_m: float = 0.0
+    reloc_placement_min_spread_m: float = 0.0
     # Loaded-map recovery with sparse verification (monocular): while the session is not yet joined to the map, a
     # component in another chart than hypothesis 0 is scored by map-association evidence instead of by its Gaussian
     # overlap relative to hypothesis 0 (whose own-session observations say nothing about map association). A frame

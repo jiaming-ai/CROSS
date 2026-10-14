@@ -1,5 +1,6 @@
 import bisect
 import math
+import os
 from cross.visualization.viz_graph import visualize_pose_graph
 from cross.utils.profile import timeit
 import pypose as pp
@@ -251,6 +252,9 @@ class HypothesisManager:
         self.reloc_unique_evidence = cfg.reloc_unique_evidence
         self.reloc_unique_min_dist = cfg.reloc_unique_min_dist
         self.reloc_min_frames = cfg.reloc_min_frames
+        self.reloc_placement_min_steps = int(getattr(cfg, "reloc_placement_min_steps", 3))
+        self.placement_stats = {"waited": 0, "disagreed": 0}
+        self._placement_pending: Dict[int, Any] = {}
         self.h0_innovation_gate = cfg.h0_innovation_gate
         self.reloc_association_evidence = cfg.reloc_association_evidence
         self.reloc_detection_prob = cfg.reloc_detection_prob
@@ -1430,6 +1434,7 @@ class HypothesisManager:
                 & (log_c_pos_hit_rate >= self.detect_overlap_hitrate_thresh) \
                 & (log_conf_hit_rate >= self.detect_conf_hitrate_thresh) \
                 & separation_gate & enough & heavy & not_rejected
+            self._placement_gate(realized_ids, detected_mask, log_c_pos_sum)
 
             for j, component in enumerate(realized_ids.tolist()):
                 self.last_loop_audit["candidates"].append({
@@ -1465,6 +1470,37 @@ class HypothesisManager:
 
         return { 'loop_closure': False, 'loop_closure_hypo_id': None }
     
+    def _placement_gate(self, realized_ids, detected_mask, scores=None):
+        """Placement hypotheses (hypothesis.reloc_placement), relocalization sessions: a detected merge candidate is
+        merged only when its implied session placement dominates the competing ones, or agrees with the placement the
+        session already joined with (in place on detected_mask)."""
+        tracker = getattr(self.system, "_placement", None)
+        if tracker is None or int(getattr(self.system, "_session_start_kf_id", 0)) == 0 or not bool(detected_mask.any()):
+            return
+        if tracker.rec is not None:             # debug recording (CROSS_PLACEMENT_RECORD): the detected candidates
+            from cross.core.placement import _m
+            step = int(getattr(self.system, "_processed_frame_num", -1))
+            for j, comp in enumerate(realized_ids.tolist()):
+                if bool(detected_mask[j]):
+                    T_k = pp.SE3(self.dist[0][comp].detach().double().cpu()).matrix().numpy()
+                    tracker.record(e="cand", s=step, comp=int(comp), Tk=_m(T_k),
+                                   score=None if scores is None else round(float(scores[j]), 4))
+            if os.environ.get("CROSS_PLACEMENT_HOLD_ALL"):   # recording run: never merge (whole pre-join streams)
+                detected_mask[:] = False
+                return
+        for j, comp in enumerate(realized_ids.tolist()):
+            if not bool(detected_mask[j]):
+                continue
+            T_k = pp.SE3(self.dist[0][comp].detach().double().cpu()).matrix().numpy()
+            ok, why, tr = tracker.decide(tracker.implied(T_k), min_steps=self.reloc_placement_min_steps)
+            if ok:
+                self._placement_pending[int(comp)] = tr
+                continue
+            detected_mask[j] = False
+            self.placement_stats["disagreed" if "disagrees" in why else "waited"] += 1
+            logger.info(f"PLACEMENT_HOLD step {int(getattr(self.system, '_processed_frame_num', -1))} comp {comp} ({why})")
+            logger.debug(f"merge candidate {comp} held ({why}); placements {tracker.summary(3)}")
+
     def handle_loop_closure(
         self, hypo_id: int, target_node_id: Optional[int] = None, apply: bool = True, global_opt: bool = False,
         window_ref: Optional[int] = None,
@@ -1683,6 +1719,12 @@ class HypothesisManager:
 
         # Step 3: Apply updates via unified method (also used by async engine); apply=False returns the solution without
         # writing it back (the verified loop closure tests it first and discards it when new edges turn out outliers)
+        if apply and hypo_id != 0 and int(hypo_id) in self._placement_pending:
+            tracker = getattr(self.system, "_placement", None)
+            if tracker is not None and tracker.current is None:
+                tracker.commit(self._placement_pending[int(hypo_id)])
+                logger.info(f"PLACEMENT_JOIN step {int(getattr(self.system, '_processed_frame_num', -1))}; "
+                            f"placement: session joined the map with {tracker.summary(1)}")
         if apply:
             applied = self.apply_pgo_result({
                 "success": True,
@@ -2114,11 +2156,27 @@ class HypothesisManager:
         if dist < getattr(self.cfg, "adopt_close_dist", 3.0):
             cfg_steps = min(cfg_steps, getattr(self.cfg, "adopt_close_steps", 5))
         if force or count >= cfg_steps:
+            if not force and self._placement_adoption(k) is False:
+                return False
             logger.info(f"Adopting dominant hypothesis {k} as hypothesis 0 ({dist:.1f} m away, after {count} steps)")
             self._reset_session_anchor()
             self.change_hypo_to_first(k)
             return True
         return False
+
+    def _placement_adoption(self, comp):
+        """Adoption of a dominant hypothesis by a relocalization session that has not joined the map (it joins the map
+        by it; the placement rule does not gate it: tested, no benefit, tag opt-placement-gate-adoption).  Debug tooling
+        only: recorded with CROSS_PLACEMENT_RECORD and held (False) with CROSS_PLACEMENT_HOLD_ALL, for the offline
+        replay of merge rules (outputs/2026-10-13_placement_variants)."""
+        tracker = getattr(self.system, "_placement", None)
+        if tracker is None or tracker.rec is None or int(getattr(self.system, "_session_start_kf_id", 0)) == 0 \
+                or tracker.current is not None or self.system.session_localized():
+            return None
+        from cross.core.placement import _m
+        T_k = pp.SE3(self.dist[0][comp].detach().double().cpu()).matrix().numpy()
+        tracker.record(e="adopt", s=int(getattr(self.system, "_processed_frame_num", -1)), comp=int(comp), Tk=_m(T_k))
+        return False if os.environ.get("CROSS_PLACEMENT_HOLD_ALL") else None
 
     def save_state(self, columns: bool = False):
         """Save the hypothesis manager state for map persistence.

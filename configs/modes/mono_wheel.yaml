@@ -4,3 +4,4 @@
 include:
   - ../base/mono_ff.yaml
   - ../base/common.yaml
+  - ../base/placement.yaml

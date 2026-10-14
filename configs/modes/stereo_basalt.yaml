@@ -6,3 +6,4 @@ include:
   - ../base/stereo.yaml
   - ../base/odometry_vio.yaml
   - ../base/common.yaml
+  - ../base/placement.yaml

@@ -4,3 +4,4 @@
 include:
   - ../base/stereo.yaml
   - ../base/common.yaml
+  - ../base/placement.yaml

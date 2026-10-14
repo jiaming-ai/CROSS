@@ -253,6 +253,19 @@ class System:
         pcfg = self.config.mapping.projection
         self._projection_prior = vertical_vector(pcfg.vertical)
         self._projection_n_nodes = -1
+        # placement hypotheses of a relocalization session (mapping.hypothesis.reloc_placement)
+        self._placement = None
+        hcfg = self.config.mapping.hypothesis
+        if bool(getattr(hcfg, "reloc_placement", False)):
+            from cross.core.placement import PlacementTracker
+            up_p = self._projection_prior
+            up_p = up_p.detach().cpu().numpy() if hasattr(up_p, "detach") else np.asarray(up_p, float)
+            self._placement = PlacementTracker(3, hcfg.reloc_placement_sep_m, hcfg.reloc_placement_yaw_tol_deg,
+                                               hcfg.reloc_placement_t_tol_m, up_p, drift=hcfg.reloc_placement_drift,
+                                               dominance=hcfg.reloc_placement_dominance,
+                                               rival_min_steps=hcfg.reloc_placement_rival_min_steps,
+                                               places_after_m=hcfg.reloc_placement_places_after_m,
+                                               min_spread_m=hcfg.reloc_placement_min_spread_m)
         self._gravity_now = None                 # up direction in the current camera frame (obs "gravity"), or None
         self._gravity_up_map = None              # the map frame's up direction (set by the map session's first keyframe)
         self.place_projection = self._make_place_projection(self._projection_prior)
@@ -1036,6 +1049,8 @@ class System:
         self.loaded_node_ids = frozenset(self.hypothesis_manager.nodes)
         self.hypothesis_manager.reference_support.start(self.loaded_node_ids)
         self._session_start_kf_id = Keyframe._next_id
+        if getattr(self, "_placement", None) is not None:
+            self._placement.reset()
         self._session_localized = False
         self._projection_n_nodes = -1                  # re-estimate the vertical from the loaded map
         self._anchor_pending.clear()
@@ -1266,6 +1281,11 @@ class System:
             logger.debug(f"Updated the current state gmm with odometry at step {self._processed_frame_num}")
             if getattr(self, "_geo", None) is not None:
                 self._geo_step(ret["delta_pose"], last_obs, timestamp)
+            if self._placement is not None:
+                d = ret["delta_pose"]
+                self._placement.odometry(None if d is None else
+                                         d.matrix().detach().cpu().numpy().astype(np.float64).reshape(4, 4),
+                                         step=int(self._processed_frame_num))
         
         else:
             # NOTE: we assumes that the system will always have some odom / imu readings
@@ -2927,6 +2947,17 @@ class System:
         if len(valid_keyframes) == 0:
             logger.debug(f"No valid keyframes found.")
             return ret
+        if self._placement is not None and self._session_start_kf_id > 0:
+            # every raw measurement to the stored map votes for a placement of the session (cross/core/placement.py)
+            try:
+                for k, pose in zip(valid_keyframes, valid_poses):
+                    if k.id in self.loaded_node_ids:
+                        Tr = pp.SE3(pose.tensor() if hasattr(pose, "tensor") else pose).matrix()
+                        self._placement.add(k.pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64),
+                                            Tr.detach().cpu().numpy().astype(np.float64), int(self._processed_frame_num),
+                                            kf=int(k.id))
+            except Exception as ex:          # the votes are advisory: never break the step
+                logger.debug(f"placement vote failed: {ex}")
 
         # verified loop closure: prior consistency of every measurement with hypothesis 0 (test 2), then the in-pass
         # consistency of the references of this forward pass (test 1, prior verdicts as tie-break); references dropped
