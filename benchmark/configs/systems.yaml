@@ -28,6 +28,15 @@ cross_rgbd_vo:
   args: [--odometry, visual]
   outdoor_config: [configs/overlays/outdoor.yaml]
 
+cross_rgbd_ff:
+  label: CROSS (VGGT-Omega scaled by depth, external odometry)
+  runner: cross_rgbd
+  setups: [rgbd]
+  uses_odometry: true
+  map_reuse: save/load
+  args: [--rgbd-estimator, ff]
+  outdoor_config: [configs/overlays/outdoor.yaml]
+
 cross_stereo:
   label: CROSS (VGGT-Omega, external odometry)
   runner: cross_ff
