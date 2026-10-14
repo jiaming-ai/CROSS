@@ -326,7 +326,7 @@ class RigCalibration:
 
 
 def calibrate_recording(recA: Recording, recB: Recording, images: bool = True, n_frames: int = 120,
-                        lidar: bool = True, log=print) -> dict:
+                        lidar: bool = True, clock_from_images: bool = False, log=print) -> dict:
     d, corr = estimate_clock_offset(recA, recB)
     log(f"  clock offset {1000 * d:+.1f} ms (angular-speed correlation {corr:.3f})")
     R, T, he = handeye(recA, recB, d)
@@ -347,6 +347,14 @@ def calibrate_recording(recA: Recording, recB: Recording, images: bool = True, n
                     out["lidar"] = lr
                     log(f"  LiDAR / triangulated depth {lr['ratio_median']:.3f} over {lr['points']} points "
                         f"-> baseline {np.linalg.norm(T) * lr['ratio_median']:.4f} m")
+        if clock_from_images:
+            moving = collect_matches(recA, recB, d, n_frames=n_frames, moving=True)
+            if moving:
+                d_img, st = clock_offset_from_images(recB, moving, R, T, d)
+                out["clock_from_images"] = st
+                log(f"  clock offset from moving frames {1000 * d_img:+.1f} ms (bootstrap std "
+                    f"{st['bootstrap_std_ms']:.1f} ms; angular speed {1000 * d:+.1f} ms)")
+                d = d_img
     out.update(R=R.tolist(), T=T.tolist(), clock_offset_s=d)
     return out
 
@@ -377,7 +385,7 @@ def combine(results: Dict[str, dict], recs: Dict[str, Tuple[Recording, Recording
                   "baseline_m": round(lens[list(results).index(k)], 4),
                   "handeye_baseline_m": round(float(np.linalg.norm(r["T_handeye"])), 4),
                   "R": np.asarray(r["R"]).tolist(), "T": np.asarray(r["T"]).tolist()}
-        for key in ("images", "lidar"):
+        for key in ("images", "lidar", "clock_from_images"):
             if key in r:
                 per[k][key] = r[key]
     return RigCalibration(R=R, T=T, K_A=recA.K(), K_B=recB.K(), size=recB.size,
