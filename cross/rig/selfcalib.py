@@ -317,7 +317,8 @@ def calibrate_recording(recA: Recording, recB: Recording, images: bool = True, n
 def combine(results: Dict[str, dict], recs: Dict[str, Tuple[Recording, Recording]], use_lidar_scale: bool = True
             ) -> RigCalibration:
     """One rig calibration from several recordings of the same mounting: chordal mean of the rotations, mean
-    translation direction, baseline from LiDAR (when available) or hand-eye; the spread is kept per recording."""
+    translation direction, baseline from LiDAR (when available) or hand-eye; the spread is kept per recording, with
+    each recording's own R and T (T at that recording's hand-eye / image length, before the LiDAR correction)."""
     Rs = np.stack([np.asarray(r["R"]) for r in results.values()])
     U, _, Vt = np.linalg.svd(Rs.sum(0))
     R = U @ np.diag([1, 1, np.sign(np.linalg.det(U @ Vt))]) @ Vt
@@ -337,7 +338,8 @@ def combine(results: Dict[str, dict], recs: Dict[str, Tuple[Recording, Recording
                   "rotation_from_combined_deg": round(float(np.degrees(np.linalg.norm(
                       Rotation.from_matrix(np.asarray(r["R"]) @ R.T).as_rotvec()))), 3),
                   "baseline_m": round(lens[list(results).index(k)], 4),
-                  "handeye_baseline_m": round(float(np.linalg.norm(r["T_handeye"])), 4)}
+                  "handeye_baseline_m": round(float(np.linalg.norm(r["T_handeye"])), 4),
+                  "R": np.asarray(r["R"]).tolist(), "T": np.asarray(r["T"]).tolist()}
         for key in ("images", "lidar"):
             if key in r:
                 per[k][key] = r[key]
