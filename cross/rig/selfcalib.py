@@ -161,14 +161,16 @@ class ImageMatches:
 
 
 def collect_matches(recA: Recording, recB: Recording, d: float, n_frames: int = 120, scale: float = 0.5,
-                    seed: int = 0) -> List[ImageMatches]:
-    """SIFT matches of up to n_frames B frames (the calmer ones, spread over the walk) with the A frame nearest in time."""
+                    seed: int = 0, moving: bool = False) -> List[ImageMatches]:
+    """SIFT matches of up to n_frames B frames (the calmer ones, spread over the walk; moving: the faster-turning
+    half instead) with the A frame nearest in time."""
     iB, jA, dt = pair_frames(recA, recB, d)
     if len(iB) == 0:
         return []
     tm, w = angular_speed(recB)
     wB = np.interp(recB.t[iB], tm, w)
-    calm = iB[wB <= np.quantile(wB, 0.5)]              # less motion blur / rolling shutter
+    half = wB > np.quantile(wB, 0.5) if moving else wB <= np.quantile(wB, 0.5)   # calm: less blur / rolling shutter
+    calm = iB[half]
     pick = calm[np.linspace(0, len(calm) - 1, min(n_frames, len(calm))).astype(int)]
     lookup = dict(zip(iB.tolist(), jA.tolist()))
     KB, KA = recB.K(), recA.K()
@@ -231,6 +233,41 @@ def refine_with_images(recB: Recording, matches: List[ImageMatches], R: np.ndarr
              "direction_change_deg": float(np.degrees(np.arccos(np.clip(float(tr @ T) / (L * L), -1, 1)))),
              "offset_change_ms": float(1000 * (dr - d))}
     return Rr, tr, dr, stats
+
+
+def clock_offset_from_images(recB: Recording, matches: List[ImageMatches], R: np.ndarray, T: np.ndarray, d: float,
+                             search: float = 0.05, step: float = 0.001, f_px: float = 1300.0, n_boot: int = 200,
+                             seed: int = 0) -> Tuple[float, dict]:
+    """(d, stats): the clock offset that minimises the robust Sampson error of matches taken while the rig turns
+    (collect_matches(..., moving=True)), with the rig (R, T) fixed.  A timing error dd leaves each pair rotated by its
+    angular velocity times dd, which only moving frames reveal.  Scan of d + [-search, search], parabolic refinement;
+    the spread is a bootstrap over the frames."""
+    if not matches:
+        raise ValueError("no image matches")
+    tb = np.array([m.tB for m in matches])
+    ta = np.array([m.tA for m in matches])
+    offs = np.arange(-search, search + step / 2, step)
+    cost = np.empty((len(offs), len(matches)))
+    for k, o in enumerate(offs):
+        P = pair_pose(recB, R, T, d + o, tb, ta)
+        for j, m in enumerate(matches):
+            e = _sampson(m.xb, m.xa, P[j, :3, :3], P[j, :3, 3]) * f_px
+            cost[k, j] = np.sum(2 * (np.sqrt(1 + e * e) - 1))         # soft-l1, 1 px scale
+
+    def best(c):
+        k = int(np.argmin(c))
+        off = 0.0
+        if 0 < k < len(c) - 1:
+            y0, y1, y2 = c[k - 1], c[k], c[k + 1]
+            den = y0 - 2 * y1 + y2
+            off = 0.5 * (y0 - y2) / den if den > 1e-12 else 0.0
+        return float(offs[k] + off * step), k in (0, len(c) - 1)
+
+    o, at_edge = best(cost.sum(1))
+    rng = np.random.default_rng(seed)
+    boot = [best(cost[:, rng.integers(0, len(matches), len(matches))].sum(1))[0] for _ in range(n_boot)]
+    return d + o, {"change_ms": 1000 * o, "bootstrap_std_ms": 1000 * float(np.std(boot)), "at_search_edge": at_edge,
+                   "frames": len(matches), "angular_speed_ms": 1000 * d}
 
 
 def lidar_baseline_ratio(recB: Recording, matches: List[ImageMatches], R: np.ndarray, T: np.ndarray, d: float,
