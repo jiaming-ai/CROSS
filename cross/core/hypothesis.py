@@ -253,7 +253,6 @@ class HypothesisManager:
         self.reloc_unique_min_dist = cfg.reloc_unique_min_dist
         self.reloc_min_frames = cfg.reloc_min_frames
         self.reloc_placement_min_steps = int(getattr(cfg, "reloc_placement_min_steps", 3))
-        self.reloc_placement_gate_adoption = bool(getattr(cfg, "reloc_placement_gate_adoption", False))
         self.placement_stats = {"waited": 0, "disagreed": 0}
         self._placement_pending: Dict[int, Any] = {}
         self.h0_innovation_gate = cfg.h0_innovation_gate
@@ -2157,42 +2156,27 @@ class HypothesisManager:
         if dist < getattr(self.cfg, "adopt_close_dist", 3.0):
             cfg_steps = min(cfg_steps, getattr(self.cfg, "adopt_close_steps", 5))
         if force or count >= cfg_steps:
-            tr = None if force else self._placement_adoption(k)
-            if tr is False:
+            if not force and self._placement_adoption(k) is False:
                 return False
             logger.info(f"Adopting dominant hypothesis {k} as hypothesis 0 ({dist:.1f} m away, after {count} steps)")
             self._reset_session_anchor()
             self.change_hypo_to_first(k)
-            if tr is not None:
-                self.system._placement.commit(tr)
-                logger.info(f"PLACEMENT_JOIN step {int(getattr(self.system, '_processed_frame_num', -1))} (adoption)")
             return True
         return False
 
     def _placement_adoption(self, comp):
-        """Placement hypotheses, adoption of a dominant hypothesis by a relocalization session that has not joined the
-        map (it joins the map by it): recorded (CROSS_PLACEMENT_RECORD), held under CROSS_PLACEMENT_HOLD_ALL, and with
-        hypothesis.reloc_placement_gate_adoption decided like a merge.  Returns False (hold), the placement track to
-        commit, or None (no gate)."""
+        """Adoption of a dominant hypothesis by a relocalization session that has not joined the map (it joins the map
+        by it; the placement rule does not gate it: tested, no benefit, tag opt-placement-gate-adoption).  Debug tooling
+        only: recorded with CROSS_PLACEMENT_RECORD and held (False) with CROSS_PLACEMENT_HOLD_ALL, for the offline
+        replay of merge rules (outputs/2026-10-13_placement_variants)."""
         tracker = getattr(self.system, "_placement", None)
-        if tracker is None or int(getattr(self.system, "_session_start_kf_id", 0)) == 0 or tracker.current is not None \
-                or self.system.session_localized():
+        if tracker is None or tracker.rec is None or int(getattr(self.system, "_session_start_kf_id", 0)) == 0 \
+                or tracker.current is not None or self.system.session_localized():
             return None
-        step = int(getattr(self.system, "_processed_frame_num", -1))
+        from cross.core.placement import _m
         T_k = pp.SE3(self.dist[0][comp].detach().double().cpu()).matrix().numpy()
-        if tracker.rec is not None:
-            from cross.core.placement import _m
-            tracker.record(e="adopt", s=step, comp=int(comp), Tk=_m(T_k))
-            if os.environ.get("CROSS_PLACEMENT_HOLD_ALL"):
-                return False
-        if not self.reloc_placement_gate_adoption:
-            return None
-        ok, why, tr = tracker.decide(tracker.implied(T_k), min_steps=self.reloc_placement_min_steps)
-        if not ok:
-            self.placement_stats["waited"] += 1
-            logger.info(f"PLACEMENT_HOLD step {step} comp {comp} (adoption: {why})")
-            return False
-        return tr
+        tracker.record(e="adopt", s=int(getattr(self.system, "_processed_frame_num", -1)), comp=int(comp), Tk=_m(T_k))
+        return False if os.environ.get("CROSS_PLACEMENT_HOLD_ALL") else None
 
     def save_state(self, columns: bool = False):
         """Save the hypothesis manager state for map persistence.

@@ -1,0 +1,17 @@
+# Placement rule, default merge mode (cross/core/placement.py): included by the mode files whose odometry is metric and
+# rigid (stereo_wheel, stereo_basalt, mono_wheel, mono_imu, mono_vio).  A relocalization session joins the stored map when
+# the placement its merge implies is supported at >= 6 steps and at 2x the steps of any different placement seen at >= 2
+# steps; after 20 m of walk also 2x the separate places (look-alike corridors on another floor are confirmed from one
+# spot, the true placement from many).
+# Full benchmark (outputs/2026-10-14_placement_full_bench): in these modes 15-40 % fewer relocalization trials end with a
+# wrong pose (ROVER, OpenLORIS, SimChange), correct trials within a null rerun's noise on ROVER, 2-5 fewer indoors
+# (OpenLORIS).  Not in the other modes: monocular DPVO odometry has no metric scale (one session implies scattered
+# placements: VGGT + DPVO lost 225 of 387 ROVER trials; it reuses mono_wheel.yaml, so cross.pipeline.session_factory
+# turns the rule off for it), DA3 mono and RGB-D gained nothing, stereo + IMU / stereo DPVO lost indoors.
+# Stricter: configs/overlays/strict_merge.yaml.
+mapping:
+  hypothesis:
+    reloc_placement: true
+    reloc_placement_min_steps: 6
+    reloc_placement_rival_min_steps: 2
+    reloc_placement_places_after_m: 20.0

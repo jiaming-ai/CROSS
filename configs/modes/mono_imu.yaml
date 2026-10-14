@@ -4,6 +4,7 @@
 include:
   - ../base/mono_ff.yaml
   - ../base/common.yaml
+  - ../base/placement.yaml
 # The geometric covisibility score with the VGGT-inertial odometry instead of the learned head (base/vggt_finetuned.yaml:
 # covis_source "auto" with the fine-tuned checkpoint; the code default is geometric).  Full benchmark v6 (2026-10-09), mono + IMU on ROVER, two runs each: with vfin2's mapped head
 # relocalization was about equal (T3 985 / 983 vs 967 / 962 of 1159, n.s.) but positioning less precise (T2@3 0.70 /

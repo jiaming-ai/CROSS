@@ -8,15 +8,3 @@ mapping:
     # benchmark and experiment runners force the synchronous optimisation (--reproducible; benchmark/run.py passes it).
     # Chart-aware graphs (the mono DA3 back end) always optimise synchronously.
     async_pgo: true
-  hypothesis:
-    # Placement hypotheses (cross/core/placement.py), default ("aggressive") merge mode: a relocalization session joins
-    # the stored map when the placement its merge implies is supported at >= 6 steps and at 2x the steps of any different
-    # placement seen at >= 2 steps; after 20 m of walk also 2x the separate places (look-alike corridors on another
-    # floor are confirmed from one spot, the true placement from many).  ROVER T3 (outputs/2026-10-13_placement_variants,
-    # stereo / mono + external odometry): correct trials as without it (1073 / 1106 vs 1073 / 1105, flips within a null
-    # rerun's), trials ending with a wrong pose 21 -> 11 / 42 -> 27; iPhone: the false cross-floor junction is refused
-    # and the true one joins at frame 340 vs 334.  configs/overlays/strict_merge.yaml: fewer wrong poses, less recall.
-    reloc_placement: true
-    reloc_placement_min_steps: 6
-    reloc_placement_rival_min_steps: 2
-    reloc_placement_places_after_m: 20.0

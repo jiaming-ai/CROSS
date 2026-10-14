@@ -1,12 +1,12 @@
-# Strict merge mode (--config configs/overlays/strict_merge.yaml): for large or repetitive environments where a wrong
+# Strict merge mode (--config configs/overlays/strict_merge.yaml): for large or repetitive places where a wrong
 # relocalization costs more than a late one (look-alike floors, corridors, campuses).  On top of the default placement
-# rule (configs/base/common.yaml), the placement a merge implies must be supported from positions >= 1.5 m apart along the
-# walk (more than one viewpoint).  ROVER T3 (outputs/2026-10-13_placement_variants, stereo / mono + external odometry):
-# trials ending with a wrong pose 21 -> 6 / 42 -> 12 against no placement rule (the default mode: 11 / 27), correct
-# trials 1073 -> 1042 / 1105 -> 1067 (the first, unfiltered rule: 991 / 1070 with 11 / 22 wrong).  iPhone: the false
-# cross-floor junction refused, the true one joins at frame 337 (no rule: 334).
+# rule (configs/base/placement.yaml), the placement a merge implies must be supported from positions >= 1.5 m apart along
+# the walk (more than one viewpoint), with >= 3 supporting steps instead of 6.  It acts only in the modes whose file
+# enables the rule (stereo_wheel, stereo_basalt, mono_wheel, mono_imu, mono_vio); elsewhere it changes nothing.
+# Full benchmark (outputs/2026-10-14_placement_full_bench), against no rule: ROVER wrong-pose trials stereo 22 -> 10,
+# mono + wheel 41 -> 12 (default mode 12 / 26), at 34-67 fewer correct trials of ~1150; indoors (OpenLORIS) 9-20 % fewer
+# correct trials and T2@1 down 0.1-0.17: not for small indoor places.
 mapping:
   hypothesis:
-    reloc_placement: true
     reloc_placement_min_steps: 3
     reloc_placement_min_spread_m: 1.5

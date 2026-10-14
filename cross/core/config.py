@@ -500,8 +500,6 @@ class HypothesisConfig:
     reloc_placement_rival_min_steps: int = 1
     reloc_placement_places_after_m: float = 0.0
     reloc_placement_min_spread_m: float = 0.0
-    # adoption of a dominant hypothesis (adopt_*) also joins a relocalization session to the map: decided like a merge
-    reloc_placement_gate_adoption: bool = False
     # Loaded-map recovery with sparse verification (monocular): while the session is not yet joined to the map, a
     # component in another chart than hypothesis 0 is scored by map-association evidence instead of by its Gaussian
     # overlap relative to hypothesis 0 (whose own-session observations say nothing about map association). A frame
