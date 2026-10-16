@@ -911,6 +911,14 @@ class GeoConfig:
     compass_max_sigma_deg: float = 30.0       # samples whose reported accuracy is worse are not used for the anchor
     compass_max_spread_deg: float = 15.0      # a session whose headings scatter more than this adds none
     compass_anchor_interval_s: float = 1.0    # spacing of the heading samples kept per session
+    # separate groups of the map (connected components of the pose graph: a session the placement rule kept apart and
+    # the sessions that joined it) get their own rigid anchor from their own fixes (with pool_sessions); a group is
+    # placed once each of its keyframes is located to component_max_pos_std_m.  The main group (the map's first keyframe)
+    # keeps the map anchor, fitted to its own fixes only.  GNSS tests, retrieval priors and latitude / longitude use the
+    # anchor of each keyframe's group; an unplaced group is not tested
+    component_anchors: bool = False
+    component_max_pos_std_m: float = 10.0
+    component_min_fixes: int = 20
 
 
 @dataclass
