@@ -689,3 +689,87 @@ def test_guard_tracks_the_fault_after_a_firing():
     for _ in range(30):                                   # steady (noise only): no correction, the inflation fades
         v._guard_push(math.exp(rng.normal(0, 0.05)), 120, 1.0)
     assert v.odom_scale == s0 and v.odom_fault < 0.05
+
+
+def test_anchor_withdrawn_when_its_edge_fails_the_posterior_test():
+    """An anchor set by a map edge the posterior test rejects is withdrawn; the session falls back to the previous one.
+    Setting the anchor from outside (drop, contradiction) clears the fallbacks."""
+    hm = FakeHM()
+    v = LoopClosureVerifier(FakeSystem(hm, session_start=10), LoopClosureConfig())
+    T = _lie(gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(1.0, 0, 0)))
+    v.update_anchor(3, 20, T)
+    v.update_anchor(4, 21, T)
+    assert not v.reject_anchor_edges([(3, 20)])            # not the current anchor: kept, but no longer a fallback
+    assert (v.anchor["map_kf"], v.anchor["kf"]) == (4, 21)
+    assert v.reject_anchor_edges([(4, 21)])
+    assert v.anchor is None                                # (3, 20) was rejected too: nothing to fall back to
+    v.update_anchor(5, 22, T)
+    v.update_anchor(6, 23, T)
+    assert v.reject_anchor_edges([(6, 23), (7, 24)])
+    assert (v.anchor["map_kf"], v.anchor["kf"]) == (5, 22)
+    v.anchor = None
+    v.update_anchor(8, 25, T)
+    assert v.reject_anchor_edges([(8, 25)]) and v.anchor is None
+    anchor = v.make_anchor(9, 26, T)
+    v.update_anchor(5, 22, T)
+    v.anchored_chi2(anchor, 9, T, 26, gtsam.Pose3(), 1)    # borrowing an anchor for a test keeps the history
+    assert v.reject_anchor_edges([]) is False and len(v._anchor_hist) == 1
+
+
+def test_gate_vertical_ratio_scales_the_vertical_sigma_only():
+    """noise.gate_vertical_ratio: the prediction's translation sigma along the world vertical (y) is scaled, the
+    horizontal ones are not; ratio 1 leaves the covariance unchanged."""
+    hm = FakeHM()
+    kf = Keyframe(pose_mu=_lie(gtsam.Pose3()).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+    kf.id = 0
+    hm.nodes[0] = kf
+    cfg = LoopClosureConfig()
+    v = LoopClosureVerifier(FakeSystem(hm), cfg)
+    cov = np.eye(6)
+    assert np.allclose(v._vertical_scaled(cov, 0, gtsam.Pose3()), cov)
+    cfg.noise.gate_vertical_ratio = 0.25
+    out = v._vertical_scaled(cov, 0, gtsam.Pose3())
+    assert np.allclose(np.diag(out), [1, 1, 1, 1, 0.0625, 1])
+    assert np.allclose(v.last_unscaled_cov, cov)        # the loop-candidate criterion keeps the unscaled prediction
+    # a camera rolled by 90 deg about its optical axis: the world vertical is its x axis
+    out = v._vertical_scaled(cov, 0, gtsam.Pose3(gtsam.Rot3.Rz(math.pi / 2), gtsam.Point3()))
+    assert np.allclose(np.diag(out), [1, 1, 1, 0.0625, 1, 1], atol=1e-9)
+
+
+def test_gate_vertical_ratio_keeps_loop_candidates_and_noise_statistics():
+    """The vertical scaling acts on the consistency test only: on consistent measurements the loop-candidate flags and the
+    noise statistics (adaptive scales, anchor self-check) are those of ratio 1; a measurement off by a storey in height
+    alone is no noise sample (a projected statistic had inflated the scales and maps lost their loop closures)."""
+    hm = FakeHM()
+    gt, hm.odom_edges = make_chain(n=120)
+    for i, g in enumerate(gt):
+        kf = Keyframe(pose_mu=_lie(g).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+        kf.id = i
+        kf.step_created = i
+        hm.nodes[i] = kf
+    last = 119
+    refs = [hm.nodes[k] for k in range(0, 118)]
+    meas = [_lie(gt[r.id].between(gt[last])) for r in refs]
+    out = {}
+    for ratio in (1.0, 0.25):
+        for aniso in (False, True):
+            cfg = LoopClosureConfig()
+            cfg.noise.gate_vertical_ratio = ratio
+            cfg.anisotropic = aniso
+            v = LoopClosureVerifier(FakeSystem(hm), cfg)
+            ok, _ = v.prior_gate(refs, meas, last, gtsam.Pose3(), 1)
+            assert all(o is True for o in ok)
+            out[ratio, aniso] = (list(v.last_loop_flags), [list(q) for q in (v._innov["sess"], v._innov_a["sess"],
+                                                                                v._innov_c["sess"], v._innov_r["sess"])])
+    for aniso in (False, True):
+        assert out[1.0, aniso][0] == out[0.25, aniso][0] and any(out[1.0, aniso][0])
+        assert all(np.allclose(a, b) for a, b in zip(out[1.0, aniso][1], out[0.25, aniso][1]))
+        assert any(len(q) for q in out[1.0, aniso][1])
+    # a short-chain reference 3.5 m off along the world vertical (y): no noise sample with the ratio, a sample without
+    cfg = LoopClosureConfig()
+    cfg.noise.gate_vertical_ratio = 0.25
+    v = LoopClosureVerifier(FakeSystem(hm), cfg)
+    up = gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(*(np.asarray(gt[last].rotation().matrix()).T @ np.array([0.0, 3.5, 0.0]))))
+    ok, _ = v.prior_gate([hm.nodes[116]], [_lie(gt[116].between(gt[last]).compose(up))], last, gtsam.Pose3(), 1)
+    assert ok == [False] and v.stats.get("vertical_alias") == 1
+    assert not any(len(q) for q in (v._innov["sess"], v._innov_a["sess"], v._innov_c["sess"]))

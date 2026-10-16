@@ -63,7 +63,7 @@ def test_forked_job_failures_do_not_hang_or_leak():
 
 
 # ----------------------------------------------------------------------------------- equality with the synchronous path
-METHODS = ("_verified_lc_optimise", "_submit_async_pgo", "_poll_async_pgo", "_apply_async_pgo", "_resubmit_pending_pgo",
+METHODS = ("_verified_lc_optimise", "_withdraw_rejected_anchor", "_submit_async_pgo", "_poll_async_pgo", "_apply_async_pgo", "_resubmit_pending_pgo",
            "_drain_async_pgo", "_cancel_async_pgo", "_apply_async_poses", "_apply_async_geo", "_geo_maybe_optimize", "note_anchor")
 
 

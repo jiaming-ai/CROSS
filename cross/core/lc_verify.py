@@ -394,7 +394,8 @@ class LoopClosureVerifier:
         # statistic is the larger of the two
         self.thr = chi2_threshold(cfg.confidence, 6 if self.test_dof == "full" else 3)
         self.chain = ChainPredictor(system.hypothesis_manager, self.noise)
-        self.anchor: Optional[dict] = None       # {"map_kf", "kf", "T" (map_kf -> kf), "sigma"} of the latest verified session->map edge
+        self._anchor: Optional[dict] = None      # {"map_kf", "kf", "T" (map_kf -> kf), "sigma"} of the latest verified session->map edge
+        self._anchor_hist: list = []              # anchors set by update_anchor since the anchor was last set otherwise
         self.stats = {"inpass_rejected": 0, "prior_rejected": 0, "prior_tested": 0, "posterior_rejected": 0, "pgo": 0, "h0_loop_edges": 0}
         self.quarantine: list = []
         # online visual-noise scales (innovation-based), one per measurement type: references of the current
@@ -653,6 +654,29 @@ class LoopClosureVerifier:
         return new
 
     # ------------------------------------------------------------------ 2. prior consistency
+    def _vertical_scaled(self, cov: np.ndarray, last_kf_id: int, T_since: gtsam.Pose3) -> np.ndarray:
+        """noise.gate_vertical_ratio < 1: the prediction covariance (right perturbation at the current frame) with its
+        translation sigma along the world vertical scaled by the ratio."""
+        self.last_unscaled_cov = cov          # the information criterion (loop candidate) uses the unscaled prediction
+        ratio = float(getattr(self.cfg.noise, "gate_vertical_ratio", 1.0))
+        u = self._vertical_in_current(last_kf_id, T_since) if ratio < 1.0 else None
+        if u is None:
+            return cov
+        M = np.eye(6)
+        M[3:, 3:] -= (1.0 - ratio) * np.outer(u, u)
+        return M @ cov @ M.T
+
+    def _vertical_in_current(self, last_kf_id: int, T_since) -> Optional[np.ndarray]:
+        """The world vertical (mapping.projection.vertical) in the current camera frame (last keyframe + odometry since)."""
+        node = self.system.hypothesis_manager.nodes.get(int(last_kf_id))
+        if node is None:
+            return None
+        proj = getattr(self.system, "place_projection", None)
+        v = (proj.vertical.detach().cpu().numpy().astype(np.float64) if proj is not None
+             else np.array([0.0, 1.0, 0.0]))
+        R = np.asarray(to_gtsam(node.pose_mu[0]).compose(to_gtsam(T_since)).rotation().matrix())
+        return R.T @ (v / np.linalg.norm(v))
+
     def predict_to_current(self, ref_id: int, last_kf_id: int, T_since: gtsam.Pose3, cov_since: np.ndarray):
         """Prediction of T_ref_current = chain(ref -> last keyframe) (+) odometry since the last keyframe, or through
         the session anchor for a map keyframe.  Returns (T_pred, cov) or (None, None) when no relation exists."""
@@ -661,7 +685,7 @@ class LoopClosureVerifier:
             T, cov = self.chain.predict(ref_id, last_kf_id, inflate=infl)
             if T is None:
                 return None, None
-            return T.compose(T_since), transport(cov, T_since) + cov_since
+            return T.compose(T_since), self._vertical_scaled(transport(cov, T_since) + cov_since, last_kf_id, T_since)
         if self.anchor is None:
             return None, None
         hm = self.system.hypothesis_manager
@@ -679,7 +703,7 @@ class LoopClosureVerifier:
         cov = transport(np.diag(self.noise.map_rel(d_map) ** 2), rest)
         cov += transport(self.anchor["cov"] if "cov" in self.anchor else np.diag(self.anchor["sigma"] ** 2), T_chain.compose(T_since))
         cov += transport(cov_chain, T_since) + cov_since
-        return T_map.compose(rest), cov
+        return T_map.compose(rest), self._vertical_scaled(cov, last_kf_id, T_since)
 
     def _guard_sample(self, sample: float, span_from: Optional[int] = None, speed: Optional[float] = None) -> bool:
         """Odometry scale guard: record one measured / odometry translation ratio of a session span starting at keyframe
@@ -902,6 +926,8 @@ class LoopClosureVerifier:
         self._gate_last_kf = int(last_kf_id)
         oks, chis, loops = [], [], []
         self._update_scale()
+        u_vert = (self._vertical_in_current(last_kf_id, Ts)
+                  if float(getattr(self.cfg.noise, "gate_vertical_ratio", 1.0)) < 1.0 else None)
         for kf, Tm in zip(refs, T_meas):
             if self._is_map_kf(int(kf.id)):
                 self._map_fix(int(kf.id), to_gtsam(Tm))           # with or without a prediction (session anchor)
@@ -929,7 +955,19 @@ class LoopClosureVerifier:
                         self.scale_ratio = float(np.median(self._ratio))
                         self.stats["scale_ratio"] = round(self.scale_ratio, 4)
             self.scale = self.scales[kind]
-            cov0 = cov / max(self.cfg.noise.gate_inflation, 1e-6) ** 2      # un-inflated chain covariance
+            # un-inflated chain covariance, without the vertical scaling (noise.gate_vertical_ratio acts on the
+            # consistency test only: a smaller vertical sigma made fewer measurements loop candidates, and maps lost
+            # their loop closures -- OpenLORIS home mono + wheel 36 -> 2 candidates, T1 0.12 -> 0.23 m)
+            cov0 = getattr(self, "last_unscaled_cov", cov) / max(self.cfg.noise.gate_inflation, 1e-6) ** 2
+            # gravity-aligned odometry (noise.gate_vertical_ratio): a measurement that contradicts the prediction in height
+            # alone (> 3 sigma against the vertically scaled prediction) is aliasing -- another floor -- and no sample
+            # of the noise statistics (adaptive scales, anchor self-check)
+            vert_alias = False
+            if u_vert is not None:
+                var_v = float(u_vert @ cov[3:, 3:] @ u_vert) + float(self.noise.visual(d)[3]) ** 2
+                vert_alias = abs(float(r[3:] @ u_vert)) > 3.0 * math.sqrt(var_v)
+                if vert_alias:
+                    self.stats["vertical_alias"] = self.stats.get("vertical_alias", 0) + 1
             if self.anisotropic:
                 Sv = self.noise.visual_cov(Tm, self.scale, self.scales_along[kind], self.scales_rot[kind])
                 # loop candidate: the prediction (un-inflated chain) is less certain than the measurement by the margin
@@ -937,7 +975,7 @@ class LoopClosureVerifier:
                 loops.append(informative(cov0, Sv, rotation=False, margin=self.margin if kind == "sess" else 1.0))
                 # innovation statistics along / across the measured bearing (frame b), each normalised by the base model
                 # and the un-inflated chain variance in that direction: medians 0.674 / 1.177 when the model holds
-                if short and d > 1e-6:
+                if short and d > 1e-6 and not vert_alias:
                     u = np.asarray(Tm.rotation().matrix()).T @ (np.asarray(Tm.translation(), dtype=np.float64) / d)
                     rt = r[3:]
                     ra = float(rt @ u)
@@ -957,10 +995,15 @@ class LoopClosureVerifier:
                 # innovation statistic: the translation residual of this very test, normalised by the un-scaled
                 # covariance (prediction + calibrated measurement noise); its median over the recent observations is 1.54
                 # when the calibration holds and grows when the measurements (against the map or the session) get noisier
-                S0 = cov + np.diag(self.noise.visual(d) ** 2)
-                self._innov[kind].append(float(np.linalg.norm(r[3:])) / math.sqrt(max(float(np.trace(S0[3:, 3:])) / 3.0, 1e-12)))
+                S0 = getattr(self, "last_unscaled_cov", cov) + np.diag(self.noise.visual(d) ** 2)
+                if not vert_alias:
+                    self._innov[kind].append(float(np.linalg.norm(r[3:])) / math.sqrt(max(float(np.trace(S0[3:, 3:])) / 3.0, 1e-12)))
                 c2 = self.chi2(r, cov + np.diag(self.noise.visual(d, self.scale) ** 2))
             self.stats["prior_tested"] += 1
+            if kind == "map":
+                logger.debug(f"prior test map kf {int(kf.id)}: residual t {np.round(r[3:], 3).tolist()} chain sigma t "
+                             f"{np.round(np.sqrt(np.clip(np.diag(cov)[3:], 0, None)), 3).tolist()} chi2 {c2:.1f} "
+                             f"(anchor {None if self.anchor is None else (self.anchor['map_kf'], self.anchor['kf'])})")
             if c2 > self.thr:
                 self.stats["prior_rejected"] += 1
             oks.append(bool(c2 <= self.thr)); chis.append(c2)
@@ -984,8 +1027,35 @@ class LoopClosureVerifier:
             out["cov"] = self.noise.visual_cov(Tm, self.scales["map"], self.scales_along["map"], self.scales_rot["map"])
         return out
 
+    @property
+    def anchor(self) -> Optional[dict]:
+        return self._anchor
+
+    @anchor.setter
+    def anchor(self, value: Optional[dict]) -> None:
+        # set from outside (dropped, contradicted, restored for a test): the anchors before it are no fallback
+        self._anchor = value
+        self._anchor_hist = []
+
     def update_anchor(self, map_kf_id: int, kf_id: int, T_meas) -> None:
-        self.anchor = self.make_anchor(map_kf_id, kf_id, T_meas)
+        self._anchor = self.make_anchor(map_kf_id, kf_id, T_meas)
+        self._anchor_hist = (self._anchor_hist + [self._anchor])[-64:]
+
+    def reject_anchor_edges(self, edges) -> bool:
+        """Edges (map_kf, kf) the posterior test rejected: an anchor set by one of them is withdrawn, and the session
+        falls back to the latest earlier anchor that was not (None when there is none).  Returns whether the current
+        anchor changed."""
+        bad = {(int(a), int(b)) for a, b in edges}
+        if self._anchor is None or not bad:
+            return False
+        keep = [x for x in self._anchor_hist if (x["map_kf"], x["kf"]) not in bad]
+        if (self._anchor["map_kf"], self._anchor["kf"]) not in bad:
+            self._anchor_hist = keep
+            return False
+        self._anchor = keep[-1] if keep else None
+        self._anchor_hist = keep
+        self.stats["anchor_withdrawn"] = self.stats.get("anchor_withdrawn", 0) + 1
+        return True
 
     def anchored_chi2(self, anchor: dict, ref_id: int, T_meas, last_kf_id: int, T_since, n_since: int) -> Optional[float]:
         """chi^2 of the prior test of the map reference ref_id through a candidate session anchor (an earlier map edge
@@ -993,11 +1063,11 @@ class LoopClosureVerifier:
         between them.  None when no chain relates them."""
         Ts = to_gtsam(T_since) if T_since is not None else gtsam.Pose3()
         cov_since = self._since_cov(Ts, n_since)
-        saved, self.anchor = self.anchor, anchor
+        saved, self._anchor = self._anchor, anchor      # the history is untouched (a test, not a new anchor)
         try:
             T_pred, cov = self.predict_to_current(int(ref_id), last_kf_id, Ts, cov_since)
         finally:
-            self.anchor = saved
+            self._anchor = saved
         if T_pred is None:
             return None
         Tm = to_gtsam(T_meas)
