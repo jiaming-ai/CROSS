@@ -277,6 +277,9 @@ class System:
             self._geo = GeoManager(self.config.geo, lc_confidence=self.config.mapping.loop_closure.confidence,
                                    odom_k_t=self.config.mapping.loop_closure.noise.odom_k_t)
             self._geo.set_vertical(self._projection_prior.numpy())
+            if self.config.geo.component_anchors:
+                self._geo.components_fn = self._kf_components
+                self._kf_comp_cache = None
 
         # Topological map (odometry + proximity) used for lightweight planning
         topo_cfg = SimpleTopoConfig(
@@ -2369,6 +2372,32 @@ class System:
             geo.pending = []
             geo.last_opt_kf = n_kf
 
+    def _kf_components(self) -> dict:
+        """Keyframe id -> its connected component of the pose graph (odometry and hypothesis-0 visual edges), labelled by
+        the component's smallest keyframe id (geo.component_anchors).  Cached until the graph changes."""
+        hm = self.hypothesis_manager
+        h0 = hm.hypotheses.get(0)
+        ve = h0.visual_edges if h0 is not None else {}
+        key = (len(hm.nodes), len(hm.odom_edges), len(ve), max(hm.nodes) if hm.nodes else -1, getattr(hm, "pose_epoch", 0))
+        if self._kf_comp_cache is not None and self._kf_comp_cache[0] == key:
+            return self._kf_comp_cache[1]
+        par = {int(k): int(k) for k in hm.nodes}
+
+        def find(x):
+            while par[x] != x:
+                par[x] = par[par[x]]
+                x = par[x]
+            return x
+        for a, b in list(hm.odom_edges.keys()) + list(ve.keys()):
+            a, b = int(a), int(b)
+            if a in par and b in par:
+                ra, rb = find(a), find(b)
+                if ra != rb:
+                    par[max(ra, rb)] = min(ra, rb)        # the root is the component's smallest id
+        comp = {k: find(k) for k in par}
+        self._kf_comp_cache = (key, comp)
+        return comp
+
     def _geo_focus(self, rgb_image, ranked, n_map):
         """geo.retrieval_focus: with a trusted fix in a geo-anchored map, the stored keyframes near the fix (horizontal
         distance, GeoManager.focus_region) take the map budget except geo.focus_global_slots, which keep the best of the
@@ -2377,23 +2406,32 @@ class System:
         gc = self.config.geo
         if geo is None or not getattr(gc, "retrieval_focus", False) or self._session_start_kf_id <= 0:
             return ranked
-        reg = geo.focus_region()
-        if reg is None:
+        regs = geo.focus_regions()
+        if not regs:
             return ranked
-        center, r_h, up = reg
-        r3 = math.sqrt(r_h ** 2 + max(r_h, 10.0) ** 2)          # the fix's height is poor: search a tall cylinder
-        rows = self.db.rows_near(center[None], np.array([r3]), epoch=self.hypothesis_manager.pose_epoch)
+        r_h = regs[0][1]
+        # the fix's height is poor: search tall cylinders (one region per placed anchor with component_anchors)
+        r3 = np.array([math.sqrt(r ** 2 + max(r, 10.0) ** 2) for _, r, _, _ in regs])
+        rows = self.db.rows_near(np.array([c for c, _, _, _ in regs]), r3, epoch=self.hypothesis_manager.pose_epoch)
         if not len(rows):
             self.last_step_diagnostics["geo_focus"] = {"radius": round(float(r_h), 1), "candidates": 0}
             return ranked
         near = self.db.query(rgb_image, rows=rows, max_kf_id=self._session_start_kf_id, top_k=len(rows),
                              score_threshold=self.config.retrieval.map_score_threshold)
+        comp = self._kf_components() if self.config.geo.component_anchors else None
+        main = comp.get(min(comp)) if comp else None
         take = []
         for sc, kf in zip(near["scores"], near["keyframes"]):
-            d = kf.pose_mu[0].tensor().detach().cpu().double().numpy()[:3] - center
-            if float(np.linalg.norm(d - (d @ up) * up)) <= r_h:
-                take.append((sc, kf))
-        self.last_step_diagnostics["geo_focus"] = {"radius": round(float(r_h), 1), "candidates": len(take)}
+            q = kf.pose_mu[0].tensor().detach().cpu().double().numpy()[:3]
+            for center, r, up, root in regs:
+                if comp is not None and comp.get(kf.id, main) != (main if root is None else root):
+                    continue                   # a region is in the frame of its own group
+                d = q - center
+                if float(np.linalg.norm(d - (d @ up) * up)) <= r:
+                    take.append((sc, kf))
+                    break
+        self.last_step_diagnostics["geo_focus"] = {"radius": round(float(r_h), 1), "candidates": len(take),
+                                                   "regions": len(regs)}
         if not take:
             return ranked
         geo.stats["focus"] += 1
@@ -2409,7 +2447,7 @@ class System:
         the keyframes just behind the robot (local tracking) are never tested: the chain's own drift is the GNSS
         factors' business, not the references'."""
         geo = self._geo
-        if not geo.anchored or (geo.current is None and geo.compass_last is None):
+        if (not geo.anchored and not geo.comp_anchors) or (geo.current is None and geo.compass_last is None):
             return None
         keep = np.ones(len(valid_keyframes), dtype=bool)
         for i, kf in enumerate(valid_keyframes):
@@ -2419,10 +2457,10 @@ class System:
             elif loop_flags is None or i >= len(loop_flags) or not loop_flags[i]:
                 continue                       # mapping: only loop-closure candidates
             T = (kf.pose_mu[0] @ valid_poses[i]).matrix().detach().cpu().numpy().astype(np.float64)
-            ok = geo.proposal_consistent(T[:3, 3])
+            ok = geo.proposal_consistent(T[:3, 3], kf.id)
             if ok is False:
                 keep[i] = False
-            elif self.config.geo.compass_gate and geo.heading_consistent(T[:3, :3]) is False:
+            elif self.config.geo.compass_gate and geo.heading_consistent(T[:3, :3], kf.id) is False:
                 keep[i] = False
         if not keep.all():
             logger.debug(f"geo: {int((~keep).sum())} of {len(keep)} references inconsistent with the GNSS fix")

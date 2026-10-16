@@ -438,7 +438,8 @@ def test_batched_fix_positions_equal_the_per_fix_positions_exactly():
         assert (one is None and b is None) or np.array_equal(one, b)
 
 
-def _session_into(geo, nodes, n, yaw_true, t_true, frame, rng, start, heading_offset=None, compass_noise=0.0):
+def _session_into(geo, nodes, n, yaw_true, t_true, frame, rng, start, heading_offset=None, compass_noise=0.0,
+                  map_offset=None):
     """Feed one walk of `n` keyframes (1 m apart, a gentle curve in a 30 m wide area, map frame = camera convention)
     to `geo` with GNSS fixes (5 m noise, correlated over 30 s) and optionally compass headings; returns the positions."""
     import pypose as pp
@@ -454,9 +455,10 @@ def _session_into(geo, nodes, n, yaw_true, t_true, frame, rng, start, heading_of
     for i in range(n):
         c, s_ = math.cos(yaw), math.sin(yaw)
         T = np.eye(4); T[:3, :3] = [[c, 0, s_], [0, 1, 0], [-s_, 0, c]]; T[:3, 3] = pos
+        Tm = T if map_offset is None else map_offset @ T          # where the map puts it (a parked group)
         if i > 0:
-            geo.on_motion(np.linalg.inv(belief) @ T)
-        belief = T
+            geo.on_motion(np.linalg.inv(belief) @ Tm)
+        belief = Tm
         enu = R_true @ pos + t_true
         err = math.exp(-1 / 30) * err + math.sqrt(1 - math.exp(-2 / 30)) * rng.normal(0, 5.0, 2)
         la = frame.to_lla(np.r_[enu[:2] + err, enu[2]][None])[0]
@@ -465,9 +467,9 @@ def _session_into(geo, nodes, n, yaw_true, t_true, frame, rng, start, heading_of
             f = R_true @ T[:3, 2]                                  # camera forward in ENU
             comp = {"yaw": float(math.atan2(f[1], f[0]) + heading_offset + rng.normal(0, compass_noise)), "sigma_deg": 5.0}
         last = max(nodes) if nodes else None
-        geo.observe(float(i), {"t": float(i), "lat": la[0], "lon": la[1], "alt": la[2], "sigma_h": 5.0}, comp, T, True,
+        geo.observe(float(i), {"t": float(i), "lat": la[0], "lon": la[1], "alt": la[2], "sigma_h": 5.0}, comp, Tm, True,
                     last_kf_id=last, nodes=nodes)
-        q = pp.mat2SE3(torch.tensor(T, dtype=torch.float32))
+        q = pp.mat2SE3(torch.tensor(Tm, dtype=torch.float32))
         kf = Keyframe(pose_mu=pp.SE3(q.tensor()[None]), pose_std=pp.se3(torch.full((1, 6), 0.1)), pose_weights=torch.ones(1))
         nodes[kf.id] = kf
         geo.on_keyframe(kf.id)
@@ -556,3 +558,54 @@ def test_compass_headings_make_the_anchor_heading_observable():
         res[comp] = (g.anchor.yaw_std(), abs(math.degrees(wrap(g.anchor.yaw - yaw_true))), g.stats["anchor_headings"])
     assert res[False][0] > math.radians(3.0) and res[False][2] == 0
     assert res[True][2] == 1 and res[True][0] < math.radians(4.5) and res[True][1] < 2 * math.degrees(res[True][0])
+
+
+def test_component_anchors_place_a_separate_group_by_its_own_fixes():
+    """A group the map keeps apart (its keyframes parked 80 m away and turned 30 deg in the map frame, GNSS from where it
+    really is) gets its own anchor (the map anchor is fitted to the main group only): the group's keyframes get their
+    true latitude / longitude, and a proposal against the group is tested through the group's anchor."""
+    from cross.core.config import GeoConfig
+    from cross.core.types import Keyframe
+    from cross.geo.manager import GeoManager
+    yaw_true, t_true = math.radians(40.0), np.array([20.0, -30.0, 0.0])
+    frame = LocalFrame(1.2944, 103.776, 30.0)
+    c, s_ = math.cos(math.radians(30)), math.sin(math.radians(30))
+    park = np.eye(4); park[:3, :3] = [[c, 0, s_], [0, 1, 0], [-s_, 0, c]]; park[:3, 3] = [80.0, 0.0, 10.0]
+    out = {}
+    for mode in (False, True):
+        Keyframe._next_id = 0
+        g = GeoManager(GeoConfig(pose_graph=False, pool_sessions=True, component_anchors=mode))
+        g.set_vertical(np.array([0, 1.0, 0]))
+        nodes = {}
+        split = [None]                                                # first keyframe id of the parked walk
+
+        def comp_fn(nodes=nodes, split=split):
+            ids = sorted(nodes)
+            return {k: (ids[0] if split[0] is None or k < split[0] else split[0]) for k in ids}
+        g.components_fn = comp_fn                                     # as System._kf_components, live
+        _session_into(g, nodes, 400, yaw_true, t_true, frame, np.random.default_rng(1), (0.0, 0.0, 0.0))
+        n1 = len(nodes)
+        split[0] = Keyframe._next_id
+        g.reset_session()
+        P2 = _session_into(g, nodes, 300, yaw_true, t_true, frame, np.random.default_rng(2), (30.0, 20.0, 1.0),
+                           map_offset=park)
+        ids = sorted(nodes)
+        g.fit_anchor(nodes)
+        lla = g.keyframe_lla(nodes)
+        k2 = ids[n1 + 150]
+        e = g.frame.to_enu(*lla[k2]) if k2 in lla else None
+        a_true = Anchor(AnchorConfig(), vertical_map=np.array([0, -1.0, 0]))
+        truth = rot_z(yaw_true) @ a_true.R_level @ P2[150] + t_true
+        truth = g.frame.to_enu(*frame.to_lla(truth[None])[0])            # in the manager's ENU frame
+        out[mode] = (g.anchor.yaw, None if e is None else float(np.linalg.norm(e[:2] - truth[:2])), g, nodes, k2, P2)
+    yaw_off, err_off = out[False][0], out[False][1]
+    yaw_on, err_on, g, nodes, k2, P2 = out[True]
+    # the map anchor: the Cauchy kernel already ignores the group's fixes; with component_anchors they are not in it
+    assert abs(math.degrees(wrap(yaw_on - yaw_true))) < 3.0 and abs(math.degrees(wrap(yaw_off - yaw_true))) < 3.0
+    assert err_off > 40.0 and err_on is not None and err_on < 10.0         # the group's keyframes where they really are
+    assert len(g.comp_anchors) == 1 and g.stats["groups_placed"] == 1
+    # a proposal at the group keyframe's map position is consistent with the current fix (the walk's last fix) only
+    # through the group's anchor
+    T = nodes[max(nodes)].pose_mu[0].matrix().numpy().astype(float)
+    assert g.proposal_consistent(T[:3, 3], max(nodes)) is True
+    assert len(g.focus_regions()) == 2

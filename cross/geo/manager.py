@@ -90,11 +90,41 @@ class GeoManager:
         self.heading_log: List[dict] = []          # compass headings attached to keyframes: {"kf", "Rd", "yaw", "t", "session"}
         self.map_heading_log: List[dict] = []
         self.last_heading_t = -1e18
+        # component_anchors: kf id -> component root (its min kf id), from the system; anchors of placed separate groups
+        self.components_fn = None
+        self.comp_anchors: Dict[int, Anchor] = {}
 
     # ------------------------------------------------------------------ state
     @property
     def anchored(self) -> bool:
         return self.frame is not None and self.anchor.ok
+
+    # ------------------------------------------------------------------ separate groups (component_anchors)
+    def _components(self, nodes: Optional[dict] = None):
+        """(kf id -> component root, root of the main group) or (None, None) without component_anchors."""
+        if not self.cfg.component_anchors or self.components_fn is None:
+            return None, None
+        comp = self.components_fn()
+        if not comp:
+            return None, None
+        return comp, comp.get(min(comp))
+
+    def anchor_of(self, kf_id) -> Optional[Anchor]:
+        """The anchor that places keyframe `kf_id` (the map anchor for the main group or without component_anchors; a
+        placed group's own anchor; None for an unplaced group or before the map is anchored)."""
+        if self.frame is None:
+            return None
+        comp, main = self._components()
+        if comp is None or kf_id is None or comp.get(int(kf_id), main) == main:
+            return self.anchor if self.anchor.ok else None
+        return self.comp_anchors.get(comp[int(kf_id)])
+
+    def _placed_anchors(self) -> list:
+        """[(root or None for the main group, anchor)] of every placed anchor."""
+        out = [(None, self.anchor)] if self.anchored else []
+        if self.cfg.component_anchors and self.frame is not None:
+            out += sorted(self.comp_anchors.items())
+        return out
 
     def set_vertical(self, v_map: np.ndarray, first_R: Optional[np.ndarray] = None):
         if self.anchor_fixed:
@@ -156,12 +186,14 @@ class GeoManager:
         z_ok = math.isfinite(fix.alt)
         lev = self.anchor.R_level @ self.T_odo[:3, 3]
         pred = None
-        if self.anchored and in_map_frame and T_map_cam is not None:
+        # the anchor of the group the session is in (component_anchors; else the map anchor); none for an unplaced group
+        A = self.anchor_of(last_kf_id) if self.cfg.component_anchors else (self.anchor if self.anchored else None)
+        if A is not None and in_map_frame and T_map_cam is not None:
             p = T_map_cam[:3, 3]
             d_since = (self.dist - self.last_used_dist) if self.last_used_dist is not None else 1e3
             sig = self.odom_k_t * max(d_since, 0.0) + max(belief_std_t, 0.0) + self.cfg.pred_floor
-            P = self.anchor.position_cov_enu(p)[:2, :2] + sig ** 2 * np.eye(2)
-            pred = (self.anchor.to_enu(p)[:2], P)
+            P = A.position_cov_enu(p)[:2, :2] + sig ** 2 * np.eye(2)
+            pred = (A.to_enu(p)[:2], P)
         if self.cfg.gate:
             dec = self.gate.process(fix, enu, lev[:2], pred)
         else:
@@ -213,8 +245,9 @@ class GeoManager:
             return
         self.compass_last = h
         self.compass_t = self.now
-        if self.anchored and in_map_frame and outdoor_ok and T_map_cam is not None:
-            cam_yaw = self.anchor.heading_enu(T_map_cam[:3, :3])
+        A = self.anchor_of(last_kf_id) if self.cfg.component_anchors else (self.anchor if self.anchored else None)
+        if A is not None and in_map_frame and outdoor_ok and T_map_cam is not None:
+            cam_yaw = A.heading_enu(T_map_cam[:3, :3])
             self.compass.add_offset_sample(h[0], cam_yaw)
         # compass_anchor: the camera's ENU heading, attached to the latest keyframe with the odometry rotation since it
         if (self.cfg.compass_anchor and in_map_frame and self.compass.offset_external and last_kf_id is not None
@@ -263,7 +296,8 @@ class GeoManager:
 
     def fit_anchor(self, nodes: dict) -> bool:
         """Fit T_ENU<-map to the used fixes of this map, at the current poses of the keyframes they are attached to
-        (pool_sessions: also the stored sessions' fixes; compass_anchor: plus one heading per session)."""
+        (pool_sessions: also the stored sessions' fixes; compass_anchor: plus one heading per session;
+        component_anchors: the map anchor from the main group's fixes, one anchor per separate group from its own)."""
         if self.anchor_fixed:
             return self.anchor.ok
         log = (self.map_fix_log + self.fix_log) if self.cfg.pool_sessions else self.fix_log
@@ -272,6 +306,46 @@ class GeoManager:
             if p is not None:
                 recs.append(r)
                 pm.append(p)
+        comp, main = self._components(nodes)
+        if comp is None:
+            return self._fit_one(self.anchor, recs, pm, nodes, None, main_anchor=True)
+        groups = {}
+        for r, p in zip(recs, pm):
+            k = r["kf"] if r["kf"] in comp else self._reattach(r["kf"], nodes)
+            if k is None or k not in comp:
+                continue
+            groups.setdefault(comp[k], ([], []))
+            groups[comp[k]][0].append(r)
+            groups[comp[k]][1].append(p)
+        mr, mp = groups.pop(main, ([], []))
+        ok = self._fit_one(self.anchor, mr, mp, nodes, lambda k: comp.get(k) == main, main_anchor=True)
+        placed = {}
+        for root, (gr, gp) in groups.items():
+            if len(gr) < self.cfg.component_min_fixes:
+                continue
+            A = Anchor(AnchorConfig(dof=self.cfg.anchor_dof, max_yaw_std_deg=180.0, max_t_std=1e9),
+                       vertical_map=self.anchor.up_map)
+            self._fit_one(A, gr, gp, nodes, lambda k, root=root: comp.get(k) == root, main_anchor=False)
+            if A.cov is None:
+                continue
+            # placed when every keyframe of the group is located to component_max_pos_std_m (yaw lever + translation)
+            ids = [k for k, c in comp.items() if c == root and k in nodes]
+            P = np.array([nodes[k].pose_mu[0].tensor()[:3].detach().cpu().double().numpy() for k in ids[::max(1, len(ids) // 200)]])
+            worst = max(math.sqrt(max(np.linalg.eigvalsh(A.position_cov_enu(q)[:2, :2]))) for q in P)
+            if worst <= self.cfg.component_max_pos_std_m:
+                placed[root] = A
+                if root not in self.comp_anchors:
+                    logger.info(f"geo: separate group (keyframes from {root}, {len(ids)} kf) placed in ENU by its own "
+                                f"{len(gr)} fixes (yaw {math.degrees(A.yaw):.1f} deg +- {math.degrees(A.yaw_std()):.1f}, "
+                                f"position std <= {worst:.1f} m)")
+        self.comp_anchors = placed
+        self.stats["groups_placed"] = len(placed)
+        self.stats["groups_with_fixes"] = len(groups)
+        return ok
+
+    def _fit_one(self, A: Anchor, recs: list, pm: list, nodes: dict, kf_filter, main_anchor: bool) -> bool:
+        """Fit anchor `A` to the records `recs` at map positions `pm` (+ compass session headings of the keyframes that
+        pass `kf_filter`)."""
         if len(recs) < 3:
             return False
         pm = np.array(pm)
@@ -283,7 +357,7 @@ class GeoManager:
         pe = pe.copy()
         pe[bad, 2] = 0.0
         sv = np.where(bad, 1e4, sv)
-        was = self.anchor.ok
+        was = A.ok
         # correlated errors: the fit's covariance assumes independent fixes; scale it by the number of fixes per
         # correlation time of the receiver error so that the observability test is not overconfident (per session:
         # the sessions' receiver errors are independent of each other)
@@ -292,41 +366,44 @@ class GeoManager:
             by_s.setdefault(r.get("session", 0), []).append(r["t"])
         n_eff = sum(max(1.0, (max(t) - min(t)) / max(self.err.tau, 1e-3)) for t in by_s.values())
         infl = max(1.0, len(recs) / n_eff)
-        heads = self._session_headings(nodes) if self.cfg.compass_anchor else None
+        heads = self._session_headings(nodes, kf_filter, A) if self.cfg.compass_anchor else None
         if heads:
             # the GNSS weights carry the inflation, so the session headings weigh in at their own noise
-            self.anchor.fit(pm, pe, sh * math.sqrt(infl), sv * math.sqrt(infl), heading_map=np.zeros(len(heads)),
-                            heading_enu=np.array([h[0] for h in heads]), heading_sigma=np.array([h[1] for h in heads]))
+            A.fit(pm, pe, sh * math.sqrt(infl), sv * math.sqrt(infl), heading_map=np.zeros(len(heads)),
+                  heading_enu=np.array([h[0] for h in heads]), heading_sigma=np.array([h[1] for h in heads]))
         else:
-            self.anchor.fit(pm, pe, sh, sv)
-            if self.anchor.cov is not None:
-                self.anchor.cov = self.anchor.cov * infl
+            A.fit(pm, pe, sh, sv)
+            if A.cov is not None:
+                A.cov = A.cov * infl
+        if not main_anchor:
+            return A.ok
         self.stats["anchor_fixes"] = len(recs)
         self.stats["anchor_sessions"] = len(by_s)
         self.stats["anchor_headings"] = len(heads or [])
-        ok = self.anchor.ok
+        ok = A.ok
         if ok and not was:
-            logger.info(f"geo: map anchored to ENU (yaw {math.degrees(self.anchor.yaw):.1f} deg +- "
-                        f"{math.degrees(self.anchor.yaw_std()):.1f}, {len(recs)} fixes of {len(by_s)} sessions, "
+            logger.info(f"geo: map anchored to ENU (yaw {math.degrees(A.yaw):.1f} deg +- "
+                        f"{math.degrees(A.yaw_std()):.1f}, {len(recs)} fixes of {len(by_s)} sessions, "
                         f"{len(heads or [])} compass sessions)")
         return ok
 
-    def _session_headings(self, nodes: dict) -> list:
+    def _session_headings(self, nodes: dict, kf_filter=None, A: Optional[Anchor] = None) -> list:
         """[(yaw offset ENU - levelled map, sigma)] per session with compass headings: the robust circular mean over the
         session's headings of (compass camera heading in ENU - the keyframe's heading in the levelled map), with noise
         compass_session_sigma_deg (the session-to-session spread of a phone compass, which dominates the in-session
         noise); a session whose headings scatter more than compass_max_spread_deg adds none."""
         log = (self.map_heading_log + self.heading_log) if self.cfg.pool_sessions else self.heading_log
-        log = [r for r in log if r["kf"] in nodes]
+        log = [r for r in log if r["kf"] in nodes and (kf_filter is None or kf_filter(r["kf"]))]
         if not log:
             return []
+        A = A or self.anchor
         import pypose as pp
         import torch
         rows = torch.stack([nodes[r["kf"]].plain_row("pose_mu", 0) for r in log])
         Rs = pp.SE3(rows).matrix().detach().cpu().numpy().astype(np.float64)[:, :3, :3]
         by_s = {}
         for r, R in zip(log, Rs):
-            d = float(wrap(r["yaw"] - self.anchor.heading_map_level(R @ r["Rd"])))
+            d = float(wrap(r["yaw"] - A.heading_map_level(R @ r["Rd"])))
             by_s.setdefault(r["session"], []).append(d)
         out = []
         s0 = math.radians(self.cfg.compass_session_sigma_deg)
@@ -352,8 +429,10 @@ class GeoManager:
         out = []
         sc = self.noise.scale
         Rme = self.anchor.R.T
+        comp, main = self._components(nodes)
         for kid, f in list(self.factors.items()):
-            if kid not in node_ids:
+            if comp is not None and comp.get(kid, main) != main:
+                continue                       # a separate group's fix: the map anchor does not place it
                 kid2 = self._reattach(kid, nodes)
                 if kid2 is None or kid2 not in node_ids:
                     continue
@@ -454,33 +533,47 @@ class GeoManager:
     def focus_region(self):
         """(center in the map frame (3,), horizontal radius (m), up vector of the map) of the stored keyframes a trusted
         fix allows (cfg.retrieval_focus), or None without a usable fix / anchor."""
-        pri = self.location_priors()
-        if not pri:
-            return None
-        center, sigma, _ = pri[0]
-        r = math.sqrt(self.k2) * sigma + float(self.cfg.focus_margin_m)
-        return center, r, np.asarray(self.anchor.up_map, float)
+        regs = self.focus_regions()
+        return regs[0][:3] if regs else None
+
+    def focus_regions(self) -> list:
+        """[(center (3,), radius, up, group root or None for the main group)]: the focus region of the current fix in
+        the frame of every placed anchor (one without component_anchors)."""
+        out = []
+        for center, sigma, src, root in self._priors():
+            out.append((center, math.sqrt(self.k2) * sigma + float(self.cfg.focus_margin_m),
+                        np.asarray(self.anchor.up_map, float), root))
+        return out
 
     def location_priors(self) -> list:
-        """[(center_map (3,), sigma (m), source)] for retrieval: the current fix through the anchor."""
+        """[(center_map (3,), sigma (m), source)] for retrieval: the current fix through the anchor (component_anchors:
+        through every placed anchor)."""
+        return [p[:3] for p in self._priors()]
+
+    def _priors(self) -> list:
         c, disp = self._current_fix()
-        if not self.anchored or c is None:
+        if not self.anchored and not self.comp_anchors or c is None:
             return []
         enu = np.array([c["enu"][0], c["enu"][1], c["enu"][2] if np.isfinite(c["enu"][2]) else 0.0])
-        p = self.anchor.to_map(enu)
         s = float(c["sh"] * self.noise.scale)
-        sa = float(np.sqrt(np.trace(self.anchor.position_cov_enu(p)[:2, :2]) / 2.0))
-        return [(p, math.sqrt(s ** 2 + sa ** 2 + disp ** 2), "gnss")]
+        out = []
+        for root, A in self._placed_anchors():
+            p = A.to_map(enu)
+            sa = float(np.sqrt(np.trace(A.position_cov_enu(p)[:2, :2]) / 2.0))
+            out.append((p, math.sqrt(s ** 2 + sa ** 2 + disp ** 2), "gnss" if root is None else f"gnss:{root}", root))
+        return out
 
-    def proposal_consistent(self, p_map: np.ndarray) -> Optional[bool]:
+    def proposal_consistent(self, p_map: np.ndarray, kf_id: Optional[int] = None) -> Optional[bool]:
         """Chi-square test (2 dof, horizontal) of a proposed current camera position (map frame) against the current
-        fix; None when there is no usable fix this frame."""
+        fix; None when there is no usable fix this frame (component_anchors: or when the reference keyframe `kf_id` is in
+        an unplaced group; a placed group's reference is tested through its group's anchor)."""
         c, disp = self._current_fix()
-        if not self.anchored or c is None:
+        A = self.anchor_of(kf_id) if self.cfg.component_anchors else (self.anchor if self.anchored else None)
+        if A is None or c is None:
             return None
-        p = self.anchor.to_enu(np.asarray(p_map, float))
+        p = A.to_enu(np.asarray(p_map, float))
         r = c["enu"][:2] - p[:2]
-        S = (c["sh"] * self.noise.scale) ** 2 * np.eye(2) + self.anchor.position_cov_enu(p_map)[:2, :2] \
+        S = (c["sh"] * self.noise.scale) ** 2 * np.eye(2) + A.position_cov_enu(p_map)[:2, :2] \
             + (self.cfg.pred_floor ** 2 + disp ** 2) * np.eye(2)
         self.stats["proposals_tested"] += 1
         ok = float(r @ np.linalg.solve(S, r)) <= self.k2
@@ -488,17 +581,18 @@ class GeoManager:
             self.stats["proposals_rejected"] += 1
         return ok
 
-    def heading_consistent(self, R_map_cam: np.ndarray) -> Optional[bool]:
+    def heading_consistent(self, R_map_cam: np.ndarray, kf_id: Optional[int] = None) -> Optional[bool]:
         """Chi-square test (1 dof) of a proposed camera orientation (map frame) against the compass heading of this
-        frame (undisturbed, offset calibrated); None without a usable compass heading."""
-        if not self.anchored or self.compass_last is None or self.compass.offset is None:
+        frame (undisturbed, offset calibrated); None without a usable compass heading (or in an unplaced group)."""
+        A = self.anchor_of(kf_id) if self.cfg.component_anchors else (self.anchor if self.anchored else None)
+        if A is None or self.compass_last is None or self.compass.offset is None:
             return None
         if self.now is not None and self.now - getattr(self, "compass_t", -1e18) > self.cfg.fix_max_age_s:
             return None
         yaw_c = self.compass.camera_yaw(self.compass_last[0])
-        yaw_p = self.anchor.heading_enu(np.asarray(R_map_cam, float))
+        yaw_p = A.heading_enu(np.asarray(R_map_cam, float))
         spread = getattr(self.compass, "offset_spread", None) or 0.0
-        sig = math.sqrt(max(self.compass_last[1], spread) ** 2 + self.anchor.yaw_std() ** 2)
+        sig = math.sqrt(max(self.compass_last[1], spread) ** 2 + A.yaw_std() ** 2)
         self.stats["heading_tested"] = self.stats.get("heading_tested", 0) + 1
         ok = float(wrap(yaw_p - yaw_c)) ** 2 <= (sig ** 2) * float(chi2.ppf(self.conf, 1))
         if not ok:
@@ -529,6 +623,8 @@ class GeoManager:
                                  "yaw": np.asarray([r["yaw"] for r in hx], np.float64),
                                  "t": np.asarray([r["t"] for r in hx], np.float64),
                                  "session": np.asarray([r["session"] for r in hx], np.int64)}
+        if self.cfg.component_anchors:
+            extra["component_anchors"] = [{"root": int(r), "anchor": A.state()} for r, A in sorted(self.comp_anchors.items())]
         return {"version": 2, **extra, "frame": None if self.frame is None else self.frame.state(),
                 "anchor": self.anchor.state(), "noise": self.noise.state(), "err": self.err.state(),
                 "compass": self.compass.state(),
@@ -571,6 +667,12 @@ class GeoManager:
                                                                hx.get("t", []), hx.get("session", []))]
             ss = [r["session"] for r in self.map_fix_log + self.map_heading_log]
             self.session = max(ss) if ss else 0
+        if self.cfg.component_anchors:
+            self.comp_anchors = {}
+            for c in s.get("component_anchors") or []:
+                A = Anchor(AnchorConfig(dof=self.cfg.anchor_dof, max_yaw_std_deg=180.0, max_t_std=1e9))
+                A.load_state(c["anchor"])
+                self.comp_anchors[int(c["root"])] = A
         self.noise.load_state(s.get("noise", {}))
         if s.get("err"):
             self.err.tau = float(s["err"].get("tau", self.err.tau))
@@ -594,13 +696,25 @@ class GeoManager:
         return {int(k): v for k, v in c.items()}
 
     def keyframe_lla(self, nodes: dict) -> Dict[int, list]:
-        """Latitude / longitude / altitude of every keyframe (camera position), once anchored."""
-        if not self.anchored:
-            return {}
-        ids = sorted(nodes)
-        P = np.array([nodes[i].pose_mu[0].tensor().detach().cpu().numpy().reshape(-1)[:3] for i in ids], float)
-        lla = self.frame.to_lla(self.anchor.to_enu(P))
-        return {int(i): [float(a), float(b), float(c)] for i, (a, b, c) in zip(ids, lla)}
+        """Latitude / longitude / altitude of every keyframe (camera position), once anchored (component_anchors: every
+        keyframe of a placed group through its group's anchor; keyframes of unplaced groups have none)."""
+        comp, main = self._components(nodes)
+        if comp is None:
+            if not self.anchored:
+                return {}
+            ids = sorted(nodes)
+            P = np.array([nodes[i].pose_mu[0].tensor().detach().cpu().numpy().reshape(-1)[:3] for i in ids], float)
+            lla = self.frame.to_lla(self.anchor.to_enu(P))
+            return {int(i): [float(a), float(b), float(c)] for i, (a, b, c) in zip(ids, lla)}
+        out = {}
+        for root, A in self._placed_anchors():
+            ids = sorted(k for k in nodes if comp.get(k, main) == (main if root is None else root))
+            if not ids:
+                continue
+            P = np.array([nodes[i].pose_mu[0].tensor().detach().cpu().numpy().reshape(-1)[:3] for i in ids], float)
+            for i, (a, b, c) in zip(ids, self.frame.to_lla(A.to_enu(P))):
+                out[int(i)] = [float(a), float(b), float(c)]
+        return out
 
     def geojson(self, nodes: dict, name: str = "map") -> dict:
         lla = self.keyframe_lla(nodes)
