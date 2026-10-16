@@ -7,3 +7,7 @@
 geo:
   pose_graph: false
   pool_sessions: true
+  # walking speed with phone GNSS (sigma 10-15 m): over the default 20 s window a walker moves ~28 m, too little for the
+  # stale-receiver test to verify the window, and ~85 % of the fixes stayed in hold-off (iPhone capture 1); over 60 s
+  # (~84 m) it passes.  ARKit-class odometry is drift free over a minute, which the relative test assumes
+  window_s: 60.0
