@@ -761,6 +761,17 @@ class FeedForwardConfig:
     # (PoseEstFeedForward.last_bev; gravity from set_gravity, e.g. the IMU, else the head's estimate); every n-th pass
     nav_bev_head: str = ""
     nav_bev_every: int = 1
+    # its observability head (P(cell observed by the pass's views)) and that head's frozen gravity head, both or neither
+    nav_bev_visibility: str = ""
+    nav_bev_visibility_gravity: str = ""
+    # with a BEV head: up to this many extra keyframes in every pass, for the BEV only (not references of the pose
+    # estimate): nearby keyframes chosen greedily for the ground they add around the robot (System._nav_coverage_keyframes:
+    # keyframes within nav_extra_radius_m, coverage = cells of nav_extra_cell_m within nav_extra_range_m of the robot
+    # inside a keyframe's horizontal field of view and range, the current view and the references counted as covered)
+    nav_extra_views: int = 0
+    nav_extra_radius_m: float = 6.0
+    nav_extra_range_m: float = 5.0
+    nav_extra_cell_m: float = 0.5
     max_rel_distance: float = 40.0       # reject relative poses further than this (m)
     kf_conf_threshold_new_kf: float = 0.35  # covis below this -> current view is novel -> permanent keyframe
     scale_std_inflation: bool = True     # inflate translation std by |t| * relative scale std

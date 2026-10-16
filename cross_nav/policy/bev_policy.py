@@ -628,20 +628,26 @@ def resolve(cfg):
 
 # ------------------------------------------------------------------------------------------------ policy (GPU)
 class BEVPlannerPolicy:
-    def __init__(self, cfg: dict, backbone=None):
+    def __init__(self, cfg: dict, backbone=None, predictor=None):
+        """predictor: a loaded cross_nav.infer.BEVPredictor whose maps the caller computes elsewhere (CROSS's own
+        feed-forward pass, pose_est.ff.nav_bev_head): no backbone is loaded and only plan_maps() is used."""
         from cross_nav.infer import BEVPredictor
         self.cfg = cfg = resolve(cfg)
         self.dev = torch.device('cuda')
-        if backbone is not None:          # the server's FrozenMetricTokens: same VGGTOmegaFT + scale head weights
-            self.model = backbone.model
+        self.model = None
+        if predictor is not None:
+            self.pred = predictor
         else:
-            from .backbone import FrozenMetricTokens
-            self.model = FrozenMetricTokens(cfg['backbone']).model.to(self.dev)
-        self.model.eval()
-        if (cfg['visibility'] is None) != (cfg['visibility_gravity'] is None) or cfg['visibility'] is None:
-            raise ValueError('the selected candidate needs occupancy, visibility and visibility_gravity checkpoints')
-        self.pred = BEVPredictor(cfg['occupancy'], 'cuda', visibility_path=cfg['visibility'],
-                                 visibility_gravity_path=cfg['visibility_gravity'])
+            if backbone is not None:          # the server's FrozenMetricTokens: same VGGTOmegaFT + scale head weights
+                self.model = backbone.model
+            else:
+                from .backbone import FrozenMetricTokens
+                self.model = FrozenMetricTokens(cfg['backbone']).model.to(self.dev)
+            self.model.eval()
+            if (cfg['visibility'] is None) != (cfg['visibility_gravity'] is None) or cfg['visibility'] is None:
+                raise ValueError('the selected candidate needs occupancy, visibility and visibility_gravity checkpoints')
+            self.pred = BEVPredictor(cfg['occupancy'], 'cuda', visibility_path=cfg['visibility'],
+                                     visibility_gravity_path=cfg['visibility_gravity'])
         self.size, self.res = self.pred.size, self.pred.res
         self.history_m = tuple(float(h) for h in cfg['history_m'])
         if cfg['gravity'] not in ('imu', 'head') or cfg['scale'] not in ('odometry', 'mono'):
@@ -774,6 +780,18 @@ class BEVPlannerPolicy:
                           **{n: m[n].cpu().numpy() for n in ('log_scale', 'odometry', 'up_head_deg', 'n_views')}})
         cat = {n: np.concatenate([p[n] for p in parts]) for n in parts[0]}
         t1 = time.perf_counter()
+        paths, debug = self.plan_maps(cat, goal_np, states, episodes, want_debug)
+        self.timing = {'maps_s': t1 - t0, 'plan_s': time.perf_counter() - t1}
+        return paths, debug
+
+    def plan_maps(self, cat, goal_np, states, episodes, want_debug):
+        """Paths from per-window maps: cat = numpy arrays with a leading batch axis, 'prob' / 'obs' / 'err' (B, N, N)
+        and 'log_scale', 'odometry', 'up_head_deg', 'n_views' (B,); optional 'fresh' (B,) bool, False = no new map
+        for that window (planned on the episode map / last route only: prob and obs are not fused). states: per sample
+        Episode or None; episodes: the caller's dicts (see __call__)."""
+        cfg = self.cfg
+        B = len(goal_np)
+        fresh = cat.get('fresh', np.ones(B, dtype=bool))
         paths = np.zeros((B, cfg['horizon'], 2), np.float32)
         debug = [None] * B
         k = cfg['debug_cells']
@@ -791,7 +809,7 @@ class BEVPlannerPolicy:
                 if cat['odometry'][j]:
                     st.log_scale = float(cat['log_scale'][j])
             prob = np.clip(cat['prob'][j], 0, 1)    # the planner validates probability maps strictly
-            if st is not None and cfg['map'] and st.pose is not None:
+            if st is not None and cfg['map'] and st.pose is not None and fresh[j]:
                 if st.world is None:
                     st.world = WorldMap(st.pose, cfg['map'])
                 st.world.fuse(prob, np.clip(cat['obs'][j], 0, 1), st.pose, self.res)
@@ -812,6 +830,5 @@ class BEVPlannerPolicy:
                             'blind_zone': np.bool_(rec['blind_zone']),
                             'bumps': np.int16(st.n_bumps if st is not None else 0)}
                 debug[j] = {n: np.asarray(v) for n, v in debug[j].items()}   # 0-d arrays survive the wire format
-        self.timing = {'maps_s': t1 - t0, 'plan_s': time.perf_counter() - t1}
         return paths, debug
 

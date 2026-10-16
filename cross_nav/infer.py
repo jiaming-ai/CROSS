@@ -9,7 +9,8 @@
 tokens: {layer: (1, S, T, 2048)} of the cached aggregator layers (4, 11, 17, 23); dino (S, P, 1024) or (1, S, P, 1024);
 depth / conf (k, H, W) of the first k views (k <= S: the others give context but are not lifted); pose_enc (1, S, 9);
 log_scale: metric = exp(log_scale) x model-gauge depth (CROSS: log of the pass's solved metric scale); up_cam: unit up
-vector in frame 0's (model) camera, e.g. from an IMU; None = the gravity head's estimate.
+vector in frame 0's (model) camera, e.g. from an IMU; None = the gravity head's estimate; views: optional (S,) bool, the
+views the heads use (default all with depth).
 """
 from __future__ import annotations
 
@@ -62,7 +63,7 @@ class BEVPredictor:
 
     @torch.inference_mode()
     def __call__(self, tokens: dict, pts: int, patch_hw, dino, depth, conf, pose_enc, hw, log_scale: float,
-                 up_cam=None) -> dict:
+                 up_cam=None, views=None) -> dict:
         from vggt_omega.utils.pose_enc import encoding_to_camera
         S = pose_enc.shape[1]
         tl = [None] * 24
@@ -79,6 +80,12 @@ class BEVPredictor:
             c[0, :k] = conf.float()
         lift = torch.zeros(1, S, dtype=torch.bool, device=self.device)
         lift[0, :k] = True
+        valid = None
+        if views is not None:
+            # views (S,) bool: the views the heads use (others, e.g. exact duplicates, are masked as in
+            # cross_nav.policy.bev_policy); they must have depth
+            valid = torch.as_tensor(views, dtype=torch.bool, device=self.device).reshape(1, S) & lift
+            lift = valid
         ext, intr = encoding_to_camera(pose_enc.float(), (H, W))
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             up = self.grav(tl, pts).float()
@@ -88,13 +95,13 @@ class BEVPredictor:
                                                dim=-1)
         ls = torch.tensor([float(log_scale)], device=self.device)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            pred = self.bev(tl, pts, patch_hw, dino, d, c, ext, intr, ls, up, None, lift, return_aux=True)
+            pred = self.bev(tl, pts, patch_hw, dino, d, c, ext, intr, ls, up, valid, lift, return_aux=True)
             logits = pred["logits"].float()
             observed = None
             if self.visibility is not None:
                 visibility_up = self.visibility_grav(tl, pts).float() if up_cam is None else up
                 visibility_logits = self.visibility(tl, pts, patch_hw, dino, d, c, ext, intr,
-                                                    ls, visibility_up, None, lift)
+                                                    ls, visibility_up, valid, lift)
                 observed = visibility_logits[0].float().sigmoid()
         return {"prob": torch.sigmoid(logits[0]),
                 "observability": observed,

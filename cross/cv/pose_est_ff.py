@@ -166,14 +166,16 @@ class _VGGTOmegaBackend(_Backend):
             for block in self._compiled:
                 block.compile(dynamic=True)
 
-    def enable_nav(self, heads_path: str):
-        """Load a cross_nav BEV head: every pass then also returns the cached aggregator layers and the DINO tokens
-        (kept in `last_nav`), from which the estimator predicts the BEV once the pass's metric scale is solved."""
+    def enable_nav(self, heads_path: str, visibility_path: str = "", visibility_gravity_path: str = ""):
+        """Load a cross_nav BEV head (and optionally its observability head): every pass then also returns the cached
+        aggregator layers and the DINO tokens (kept in `last_nav`), from which the estimator predicts the BEV once the
+        pass's metric scale is solved."""
         try:
             from cross_nav.infer import BEVPredictor
         except ImportError as e:
             raise ImportError(f"pose_est.ff.nav_bev_head needs the navigation package: bash install.sh --nav ({e})") from e
-        self.nav = BEVPredictor(heads_path, self.device)
+        self.nav = BEVPredictor(heads_path, self.device, visibility_path=visibility_path or None,
+                                visibility_gravity_path=visibility_gravity_path or None)
         self._graphs.clear()                     # captured graphs do not return the extra outputs
         logger.info(f"cross_nav BEV head {heads_path}: {self.nav.size} x {self.nav.size} cells of {self.nav.res} m")
 
@@ -674,8 +676,13 @@ class PoseEstFeedForward:
         self.last_bev: Optional[dict] = None
         self._gravity_cam: Optional[np.ndarray] = None
         self._n_passes = 0
+        # nav_shadow: extra-view counts of diagnostic BEV passes made after the pass (experiments: one BEV per count,
+        # last_bev_shadow, from the same views plus that many of the extra keyframes); empty = none
+        self.nav_shadow: List[int] = []
+        self.last_bev_shadow: dict = {}
         if getattr(config, "nav_bev_head", "") and isinstance(self.backend, _VGGTOmegaBackend):
-            self.backend.enable_nav(config.nav_bev_head)
+            self.backend.enable_nav(config.nav_bev_head, getattr(config, "nav_bev_visibility", ""),
+                                    getattr(config, "nav_bev_visibility_gravity", ""))
         self._auto_covis = auto_covis_source(self.backend)
         if getattr(config, "covis_source", "auto") == "auto":
             logger.info(f"covisibility source: {self._auto_covis} (auto)")
@@ -698,27 +705,110 @@ class PoseEstFeedForward:
         attitude; None = the BEV head's own gravity estimate."""
         self._gravity_cam = None if up_cam is None else np.asarray(up_cam, dtype=np.float64)
 
-    def _predict_bev(self, metric: float):
-        """BEV of the current view from the last pass's tensors and its solved metric scale (cross_nav)."""
+    def nav_extra_count(self) -> int:
+        """Extra keyframes the System should offer the next pass (estimate_pose nav_images): the configured count and
+        the largest diagnostic count; 0 without a BEV head."""
+        if getattr(self.backend, "nav", None) is None:
+            return 0
+        return max([int(getattr(self.config, "nav_extra_views", 0))] + [int(k) for k in self.nav_shadow])
+
+    def _predict_bev(self, metric: float, views=None):
+        """BEV of the current view from the last pass's tensors and its solved metric scale (cross_nav). views: (S,)
+        bool, the views the heads use (None: all with depth)."""
         nav = getattr(self.backend, "last_nav", None)
         if nav is None:
             return None
+        t0 = time.perf_counter()
         up = None
         R = np.eye(3) if self._R_model_to_cam is None else self._R_model_to_cam[:3, :3]   # cam -> model directions
         if self._gravity_cam is not None:
             up = R @ self._gravity_cam                        # into the model's (principal-point-centred) camera
         out = self.backend.nav(nav["tokens"], nav["pts"], nav["patch_hw"], nav["dino"], nav["depth"], nav["conf"],
-                               nav["pose_enc"], nav["hw"], self.backend.nav.log_metric_scale(metric), up)
+                               nav["pose_enc"], nav["hw"], self.backend.nav.log_metric_scale(metric), up, views=views)
         from cross_nav.bev import bev_axes_np
         up_model = out["up_cam"].float().cpu().numpy().astype(np.float64)
         out["prob"] = out["prob"].half().cpu().numpy()
+        for k in ("observability", "uncertainty"):
+            if out.get(k) is not None:
+                out[k] = out[k].half().cpu().numpy()
+        out["n_views"] = int(np.sum(views)) if views is not None else int(nav["depth"].shape[0])
         out["up_cam"] = R.T @ up_model                       # gravity in the camera
         out["R_bev_from_cam"] = bev_axes_np(up_model) @ R    # BEV axes (right, forward, up) from camera coordinates
         out["gravity_source"] = "given" if self._gravity_cam is not None else "head"
         uh = out.pop("up_head").float().cpu().numpy().astype(np.float64)
         out["gravity_head_deg"] = float(np.degrees(np.arccos(np.clip(uh @ up_model, -1.0, 1.0))))
-        self._gravity_cam = None
+        out["t_bev"] = time.perf_counter() - t0
         return out
+
+    def _solve_scale(self, pred, c2w_model, anchors, depth_meas, cfg) -> ScaleEstimate:
+        """Metric scale of a pass's model gauge: the scale anchors (map anchors filtered by pair covisibility), the
+        measured depth when valid, or the scale head (config.scale_source)."""
+        if getattr(cfg, "map_anchor_min_pair_covis", 0.0) > 0:
+            anchors = filter_map_anchors(pred, anchors, cfg.map_anchor_min_pair_covis, cfg.map_anchor_max_pairs,
+                                         source=self._covis_source(cfg), grid=cfg.covis_grid,
+                                         rel_depth_tol=cfg.covis_depth_tol)
+        scale_est = estimate_scale(
+            c2w_model, anchors, method=cfg.scale_method,
+            max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
+            weight_by_baseline=True,          # anchors weighted by their predicted baseline (precision of the ratio)
+        )
+        if depth_meas is not None:
+            # the measured depth's scale replaces the anchors' when it is valid
+            depth_est = depth_scale(
+                [pred.depth[i] if i < pred.depth.shape[0] else None for i in range(len(depth_meas))], depth_meas,
+                None if pred.depth_conf is None else [pred.depth_conf[i] if i < pred.depth_conf.shape[0] else None
+                                                      for i in range(len(depth_meas))],
+                min_depth=cfg.depth_scale_min_depth, max_depth=cfg.depth_scale_max_depth,
+                conf_quantile=cfg.depth_scale_conf_quantile, min_pixels=cfg.depth_scale_min_pixels,
+                std_floor=cfg.depth_scale_std_floor)
+            if depth_est.valid:
+                scale_est = depth_est
+        src = getattr(cfg, "scale_source", "anchors")
+        if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
+            # the scale head's metric scale of the model gauge (translations scale with it, frame 0 at the origin)
+            scale_est = ScaleEstimate(scale=float(np.exp(pred.log_scale)), valid=True, n_anchors=scale_est.n_anchors,
+                                      n_used=0, method="head")
+        return scale_est
+
+    def _nav_bev(self, pred, images, metric: Optional[float]):
+        """BEV of a pass (last_nav) at its solved metric scale, or at the scale head's when the pass has no valid
+        anchor; exact duplicate views (e.g. the previous observation stored as a reference) are masked."""
+        source = "anchors"
+        if metric is None:
+            if pred.log_scale is None:
+                return None
+            metric = float(np.exp(pred.log_scale)) / float(getattr(self, "metric_scale_correction", 1.0) or 1.0)
+            source = "head"
+        keys = self.backend.fingerprints(images)
+        views = np.array([k not in keys[:i] for i, k in enumerate(keys)], dtype=bool)
+        out = self._predict_bev(metric, views)
+        if out is not None:
+            out["scale_source"] = source
+        return out
+
+    def _nav_bevs(self, pred, images, metric, base_views, nav_images, n_extra, anchors, depth_meas, cfg, focal, mixed):
+        """last_bev from the pass (every nav_bev_every-th pass) and, for experiments, last_bev_shadow: one BEV per
+        count in nav_shadow from a separate pass with the same views and that many extra keyframes."""
+        self.last_bev = None
+        self.last_bev_shadow = {}
+        self._n_passes += 1
+        if (self._n_passes - 1) % max(1, int(getattr(cfg, "nav_bev_every", 1))) == 0:
+            self.last_bev = self._nav_bev(pred, images, metric)
+            if self.last_bev is not None:
+                self.last_bev["n_extra"] = n_extra
+            done = {n_extra: self.last_bev}     # by the number of extra keyframes actually in the pass
+            for want in sorted(set(int(k) for k in self.nav_shadow)):
+                k = min(want, len(nav_images))   # fewer candidates than asked: the pass with all of them
+                if k not in done and not mixed:  # (several cameras: diagnostic passes not supported)
+                    imgs_k = self._as_model_input(list(base_views) + list(nav_images[:k]))
+                    pred_k = self.backend.infer(imgs_k, n_depth=None, focal=focal)
+                    est = self._solve_scale(pred_k, pred_k.c2w, anchors, depth_meas, cfg)
+                    m_k = est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0) if est.valid else None
+                    done[k] = self._nav_bev(pred_k, imgs_k, m_k)
+                    if done[k] is not None:
+                        done[k]["n_extra"] = k
+                self.last_bev_shadow[want] = done.get(k)
+        self._gravity_cam = None
 
     def set_stereo_calibration(self, T_right_in_left: np.ndarray):
         self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
@@ -814,6 +904,7 @@ class PoseEstFeedForward:
         odom_anchor: Optional[dict] = None,
         ref_rel_poses: Optional[List[Tuple[int, int, np.ndarray]]] = None,
         ref_cam_ids: Optional[List[int]] = None,
+        nav_images: Optional[List[torch.Tensor]] = None,
         **kwargs,
     ):
         """Estimate T_ref_cam for every reference image in one forward pass.
@@ -831,6 +922,9 @@ class PoseEstFeedForward:
             odom_anchor: {"image": (3,H,W) previous left image, "T_prev_curr": (4,4) metric}
                 optional temporal anchor from odometry
             ref_cam_ids: camera id of every reference (set_cameras); None: all the session's camera
+            nav_images: with a BEV head, extra (3, H, W) left images (nearby keyframes, best first): the first
+                config.nav_extra_views join the pass for the BEV only (no pose is estimated for them); diagnostic
+                passes (nav_shadow) take other prefixes.  B may be 0 with a BEV head: a pass for the BEV alone
         Returns:
             poses: pp.SE3 (B_valid, 7) T_ref_cam (metric), valid_masks (B,) np.bool, confidences (B_valid,)
         """
@@ -891,6 +985,14 @@ class PoseEstFeedForward:
                     anchors.append(ScaleAnchor(idx_a=1 + i, idx_b=1 + j, T_ab=np.asarray(T_ij, dtype=np.float64),
                                                kind="map", weight=cfg.map_anchor_weight))
 
+        # extra keyframes for the BEV head only (after every other view: indices above are unchanged)
+        n_base = len(views)
+        nav_on = getattr(self.backend, "nav", None) is not None
+        nav_images = list(nav_images or []) if nav_on else []
+        n_extra = min(int(getattr(cfg, "nav_extra_views", 0)), len(nav_images))
+        for img in nav_images[:n_extra]:
+            views.append(img)
+            view_tags.append("nav_L")
         images = self._as_model_input(views)
 
         t_model = time.perf_counter()
@@ -906,8 +1008,8 @@ class PoseEstFeedForward:
         depth_meas = self._depth_scale_inputs(cfg, curr_depth, ref_depth, B)
         if depth_meas is not None and n_depth is not None:
             n_depth = max(n_depth, max(i for i, d in enumerate(depth_meas) if d is not None) + 1)
-        if getattr(self.backend, "nav", None) is not None and n_depth is not None:
-            n_depth = max(n_depth, 1 + B)                       # the BEV head lifts the current view and references
+        if nav_on:
+            n_depth = None                                      # the BEV head lifts every view of the pass
         focal = getattr(self, "_focal_norm", None) if getattr(cfg, "scale_focal", "calibrated") == "calibrated" else None
         pred = self.backend.infer(images, n_depth=n_depth, focal=focal)
         torch.cuda.synchronize()
@@ -940,46 +1042,25 @@ class PoseEstFeedForward:
             c2w_model = pred.c2w @ np.stack(Ms)
 
         # ---- metric scale ----
-        if getattr(cfg, "map_anchor_min_pair_covis", 0.0) > 0:
-            anchors = filter_map_anchors(pred, anchors, cfg.map_anchor_min_pair_covis, cfg.map_anchor_max_pairs,
-                                         source=self._covis_source(cfg), grid=cfg.covis_grid,
-                                         rel_depth_tol=cfg.covis_depth_tol)
-        scale_est = estimate_scale(
-            c2w_model, anchors, method=cfg.scale_method,
-            max_rot_err_deg=cfg.anchor_max_rot_err_deg, min_dir_cos=cfg.anchor_min_dir_cos,
-            weight_by_baseline=True,          # anchors weighted by their predicted baseline (precision of the ratio)
-        )
-        if depth_meas is not None:
-            # the measured depth's scale replaces the anchors' when it is valid
-            depth_est = depth_scale(
-                [pred.depth[i] if i < pred.depth.shape[0] else None for i in range(len(depth_meas))], depth_meas,
-                None if pred.depth_conf is None else [pred.depth_conf[i] if i < pred.depth_conf.shape[0] else None
-                                                      for i in range(len(depth_meas))],
-                min_depth=cfg.depth_scale_min_depth, max_depth=cfg.depth_scale_max_depth,
-                conf_quantile=cfg.depth_scale_conf_quantile, min_pixels=cfg.depth_scale_min_pixels,
-                std_floor=cfg.depth_scale_std_floor)
-            if depth_est.valid:
-                scale_est = depth_est
-        src = getattr(cfg, "scale_source", "anchors")
-        if src != "anchors" and pred.log_scale is not None and (src == "head" or not scale_est.valid):
-            # the scale head's metric scale of the model gauge (translations scale with it, frame 0 at the origin)
-            scale_est = ScaleEstimate(scale=float(np.exp(pred.log_scale)), valid=True, n_anchors=scale_est.n_anchors,
-                                      n_used=0, method="head")
+        scale_est = self._solve_scale(pred, c2w_model, anchors, depth_meas, cfg)
         self.last_scale = scale_est
+        metric = None
+        if scale_est.valid:
+            # calibrated metric-scale correction (the estimator's translations divided by their measured/true ratio)
+            metric = scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0)
+        if nav_on:
+            self._nav_bevs(pred, images, metric, views[:n_base], nav_images, n_extra, anchors, depth_meas, cfg, focal,
+                           mixed)
+        if B == 0:                       # a pass for the BEV alone
+            self.last_info = {"valid": False, "nav_only": True, "scale": scale_est.to_dict(), "t_model": t_model,
+                              "n_views": len(views), "view_tags": view_tags}
+            return torch.empty((0, 7)), np.zeros(0, dtype=bool), torch.empty(0)
         if not scale_est.valid:
             logger.debug(f"FF pose est: no valid scale anchor ({scale_est.n_anchors} anchors)")
             self.last_info = {"valid": False, "scale": scale_est.to_dict(), "t_model": t_model,
                               "n_views": len(views), "view_tags": view_tags}
             return torch.empty((0, 7)), np.zeros(B, dtype=bool), torch.empty(0)
-
-        # calibrated metric-scale correction (the estimator's translations divided by their measured/true ratio)
-        metric = scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0)
         c2w_metric = scale_camera_centers(c2w_model, metric, origin_index=0)
-        self.last_bev = None
-        if getattr(self.backend, "nav", None) is not None:
-            self._n_passes += 1
-            if (self._n_passes - 1) % max(1, int(getattr(cfg, "nav_bev_every", 1))) == 0:
-                self.last_bev = self._predict_bev(metric)
         if self._R_model_to_cam is not None and not mixed:
             c2w_metric = c2w_metric @ self._R_model_to_cam
 
