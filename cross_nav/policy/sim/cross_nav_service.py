@@ -162,8 +162,12 @@ def main():
                     o = b['observability'] if b.get('observability') is not None else np.ones((N, N), np.float16)
                     path, rec = plan_window(np.clip(b['prob'].astype(np.float32), 0, 1), np.clip(o.astype(np.float32), 0, 1),
                                             goal, policy.res, policy.cfg, None)
-                    # obs_area: m^2 within 5 m predicted observed (P > 0.5)
+                    # obs_area: m^2 within 5 m predicted observed (P > 0.5); occ / obs: the maps mean-pooled to
+                    # debug_cells (0.2 m cells, robot frame as BEVPlannerPolicy's debug maps) for the navmesh check
+                    q = N // policy.cfg['debug_cells']
+                    pool = lambda x: x.astype(np.float32).reshape(N // q, q, N // q, q).mean((1, 3)).astype(np.float16)
                     local[str(k)] = {'path': path, 'status': int(rec['status']), 'n_views': int(b['n_views']),
+                                     'occ': pool(b['prob']), 'obs': pool(o),
                                      'n_extra': int(b.get('n_extra', 0)), 'scale': b.get('scale_source'),
                                      'obs_area': float((o.astype(np.float32)[near] > .5).sum() * policy.res ** 2)}
                 reply['local'] = local

@@ -75,6 +75,25 @@ def score_local(pf, pos, yaw, goal, path, status, d0, sub_m=.25):
     return 'progress' if travel >= 1. and d0 - d1 >= .5 else 'no_progress'
 
 
+def nav_grid(pf, pos, yaw, n, cell=.2, radius=5.):
+    """Navmesh ground truth on the cells of an n x n robot-frame map (cell metres; row 0 = far forward, column 0 =
+    far left, as BEVPlannerPolicy's debug maps) within radius of the robot: (mask of those cells, navigable flags =
+    the robot's centre may stand there with its true radius; cells within the radius of an obstacle are not)."""
+    c = (n / 2 - np.arange(n) - .5) * cell
+    fw, lf = np.meshgrid(c, c, indexing='ij')
+    near = np.hypot(fw, lf) <= radius
+    w = to_world(np.stack([fw[near], lf[near]], -1), pos[[0, 2]], yaw)
+    return near, np.array([pf.is_navigable(np.array([x, pos[1], z], np.float32)) for x, z in w])
+
+
+def map_check(grid, occ, obs):
+    """(predicted free, of them navigable, navigable) cell counts of a window's maps on nav_grid's cells; predicted
+    free = P(observed) > 0.5 and P(occupied) < 0.5."""
+    near, nav = grid
+    free = (np.asarray(obs, np.float32)[near] > .5) & (np.asarray(occ, np.float32)[near] < .5)
+    return int(free.sum()), int((free & nav).sum()), int(nav.sum())
+
+
 def run_episode(sim, conn, ep, a, rng, viz=None):
     pf = sim.pathfinder
     pos = np.asarray(ep['start'], np.float64)
@@ -119,11 +138,17 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
             cross['steps'] += 1; cross['seconds'] += c['seconds']; cross['fresh'] += bool(c['fresh'])
             cross['n_views'] += c['n_views']; cross['n_extra'] += c['n_extra']; cross['head_scale'] += c['scale'] == 'head'
         if reply.get('local'):                       # diagnostic single-window plans, scored on the navmesh
+            grid = None
             for k, v in reply['local'].items():
                 kind = score_local(pf, pos, yaw, goal, v['path'], v['status'], d_geo)
                 r = local.setdefault(k, {'n': 0, 'ok': 0, 'kinds': {}, 'obs_area': 0., 'n_views': 0, 'n_extra': 0})
                 r['n'] += 1; r['ok'] += kind in ('goal', 'progress'); r['kinds'][kind] = r['kinds'].get(kind, 0) + 1
                 r['obs_area'] += v['obs_area']; r['n_views'] += v['n_views']; r['n_extra'] += v.get('n_extra', 0)
+                if v.get('occ') is not None:
+                    grid = grid or nav_grid(pf, pos, yaw, v['occ'].shape[0])
+                    pf_, pfn, nv = map_check(grid, v['occ'], v['obs'])
+                    r['free'] = r.get('free', 0) + pf_; r['free_nav'] = r.get('free_nav', 0) + pfn
+                    r['nav'] = r.get('nav', 0) + nv
         if use_expert:
             if label is None:
                 break
