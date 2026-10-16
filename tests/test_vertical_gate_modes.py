@@ -5,10 +5,9 @@ import pytest
 from cross.core.config import load_config
 from cross.pipeline import mode_config_files, vertical_gate_odometry_ok
 
-ON = [("stereo", "external", None), ("stereo", "basalt", None), ("mono", "external", "ff")]
+ON = [("stereo", "external", None), ("stereo", "basalt", None), ("mono", "external", "ff"), ("mono", "vgio", "ff")]
 OFF = [("stereo", "vgio", None), ("stereo", "visual", None), ("rgbd", "external", None), ("rgbd", "basalt", None),
-       ("rgbd", "visual", None), ("mono", "visual", None), ("mono", "external", None), ("mono", "vgio", "ff"),
-       ("mono", "vio", "ff")]
+       ("rgbd", "visual", None), ("mono", "visual", None), ("mono", "external", None), ("mono", "vio", "ff")]
 
 
 def gate(files):
