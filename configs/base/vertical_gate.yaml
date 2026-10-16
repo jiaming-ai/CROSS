@@ -1,5 +1,6 @@
 # Wrong-floor protection for gravity-aligned odometry (outputs/2026-10-16_anchor_vertical_gate): included by the mode
-# files whose odometry keeps the height (stereo_wheel, stereo_basalt, mono_wheel, mono_imu).
+# files whose odometry keeps the height (stereo_wheel, stereo_basalt, mono_wheel, mono_imu,
+# mono_vio).
 # - anchor_needs_posterior: a session anchor whose map edge the posterior test rejects is withdrawn (a look-alike lift
 #   lobby on another floor had anchored an iPhone session and the prior test then rejected the true floor);
 # - noise.gate_vertical_ratio: the prior test's prediction has its vertical sigma scaled (odometry height drift is
@@ -8,8 +9,8 @@
 # Together (only together): iPhone i4 walk with a lift ride, median height error 2.95 -> 0.27 m, every other walk lower;
 # ROVER and OpenLORIS T1 / T2 / T3 within a null rerun's noise in these modes.  Not in the others: stereo + IMU (VGGT +
 # IMU odometry, world vertical not the camera y) lost loop closures on ROVER (T1 0.81 -> 1.82 m); monocular DPVO has no
-# gravity or scale (it reuses mono_wheel.yaml, so cross.pipeline.session_factory turns these off for it); mono_vio gained
-# on OpenLORIS (T3 +19/-6, T2@1 0.41 -> 0.47) but its ROVER check was not finished.
+# gravity or scale (it reuses mono_wheel.yaml, so cross.pipeline.session_factory turns these off for it).  mono_vio gains
+# on OpenLORIS (T3 +19/-6, T2@1 0.41 -> 0.47) and is within the noise on ROVER (T3 correct 992 -> 996, wrong 105 -> 95).
 mapping:
   loop_closure:
     anchor_needs_posterior: true

@@ -5,6 +5,7 @@ include:
   - ../base/mono_ff.yaml
   - ../base/common.yaml
   - ../base/placement.yaml
+  - ../base/vertical_gate.yaml
 mapping:
   hypothesis:
     # merge hypotheses in mapping sessions too, and update hypothesis 0 with every observation (the defaults are false /
