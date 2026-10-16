@@ -657,6 +657,7 @@ class LoopClosureVerifier:
     def _vertical_scaled(self, cov: np.ndarray, last_kf_id: int, T_since: gtsam.Pose3) -> np.ndarray:
         """noise.gate_vertical_ratio < 1: the prediction covariance (right perturbation at the current frame) with its
         translation sigma along the world vertical scaled by the ratio."""
+        self.last_unscaled_cov = cov          # the information criterion (loop candidate) uses the unscaled prediction
         ratio = float(getattr(self.cfg.noise, "gate_vertical_ratio", 1.0))
         u = self._vertical_in_current(last_kf_id, T_since) if ratio < 1.0 else None
         if u is None:
@@ -954,7 +955,19 @@ class LoopClosureVerifier:
                         self.scale_ratio = float(np.median(self._ratio))
                         self.stats["scale_ratio"] = round(self.scale_ratio, 4)
             self.scale = self.scales[kind]
-            cov0 = cov / max(self.cfg.noise.gate_inflation, 1e-6) ** 2      # un-inflated chain covariance
+            # un-inflated chain covariance, without the vertical scaling (noise.gate_vertical_ratio acts on the
+            # consistency test only: a smaller vertical sigma made fewer measurements loop candidates, and maps lost
+            # their loop closures -- OpenLORIS home mono + wheel 36 -> 2 candidates, T1 0.12 -> 0.23 m)
+            cov0 = getattr(self, "last_unscaled_cov", cov) / max(self.cfg.noise.gate_inflation, 1e-6) ** 2
+            # gravity-aligned odometry (noise.gate_vertical_ratio): a measurement that contradicts the prediction in height
+            # alone (> 3 sigma against the vertically scaled prediction) is aliasing -- another floor -- and no sample
+            # of the noise statistics (adaptive scales, anchor self-check)
+            vert_alias = False
+            if u_vert is not None:
+                var_v = float(u_vert @ cov[3:, 3:] @ u_vert) + float(self.noise.visual(d)[3]) ** 2
+                vert_alias = abs(float(r[3:] @ u_vert)) > 3.0 * math.sqrt(var_v)
+                if vert_alias:
+                    self.stats["vertical_alias"] = self.stats.get("vertical_alias", 0) + 1
             if self.anisotropic:
                 Sv = self.noise.visual_cov(Tm, self.scale, self.scales_along[kind], self.scales_rot[kind])
                 # loop candidate: the prediction (un-inflated chain) is less certain than the measurement by the margin
@@ -962,15 +975,9 @@ class LoopClosureVerifier:
                 loops.append(informative(cov0, Sv, rotation=False, margin=self.margin if kind == "sess" else 1.0))
                 # innovation statistics along / across the measured bearing (frame b), each normalised by the base model
                 # and the un-inflated chain variance in that direction: medians 0.674 / 1.177 when the model holds
-                if short and d > 1e-6:
+                if short and d > 1e-6 and not vert_alias:
                     u = np.asarray(Tm.rotation().matrix()).T @ (np.asarray(Tm.translation(), dtype=np.float64) / d)
                     rt = r[3:]
-                    if u_vert is not None:
-                        # gravity-aligned odometry: a contradiction in height is aliasing (another floor), not evidence
-                        # about the noise or the anchor; the statistics use the horizontal residual and covariance
-                        P = np.eye(3) - np.outer(u_vert, u_vert)
-                        rt = P @ rt
-                        cov0 = cov0.copy(); cov0[3:, 3:] = P @ cov0[3:, 3:] @ P
                     ra = float(rt @ u)
                     rc = float(np.linalg.norm(rt - ra * u))
                     va = float(u @ cov0[3:, 3:] @ u)
@@ -988,13 +995,9 @@ class LoopClosureVerifier:
                 # innovation statistic: the translation residual of this very test, normalised by the un-scaled
                 # covariance (prediction + calibrated measurement noise); its median over the recent observations is 1.54
                 # when the calibration holds and grows when the measurements (against the map or the session) get noisier
-                S0 = cov + np.diag(self.noise.visual(d) ** 2)
-                if u_vert is None:
+                S0 = getattr(self, "last_unscaled_cov", cov) + np.diag(self.noise.visual(d) ** 2)
+                if not vert_alias:
                     self._innov[kind].append(float(np.linalg.norm(r[3:])) / math.sqrt(max(float(np.trace(S0[3:, 3:])) / 3.0, 1e-12)))
-                else:                                     # horizontal statistic (see the anisotropic branch); 2 dof scaled to 3
-                    P = np.eye(3) - np.outer(u_vert, u_vert)
-                    self._innov[kind].append(float(np.linalg.norm(P @ r[3:])) * math.sqrt(1.5)
-                                             / math.sqrt(max(float(np.trace(P @ S0[3:, 3:] @ P)) / 2.0, 1e-12)))
                 c2 = self.chi2(r, cov + np.diag(self.noise.visual(d, self.scale) ** 2))
             self.stats["prior_tested"] += 1
             if kind == "map":
