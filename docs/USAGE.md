@@ -516,7 +516,17 @@ python -m cross_nav.navmap --map runs/office/map.pkl --heads models/nav/heads.pt
 ```
 
 Gravity from an IMU: `pose_est.set_gravity(up_in_camera)` before the step whose pass should use it. The head adds
-~12 ms per pass (RTX 5090, 6-10 views) and makes the depth head cover the current view and the references.
+~12 ms per pass (RTX 5090, 6-10 views) and makes the depth head cover every view of the pass.
+
+Navigation on CROSS's own pass (no second backbone pass): with `pose_est.ff.nav_bev_visibility` and
+`pose_est.ff.nav_bev_visibility_gravity` the BEV also carries the observability head (`last_bev["observability"]`),
+which the closed-loop BEV planner needs (`cross_nav.policy.bev_policy.BEVPlannerPolicy(cfg, predictor=pose_est.backend.nav)`
+then `plan_maps(...)` on those maps). Without retrieved references a pass is still made for the BEV (current view,
+previous observation). `pose_est.ff.nav_extra_views=K` adds up to K nearby keyframes to every pass, for the BEV only,
+chosen by a fast coverage rule (`System._nav_coverage_keyframes`: keyframes within `nav_extra_radius_m` of the
+current pose, greedily the one whose horizontal field of view adds the most uncovered `nav_extra_cell_m` cells within
+`nav_extra_range_m`; the current view and the references count as covered). The heads must match the pass's
+checkpoint (the released heads were trained on vdl_s1). Simulator service: `cross_nav/policy/sim/cross_nav_service.py`.
 Labels for training come from the scene cache of `vggt_ft` (`python -m cross_nav.labels`: all frames of a place
 accumulated, free-space carving) and from simulated HSSD scenes with mesh labels (`cross_nav/sim/`).
 

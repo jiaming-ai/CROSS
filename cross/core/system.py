@@ -2859,6 +2859,86 @@ class System:
         n = None if getattr(ffc, "map_anchor_min_pair_covis", 0.0) > 0 else ffc.map_anchor_max_pairs
         return [(i, j, T) for _, i, j, T in pairs[:n]] or None
 
+    def _nav_coverage_keyframes(self, refs, n: int) -> list:
+        """Up to n nearby keyframes, best first, that add the most ground around the robot to a BEV pass (fast
+        heuristic, a few numpy operations): candidates = keyframes within nav_extra_radius_m of the current pose (not
+        among the pass's references); ground = cells of nav_extra_cell_m within nav_extra_range_m of the robot on the
+        horizontal plane; a camera covers the cells within that range inside its horizontal field of view (no
+        occlusion).  The current view and the references count as covered; greedy picks maximise the newly covered
+        cells (ties: the more recent keyframe); a keyframe adding nothing is not taken.  Horizontal plane: the gravity
+        given to the BEV head (set_gravity), else the current camera's x-z plane (a level camera)."""
+        if n <= 0:
+            return []
+        ffc = self.config.pose_est.ff
+        hm = self.hypothesis_manager
+        ref_ids = {int(k.id) for k in refs}
+        with hm.graph_lock:
+            cands = [kf for i, kf in hm.nodes.items() if i not in ref_ids and kf.has_image("raw_rgb_image")]
+            if not cands:
+                return []
+            P = torch.stack([kf.plain_row("pose_mu", 0) for kf in cands]).detach().float().cpu().numpy().astype(np.float64)
+            R_ = [k.plain_row("pose_mu", 0) for k in refs]
+        Q = np.stack([r.detach().float().cpu().numpy() for r in R_]).astype(np.float64) if R_ else np.zeros((0, 7))
+        cur = self.get_current_pose()
+        cur = np.asarray((cur.tensor() if hasattr(cur, "tensor") else cur).detach().float().cpu().numpy(),
+                         np.float64).reshape(-1)[:7]
+
+        def z_axis(q):            # optical axes (third rotation column) of quaternions [x y z w]
+            x, y, z, w = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+            return np.stack([2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)], -1)
+
+        def rot(q):
+            x, y, z, w = q
+            return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                             [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                             [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+        Rc = rot(cur[3:7])
+        up = getattr(self.pose_est, "_gravity_cam", None)
+        up = np.array([0., -1., 0.]) if up is None else np.asarray(up, np.float64) / np.linalg.norm(up)
+        fwd = np.array([0., 0., 1.]) - up[2] * up
+        fwd /= max(np.linalg.norm(fwd), 1e-9)
+        right = np.cross(fwd, up)          # x right, y forward on the horizontal plane (camera axes)
+
+        def planar(pos_w, axis_w):         # world positions / optical axes -> 2D (right, forward) of the current camera
+            p = (pos_w - cur[:3]) @ Rc
+            a = axis_w @ Rc
+            return np.stack([p @ right, p @ fwd], -1), np.arctan2(a @ fwd, a @ right)
+
+        rng, cell = float(ffc.nav_extra_range_m), float(ffc.nav_extra_cell_m)
+        xy, head = planar(P[:, :3], z_axis(P[:, 3:7]))
+        near = np.hypot(xy[:, 0], xy[:, 1]) <= float(ffc.nav_extra_radius_m)
+        if not near.any():
+            return []
+        idx = np.flatnonzero(near)
+        g = np.arange(-rng + cell / 2, rng, cell)
+        gx, gy = np.meshgrid(g, g)
+        keep = np.hypot(gx, gy) <= rng
+        cells = np.stack([gx[keep], gy[keep]], -1)                       # (M, 2)
+        half = math.atan2(self.camera.frame_width / 2, float(self.camera.fx))    # half the horizontal field of view
+
+        def cover(pxy, ph):                                              # (C, M) bool
+            d = cells[None] - pxy[:, None]
+            r = np.hypot(d[..., 0], d[..., 1])
+            ang = np.arctan2(d[..., 1], d[..., 0]) - ph[:, None]
+            ang = np.abs((ang + np.pi) % (2 * np.pi) - np.pi)
+            return (r <= rng) & (ang <= half)
+        covered = cover(np.zeros((1, 2)), np.array([np.pi / 2]))[0]      # the current view looks along +y
+        if len(Q):
+            qxy, qh = planar(Q[:, :3], z_axis(Q[:, 3:7]))
+            covered |= cover(qxy, qh).any(0)
+        C = cover(xy[idx], head[idx])
+        recency = np.array([cands[i].id for i in idx], np.float64)
+        picks = []
+        for _ in range(n):
+            gain = (C & ~covered).sum(1).astype(np.float64)
+            gain[picks] = -1
+            j = int(np.lexsort((recency, gain))[-1])
+            if gain[j] <= 0:
+                break
+            picks.append(j)
+            covered |= C[j]
+        return [cands[idx[j]] for j in picks]
+
     def _construct_observation_dist(
         self,
         rgb_image: torch.Tensor,
@@ -2885,8 +2965,19 @@ class System:
         }
         # first retrieve the image
         results = self._retrieve_keyframes(rgb_image) 
+        # a BEV head in the feed-forward pass (pose_est.ff.nav_bev_head): nearby keyframes that cover more ground join
+        # the pass for the BEV, and without references a pass is made for the BEV alone
+        n_nav = self.pose_est.nav_extra_count() if self.pose_est_type == PoseEstType.FF and \
+            hasattr(self.pose_est, "nav_extra_count") else 0
+        nav_on = self.pose_est_type == PoseEstType.FF and getattr(getattr(self.pose_est, "backend", None), "nav", None) is not None
         if len(results["scores"]) == 0:
             logger.debug(f"No valid retrieval results found.")
+            if nav_on:
+                from cross.db.db import as_float_image
+                nav_images = [as_float_image(k.raw_rgb_image.to(self.device))
+                              for k in self._nav_coverage_keyframes([], n_nav)]
+                self.pose_est.estimate_pose(rgb_image.new_zeros((0,) + tuple(rgb_image.shape)), None, rgb_image, None,
+                                            odom_anchor=odom_anchor, nav_images=nav_images)
             return ret
 
         retrieval_scores = results["scores"]
@@ -2897,6 +2988,8 @@ class System:
             retrieval_scores = retrieval_scores[:max_refs]
             keyframes = keyframes[:max_refs]
         from cross.db.db import as_float_image
+        nav_images = [as_float_image(k.raw_rgb_image.to(self.device))
+                      for k in self._nav_coverage_keyframes(keyframes, n_nav)] if n_nav > 0 else None
         # stored images (host RAM by default) copied to the compute device for this pass only
         ref_rgbs = [as_float_image(p.raw_rgb_image.to(self.device)) for p in keyframes]
         ref_depths = [as_float_image(p.depth_image.to(self.device)) for p in keyframes] \
@@ -2923,6 +3016,7 @@ class System:
                 odom_anchor=odom_anchor,
                 ref_rel_poses=self._map_anchor_pairs(keyframes),
                 ref_cam_ids=[k.cam_id for k in keyframes] if len(self.cameras) > 1 else None,
+                nav_images=nav_images,
                 **source_context,
             )
         else:

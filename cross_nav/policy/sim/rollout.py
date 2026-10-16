@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from . import wire
-from .geom import control, resample, spl, to_robot, trail, window_ids
+from .geom import control, resample, spl, to_robot, to_world, trail, window_ids
 from .hab import camera_sample, dataset_name, expert_path, geodesic, make_sim, render, set_hfov
 
 SUCCESS_M = .2
@@ -47,6 +47,53 @@ def odom_pose(pos, yaw):
     return np.array([-pos[2], -pos[0], yaw], np.float64)
 
 
+def score_local(pf, pos, yaw, goal, path, status, d0, sub_m=.25):
+    """Ground-truth check of one single-window plan (local success, as the BEV head's local-planning benchmark): follow
+    the path from the robot on the navmesh (true radius) in steps of <= sub_m; a step that slides by > 2 cm is a
+    contact and ends it. Success = no contact and either the goal reached (0.2 m) or >= 1 m travelled with >= 0.5 m
+    of geodesic progress (d0: geodesic distance to the goal at the start). Kinds: goal, progress, contact, no_progress,
+    no_route (the planner found none: status 2)."""
+    if status == 2:
+        return 'no_route'
+    pts = to_world(np.asarray(path, np.float64), pos[[0, 2]], yaw)
+    cur, travel = pos.astype(np.float64), 0.
+    for p in pts:
+        tgt = np.array([p[0], cur[1], p[1]])
+        seg = float(np.linalg.norm((tgt - cur)[[0, 2]]))
+        n = max(1, int(math.ceil(seg / sub_m))) if seg > 1e-6 else 0
+        start = cur.copy()
+        for i in range(1, n + 1):
+            want = start + (tgt - start) * (i / n)
+            new = np.asarray(pf.try_step(cur.astype(np.float32), want.astype(np.float32)), np.float64)
+            if np.linalg.norm((new - want)[[0, 2]]) > .02:
+                return 'contact'
+            travel += float(np.linalg.norm((new - cur)[[0, 2]]))
+            cur = new
+            if np.linalg.norm((goal - cur)[[0, 2]]) < SUCCESS_M:
+                return 'goal'
+    d1, _ = geodesic(pf, cur, goal)
+    return 'progress' if travel >= 1. and d0 - d1 >= .5 else 'no_progress'
+
+
+def nav_grid(pf, pos, yaw, n, cell=.2, radius=5.):
+    """Navmesh ground truth on the cells of an n x n robot-frame map (cell metres; row 0 = far forward, column 0 =
+    far left, as BEVPlannerPolicy's debug maps) within radius of the robot: (mask of those cells, navigable flags =
+    the robot's centre may stand there with its true radius; cells within the radius of an obstacle are not)."""
+    c = (n / 2 - np.arange(n) - .5) * cell
+    fw, lf = np.meshgrid(c, c, indexing='ij')
+    near = np.hypot(fw, lf) <= radius
+    w = to_world(np.stack([fw[near], lf[near]], -1), pos[[0, 2]], yaw)
+    return near, np.array([pf.is_navigable(np.array([x, pos[1], z], np.float32)) for x, z in w])
+
+
+def map_check(grid, occ, obs):
+    """(predicted free, of them navigable, navigable) cell counts of a window's maps on nav_grid's cells; predicted
+    free = P(observed) > 0.5 and P(occupied) < 0.5."""
+    near, nav = grid
+    free = (np.asarray(obs, np.float32)[near] > .5) & (np.asarray(occ, np.float32)[near] < .5)
+    return int(free.sum()), int((free & nav).sum()), int(nav.sum())
+
+
 def run_episode(sim, conn, ep, a, rng, viz=None):
     pf = sim.pathfinder
     pos = np.asarray(ep['start'], np.float64)
@@ -59,6 +106,7 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
     frames_cum, yaws, cams, plane, traj = [], [], [], [], [pos[[0, 2]].tolist()]
     cum, travelled, collisions, excursion, traj_steps = 0., 0., 0, 0, 0
     success, steps, min_geo = False, 0, ep['geodesic']
+    local, cross = {}, {'steps': 0, 'seconds': 0., 'fresh': 0, 'n_views': 0, 'n_extra': 0, 'head_scale': 0}
     for step in range(a.max_steps):
         rgb = np.ascontiguousarray(render(sim, pos, yaw, camera=camera))
         frames_cum.append(cum); cams.append(pos + np.array([0., camera['height'], 0.]))
@@ -85,6 +133,22 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
                         'camera': camera, 'dataset': dataset_name(a.hssd)}}
         wire.send(conn, msg)
         reply = wire.recv(conn)
+        if reply.get('cross'):                       # CROSS + navigation service (cross_nav_service)
+            c = reply['cross']
+            cross['steps'] += 1; cross['seconds'] += c['seconds']; cross['fresh'] += bool(c['fresh'])
+            cross['n_views'] += c['n_views']; cross['n_extra'] += c['n_extra']; cross['head_scale'] += c['scale'] == 'head'
+        if reply.get('local'):                       # diagnostic single-window plans, scored on the navmesh
+            grid = None
+            for k, v in reply['local'].items():
+                kind = score_local(pf, pos, yaw, goal, v['path'], v['status'], d_geo)
+                r = local.setdefault(k, {'n': 0, 'ok': 0, 'kinds': {}, 'obs_area': 0., 'n_views': 0, 'n_extra': 0})
+                r['n'] += 1; r['ok'] += kind in ('goal', 'progress'); r['kinds'][kind] = r['kinds'].get(kind, 0) + 1
+                r['obs_area'] += v['obs_area']; r['n_views'] += v['n_views']; r['n_extra'] += v.get('n_extra', 0)
+                if v.get('occ') is not None:
+                    grid = grid or nav_grid(pf, pos, yaw, v['occ'].shape[0])
+                    pf_, pfn, nv = map_check(grid, v['occ'], v['obs'])
+                    r['free'] = r.get('free', 0) + pf_; r['free_nav'] = r.get('free_nav', 0) + pfn
+                    r['nav'] = r.get('nav', 0) + nv
         if use_expert:
             if label is None:
                 break
@@ -125,6 +189,7 @@ def run_episode(sim, conn, ep, a, rng, viz=None):
             'spl': spl(success, ep['geodesic'], travelled), 'steps': steps, 'travelled': travelled, 'collisions': collisions,
             'collision_free': success and collisions == 0, 'final_geo': final_geo, 'min_geo': min_geo, 'mode': a.mode,
             'noise': noise, 'camera': camera, 'trajectory': traj[::2] + [traj[-1]],
+            **({'local': local} if local else {}), **({'cross': cross} if cross['steps'] else {}),
             **({'traj_steps': traj_steps} if (getattr(a, 'info', None) or {}).get('hybrid') else {})}
 
 
