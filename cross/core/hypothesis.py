@@ -786,6 +786,17 @@ class HypothesisManager:
         self.dist = (last_gmm_mu, last_gmm_sigma, last_gmm_weights)
 
     @timeit
+    def _vertical_in_h0(self, mu0):
+        """(world vertical in the body frame of mu0, ratio) when loop_closure.noise.gate_vertical_ratio < 1, else None."""
+        lc = getattr(getattr(getattr(self.system, "config", None), "mapping", None), "loop_closure", None)
+        ratio = float(getattr(getattr(lc, "noise", None), "gate_vertical_ratio", 1.0)) if lc is not None else 1.0
+        if ratio >= 1.0:
+            return None
+        proj = getattr(self.system, "place_projection", None)
+        v = proj.vertical.detach().double().cpu() if proj is not None else torch.tensor([0.0, 1.0, 0.0], dtype=torch.float64)
+        R = pp.SE3(mu0.tensor().detach().double().cpu().reshape(-1)).rotation().matrix()
+        return R.T @ (v / torch.linalg.vector_norm(v)), ratio
+
     def align_proposal_prior(self, proposal_hypotheses: List[Dict]):
         """
         Aligns new proposals with the current GMM state, handles hypothesis birth/death,
@@ -860,11 +871,23 @@ class HypothesisManager:
         if self.h0_innovation_gate > 0 and row0 is not None:
             # chi-square gate against hypothesis 0 for proposals the verified loop closure could not test
             prior_var = current_std[0].tensor() ** 2 + float(self.filter_process_std) ** 2
+            u_vert = self._vertical_in_h0(current_mu[0])
             for j, h in enumerate(proposal_hypotheses):
                 if h0_flags[j] is not None or not math.isfinite(float(dist_matrix[row0, j])):
                     continue
                 residual = (current_mu[0].Inv() @ h['pose']).Log().tensor()
-                maha = float((residual ** 2 / (prior_var + h['std'].tensor() ** 2).clamp_min(1e-12)).sum())
+                if u_vert is None:
+                    maha = float((residual ** 2 / (prior_var + h['std'].tensor() ** 2).clamp_min(1e-12)).sum())
+                else:
+                    # gravity-aligned odometry (loop_closure.noise.gate_vertical_ratio): the prior's translation sigma
+                    # along the vertical is scaled, as in the verified loop closure's prior test
+                    u, ratio = u_vert
+                    r = residual.detach().double().cpu().reshape(-1)
+                    pv = prior_var.detach().double().cpu().reshape(-1)
+                    hv = (h['std'].tensor() ** 2).detach().double().cpu().reshape(-1)
+                    M = torch.eye(3, dtype=torch.float64) - (1.0 - ratio) * torch.outer(u, u)
+                    S = M @ torch.diag(pv[:3]) @ M.T + torch.diag(hv[:3])
+                    maha = float(r[:3] @ torch.linalg.solve(S, r[:3])) + float((r[3:] ** 2 / (pv[3:] + hv[3:]).clamp_min(1e-12)).sum())
                 if maha > self.h0_innovation_gate:
                     h0_flags[j] = False
         dropped = set()

@@ -658,19 +658,23 @@ class LoopClosureVerifier:
         """noise.gate_vertical_ratio < 1: the prediction covariance (right perturbation at the current frame) with its
         translation sigma along the world vertical scaled by the ratio."""
         ratio = float(getattr(self.cfg.noise, "gate_vertical_ratio", 1.0))
-        if ratio >= 1.0:
+        u = self._vertical_in_current(last_kf_id, T_since) if ratio < 1.0 else None
+        if u is None:
             return cov
-        node = self.system.hypothesis_manager.nodes.get(int(last_kf_id))
-        if node is None:
-            return cov
-        proj = getattr(self.system, "place_projection", None)
-        v = (proj.vertical.detach().cpu().numpy().astype(np.float64) if proj is not None
-             else np.array([0.0, 1.0, 0.0]))
-        R = np.asarray(to_gtsam(node.pose_mu[0]).compose(T_since).rotation().matrix())
-        u = R.T @ (v / np.linalg.norm(v))                 # the vertical in the current camera frame
         M = np.eye(6)
         M[3:, 3:] -= (1.0 - ratio) * np.outer(u, u)
         return M @ cov @ M.T
+
+    def _vertical_in_current(self, last_kf_id: int, T_since) -> Optional[np.ndarray]:
+        """The world vertical (mapping.projection.vertical) in the current camera frame (last keyframe + odometry since)."""
+        node = self.system.hypothesis_manager.nodes.get(int(last_kf_id))
+        if node is None:
+            return None
+        proj = getattr(self.system, "place_projection", None)
+        v = (proj.vertical.detach().cpu().numpy().astype(np.float64) if proj is not None
+             else np.array([0.0, 1.0, 0.0]))
+        R = np.asarray(to_gtsam(node.pose_mu[0]).compose(to_gtsam(T_since)).rotation().matrix())
+        return R.T @ (v / np.linalg.norm(v))
 
     def predict_to_current(self, ref_id: int, last_kf_id: int, T_since: gtsam.Pose3, cov_since: np.ndarray):
         """Prediction of T_ref_current = chain(ref -> last keyframe) (+) odometry since the last keyframe, or through
@@ -921,6 +925,8 @@ class LoopClosureVerifier:
         self._gate_last_kf = int(last_kf_id)
         oks, chis, loops = [], [], []
         self._update_scale()
+        u_vert = (self._vertical_in_current(last_kf_id, Ts)
+                  if float(getattr(self.cfg.noise, "gate_vertical_ratio", 1.0)) < 1.0 else None)
         for kf, Tm in zip(refs, T_meas):
             if self._is_map_kf(int(kf.id)):
                 self._map_fix(int(kf.id), to_gtsam(Tm))           # with or without a prediction (session anchor)
@@ -959,6 +965,12 @@ class LoopClosureVerifier:
                 if short and d > 1e-6:
                     u = np.asarray(Tm.rotation().matrix()).T @ (np.asarray(Tm.translation(), dtype=np.float64) / d)
                     rt = r[3:]
+                    if u_vert is not None:
+                        # gravity-aligned odometry: a contradiction in height is aliasing (another floor), not evidence
+                        # about the noise or the anchor; the statistics use the horizontal residual and covariance
+                        P = np.eye(3) - np.outer(u_vert, u_vert)
+                        rt = P @ rt
+                        cov0 = cov0.copy(); cov0[3:, 3:] = P @ cov0[3:, 3:] @ P
                     ra = float(rt @ u)
                     rc = float(np.linalg.norm(rt - ra * u))
                     va = float(u @ cov0[3:, 3:] @ u)
@@ -977,7 +989,12 @@ class LoopClosureVerifier:
                 # covariance (prediction + calibrated measurement noise); its median over the recent observations is 1.54
                 # when the calibration holds and grows when the measurements (against the map or the session) get noisier
                 S0 = cov + np.diag(self.noise.visual(d) ** 2)
-                self._innov[kind].append(float(np.linalg.norm(r[3:])) / math.sqrt(max(float(np.trace(S0[3:, 3:])) / 3.0, 1e-12)))
+                if u_vert is None:
+                    self._innov[kind].append(float(np.linalg.norm(r[3:])) / math.sqrt(max(float(np.trace(S0[3:, 3:])) / 3.0, 1e-12)))
+                else:                                     # horizontal statistic (see the anisotropic branch); 2 dof scaled to 3
+                    P = np.eye(3) - np.outer(u_vert, u_vert)
+                    self._innov[kind].append(float(np.linalg.norm(P @ r[3:])) * math.sqrt(1.5)
+                                             / math.sqrt(max(float(np.trace(P @ S0[3:, 3:] @ P)) / 2.0, 1e-12)))
                 c2 = self.chi2(r, cov + np.diag(self.noise.visual(d, self.scale) ** 2))
             self.stats["prior_tested"] += 1
             if kind == "map":
