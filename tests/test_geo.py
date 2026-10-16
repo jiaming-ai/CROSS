@@ -609,27 +609,3 @@ def test_component_anchors_place_a_separate_group_by_its_own_fixes():
     T = nodes[max(nodes)].pose_mu[0].matrix().numpy().astype(float)
     assert g.proposal_consistent(T[:3, 3], max(nodes)) is True
     assert len(g.focus_regions()) == 2
-
-
-def test_pooled_fixes_follow_removed_keyframes_before_they_are_stored():
-    """A fix attached to a keyframe that is later removed (temporary keyframe) is re-attached to the session's nearest
-    earlier keyframe before the map stores it, at the same map position."""
-    from cross.core.config import GeoConfig
-    from cross.core.types import Keyframe
-    from cross.geo.manager import GeoManager
-    Keyframe._next_id = 0
-    g = GeoManager(GeoConfig(pose_graph=False, pool_sessions=True))
-    g.set_vertical(np.array([0, 1.0, 0]))
-    nodes = {}
-    _session_into(g, nodes, 200, math.radians(10), np.zeros(3), LocalFrame(1.2944, 103.776, 30.0),
-                  np.random.default_rng(5), (0.0, 0.0, 0.0))
-    before = {id(r): p.copy() for r, p in zip(g.fix_log, g._positions(nodes, g.fix_log))}
-    gone = [k for k in sorted(nodes) if k % 3 == 1]            # every third keyframe removed
-    for k in gone:
-        del nodes[k]
-    g.fit_anchor(nodes)
-    assert all(r["kf"] in nodes for r in g.fix_log)
-    after = g._positions(nodes, g.fix_log)
-    assert max(float(np.linalg.norm(p - before[id(r)])) for r, p in zip(g.fix_log, after)) < 1e-4      # float32 poses
-    st = g.state()
-    assert set(st["fixes"]["kf"].tolist()) <= set(nodes)

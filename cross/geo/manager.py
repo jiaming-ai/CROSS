@@ -300,8 +300,6 @@ class GeoManager:
         component_anchors: the map anchor from the main group's fixes, one anchor per separate group from its own)."""
         if self.anchor_fixed:
             return self.anchor.ok
-        if self.cfg.pool_sessions:
-            self._reattach_logs(nodes)
         log = (self.map_fix_log + self.fix_log) if self.cfg.pool_sessions else self.fix_log
         recs, pm = [], []
         for r, p in zip(log, self._positions(nodes, log)):
@@ -453,25 +451,6 @@ class GeoManager:
             Cenu = np.diag([(f["sh"] * sc) ** 2, (f["sh"] * sc) ** 2, ((f["sv"] * sc) if z_ok else 1e3) ** 2])
             out.append((kid, target, Rme @ Cenu @ Rme.T + 1e-6 * np.eye(3)))
         return out
-
-    def _reattach_logs(self, nodes: dict):
-        """pool_sessions: this session's fixes / headings attached to a keyframe that is gone (a temporary keyframe merged
-        away) move to the nearest earlier keyframe of the session, with the odometry between them, so that the stored
-        records stay usable in later sessions (the odometry of this session is not stored)."""
-        for log, rot in ((self.fix_log, False), (self.heading_log, True)):
-            for r in log:
-                kid = r["kf"]
-                if kid is None or kid in nodes:
-                    continue
-                k2 = self._reattach(kid, nodes)
-                if k2 is None or k2 not in self.kf_odo:
-                    continue
-                M = np.linalg.inv(self.kf_odo[k2]) @ self.kf_odo[kid]
-                if rot:
-                    r["Rd"] = M[:3, :3] @ r["Rd"]
-                else:
-                    r["delta"] = M[:3, :3] @ r["delta"] + M[:3, 3]
-                r["kf"] = int(k2)
 
     def _reattach(self, kid: int, nodes: dict) -> Optional[int]:
         """A keyframe that carried a factor was removed (temporary keyframe merged away): the nearest earlier keyframe."""
