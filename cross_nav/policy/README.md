@@ -53,7 +53,9 @@ in Habitat (`cross_nav/policy/sim/`, HSSD scenes, point goals 1.5-20 m, success 
   odometry trail (past positions) as memory, stuck recovery (`recovery.py`) and flow temperature 0.5 (both defaults).
 - **BEV + planner** (`BEVPlanner`): the BEV occupancy and observability heads, an episode map in the odometry frame
   (fusion + A*) and the closed-loop rules in `cross_nav/configs/policy/bev_planner_best.json` (`bev_planner.json` is the
-  frozen planner without them).
+  frozen planner without them). Its heads were trained on the vdl_s1 backbone; `bev_planner_vfin2.json` has the same
+  rules with heads fine-tuned on CROSS's default checkpoint vfin2 (for `--backbone` vfin2 and for CROSS's own pass,
+  `cross_nav_service.py`).
 - **Hybrid** (`HybridPlanner`, option): both on one backbone; the BEV planner drives and the trajectory head takes over
   for 20 s after a 15 s stall or less than 1 m of goal progress in 40 s (`cross_nav/configs/policy/hybrid_best.json`, time
   windows when `step` gets stamps). HSSD val240 98.1% vs 97.3% for the BEV planner alone (mean of two runs); test above.

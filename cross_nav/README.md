@@ -5,7 +5,7 @@ environment). Everything runs on the frozen VGGT-Omega backbone of the stereo mo
 
 | Part | Where | What |
 |---|---|---|
-| BEV head | `cross_nav/{model,head,train,infer}.py`, `cross_nav/configs/train/` | occupancy (and observability / error) on a gravity-aligned metric grid around the camera; `BEVPredictor`; also usable inside a CROSS session (`pose_est.ff.nav_bev_head`) |
+| BEV head | `cross_nav/{model,head,train,train_visibility,infer}.py`, `cross_nav/configs/train/` | occupancy (and observability / error) on a gravity-aligned metric grid around the camera; `BEVPredictor`; also usable inside a CROSS session (`pose_est.ff.nav_bev_head`) |
 | Planners | `cross_nav/{plan,local_plan,observed_plan}.py`, `cross_nav/policy/bev_policy.py`, `cross_nav/configs/policy/` | local planning on the BEV, closed-loop rules and episode map (`bev_planner_best.json`) |
 | Trajectory policy | `cross_nav/policy/{head,train_sim,server,recovery}.py` | direct 16-waypoint path from four views, the goal and an odometry trail (flow head) |
 | Robot agent | `cross_nav/policy/robot.py` | `NavigationAgent` with `TrajectoryPlanner`, `BEVPlanner` or `HybridPlanner` (`hybrid_best.json`) |

@@ -527,7 +527,11 @@ previous observation). `pose_est.ff.nav_extra_views=K` adds up to K nearby keyfr
 chosen by a fast coverage rule (`System._nav_coverage_keyframes`: keyframes within `nav_extra_radius_m` of the
 current pose, greedily the one whose horizontal field of view adds the most uncovered `nav_extra_cell_m` cells within
 `nav_extra_range_m`; the current view and the references count as covered). The heads must match the pass's
-checkpoint (the released heads were trained on vdl_s1). Simulator service: `cross_nav/policy/sim/cross_nav_service.py`.
+checkpoint: with CROSS's default (vfin2) use the heads of `cross_nav/configs/policy/bev_planner_vfin2.json` (fine-tuned
+on vfin2: occupancy `configs/train/vfin2_route_ft.yaml`, observability `vfin2_vis_ft.yaml` with
+`python -m cross_nav.train_visibility`; HSSD val240 on CROSS's pass 97.1-97.9 % vs 94.2-95.0 % with the vdl_s1 heads,
+`outputs/2026-10-16_vfin2_heads`); `bev_planner_best.json` holds the vdl_s1 heads.
+Simulator service: `cross_nav/policy/sim/cross_nav_service.py --bev cross_nav/configs/policy/bev_planner_vfin2.json`.
 Labels for training come from the scene cache of `vggt_ft` (`python -m cross_nav.labels`: all frames of a place
 accumulated, free-space carving) and from simulated HSSD scenes with mesh labels (`cross_nav/sim/`).
 
