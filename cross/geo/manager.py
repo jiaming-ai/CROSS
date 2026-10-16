@@ -84,6 +84,12 @@ class GeoManager:
         self.now = None
         self.robust_c = (float(cfg.robust_c) if cfg.robust_c is not None else math.sqrt(self.k2)) if cfg.robust else None
         self.stats = {"factors": 0, "opt": 0, "proposals_rejected": 0, "proposals_tested": 0, "focus": 0}
+        # pool_sessions / compass_anchor: this session's index in the map, the stored sessions' fixes and headings
+        self.session = 0
+        self.map_fix_log: List[dict] = []
+        self.heading_log: List[dict] = []          # compass headings attached to keyframes: {"kf", "Rd", "yaw", "t", "session"}
+        self.map_heading_log: List[dict] = []
+        self.last_heading_t = -1e18
 
     # ------------------------------------------------------------------ state
     @property
@@ -106,6 +112,8 @@ class GeoManager:
         self.current = None
         self.last_factor_t = -1e18
         self.last_used_dist = None
+        self.session += 1
+        self.last_heading_t = -1e18
 
     # ------------------------------------------------------------------ per step
     def tick(self, t: float):
@@ -134,7 +142,7 @@ class GeoManager:
         it is a pose in the map's frame (mapping session, or a relocalization session merged into the map)."""
         self.now = float(t)
         if compass is not None:
-            self._observe_compass(compass, T_map_cam, in_map_frame)
+            self._observe_compass(compass, T_map_cam, in_map_frame, last_kf_id)
         if gnss is None:
             return None
         self.current = None
@@ -172,7 +180,7 @@ class GeoManager:
         rec = {"t": float(fix.t), "enu": np.array([enu[0], enu[1], enu[2] if z_ok else np.nan]),
                "sh": dec.sigma_h / sc, "sv": dec.sigma_v / sc, "in_map": bool(in_map_frame), "kf": None, "delta": None,
                "map": None if T_map_cam is None else T_map_cam[:3, 3].copy(), "odo": self.T_odo.copy(),
-               "epoch": int(self.gate.stats["epochs"])}
+               "epoch": int(self.gate.stats["epochs"]), "session": int(self.session)}
         if last_kf_id is not None and last_kf_id in self.kf_odo:
             # attached to the latest keyframe with the odometry between them: its map position follows the keyframe
             rec["kf"] = int(last_kf_id)
@@ -197,7 +205,7 @@ class GeoManager:
                 self.fit_anchor(nodes)
         return dec
 
-    def _observe_compass(self, sample, T_map_cam, in_map_frame):
+    def _observe_compass(self, sample, T_map_cam, in_map_frame, last_kf_id=None):
         outdoor_ok = self.last_decision is not None and self.last_decision.used
         h = self.compass.heading(sample, outdoor_ok=outdoor_ok)
         if h is None:
@@ -208,6 +216,14 @@ class GeoManager:
         if self.anchored and in_map_frame and outdoor_ok and T_map_cam is not None:
             cam_yaw = self.anchor.heading_enu(T_map_cam[:3, :3])
             self.compass.add_offset_sample(h[0], cam_yaw)
+        # compass_anchor: the camera's ENU heading, attached to the latest keyframe with the odometry rotation since it
+        if (self.cfg.compass_anchor and in_map_frame and self.compass.offset_external and last_kf_id is not None
+                and last_kf_id in self.kf_odo and h[1] <= math.radians(self.cfg.compass_max_sigma_deg)
+                and self.now - self.last_heading_t >= self.cfg.compass_anchor_interval_s):
+            self.last_heading_t = self.now
+            Rd = (np.linalg.inv(self.kf_odo[last_kf_id]) @ self.T_odo)[:3, :3].copy()
+            self.heading_log.append({"kf": int(last_kf_id), "Rd": Rd, "yaw": float(self.compass.camera_yaw(h[0])),
+                                     "t": float(self.now), "session": int(self.session)})
 
     def on_keyframe(self, kf_id: int):
         self.kf_odo[int(kf_id)] = self.T_odo.copy()
@@ -246,11 +262,13 @@ class GeoManager:
         return out
 
     def fit_anchor(self, nodes: dict) -> bool:
-        """Fit T_ENU<-map to the used fixes of this map, at the current poses of the keyframes they are attached to."""
+        """Fit T_ENU<-map to the used fixes of this map, at the current poses of the keyframes they are attached to
+        (pool_sessions: also the stored sessions' fixes; compass_anchor: plus one heading per session)."""
         if self.anchor_fixed:
             return self.anchor.ok
+        log = (self.map_fix_log + self.fix_log) if self.cfg.pool_sessions else self.fix_log
         recs, pm = [], []
-        for r, p in zip(self.fix_log, self._positions(nodes, self.fix_log)):
+        for r, p in zip(log, self._positions(nodes, log)):
             if p is not None:
                 recs.append(r)
                 pm.append(p)
@@ -266,23 +284,70 @@ class GeoManager:
         pe[bad, 2] = 0.0
         sv = np.where(bad, 1e4, sv)
         was = self.anchor.ok
-        self.anchor.fit(pm, pe, sh, sv)
         # correlated errors: the fit's covariance assumes independent fixes; scale it by the number of fixes per
-        # correlation time of the receiver error so that the observability test is not overconfident
-        if self.anchor.cov is not None:
-            span = recs[-1]["t"] - recs[0]["t"]
-            n_eff = max(1.0, span / max(self.err.tau, 1e-3))
-            self.anchor.cov = self.anchor.cov * max(1.0, len(recs) / n_eff)
+        # correlation time of the receiver error so that the observability test is not overconfident (per session:
+        # the sessions' receiver errors are independent of each other)
+        by_s = {}
+        for r in recs:
+            by_s.setdefault(r.get("session", 0), []).append(r["t"])
+        n_eff = sum(max(1.0, (max(t) - min(t)) / max(self.err.tau, 1e-3)) for t in by_s.values())
+        infl = max(1.0, len(recs) / n_eff)
+        heads = self._session_headings(nodes) if self.cfg.compass_anchor else None
+        if heads:
+            # the GNSS weights carry the inflation, so the session headings weigh in at their own noise
+            self.anchor.fit(pm, pe, sh * math.sqrt(infl), sv * math.sqrt(infl), heading_map=np.zeros(len(heads)),
+                            heading_enu=np.array([h[0] for h in heads]), heading_sigma=np.array([h[1] for h in heads]))
+        else:
+            self.anchor.fit(pm, pe, sh, sv)
+            if self.anchor.cov is not None:
+                self.anchor.cov = self.anchor.cov * infl
+        self.stats["anchor_fixes"] = len(recs)
+        self.stats["anchor_sessions"] = len(by_s)
+        self.stats["anchor_headings"] = len(heads or [])
         ok = self.anchor.ok
         if ok and not was:
             logger.info(f"geo: map anchored to ENU (yaw {math.degrees(self.anchor.yaw):.1f} deg +- "
-                        f"{math.degrees(self.anchor.yaw_std()):.1f}, {len(recs)} fixes)")
+                        f"{math.degrees(self.anchor.yaw_std()):.1f}, {len(recs)} fixes of {len(by_s)} sessions, "
+                        f"{len(heads or [])} compass sessions)")
         return ok
+
+    def _session_headings(self, nodes: dict) -> list:
+        """[(yaw offset ENU - levelled map, sigma)] per session with compass headings: the robust circular mean over the
+        session's headings of (compass camera heading in ENU - the keyframe's heading in the levelled map), with noise
+        compass_session_sigma_deg (the session-to-session spread of a phone compass, which dominates the in-session
+        noise); a session whose headings scatter more than compass_max_spread_deg adds none."""
+        log = (self.map_heading_log + self.heading_log) if self.cfg.pool_sessions else self.heading_log
+        log = [r for r in log if r["kf"] in nodes]
+        if not log:
+            return []
+        import pypose as pp
+        import torch
+        rows = torch.stack([nodes[r["kf"]].plain_row("pose_mu", 0) for r in log])
+        Rs = pp.SE3(rows).matrix().detach().cpu().numpy().astype(np.float64)[:, :3, :3]
+        by_s = {}
+        for r, R in zip(log, Rs):
+            d = float(wrap(r["yaw"] - self.anchor.heading_map_level(R @ r["Rd"])))
+            by_s.setdefault(r["session"], []).append(d)
+        out = []
+        s0 = math.radians(self.cfg.compass_session_sigma_deg)
+        for ses, d in by_s.items():
+            d = np.asarray(d)
+            if len(d) < 10:
+                continue
+            c = math.atan2(np.sin(d).mean(), np.cos(d).mean())
+            e = wrap(d - c)
+            med = float(np.median(e))
+            spread = 1.4826 * float(np.median(np.abs(e - med)))
+            if spread > math.radians(self.cfg.compass_max_spread_deg):
+                continue
+            out.append((float(wrap(c + med)), s0))
+        return out
 
     # ------------------------------------------------------------------ pose graph
     def pgo_factors(self, nodes: dict, node_ids) -> list:
-        """[(kf_id, target_map (3,), cov_map (3, 3))] for the keyframes of `node_ids` that carry a GNSS factor."""
-        if not self.anchored or not self.factors:
+        """[(kf_id, target_map (3,), cov_map (3, 3))] for the keyframes of `node_ids` that carry a GNSS factor (none
+        with pose_graph off: anchor only)."""
+        if not self.cfg.pose_graph or not self.anchored or not self.factors:
             return []
         out = []
         sc = self.noise.scale
@@ -331,6 +396,8 @@ class GeoManager:
 
     def should_optimize(self, nodes: dict, n_kf_now: int) -> bool:
         """The factors added since the last optimisation disagree with the current keyframe poses."""
+        if not self.cfg.pose_graph:
+            return False
         if not self.anchored or (len(self.pending) < self.cfg.opt_min_factors and not self.drift_flag) or not self.pending:
             return False
         if n_kf_now - self.last_opt_kf < self.cfg.opt_min_keyframes:
@@ -445,7 +512,24 @@ class GeoManager:
         # the stored map's factors (a loaded map) are kept with this session's (a map saved again keeps its fixes)
         f = {**getattr(self, "map_factors", {}), **self.factors}
         ks = sorted(f)
-        return {"version": 2, "frame": None if self.frame is None else self.frame.state(),
+        extra = {}
+        if self.cfg.pool_sessions:
+            # every used fix of every session (the anchor of the whole map is refitted from them later)
+            fx = self.map_fix_log + self.fix_log
+            extra["fixes"] = {"kf": np.asarray([r["kf"] for r in fx], np.int64),
+                              "enu": np.asarray([r["enu"] for r in fx], np.float64).reshape(-1, 3),
+                              "sh": np.asarray([r["sh"] for r in fx], np.float64),
+                              "sv": np.asarray([r["sv"] for r in fx], np.float64),
+                              "delta": np.asarray([r["delta"] for r in fx], np.float64).reshape(-1, 3),
+                              "t": np.asarray([r["t"] for r in fx], np.float64),
+                              "session": np.asarray([r.get("session", 0) for r in fx], np.int64)}
+            hx = self.map_heading_log + self.heading_log
+            extra["headings"] = {"kf": np.asarray([r["kf"] for r in hx], np.int64),
+                                 "Rd": np.asarray([r["Rd"] for r in hx], np.float64).reshape(-1, 3, 3),
+                                 "yaw": np.asarray([r["yaw"] for r in hx], np.float64),
+                                 "t": np.asarray([r["t"] for r in hx], np.float64),
+                                 "session": np.asarray([r["session"] for r in hx], np.int64)}
+        return {"version": 2, **extra, "frame": None if self.frame is None else self.frame.state(),
                 "anchor": self.anchor.state(), "noise": self.noise.state(), "err": self.err.state(),
                 "compass": self.compass.state(),
                 "factors": {"kf": np.asarray(ks, np.int64),
@@ -471,12 +555,27 @@ class GeoManager:
             return
         self.frame = LocalFrame.from_state(s["frame"])
         self.anchor.load_state(s["anchor"])
-        self.anchor_fixed = self.anchor.ok
+        # pool_sessions: the anchor keeps being refitted with the stored and this session's fixes
+        self.anchor_fixed = self.anchor.ok and not self.cfg.pool_sessions
+        if self.cfg.pool_sessions:
+            fx = s.get("fixes") or {}
+            self.map_fix_log = [{"kf": int(k), "enu": np.asarray(e, float), "sh": float(a), "sv": float(b),
+                                 "delta": np.asarray(d, float), "t": float(t), "session": int(ses)}
+                                for k, e, a, b, d, t, ses in zip(fx.get("kf", []), fx.get("enu", []), fx.get("sh", []),
+                                                                 fx.get("sv", []), fx.get("delta", []), fx.get("t", []),
+                                                                 fx.get("session", []))]
+            hx = s.get("headings") or {}
+            self.map_heading_log = [{"kf": int(k), "Rd": np.asarray(R, float), "yaw": float(y), "t": float(t),
+                                     "session": int(ses)}
+                                    for k, R, y, t, ses in zip(hx.get("kf", []), hx.get("Rd", []), hx.get("yaw", []),
+                                                               hx.get("t", []), hx.get("session", []))]
+            ss = [r["session"] for r in self.map_fix_log + self.map_heading_log]
+            self.session = max(ss) if ss else 0
         self.noise.load_state(s.get("noise", {}))
         if s.get("err"):
             self.err.tau = float(s["err"].get("tau", self.err.tau))
             self.err.sigma2_axis = s["err"].get("sigma2_axis")
-        self.compass.load_state(s.get("compass", {}))
+        self.compass.load_state(s.get("compass", {}), freeze=self.cfg.compass_anchor)
         # the stored map's fixes stay with it (its keyframes are fixed in a relocalization session)
         self.map_factors = self.factor_records(s.get("factors"))
 

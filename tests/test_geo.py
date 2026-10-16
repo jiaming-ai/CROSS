@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from cross.geo.geodesy import LocalFrame, ecef_to_lla, lla_to_ecef
-from cross.geo.anchor import Anchor, AnchorConfig, rot_z, rotation_between
+from cross.geo.anchor import Anchor, AnchorConfig, rot_z, rotation_between, wrap
 from cross.geo.gnss import GnssFix, GnssGate, GnssGateConfig, GnssNoiseModel, FIX_3D, FIX_NONE
 from cross.geo.compass import Compass, CompassConfig, tilt_compensated_yaw
 
@@ -436,3 +436,123 @@ def test_batched_fix_positions_equal_the_per_fix_positions_exactly():
     for r, b in zip(recs, batched):
         one = mgr._position(nodes, r["kf"], r["delta"])
         assert (one is None and b is None) or np.array_equal(one, b)
+
+
+def _session_into(geo, nodes, n, yaw_true, t_true, frame, rng, start, heading_offset=None, compass_noise=0.0):
+    """Feed one walk of `n` keyframes (1 m apart, a gentle curve in a 30 m wide area, map frame = camera convention)
+    to `geo` with GNSS fixes (5 m noise, correlated over 30 s) and optionally compass headings; returns the positions."""
+    import pypose as pp
+    import torch
+    from cross.core.types import Keyframe
+    a_true = Anchor(AnchorConfig(), vertical_map=np.array([0, -1.0, 0]))
+    R_true = rot_z(yaw_true) @ a_true.R_level
+    err = np.zeros(2)
+    belief = np.eye(4)
+    yaw = start[2]
+    pos = np.array([start[0], 0.0, start[1]])
+    out = []
+    for i in range(n):
+        c, s_ = math.cos(yaw), math.sin(yaw)
+        T = np.eye(4); T[:3, :3] = [[c, 0, s_], [0, 1, 0], [-s_, 0, c]]; T[:3, 3] = pos
+        if i > 0:
+            geo.on_motion(np.linalg.inv(belief) @ T)
+        belief = T
+        enu = R_true @ pos + t_true
+        err = math.exp(-1 / 30) * err + math.sqrt(1 - math.exp(-2 / 30)) * rng.normal(0, 5.0, 2)
+        la = frame.to_lla(np.r_[enu[:2] + err, enu[2]][None])[0]
+        comp = None
+        if heading_offset is not None:
+            f = R_true @ T[:3, 2]                                  # camera forward in ENU
+            comp = {"yaw": float(math.atan2(f[1], f[0]) + heading_offset + rng.normal(0, compass_noise)), "sigma_deg": 5.0}
+        last = max(nodes) if nodes else None
+        geo.observe(float(i), {"t": float(i), "lat": la[0], "lon": la[1], "alt": la[2], "sigma_h": 5.0}, comp, T, True,
+                    last_kf_id=last, nodes=nodes)
+        q = pp.mat2SE3(torch.tensor(T, dtype=torch.float32))
+        kf = Keyframe(pose_mu=pp.SE3(q.tensor()[None]), pose_std=pp.se3(torch.full((1, 6), 0.1)), pose_weights=torch.ones(1))
+        nodes[kf.id] = kf
+        geo.on_keyframe(kf.id)
+        out.append(pos.copy())
+        yaw += 0.01
+        pos = pos + np.array([math.sin(yaw), 0.0, math.cos(yaw)])
+        if (i // 20) % 2:                                          # zig-zag inside a small site
+            yaw -= 0.05
+    return np.array(out)
+
+
+def test_anchor_only_mode_adds_no_pose_graph_factors():
+    from cross.core.config import GeoConfig
+    from cross.core.types import Keyframe
+    from cross.geo.manager import GeoManager
+    Keyframe._next_id = 0
+    rng = np.random.default_rng(0)
+    frame = LocalFrame(1.2944, 103.776, 30.0)
+    geo = GeoManager(GeoConfig(pose_graph=False))
+    geo.set_vertical(np.array([0, 1.0, 0]))
+    nodes = {}
+    _session_into(geo, nodes, 400, math.radians(40), np.array([50.0, -20.0, 0.0]), frame, rng, (0.0, 0.0, 0.0))
+    assert geo.anchored and geo.factors                       # anchored, factors recorded for the map's state
+    assert geo.pgo_factors(nodes, set(nodes)) == []
+    geo.pending, geo.drift_flag = list(geo.factors), True
+    assert not geo.should_optimize(nodes, 10 ** 6)
+
+
+def test_pooled_sessions_anchor_a_map_no_single_session_can():
+    """Two short walks in a small site: each alone leaves the heading unobservable (std > 3 deg); pooled through the
+    map's stored fixes (pool_sessions) the anchor is observable, and its fixes survive a save / load."""
+    import pickle
+    from cross.core.config import GeoConfig
+    from cross.core.types import Keyframe
+    from cross.geo.manager import GeoManager
+    yaw_true, t_true = math.radians(-25.0), np.array([30.0, 40.0, 0.0])
+    frame = LocalFrame(1.2944, 103.776, 30.0)
+    alone = []
+    for seed in (1, 2):
+        Keyframe._next_id = 0
+        g = GeoManager(GeoConfig(pose_graph=False))
+        g.set_vertical(np.array([0, 1.0, 0]))
+        nodes = {}
+        _session_into(g, nodes, 120, yaw_true, t_true, frame, np.random.default_rng(seed), (0.0, 0.0, 0.3 * seed))
+        alone.append(g.anchor.yaw_std())
+    assert min(alone) > math.radians(3.0)
+    Keyframe._next_id = 0
+    cfg = GeoConfig(pose_graph=False, pool_sessions=True)
+    g1 = GeoManager(cfg)
+    g1.set_vertical(np.array([0, 1.0, 0]))
+    nodes = {}
+    _session_into(g1, nodes, 120, yaw_true, t_true, frame, np.random.default_rng(1), (0.0, 0.0, 0.3))
+    st = pickle.loads(pickle.dumps(g1.state()))
+    assert len(st["fixes"]["kf"]) == len(g1.fix_log) and set(st["fixes"]["session"].tolist()) == {0}
+    g2 = GeoManager(cfg)
+    g2.load_state(st)
+    assert not g2.anchor_fixed and len(g2.map_fix_log) == len(g1.fix_log)
+    g2.set_vertical(np.array([0, 1.0, 0]))
+    g2.reset_session()
+    assert g2.session == 1
+    _session_into(g2, nodes, 120, yaw_true, t_true, frame, np.random.default_rng(2), (0.0, 0.0, 0.6))
+    g2.fit_anchor(nodes)
+    assert g2.stats["anchor_sessions"] == 2
+    assert g2.anchor.yaw_std() < min(alone)
+    assert abs(math.degrees(wrap(g2.anchor.yaw - yaw_true))) < 6.0
+
+
+def test_compass_headings_make_the_anchor_heading_observable():
+    """With the compass offset known (configured), each session adds one heading to the anchor fit: a short walk whose
+    GNSS alone cannot fix the heading is anchored to within the compass noise."""
+    from cross.core.config import GeoConfig
+    from cross.core.types import Keyframe
+    from cross.geo.manager import GeoManager
+    yaw_true, t_true = math.radians(70.0), np.array([-10.0, 5.0, 0.0])
+    off = math.radians(-15.0)
+    frame = LocalFrame(1.2944, 103.776, 30.0)
+    res = {}
+    for comp in (False, True):
+        Keyframe._next_id = 0
+        g = GeoManager(GeoConfig(pose_graph=False, compass_anchor=comp, compass_offset_deg=-15.0))
+        g.set_vertical(np.array([0, 1.0, 0]))
+        nodes = {}
+        _session_into(g, nodes, 120, yaw_true, t_true, frame, np.random.default_rng(4), (0.0, 0.0, 0.0),
+                      heading_offset=off, compass_noise=math.radians(3.0))
+        g.fit_anchor(nodes)
+        res[comp] = (g.anchor.yaw_std(), abs(math.degrees(wrap(g.anchor.yaw - yaw_true))), g.stats["anchor_headings"])
+    assert res[False][0] > math.radians(3.0) and res[False][2] == 0
+    assert res[True][2] == 1 and res[True][0] < math.radians(4.5) and res[True][1] < 2 * math.degrees(res[True][0])
