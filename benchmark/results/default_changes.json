@@ -1,5 +1,13 @@
 [
   {
+    "date": "2026-10-16",
+    "title": "Wrong-floor gate for gravity-aligned odometry",
+    "description": "Three loop-closure safeguards against look-alike floors, on together: a session anchor whose map match fails the check after the graph optimisation is withdrawn (the session falls back to its previous anchor); the consistency test trusts the odometry's height more than its horizontal position (predicted vertical sigma x 0.25); and map matches the test cannot check pass a chi-square gate on hypothesis 0. On by default in stereo + wheel, stereo + Basalt, mono + wheel and mono + IMU (configs/base/vertical_gate.yaml).",
+    "evidence": "iPhone stereo + ARKit in a building with look-alike floors (eight walks): a walk that rode a lift went from 2.95 m to 0.27 m median height error against ARKit, and every other walk's height error dropped (e.g. 0.47 -> 0.28 m); relocalization unchanged. ROVER and OpenLORIS with each mode's own maps: T1, T2 and T3 within a null rerun's noise (e.g. ROVER stereo T3 1070 -> 1070, mono + IMU flips +10/-11 against null +31/-22). Off in stereo + IMU: its VGGT + IMU world vertical is not the camera's, and its ROVER map lost loop closures (T1 0.81 -> 1.82 m). Off in code for monocular DPVO (no gravity or scale). VGGT + DPVO + IMU gained on OpenLORIS (T3 +19/-6) but its ROVER check is not finished, so it stays off.",
+    "scope": "Maps and relocalization in the four modes; the tables still show the earlier runs.",
+    "experiment_code": "26cafcd / 694ada3"
+  },
+  {
     "date": "2026-10-15",
     "title": "Placement rule for relocalization merges",
     "description": "A relocalization session joins the stored map only when the placement its merge implies is supported at six or more steps and twice as well as any rival placement; after 20 m of walk it must also be confirmed from twice as many separate places. On by default in stereo + wheel, stereo + Basalt, mono + wheel, mono + IMU and VGGT + DPVO + IMU. configs/overlays/strict_merge.yaml is an opt-in stricter mode (support from positions 1.5 m apart).",
