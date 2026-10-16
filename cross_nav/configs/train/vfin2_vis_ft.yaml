@@ -1,0 +1,291 @@
+# vfin2_vis_ft: the BEV observability head fine-tuned on vfin2 (cross_nav.train_visibility): initialised from the
+# trained observability head (vis_init, 2026-10-11, vdl_s1), gravity frozen from the vfin2 occupancy run (init),
+# 2000 steps, lr 2e-4. inputs gtmix = the occupancy recipe's scale / gravity inputs (GT scale with noise, scale head
+# 20 %; GT gravity tilted, gravity head 30 %): with the backbone's scale-head scale only (inputs: head, the 2026-10-11
+# recipe) the head became conservative on vfin2 (dev local planning 88.2 vs 91.8 % with GT scale).
+#   python -m cross_nav.train_visibility --config cross_nav/configs/train/vfin2_vis_ft.yaml --out <dir>
+backbone: ${CROSS_NAV_ROOT}/data/runs/vfin2/vggt_omega_cross_1b_512.pt
+bev_head:
+  depth: 8
+  dim: 384
+  feat: 256
+  heads: 8
+  res: 0.05
+  size: 400
+  uncertainty: true
+data:
+  area: 262144
+  aspect:
+  - 0.56
+  - 1.0
+  aug:
+    blur_k:
+    - 3
+    - 5
+    color: 1.0
+    jpeg_q:
+    - 40
+    - 90
+    p_blur: 0.1
+    p_color: 0.8
+    p_gray: 0.05
+    p_jpeg: 0.2
+    p_noise: 0.1
+  bev:
+    res: 0.05
+    size: 400
+  bev_root: ${CROSS_NAV_ROOT}/data/nav/bev_v3
+  cam_h_range:
+  - 0.1
+  - 2.4
+  context_lags:
+  - 0
+  - 4
+  - 8
+  - 16
+  - 32
+  - 64
+  - 128
+  - 256
+  datasets:
+    grandtour:
+      p_cross: 0.0
+      p_neg: 0.1
+      stride:
+      - 1
+      - 16
+      weight: 0.06
+    hssd_nav:
+      cross_max_rot: 60
+      cross_radius:
+      - 0.0
+      - 0.5
+      exclude:
+      - '103997718'
+      - '104348010'
+      include:
+      - '102344022'
+      - '102344049'
+      - '102344094'
+      - '102344115'
+      - '102344193'
+      - '102344250'
+      - '102344280'
+      - '102344307'
+      - '102344328'
+      - '102344403'
+      - '102344439'
+      - '102344457'
+      - '102344469'
+      - '102344529'
+      - '102815835'
+      - '102815859'
+      - '102816009'
+      - '102816036'
+      - '102816051'
+      - '102816066'
+      - '102816114'
+      - '102816216'
+      - '102816615'
+      - '102816627'
+      - '102816729'
+      - '102816756'
+      - '102816786'
+      - '102816852'
+      - '102817053'
+      - '102817140'
+      - '102817200'
+      - '103997403_171030405'
+      - '103997424_171030444'
+      - '103997445_171030492'
+      - '103997460_171030507'
+      - '103997478_171030525'
+      - '103997478_171030528'
+      - '103997541_171030615'
+      - '103997562_171030642'
+      - '103997586_171030666'
+      - '103997586_171030669'
+      - '103997613_171030702'
+      - '103997643_171030747'
+      - '103997781_171030978'
+      - '103997799_171031002'
+      - '103997895_171031182'
+      - '103997919_171031233'
+      - '103997940_171031257'
+      - '103997970_171031287'
+      - '103997994_171031320'
+      - '104348028_171512877'
+      - '104348037_171512898'
+      - '104348082_171512994'
+      - '104348133_171513054'
+      - '104348160_171513093'
+      - '104348181_171513120'
+      - '104348202_171513150'
+      - '104348253_171513237'
+      - '104348328_171513363'
+      - '104348361_171513414'
+      - '104348394_171513453'
+      - '104348463_171513588'
+      - '104348511_171513654'
+      - '104862384_172226319'
+      - '104862396_172226349'
+      - '104862417_172226382'
+      - '104862501_172226556'
+      - '104862513_172226580'
+      - '104862534_172226625'
+      - '104862558_172226664'
+      - '104862573_172226682'
+      - '104862621_172226772'
+      - '104862639_172226823'
+      - '104862660_172226844'
+      - '104862669_172226853'
+      - '104862681_172226874'
+      - '104862687_172226883'
+      - '105515151_173104068'
+      - '105515160_173104077'
+      - '105515184_173104128'
+      - '105515211_173104179'
+      - '105515211_173104185'
+      - '105515235_173104215'
+      - '105515286_173104287'
+      - '105515301_173104305'
+      - '105515307_173104317'
+      - '105515337_173104347'
+      - '105515379_173104395'
+      - '105515403_173104449'
+      - '105515430_173104494'
+      - '108294846_176710506'
+      - '108294870_176710551'
+      - '108294897_176710602'
+      - '108736611_177263226'
+      - '108736635_177263256'
+      - '108736656_177263304'
+      - '108736722_177263382'
+      - '108736737_177263406'
+      - '108736779_177263484'
+      - '108736800_177263517'
+      - '108736824_177263559'
+      - '108736851_177263586'
+      - '108736872_177263607'
+      - '108736884_177263634'
+      p_cross: 0.3
+      p_neg: 0.1
+      stride:
+      - 1
+      - 16
+      weight: 0.15
+    hypersim:
+      cross_max_rot: 60
+      cross_radius:
+      - 0.0
+      - 0.5
+      p_cross: 0.3
+      p_neg: 0.1
+      stride:
+      - 1
+      - 16
+      weight: 0.08
+    nclt:
+      p_cross: 0.0
+      p_neg: 0.1
+      stride:
+      - 1
+      - 16
+      weight: 0.12
+    pandaset:
+      p_cross: 0.0
+      p_neg: 0.1
+      stride:
+      - 1
+      - 16
+      weight: 0.04
+    tartanground:
+      cross_max_rot: 45
+      cross_radius:
+      - 0.0
+      - 0.5
+      exclude:
+      - CarWelding
+      - Gascola
+      - MiddleEast
+      - ModernCityDowntown
+      - Supermarket
+      include:
+      - AbandonedCable
+      - AbandonedFactory
+      - AbandonedFactory2
+      - AbandonedSchool
+      - AncientTowns
+      - Antiquity3D
+      - CastleFortress
+      - CoalMine
+      - ConstructionSite
+      - CyberPunkDowntown
+      - DesertGasStation
+      - Downtown
+      - FactoryWeather
+      - ForestEnv
+      - Hospital
+      - IndustrialHangar
+      - JapaneseAlley
+      - JapaneseCity
+      - ModUrbanCity
+      - ModularNeighborhood
+      - ModularNeighborhoodIntExt
+      - NordicHarbor
+      - Office
+      - OldIndustrialCity
+      - OldScandinavia
+      - OldTownSummer
+      - Prison
+      - Restaurant
+      - Rome
+      - Sewerage
+      - Slaughter
+      - UrbanConstruction
+      - VictorianStreet
+      - WaterMillDay
+      - WesternDesertTown
+      label_dataset: tartanground_mix
+      p_cross: 0.3
+      p_neg: 0.1
+      stride:
+      - 1
+      - 16
+      weight: 0.15
+  frames:
+  - 8
+  - 8
+  images_per_gpu: 32
+  max_windows: 10
+  num_workers: 6
+  observation_targets: true
+  prefetch: 2
+  require_all_datasets: true
+  root: ${CROSS_NAV_ROOT}/data/cache
+  val_mod: 20
+  zoom:
+  - 0.6
+  - 1.0
+exp_name: vfin2_vis_ft
+gravity_head: {}
+init: ${CROSS_NAV_ROOT}/experiments/2026-10-16_vfin2_heads/vfin2_route_ft/heads_004000_ema.pt
+log_every: 20
+loss:
+  gravity_noise_deg: 2.0
+  p_gravity_pred: 0.3
+  p_scale_head: 0.2
+  pos_weight: 1.0
+  scale_noise: 0.1
+  w_dice: 0.5
+  w_gravity: 1.0
+out_dir: ${CROSS_NAV_ROOT}/experiments/2026-10-16_vfin2_heads
+resume: null
+seed: 7
+train:
+  clip: 1.0
+  inputs: gtmix
+  lr: 0.0002
+  steps: 2000
+  weight_decay: 0.01
+vis_init: ${CROSS_NAV_ROOT}/experiments/2026-10-11_visibility_head/visibility/visibility_final.pt

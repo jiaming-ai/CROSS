@@ -90,3 +90,22 @@ def test_plan_maps_skips_fusion_without_fresh_map():
     cat['fresh'] = np.array([True])
     pol.plan_maps(cat, np.array([[3., 0.]], np.float32), [st], [{'ep': 'e', 'odom': np.zeros(3)}], [False])
     assert st.world is not None
+
+
+def test_visibility_head_inputs():
+    """cross_nav.train_visibility.head_inputs: 'head' passes the estimates through; 'gtmix' gives the GT scale / gravity
+    (no noise, probabilities 0) and the estimates with probability 1."""
+    from cross_nav.train_visibility import head_inputs
+    B, S, H, W = 2, 3, 32, 32       # gt_log_scale needs >= 500 valid pixels
+    depth = torch.ones(B, S, H, W)
+    bb = {"log_scale_head": torch.full((B,), 0.5), "depth": depth}
+    batch = {"depths": depth * 2.0, "masks": torch.ones(B, S, H, W, dtype=torch.bool),
+             "up_cam": torch.tensor([[0., -1., 0.]] * B)}
+    up_pred = torch.tensor([[0., 0., 1.]] * B)
+    ls, up = head_inputs(bb, batch, up_pred, {}, "head")
+    assert torch.equal(ls, bb["log_scale_head"]) and torch.equal(up, up_pred)
+    exact = {"scale_noise": 0.0, "p_scale_head": 0.0, "gravity_noise_deg": 0.0, "p_gravity_pred": 0.0}
+    ls, up = head_inputs(bb, batch, up_pred, exact, "gtmix")
+    assert torch.allclose(ls, torch.full((B,), math.log(2.0))) and torch.allclose(up, batch["up_cam"])
+    ls, up = head_inputs(bb, batch, up_pred, {**exact, "p_scale_head": 1.0, "p_gravity_pred": 1.0}, "gtmix")
+    assert torch.allclose(ls, bb["log_scale_head"]) and torch.allclose(up, up_pred)
