@@ -348,6 +348,16 @@ the clock of `times.txt`), optionally `mag.txt` / `ms25.txt` (magnetometer + acc
 `geo.enabled=false` turns it off): `--gnss` only feeds the folder's GNSS data; without GNSS input the system's results
 are unchanged, and a geo-anchored map keeps its anchor and keyframe latitude / longitude when it is saved again.
 
+**Anchor only, pooled over sessions (opt-in, under evaluation).** `--gnss --config configs/overlays/geo_anchor.yaml`
+keeps GNSS out of the pose graph (`geo.pose_graph false`: the map is what vision and odometry make it) and fits one
+rigid anchor (heading + translation) to every used fix of every session of the map (`geo.pool_sessions`: the fixes are
+stored with the map and later sessions keep refining the anchor); it also widens the GNSS consistency window to 60 s
+for phones at walking speed. With a compass whose offset to the camera heading is known
+(`--set geo.compass_anchor=true geo.compass_offset_deg=<deg>`, or a loaded map's calibration), each session adds one
+heading to the fit. iPhone captures (outputs/2026-10-16_geo_anchor): nine 3-6 min walks anchored after 4 walks (never
+with per-session fits; after 1 with a compass), a 1.6 km walk anchored to 2.5 deg / 7 m against OpenStreetMap, maps
+unchanged (median 3-39 mm against the run without GPS).
+
 Stereo-mode quick-run options: `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation gating;
 default: the mode's configuration file), `--max-refs`, `--n-ref-anchors`. Without a right camera pass
 `--set pose_est.ff.right_image=left` (scale from the odometry; see the README OpenLORIS example).

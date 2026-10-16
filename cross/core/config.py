@@ -871,6 +871,23 @@ class GeoConfig:
     compass_sigma_deg: float = 5.0
     compass_offset_deg: Optional[float] = None   # compass -> camera heading offset; None: calibrated online
     compass_frame: str = "frd"                # body frame of raw magnetometer / accelerometer samples
+    # where GNSS acts.  pose_graph True: decimated GNSS factors enter the pose graph and GNSS-triggered optimisations
+    # move keyframes (the method above).  False (anchor only): the map's geometry is what vision and odometry make it;
+    # GNSS only fits the rigid map<->ENU anchor (heading + translation), which gates retrieval / proposals and gives every
+    # keyframe its latitude / longitude
+    pose_graph: bool = True
+    # the anchor is fitted to the used fixes of every session of the map (stored with it), not only this session's: a
+    # map of several short walks becomes observable together, and later sessions keep refining the anchor
+    pool_sessions: bool = False
+    # compass headings in the anchor fit, once the compass offset is known from outside this session (compass_offset_deg
+    # or a loaded map's calibration): each session adds one heading (robust circular mean of its headings against its
+    # keyframes; noise compass_session_sigma_deg, a phone compass's session-to-session spread), so the anchor's heading is
+    # observable on a site too small for GNSS alone
+    compass_anchor: bool = False
+    compass_session_sigma_deg: float = 4.0
+    compass_max_sigma_deg: float = 30.0       # samples whose reported accuracy is worse are not used for the anchor
+    compass_max_spread_deg: float = 15.0      # a session whose headings scatter more than this adds none
+    compass_anchor_interval_s: float = 1.0    # spacing of the heading samples kept per session
 
 
 @dataclass

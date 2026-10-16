@@ -656,7 +656,8 @@ class System:
         if self._lc_verifier is not None and 0 in self.hypothesis_manager.hypotheses:
             h0 = self.hypothesis_manager.hypotheses[0]
             n_inf = sum(1 for fs in h0.visual_edges.values() for f in fs if getattr(f, "informative", True))
-            n_geo = len(self._geo.factors) if (getattr(self, "_geo", None) is not None and self._geo.anchored) else 0
+            n_geo = len(self._geo.factors) if (getattr(self, "_geo", None) is not None and self._geo.anchored
+                                               and self.config.geo.pose_graph) else 0
             if (n_inf > 0 or n_geo > 0) and len(self.hypothesis_manager.nodes) >= 10:
                 t_final = time.perf_counter()
                 try:
@@ -770,6 +771,9 @@ class System:
         if getattr(self, "_gravity_up_map", None) is not None:
             save_data["gravity_up_map"] = [float(x) for x in self._gravity_up_map]
         if getattr(self, "_geo", None) is not None and self._geo.frame is not None:
+            if not self.config.geo.pose_graph or self.config.geo.pool_sessions:
+                # the anchor at the saved keyframe poses (anchor only: GNSS-triggered optimisations do not refit it)
+                self._geo.fit_anchor(self.hypothesis_manager.nodes)
             # geo anchor of the map (ENU origin, T_ENU<-map, fixes) and every keyframe's latitude / longitude
             save_data["geo"] = self._geo.state()
             save_data["geo"]["keyframe_lla"] = self._geo.lla_columns(self._geo.keyframe_lla(self.hypothesis_manager.nodes))

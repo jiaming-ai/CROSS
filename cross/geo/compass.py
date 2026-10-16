@@ -92,6 +92,8 @@ class Compass:
         self.offset_samples = deque(maxlen=2000)                    # (compass yaw - camera yaw in ENU)
         self.offset = None if self.cfg.offset_deg is None else math.radians(self.cfg.offset_deg)
         self.offset_std = None if self.offset is None else 0.0
+        # the offset is known from outside this session (configured, or a loaded map's calibration kept fixed)
+        self.offset_external = self.offset is not None
         self.stats = {"samples": 0, "disturbed": 0, "used": 0}
         self.ref_fixed = None                                       # (median, spread) stored with a map
 
@@ -145,7 +147,7 @@ class Compass:
     def add_offset_sample(self, compass_yaw: float, camera_yaw_enu: float):
         """A heading pair while the map is anchored and GNSS is good: calibrates the compass offset."""
         self.offset_samples.append(float(wrap(compass_yaw - camera_yaw_enu)))
-        if self.cfg.offset_deg is not None or len(self.offset_samples) < self.cfg.min_offset_samples:
+        if self.offset_external or len(self.offset_samples) < self.cfg.min_offset_samples:
             return
         a = np.asarray(self.offset_samples)
         # robust circular mean: median around the circular mean, then MAD
@@ -169,11 +171,13 @@ class Compass:
                 "offset_spread": getattr(self, "offset_spread", None), "stats": dict(self.stats),
                 "reference": None if self._reference() is None else [list(map(float, x)) for x in self._reference()]}
 
-    def load_state(self, s: dict):
+    def load_state(self, s: dict, freeze: bool = False):
+        """`freeze`: a loaded calibration stays as it is (it is then a calibration from outside this session)."""
         if s.get("offset") is not None and self.cfg.offset_deg is None:
             self.offset = float(s["offset"])
             self.offset_std = s.get("offset_std")
             self.offset_spread = s.get("offset_spread")
+            self.offset_external = bool(freeze)
         ref = s.get("reference")
         if ref:
             self.ref_fixed = (np.asarray(ref[0], float), np.asarray(ref[1], float))
