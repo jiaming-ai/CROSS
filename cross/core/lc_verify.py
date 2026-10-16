@@ -654,6 +654,24 @@ class LoopClosureVerifier:
         return new
 
     # ------------------------------------------------------------------ 2. prior consistency
+    def _vertical_scaled(self, cov: np.ndarray, last_kf_id: int, T_since: gtsam.Pose3) -> np.ndarray:
+        """noise.gate_vertical_ratio < 1: the prediction covariance (right perturbation at the current frame) with its
+        translation sigma along the world vertical scaled by the ratio."""
+        ratio = float(getattr(self.cfg.noise, "gate_vertical_ratio", 1.0))
+        if ratio >= 1.0:
+            return cov
+        node = self.system.hypothesis_manager.nodes.get(int(last_kf_id))
+        if node is None:
+            return cov
+        proj = getattr(self.system, "place_projection", None)
+        v = (proj.vertical.detach().cpu().numpy().astype(np.float64) if proj is not None
+             else np.array([0.0, 1.0, 0.0]))
+        R = np.asarray(to_gtsam(node.pose_mu[0]).compose(T_since).rotation().matrix())
+        u = R.T @ (v / np.linalg.norm(v))                 # the vertical in the current camera frame
+        M = np.eye(6)
+        M[3:, 3:] -= (1.0 - ratio) * np.outer(u, u)
+        return M @ cov @ M.T
+
     def predict_to_current(self, ref_id: int, last_kf_id: int, T_since: gtsam.Pose3, cov_since: np.ndarray):
         """Prediction of T_ref_current = chain(ref -> last keyframe) (+) odometry since the last keyframe, or through
         the session anchor for a map keyframe.  Returns (T_pred, cov) or (None, None) when no relation exists."""
@@ -662,7 +680,7 @@ class LoopClosureVerifier:
             T, cov = self.chain.predict(ref_id, last_kf_id, inflate=infl)
             if T is None:
                 return None, None
-            return T.compose(T_since), transport(cov, T_since) + cov_since
+            return T.compose(T_since), self._vertical_scaled(transport(cov, T_since) + cov_since, last_kf_id, T_since)
         if self.anchor is None:
             return None, None
         hm = self.system.hypothesis_manager
@@ -680,7 +698,7 @@ class LoopClosureVerifier:
         cov = transport(np.diag(self.noise.map_rel(d_map) ** 2), rest)
         cov += transport(self.anchor["cov"] if "cov" in self.anchor else np.diag(self.anchor["sigma"] ** 2), T_chain.compose(T_since))
         cov += transport(cov_chain, T_since) + cov_since
-        return T_map.compose(rest), cov
+        return T_map.compose(rest), self._vertical_scaled(cov, last_kf_id, T_since)
 
     def _guard_sample(self, sample: float, span_from: Optional[int] = None, speed: Optional[float] = None) -> bool:
         """Odometry scale guard: record one measured / odometry translation ratio of a session span starting at keyframe

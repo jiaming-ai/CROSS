@@ -714,3 +714,22 @@ def test_anchor_withdrawn_when_its_edge_fails_the_posterior_test():
     v.update_anchor(5, 22, T)
     v.anchored_chi2(anchor, 9, T, 26, gtsam.Pose3(), 1)    # borrowing an anchor for a test keeps the history
     assert v.reject_anchor_edges([]) is False and len(v._anchor_hist) == 1
+
+
+def test_gate_vertical_ratio_scales_the_vertical_sigma_only():
+    """noise.gate_vertical_ratio: the prediction's translation sigma along the world vertical (y) is scaled, the
+    horizontal ones are not; ratio 1 leaves the covariance unchanged."""
+    hm = FakeHM()
+    kf = Keyframe(pose_mu=_lie(gtsam.Pose3()).unsqueeze(0), pose_std=pp.se3(torch.zeros(1, 6)), pose_weights=torch.ones(1))
+    kf.id = 0
+    hm.nodes[0] = kf
+    cfg = LoopClosureConfig()
+    v = LoopClosureVerifier(FakeSystem(hm), cfg)
+    cov = np.eye(6)
+    assert np.allclose(v._vertical_scaled(cov, 0, gtsam.Pose3()), cov)
+    cfg.noise.gate_vertical_ratio = 0.25
+    out = v._vertical_scaled(cov, 0, gtsam.Pose3())
+    assert np.allclose(np.diag(out), [1, 1, 1, 1, 0.0625, 1])
+    # a camera rolled by 90 deg about its optical axis: the world vertical is its x axis
+    out = v._vertical_scaled(cov, 0, gtsam.Pose3(gtsam.Rot3.Rz(math.pi / 2), gtsam.Point3()))
+    assert np.allclose(np.diag(out), [1, 1, 1, 0.0625, 1, 1], atol=1e-9)

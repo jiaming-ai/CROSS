@@ -180,6 +180,12 @@ class NoiseModelConfig:
     map_r_b: float = 0.001
     # odometry covariance inflation used by the prior gate only (uncertainty of the odometry noise model itself)
     gate_inflation: float = 2.0
+    # gravity-aligned odometry (VIO, IMU, wheel odometry on level ground, a gravity-aligned stored map): the prior test's
+    # prediction (odometry chain, stored-map relative pose, session anchor) has its translation sigma along the vertical
+    # (mapping.projection.vertical) scaled by this ratio; the visual measurement's own noise is unchanged.  Odometry
+    # drifts mostly horizontally (heading and scale errors); its height error is bounded by gravity, so a reference on
+    # another floor of a look-alike building contradicts the prediction by metres vertically.  1: isotropic (off).
+    gate_vertical_ratio: float = 1.0
 
 
 @dataclass
