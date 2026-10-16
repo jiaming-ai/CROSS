@@ -344,6 +344,11 @@ class LoopClosureConfig:
     # this far (m) from the belief: a sub-metre disagreement is measurement bias, not a wrong anchor (the lock-outs seen
     # were 2-60 m off).  0: no minimum.
     anchor_contradict_min_offset: float = 0.0
+    # a session anchor set by a map edge that the posterior test of the verified loop closure then rejects is withdrawn,
+    # and the session falls back to its previous anchor (otherwise a marginal aliased measurement, e.g. a look-alike lift
+    # lobby on another floor, anchors the session and the prior test then rejects the true measurements).  Off: the
+    # anchor stays.
+    anchor_needs_posterior: bool = False
     intra_enabled: bool = True
     intra_min_edges: int = 3          # accepted long-range visual edges ...
     intra_window_steps: int = 15      # ... within this many processed steps

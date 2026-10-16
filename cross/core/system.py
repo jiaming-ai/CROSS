@@ -1683,6 +1683,17 @@ class System:
                         h0_ok[j] = None
                 return
 
+    def _withdraw_rejected_anchor(self, edges) -> None:
+        """mapping.loop_closure.anchor_needs_posterior: a session anchor set by a map edge that the posterior test then
+        rejected is withdrawn (the session falls back to its previous anchor)."""
+        v = self._lc_verifier
+        if v is None or not self.config.mapping.loop_closure.anchor_needs_posterior or not edges:
+            return
+        prev = v.anchor
+        if v.reject_anchor_edges(edges):
+            logger.info(f"session anchor {(prev['map_kf'], prev['kf'])} withdrawn: its edge failed the posterior test; anchor now "
+                        f"{None if v.anchor is None else (v.anchor['map_kf'], v.anchor['kf'])}")
+
     def _maybe_verified_loop_closure(self, ret: dict, new_kf, edge_mapping: dict) -> bool:
         """Verified loop closure of hypothesis 0 (cross/core/lc_verify.py).
 
@@ -1764,6 +1775,7 @@ class System:
                 v.stats["posterior_flagged"] = v.stats.get("posterior_flagged", 0) + len(outliers)
                 for (a, b, f, c2) in outliers:
                     v.remove_edge(a, b, f)
+                self._withdraw_rejected_anchor([(a, b) for (a, b, _f, _c) in outliers])
                 logger.info(f"Verified loop closure at step {step}: {len(outliers)} of {len(new_keys)} new edges rejected after the "
                             f"optimisation (chi2 {[round(o[3], 1) for o in outliers][:6]}, edges {[(o[0], o[1]) for o in outliers][:6]}) -> re-optimising")
                 if defer and len(outliers) == len(new_keys):
@@ -1878,6 +1890,7 @@ class System:
                 found.append((a, b, f, c2))
         for (a, b, f, c2) in found:
             v.remove_edge(a, b, f)
+        self._withdraw_rejected_anchor([(a, b) for (a, b, _f, _c) in found])
         info, n_tail = self._apply_async_poses(res, meta)
         ap.stats["applied"] += 1
         ap.stats["apply_s"] += time.perf_counter() - t0

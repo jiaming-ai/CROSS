@@ -394,7 +394,8 @@ class LoopClosureVerifier:
         # statistic is the larger of the two
         self.thr = chi2_threshold(cfg.confidence, 6 if self.test_dof == "full" else 3)
         self.chain = ChainPredictor(system.hypothesis_manager, self.noise)
-        self.anchor: Optional[dict] = None       # {"map_kf", "kf", "T" (map_kf -> kf), "sigma"} of the latest verified session->map edge
+        self._anchor: Optional[dict] = None      # {"map_kf", "kf", "T" (map_kf -> kf), "sigma"} of the latest verified session->map edge
+        self._anchor_hist: list = []              # anchors set by update_anchor since the anchor was last set otherwise
         self.stats = {"inpass_rejected": 0, "prior_rejected": 0, "prior_tested": 0, "posterior_rejected": 0, "pgo": 0, "h0_loop_edges": 0}
         self.quarantine: list = []
         # online visual-noise scales (innovation-based), one per measurement type: references of the current
@@ -961,6 +962,10 @@ class LoopClosureVerifier:
                 self._innov[kind].append(float(np.linalg.norm(r[3:])) / math.sqrt(max(float(np.trace(S0[3:, 3:])) / 3.0, 1e-12)))
                 c2 = self.chi2(r, cov + np.diag(self.noise.visual(d, self.scale) ** 2))
             self.stats["prior_tested"] += 1
+            if kind == "map":
+                logger.debug(f"prior test map kf {int(kf.id)}: residual t {np.round(r[3:], 3).tolist()} chain sigma t "
+                             f"{np.round(np.sqrt(np.clip(np.diag(cov)[3:], 0, None)), 3).tolist()} chi2 {c2:.1f} "
+                             f"(anchor {None if self.anchor is None else (self.anchor['map_kf'], self.anchor['kf'])})")
             if c2 > self.thr:
                 self.stats["prior_rejected"] += 1
             oks.append(bool(c2 <= self.thr)); chis.append(c2)
@@ -984,8 +989,35 @@ class LoopClosureVerifier:
             out["cov"] = self.noise.visual_cov(Tm, self.scales["map"], self.scales_along["map"], self.scales_rot["map"])
         return out
 
+    @property
+    def anchor(self) -> Optional[dict]:
+        return self._anchor
+
+    @anchor.setter
+    def anchor(self, value: Optional[dict]) -> None:
+        # set from outside (dropped, contradicted, restored for a test): the anchors before it are no fallback
+        self._anchor = value
+        self._anchor_hist = []
+
     def update_anchor(self, map_kf_id: int, kf_id: int, T_meas) -> None:
-        self.anchor = self.make_anchor(map_kf_id, kf_id, T_meas)
+        self._anchor = self.make_anchor(map_kf_id, kf_id, T_meas)
+        self._anchor_hist = (self._anchor_hist + [self._anchor])[-64:]
+
+    def reject_anchor_edges(self, edges) -> bool:
+        """Edges (map_kf, kf) the posterior test rejected: an anchor set by one of them is withdrawn, and the session
+        falls back to the latest earlier anchor that was not (None when there is none).  Returns whether the current
+        anchor changed."""
+        bad = {(int(a), int(b)) for a, b in edges}
+        if self._anchor is None or not bad:
+            return False
+        keep = [x for x in self._anchor_hist if (x["map_kf"], x["kf"]) not in bad]
+        if (self._anchor["map_kf"], self._anchor["kf"]) not in bad:
+            self._anchor_hist = keep
+            return False
+        self._anchor = keep[-1] if keep else None
+        self._anchor_hist = keep
+        self.stats["anchor_withdrawn"] = self.stats.get("anchor_withdrawn", 0) + 1
+        return True
 
     def anchored_chi2(self, anchor: dict, ref_id: int, T_meas, last_kf_id: int, T_since, n_since: int) -> Optional[float]:
         """chi^2 of the prior test of the map reference ref_id through a candidate session anchor (an earlier map edge
@@ -993,11 +1025,11 @@ class LoopClosureVerifier:
         between them.  None when no chain relates them."""
         Ts = to_gtsam(T_since) if T_since is not None else gtsam.Pose3()
         cov_since = self._since_cov(Ts, n_since)
-        saved, self.anchor = self.anchor, anchor
+        saved, self._anchor = self._anchor, anchor      # the history is untouched (a test, not a new anchor)
         try:
             T_pred, cov = self.predict_to_current(int(ref_id), last_kf_id, Ts, cov_since)
         finally:
-            self.anchor = saved
+            self._anchor = saved
         if T_pred is None:
             return None
         Tm = to_gtsam(T_meas)

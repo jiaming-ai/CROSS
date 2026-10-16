@@ -689,3 +689,28 @@ def test_guard_tracks_the_fault_after_a_firing():
     for _ in range(30):                                   # steady (noise only): no correction, the inflation fades
         v._guard_push(math.exp(rng.normal(0, 0.05)), 120, 1.0)
     assert v.odom_scale == s0 and v.odom_fault < 0.05
+
+
+def test_anchor_withdrawn_when_its_edge_fails_the_posterior_test():
+    """An anchor set by a map edge the posterior test rejects is withdrawn; the session falls back to the previous one.
+    Setting the anchor from outside (drop, contradiction) clears the fallbacks."""
+    hm = FakeHM()
+    v = LoopClosureVerifier(FakeSystem(hm, session_start=10), LoopClosureConfig())
+    T = _lie(gtsam.Pose3(gtsam.Rot3(), gtsam.Point3(1.0, 0, 0)))
+    v.update_anchor(3, 20, T)
+    v.update_anchor(4, 21, T)
+    assert not v.reject_anchor_edges([(3, 20)])            # not the current anchor: kept, but no longer a fallback
+    assert (v.anchor["map_kf"], v.anchor["kf"]) == (4, 21)
+    assert v.reject_anchor_edges([(4, 21)])
+    assert v.anchor is None                                # (3, 20) was rejected too: nothing to fall back to
+    v.update_anchor(5, 22, T)
+    v.update_anchor(6, 23, T)
+    assert v.reject_anchor_edges([(6, 23), (7, 24)])
+    assert (v.anchor["map_kf"], v.anchor["kf"]) == (5, 22)
+    v.anchor = None
+    v.update_anchor(8, 25, T)
+    assert v.reject_anchor_edges([(8, 25)]) and v.anchor is None
+    anchor = v.make_anchor(9, 26, T)
+    v.update_anchor(5, 22, T)
+    v.anchored_chi2(anchor, 9, T, 26, gtsam.Pose3(), 1)    # borrowing an anchor for a test keeps the history
+    assert v.reject_anchor_edges([]) is False and len(v._anchor_hist) == 1
