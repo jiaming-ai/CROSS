@@ -184,7 +184,8 @@ class NoiseModelConfig:
     # prediction (odometry chain, stored-map relative pose, session anchor) has its translation sigma along the vertical
     # (mapping.projection.vertical) scaled by this ratio; the visual measurement's own noise is unchanged.  Odometry
     # drifts mostly horizontally (heading and scale errors); its height error is bounded by gravity, so a reference on
-    # another floor of a look-alike building contradicts the prediction by metres vertically.  1: isotropic (off).
+    # another floor of a look-alike building contradicts the prediction by metres vertically.  1: isotropic (off); 0.25 in
+    # the modes that include configs/base/vertical_gate.yaml.
     gate_vertical_ratio: float = 1.0
 
 
@@ -353,7 +354,7 @@ class LoopClosureConfig:
     # a session anchor set by a map edge that the posterior test of the verified loop closure then rejects is withdrawn,
     # and the session falls back to its previous anchor (otherwise a marginal aliased measurement, e.g. a look-alike lift
     # lobby on another floor, anchors the session and the prior test then rejects the true measurements).  Off: the
-    # anchor stays.
+    # anchor stays.  On in the modes that include configs/base/vertical_gate.yaml.
     anchor_needs_posterior: bool = False
     intra_enabled: bool = True
     intra_min_edges: int = 3          # accepted long-range visual edges ...

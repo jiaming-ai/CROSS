@@ -7,3 +7,4 @@ include:
   - ../base/odometry_vio.yaml
   - ../base/common.yaml
   - ../base/placement.yaml
+  - ../base/vertical_gate.yaml

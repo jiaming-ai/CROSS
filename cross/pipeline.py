@@ -858,6 +858,13 @@ def placement_odometry_ok(mode: str, odometry: str) -> bool:
     return not (mode == "mono" and odometry == "visual")
 
 
+def vertical_gate_odometry_ok(mode: str, odometry: str) -> bool:
+    """Whether the wrong-floor gate (configs/base/vertical_gate.yaml) can work with a session's odometry: it treats the
+    odometry's height as nearly drift-free (gravity-aligned and metric).  Monocular DPVO (mono --odometry visual) has
+    neither gravity nor scale; it reuses configs/modes/mono_wheel.yaml, so the gate is turned off in code."""
+    return not (mode == "mono" and odometry == "visual")
+
+
 def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, visualize=False):
     """A callable building fresh sessions for the runner's --mode / --odometry (one per map run or query trial)."""
     mode, odometry = args.mode, ("external" if args.odometry == "basalt" else args.odometry)
@@ -873,6 +880,15 @@ def session_factory(args, camera, system_config, T_right_in_left=None, seed=0, v
         logger.warning("mapping.hypothesis.reloc_placement off: the placement rule needs metric odometry, monocular "
                        "DPVO has no scale (cross.pipeline.placement_odometry_ok)")
         cfg.mapping.hypothesis.reloc_placement = False
+    lc = cfg.mapping.loop_closure
+    if (lc.anchor_needs_posterior or lc.noise.gate_vertical_ratio < 1.0 or cfg.mapping.hypothesis.h0_innovation_gate > 0) \
+            and not vertical_gate_odometry_ok(mode, odometry):
+        from loguru import logger
+        logger.warning("wrong-floor gate off (anchor_needs_posterior, gate_vertical_ratio, h0_innovation_gate): it needs "
+                       "gravity-aligned metric odometry, monocular DPVO has neither (cross.pipeline.vertical_gate_odometry_ok)")
+        lc.anchor_needs_posterior = False
+        lc.noise.gate_vertical_ratio = 1.0
+        cfg.mapping.hypothesis.h0_innovation_gate = 0.0
     risks = config_risks(cfg, mode, getattr(args, "odometry_name", args.odometry), getattr(args, "odom_file", None))
     confirm_config_risks(risks, accept=getattr(args, "accept_config_risk", False))
     mono_config = vo_config = None
