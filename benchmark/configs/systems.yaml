@@ -254,3 +254,13 @@ vggt_slam:
   uses_odometry: false
   map_reuse: concatenated stream
   sim3_setups: [mono]
+
+# streaming feed-forward reconstruction (KV cache over the map session's keyframes); no relocalization step, so every
+# query pose counts and its T2 / T3 are upper bounds (scripts/baselines/run_lingbot_map.py)
+lingbot_map:
+  label: LingBot-Map
+  runner: concat
+  setups: [mono]
+  uses_odometry: false
+  map_reuse: concatenated stream
+  sim3_setups: [mono]
