@@ -72,7 +72,7 @@ def _run(delay, seconds=40.0, fail=()):
     mc = MonoConfig()
     mc.imu.vgio_klt = False                       # no images to track corners in
     fe = VggtImuFrontend(np.array([[300.0, 0, 32], [0, 300.0, 24], [0, 0, 1]]), mc, device="cpu", interval=3,
-                         context=2, keyframe_age=2.0, graph=True, local_service=False)
+                         context=2, keyframe_age=2.0, local_service=False)
     fe.standalone = False
     service = _FakeService(poses, fail=fail)
     pending, est, gt = [], [], []

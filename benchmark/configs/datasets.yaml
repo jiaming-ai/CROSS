@@ -14,8 +14,9 @@ openloris:
   trial_len: 100
   trial_stride: 50
   odometry: wheel
-  # --odom-source vio keeps the wheel odometry here (no odom_vio.txt): the runs are the external-odometry runs, which the
-  # tables reuse for the VIO rows (make_tables.odom_rows; checked bit-identical on the development split)
+  # --odom-source vio keeps the wheel odometry here (no odom_vio.txt), and the tables show the external-odometry runs in
+  # the VIO rows (make_tables.odom_rows). Same odometry input, but the *_wheel mode file's settings: since the *_basalt
+  # files differ from the *_wheel files (configs/base/odometry_vio.yaml), these cells are not runs of the Basalt modes
   odom_fallback: {vio: wheel}
   setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
   scenes:
@@ -192,8 +193,9 @@ val_openloris:
   trial_len: 100
   trial_stride: 50
   odometry: wheel
-  # --odom-source vio keeps the wheel odometry here (no odom_vio.txt): the runs are the external-odometry runs, which the
-  # tables reuse for the VIO rows (make_tables.odom_rows; checked bit-identical on the development split)
+  # --odom-source vio keeps the wheel odometry here (no odom_vio.txt), and the tables show the external-odometry runs in
+  # the VIO rows (make_tables.odom_rows). Same odometry input, but the *_wheel mode file's settings: since the *_basalt
+  # files differ from the *_wheel files (configs/base/odometry_vio.yaml), these cells are not runs of the Basalt modes
   odom_fallback: {vio: wheel}
   setups: {rgbd: rgbd, stereo: stereo, mono: rgbd}
   scenes:
@@ -203,7 +205,7 @@ val_openloris:
   t1: maps
 
 # ---------------------------------------------------------------------------------------------------------------------
-# Cross-camera test (outputs/2026-10-12_cross_camera/): map with one camera, relocalize / continue mapping with another.
+# Cross-camera test: map with one camera, relocalize / continue mapping with another.
 # SimChange traversals rendered with other cameras next to the camA ones: <scene>/<variant>__camB (848 x 480, hfov 75,
 # baseline 0.12 m, off-centre principal point, 0.25 m lower) and __camC (640 x 480, hfov 60, baseline 0.20 m); same
 # world frame.  No fixed `baseline`: every folder loads its own pair (its right/ link = its first rendered baseline;

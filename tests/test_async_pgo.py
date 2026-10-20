@@ -76,7 +76,6 @@ def make_system(test_before_apply=False, outlier=True, async_lag=None, n=240, se
     sys_.config.mapping.loop_closure.async_pgo = async_lag is not None
     sys_.state_device = "cpu"
     sys_._processed_frame_num = 100
-    sys_._last_pgo_step = -1
     v = LoopClosureVerifier(sys_, sys_.config.mapping.loop_closure)
     v.stats["pgo_time"] = 0.0
     sys_._lc_verifier = v
@@ -88,7 +87,6 @@ def make_system(test_before_apply=False, outlier=True, async_lag=None, n=240, se
     new = [(60, 230)]
     if outlier:
         new.append((100, 215))
-    rng = np.random.default_rng(1)
     for a, b in new:
         wrong = (a, b) == (100, 215)
         T = gtsam.Pose3.Expmap(np.array([0, 0, 0, 3.0, -2.0, 0.5]))
@@ -171,7 +169,6 @@ def test_late_result_moves_the_keyframes_added_meanwhile_with_the_latest_one(lag
     late._submit_async_pgo({}, list(keys), ref, list(keys))
     assert late._apgo.busy
     add_tail(hm, 5)                                          # the front end goes on
-    tail_before = {i: poses(hm)[i] for i in range(240, 245)}
     late._processed_frame_num += 2
     if lag < 0:
         import time

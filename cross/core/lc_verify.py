@@ -541,11 +541,6 @@ class LoopClosureVerifier:
             return None
         return self.scales_rot["map"] if self._is_map_kf(int(kf_id)) else self.scales_rot["sess"]
 
-    def meas_cov(self, kf_id: int, T, unscaled: bool = False) -> np.ndarray:
-        """Covariance of a visual measurement to keyframe kf_id under the current online scales."""
-        if unscaled:
-            return self.noise.visual_cov(T, 1.0, 1.0 if self.anisotropic else None)
-        return self.noise.visual_cov(T, self.scale_for(kf_id), self.scale_along_for(kf_id), self.scale_rot_for(kf_id))
 
     # ------------------------------------------------------------------ helpers
     def chi2(self, r: np.ndarray, cov: np.ndarray, rotation: bool = False) -> float:

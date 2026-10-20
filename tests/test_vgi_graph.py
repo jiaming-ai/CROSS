@@ -76,16 +76,18 @@ def _drive(graphs, cfg_kw, seed=0, seconds=24.0, every=3, K=6, outliers=True, ch
         else:
             fp = frames[n - 1]
             ids = []
+            shared = None                               # the first graph's factor data, reused by the others
             for g in graphs:
                 part = _window(samples, used[id(g)], fp / fps, tt)
                 if g.cfg.time_offset:
                     pre, jac = g.preintegrate(part, fp / fps, tt, used[id(g)])
-                elif g is not graphs[0]:
+                elif shared is not None:
                     # the same factor data for every graph (the reference took its gyro-bias Jacobians by finite
                     # differences): the comparison is of the solvers
                     pre, jac = shared
                 else:
-                    pre, jac = shared = g.preintegrate(part, fp / fps, tt)
+                    shared = g.preintegrate(part, fp / fps, tt)
+                    pre, jac = shared
                 ids.append(g.add_node(pre, jac, g.lam[g.ids[-1]], tt))
             views = [frames[n - 1]] + ([frames[n - K]] if n - K >= 0 else [])
             noise = [(Rotation.from_rotvec(rng.normal(0, rot_noise, 3)).as_matrix(), rng.normal(0, 0.02, 3))

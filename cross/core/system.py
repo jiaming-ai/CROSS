@@ -38,9 +38,15 @@ import pickle
 
 import os
 
-logger.remove()
-logger.add(os.environ.get("CROSS_LOG_FILE", "logs/system.log"), level="DEBUG", mode="w")  
-logger.add(sys.stdout, level="INFO")
+# console at INFO instead of loguru's default DEBUG handler (a host application's own handlers are kept); the
+# debug log goes to a file only when asked: CROSS_LOG_FILE (the scripts/ runners set it per run; run.py --log-file)
+try:
+    logger.remove(0)
+    logger.add(sys.stdout, level="INFO")
+except ValueError:                      # the default handler was already replaced by the host application
+    pass
+if os.environ.get("CROSS_LOG_FILE"):
+    logger.add(os.environ["CROSS_LOG_FILE"], level="DEBUG", mode="w")
 
 
 torch.set_printoptions(
@@ -123,18 +129,12 @@ class System:
         else:
             raise TypeError(f"config must be SystemConfig, path, or None, got {type(config)}")
 
-        # print the formatted config
-        logger.info(f"System config: {json.dumps(config_to_dict(self.config), indent=4)}")
-
-        self.async_update = self.config.async_update
-        self.local_update_thread = None
-        self.local_update_thread_running = threading.Event()
-        self._cur_obs_lock = threading.Lock()
+        logger.debug(f"System config: {json.dumps(config_to_dict(self.config), indent=4)}")
 
         self.device = device
         # keyframe images live in host RAM; an observation copies its references to `device` (on the GPU they cost ~0.6 MB
         # per keyframe; the option to keep them there was removed: no speed gain once the keyframe filter's detector ran on
-        # the GPU, outputs/2026-10-08_option_pruning; code in tag storage-image-device-2026-10-08)
+        # the GPU; code in tag storage-image-device-2026-10-08)
         self.storage_device = torch.device("cpu")
         self.state_device = torch.device(self.config.state_device or device)
         self.visualize = visualize
@@ -156,8 +156,6 @@ class System:
 
 
         ########### tracking ###########
-        self._cur_obs_queue = deque(maxlen=10)
-        self._odometry_readings = []
         self.new_kf_after_n_unsuccessful_steps = self.config.tracking.new_kf_after_n_unsuccessful_steps
         self.base_measurement_std_diag = torch.tensor([0.2, 0.2, 0.3, 0.2, 0.2, 0.2])
         if self.config.pose_est.type == PoseEstType.FF and self.config.pose_est.ff.base_measurement_std:
@@ -284,8 +282,6 @@ class System:
         # Topological map (odometry + proximity) used for lightweight planning
         topo_cfg = SimpleTopoConfig(
             proximity_distance_thresh=self.config.mapping.topo.proximity_distance_thresh,
-            proximity_std_trans=self.config.mapping.topo.proximity_std_trans,
-            proximity_std_rot=self.config.mapping.topo.proximity_std_rot,
             use_proximity_grid=self.config.mapping.topo.use_proximity_grid,
             enable_incremental_proximity=self.config.mapping.topo.enable_incremental_proximity,
             enabled=self.config.mapping.topo.enabled,
@@ -311,7 +307,6 @@ class System:
             if float(getattr(lc_cfg.noise, "visual_scale", 1.0) or 1.0) != 1.0 and hasattr(self, "pose_est"):
                 self.pose_est.metric_scale_correction = float(lc_cfg.noise.visual_scale)
                 logger.info(f"Feed-forward metric scale correction: translations divided by {lc_cfg.noise.visual_scale:.3f}")
-        self._last_pgo_step = -10**9
         # verified loop closure optimised in a forked process while the front end goes on (cross/core/async_pgo.py)
         self._apgo = None
         if lc_cfg.async_pgo and self._lc_verifier is not None:
@@ -373,32 +368,6 @@ class System:
 
         atexit.register(self.shutdown)
 
-
-        if self.async_update:
-            self.init_update_thread()
-
-    @property
-    def anchor_count(self):
-        """Get the number of anchors."""
-        return self.db._next_atlas_id
-    
-    @property
-    def processed_count(self):
-        """Get the processed count."""
-        return self._processed_frame_num
-    
-
-    def init_update_thread(self):
-        """Initialize the local update thread."""
-        logger.info("Initializing the local update thread...")
-        self.local_update_thread = threading.Thread(
-            target=self.run_worker,
-            name="local_update_thread",
-            daemon=False,
-        )
-        self.local_update_thread_running.set()
-        self.local_update_thread.start()
-
     def __del__(self):
         try:
             self.shutdown()
@@ -418,10 +387,6 @@ class System:
             time.sleep(1)  # grace period for the visualizer to finish
         if getattr(self, "_apgo", None) is not None:
             self._cancel_async_pgo()
-        if hasattr(self, "local_update_thread") and self.local_update_thread is not None:
-            self.local_update_thread_running.clear()
-            self.local_update_thread.join(timeout=1)
-
         stop_fps_monitoring()
 
     def get_all_keyframes(self):
@@ -521,18 +486,6 @@ class System:
             self._lc_verifier.reset_session()
         return kf
         
-    def run_worker(self):
-        """Run worker."""
-        while self.local_update_thread_running.is_set():
-            # update the map
-            if len(self._cur_obs_queue) == 0:
-                logger.info("Waiting for observation...")
-                time.sleep(1)
-                continue
-            self._step_work()
-
-        logger.info("Local update thread finished")
-    
     def get_current_pose(self):
         """Get the current pose.
         Note: this is not accurate in the global frame. 
@@ -671,20 +624,6 @@ class System:
                     pg0 = res.get("pose_graph")
                     logger.info(f"Final optimisation round 0: initial {getattr(pg0, 'initial_cost', None)} -> {res.get('cost')} "
                                 f"({getattr(pg0, 'lm_iterations', None)} it, {len(getattr(pg0, 'vertices', []))} vertices, factors {getattr(pg0, 'n_factors', None)})")
-                    # diagnostics: did the write-back land in the keyframes the graph reads?
-                    mism = []
-                    for nid, p in (getattr(pg0, "optimized_poses", None) or {}).items():
-                        kf_ = self.hypothesis_manager.nodes.get(nid)
-                        if kf_ is None:
-                            continue
-                        a_ = kf_.pose_mu[0].tensor().detach().cpu().numpy().reshape(-1); b_ = p.tensor().detach().cpu().numpy().reshape(-1)
-                        d_ = float(np.linalg.norm(a_[:3] - b_[:3]))
-                        qa_, qb_ = a_[3:7] / max(np.linalg.norm(a_[3:7]), 1e-12), b_[3:7] / max(np.linalg.norm(b_[3:7]), 1e-12)
-                        ang_ = float(np.degrees(2 * np.arccos(min(1.0, abs(float(np.dot(qa_, qb_)))))))
-                        if d_ > 1e-3 or ang_ > 0.1:
-                            mism.append((int(nid), round(d_, 3), round(ang_, 1), bool(kf_.temporary), tuple(kf_.pose_mu.shape), str(kf_.pose_mu.device), str(kf_.pose_mu.dtype),
-                                         [round(float(x), 4) for x in a_[3:7]], [round(float(x), 4) for x in b_[3:7]]))
-                    logger.info(f"Final optimisation write-back check: {len(mism)} of {len(getattr(pg0, 'optimized_poses', {}))} nodes differ from the optimised pose; e.g. {mism[:8]}")
                     # posterior test over every informative measurement: the ones the robust optimisation cannot
                     # reconcile are quarantined and the map re-optimised (at most three rounds)
                     for _ in range(3):
@@ -693,35 +632,8 @@ class System:
                         outliers = v.posterior_outliers(res["pose_graph"], informative_only=True)
                         if not outliers:
                             break
-                        c_after_apply = self.hypothesis_manager.graph_cost_now()
-                        try:   # diagnostics: the most expensive factor of the fresh graph vs the same pair in the optimiser's graph
-                            import gtsam as _g
-                            pgd = PoseGraph(self.hypothesis_manager, depth=1000, k_hop=2, device=self.state_device, noise_fn=self.hypothesis_manager.pgo_noise_fn(), skip_fn=self.hypothesis_manager.pgo_skip_fn())
-                            pgd.eval_only = True
-                            with self.hypothesis_manager.graph_lock:
-                                pgd.construct_for_loop_closure(target_node_id=max(self.hypothesis_manager.nodes.keys()), other_hypothesis_id=0)
-                            ids_ = [vv.id for vv in pgd.vertices if vv.id in self.hypothesis_manager.nodes]
-                            pgd.solve(optim_node_ids=set(ids_) - {min(ids_)}, fixed_node_ids={min(ids_)})
-                            gd, vd = pgd._graph, pgd._initial
-                            worst_i = max(range(gd.size()), key=lambda i: gd.at(i).error(vd))
-                            fd = gd.at(worst_i); ka, kb = list(fd.keys())[:2]
-                            g0, r0, i0 = pg0._graph, pg0._result, pg0._initial
-                            same = [i for i in range(g0.size()) if list(g0.at(i).keys())[:2] == [ka, kb]]
-                            f0 = g0.at(same[0]) if same else None
-                            def p7(P): q = P.rotation().toQuaternion(); t = P.translation(); return [round(float(x), 4) for x in (t[0], t[1], t[2], q.x(), q.y(), q.z(), q.w())]
-                            logger.info(f"Worst factor diagnostics: keys {ka},{kb}: fresh error {fd.error(vd):.1f}; optimiser factor error at result {f0.error(r0) if f0 else None:.1f}, at fresh values {f0.error(vd) if f0 else None:.1f}; "
-                                        f"fresh measurement {p7(fd.measured())} optimiser measurement {p7(f0.measured()) if f0 else None}; "
-                                        f"fresh sigmas {np.round(fd.noiseModel().sigmas() if hasattr(fd.noiseModel(), 'sigmas') else fd.noiseModel().noise().sigmas(), 4).tolist()} "
-                                        f"optimiser sigmas {np.round(f0.noiseModel().sigmas() if hasattr(f0.noiseModel(), 'sigmas') else f0.noiseModel().noise().sigmas(), 4).tolist() if f0 else None}; "
-                                        f"values a: result {p7(r0.atPose3(ka))} fresh {p7(vd.atPose3(ka))}; b: result {p7(r0.atPose3(kb))} fresh {p7(vd.atPose3(kb))}")
-                        except Exception as ex:
-                            logger.warning(f"worst-factor diagnostics failed: {ex}")
-                        sizes = [len(self.hypothesis_manager.hypotheses[0].visual_edges.get((a, b), [])) for (a, b, f, c2) in outliers]
                         for (a, b, f, c2) in outliers:
                             v.remove_edge(a, b, f)
-                        c_after_remove = self.hypothesis_manager.graph_cost_now()
-                        logger.info(f"Final optimisation diagnostics: cost after write-back {c_after_apply[0]:.1f} {c_after_apply[1]} worst {c_after_apply[2]}; "
-                                    f"bucket sizes of removed {sizes}; cost after removal {c_after_remove[0]:.1f} {c_after_remove[1]} worst {c_after_remove[2]}")
                         n_rej += len(outliers)
                         res = self.hypothesis_manager.handle_loop_closure(0)
                         v.stats["pgo"] = v.stats.get("pgo", 0) + 1
@@ -827,7 +739,6 @@ class System:
             logger.info(f"Map storage: graph {st['graph_bytes'] / 1e6:.2f} MB, images {st['pack_bytes'] / 1e6:.1f} MB "
                         f"({scfg.image_codec}; {st['encoded']} encoded, {st['copied']} copied, {st['kept']} kept), "
                         f"descriptors {st.get('descriptor_bytes', 0) / 1e6:.1f} MB, {st['write_s']:.2f} s")
-            self.last_save_stats = st
         else:
             raise ValueError(f"storage.format: v2 | pickle, not {scfg.format}")
 
@@ -1153,11 +1064,7 @@ class System:
         # expects the back end to observe (remote_frame without rgb: the step without an observation)
         if obs.get("rgb", None) is not None or obs.get("remote_frame", False):
 
-            # push obs to queue if rgb image is not None
-            if self.async_update:
-                self._step_async(obs, **kwargs)
-            else:
-                self._step_sync(obs, **kwargs)
+            self._step_work(obs, **kwargs)
             if getattr(self, "_world_capture", None) is not None:
                 self._capture_frame(obs)
 
@@ -1186,49 +1093,14 @@ class System:
                 logger.warning(f"world capture failed (frames are not kept): {ex}")
                 self._capture_warned = True
 
-    def _step_async(
-        self,
-        obs: dict,
-        **kwargs,
-    ):
-        """Update the map.
-        This is the main function that is called to update the map.
-        Args:
-            obs: the observation dict containing:
-                - rgb: the rgb image, np.ndarray
-                - depth: the depth image, np.ndarray
-                - conf: the confidence map of the depth image, np.ndarray
-                - delta_pose: the delta pose between current and last step, np.ndarray
-                - timestamp: the timestamp of the observation
-        """
-        with self._cur_obs_lock:
-            self._cur_obs_queue.append(obs)
-
-    def _step_sync(
-        self,
-        obs: dict,
-        **kwargs,
-    ):
-        """Update the map synchronized
-        This is primarily used for testing
-        """
-        self._cur_obs_queue.append(obs)
-
-        self._step_work(**kwargs)
-
     @fps_monitor("Process Step")
     @timeit
-    def _step_work(self, **kwargs):
-        """main function for step
-        """
+    def _step_work(self, last_obs: dict, **kwargs):
+        """One step with an image (or a remote frame): observation, filtering, keyframes, loop closure."""
         logger.debug(f"Step work at step {self._processed_frame_num}")
         self.last_step_diagnostics = {"loop_closure_detected": False, "loop_closure_applied": False}
         self._processed_frame_num += 1
         
-        # get all synchronized observations
-        with self._cur_obs_lock:
-            last_obs = self._cur_obs_queue.popleft()
-
         rgb_image = last_obs["rgb"]
         self._frontend_anchor = last_obs.get("frontend_anchor")
         g = last_obs.get("gravity")
@@ -1391,7 +1263,7 @@ class System:
         # if no proposal, continue with motion-only update
         if len(ret["valid_keyframes"]) == 0:
             self.hypothesis_manager.reference_support.observe(self._processed_frame_num, {})
-            logger.info(f"No valid keyframes found. Continuing with motion-only update")
+            logger.debug("No valid keyframes found. Continuing with motion-only update")
             self._unsuccessful_retrieval_steps += 1
             self._last_obs_mapped = False
 
@@ -1774,7 +1646,6 @@ class System:
             return False
         v.stats["pgo"] += 1
         v.stats["pgo_time"] = v.stats.get("pgo_time", 0.0) + (time.perf_counter() - t_pgo)
-        self._last_pgo_step = step
         applied = not defer
         if self.config.mapping.loop_closure.use_posterior:
             outliers = v.posterior_outliers(pgo_info["pose_graph"], only_keys=set(new_keys))
@@ -1830,7 +1701,6 @@ class System:
             ap.stats["provisional"] = ap.stats.get("provisional", 0) + int(bool(info.get("success")))
             ap.stats["provisional_s"] = ap.stats.get("provisional_s", 0.0) + time.perf_counter() - t0
         ap.submit(new_keys, window_ref, step, loop_keys=loop_keys)
-        self._last_pgo_step = step
         if ap.lag == 0:
             self._poll_async_pgo(ret)
         return True

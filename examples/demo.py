@@ -1,20 +1,32 @@
-"""Interactive demo for CROSS topological mapping."""
+"""Interactive demo for CROSS topological mapping (RGB-D mode, configs/modes/rgbd_wheel.yaml).
 
+Usage:
+    python examples/demo.py data/posed/office1-1
+
+Commands: [s]tart index (the next run starts there without a pose, as if the robot were carried there), [g]o (run
+to an end index), [p]lan a path to a keyframe, [v]isualize the planning graph, [q]uit.  Sequences: any format run.py
+reads (posed RGB-D folders, R3D files, ...).
+"""
+
+import argparse
 import time
+from pathlib import Path
 
 import numpy as np
 from loguru import logger
 
+from cross.core.config import load_config
+from cross.core.planning_system import PlanningSystem
 from cross.core.system import System
 from cross.core.types import Camera
-from cross.core.planning_system import PlanningSystem
-from cross.dataloader.r3d_loader import R3DDataset
+from cross.dataloader.auto import load_dataset
 from cross.utils.profile import print_timing_registry
 
 np.set_printoptions(formatter={"float": lambda x: f"{x:0.2f}"})
+MODE_FILE = Path(__file__).resolve().parents[1] / "configs" / "modes" / "rgbd_wheel.yaml"
 
 
-def run(dataset: R3DDataset):
+def run(dataset):
     logger.info(f"Total frames: {len(dataset)}")
 
     camera = Camera(
@@ -22,35 +34,24 @@ def run(dataset: R3DDataset):
         frame_width=dataset.rgb_width,
         frame_height=dataset.rgb_height,
     )
-
-    from cross.core.config import SystemConfig
-    config = SystemConfig(async_update=False)
-    system = System(visualize=True, debug=True, camera=camera, config=config)
+    system = System(visualize=True, camera=camera, config=load_config(MODE_FILE))
 
     start_idx = 0
-    end_idx = 10000
+    end_idx = len(dataset)
     start_idx_user = start_idx
-    end_idx_user = start_idx_user + 100
     kidnapped = False
     planning = None
 
     while True:
-        cmd = input("Command [l]oad [s]tart [g]o [p]lan [v]iz [q]uit: ").strip()
+        cmd = input("Command [s]tart [g]o [p]lan [v]iz [q]uit: ").strip()
         if cmd == "q":
             break
-        elif cmd == "l":
-            seq_id = int(input("Sequence id: "))
-            dataset.load_sequence(seq_id)
-            logger.info(f"Loaded sequence {seq_id}")
         elif cmd == "s":
             start_idx_user = int(input("Start index: ")) + start_idx
-            end_idx_user = start_idx_user + 100
             kidnapped = True
-        elif cmd == "a":
-            stop_at = int(input("Stop index: "))
         elif cmd == "p":
             goal_kf_id = int(input("Goal keyframe id: "))
-            planning = PlanningSystem(system=system)
+            planning = PlanningSystem(system=system)          # built from the current map
             planning.set_goal(goal_kf_id=goal_kf_id)
             result = planning.plan_to_goal()
             if result and result["sparse_path"]:
@@ -87,7 +88,6 @@ def run(dataset: R3DDataset):
 
             if end_idx_user >= end_idx:
                 start_idx_user = start_idx
-                end_idx_user = start_idx_user + 100
                 kidnapped = True
             else:
                 start_idx_user = end_idx_user
@@ -96,5 +96,8 @@ def run(dataset: R3DDataset):
 
 
 if __name__ == "__main__":
-    dataset = R3DDataset("data/r3d/lab2.r3d", snr=0.5)
-    run(dataset)
+    parser = argparse.ArgumentParser(description="CROSS interactive demo")
+    parser.add_argument("sequence", help="sequence path (posed RGB-D folder, .r3d file, ...)")
+    parser.add_argument("--snr", type=float, default=None, help="noise of simulated odometry (sequences without one)")
+    args = parser.parse_args()
+    run(load_dataset(args.sequence, **({"snr": args.snr} if args.snr is not None else {})))

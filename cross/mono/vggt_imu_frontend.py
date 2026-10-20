@@ -50,10 +50,6 @@ def _so3_log(R):
     return Rotation.from_matrix(R).as_rotvec()
 
 
-def _exp_rot(rotvec):
-    return Rotation.from_rotvec(rotvec).as_matrix()
-
-
 def _ortho(R):
     """The nearest rotation (products of preintegrated rotations drift off SO(3) by ~1e-6 per frame)."""
     U, _, Vt = np.linalg.svd(R)
@@ -68,11 +64,8 @@ def _angle_deg(R):
 class VggtImuFrontend:
     def __init__(self, K, config, device="cuda", metric_model=None, backend=None, rgb_transform=None,
                  depth_transform=None, interval: int = 3, depth_every: int = 3, context: int = 1,
-                 keyframe_age: float = 0.0, visual_rotation: bool = False, rotation_gate_deg: float = 3.0,
-                 graph: bool = True, T_right_in_left=None, local_service: bool = True):
-        if not graph:
-            raise ValueError("The VGGT-IMU frontend's inertial-filter variant (vgio_graph=false) was removed "
-                             "(2026-10-06, remote split); the local pose graph is the frontend")
+                 keyframe_age: float = 0.0, visual_rotation: bool = False, T_right_in_left=None,
+                 local_service: bool = True):
         self.config = config
         self.K = np.asarray(K, dtype=np.float64).copy()
         self.device = device
@@ -99,12 +92,10 @@ class VggtImuFrontend:
         # reported orientation (visual_rotation): the gyro-propagated orientation R_out instead of the graph's (the
         # estimator stays in its own frame R_wc; translations are reported in the camera frame)
         self.visual_rotation = bool(visual_rotation)
-        self.rotation_gate_deg = float(rotation_gate_deg)
         self.R_out = np.eye(3)
         self._reported_R_out = None
         # local pose graph (cross.imu.vgi_graph): every visual measurement is a node; all pairs of a pass, the gauge
         # links through shared frames, learned depth (with its bias), the IMU and its biases are optimized together
-        self.use_graph = True
         self.graph = None
         self.g_rep = None                        # gravity in the reported frame
         self.rotation_gate_deg_graph = 2.0       # deg: a pass whose rotation disagrees with the gyro's is not used
@@ -562,7 +553,6 @@ class VggtImuFrontend:
         if diff > 1.0:
             self.stats["klt_rejected"] = self.stats.get("klt_rejected", 0) + 1
             return None
-        self.klt_last = (R_mb, inliers)
         # the noise of these rotations, online: the median disagreement with the gyro (good to ~0.1 deg over 0.3 s)
         # over the last 100 accepted ones; the norm of a 3-D error has its median at 1.54 sigma per axis.  KITTI 07:
         # ~0.12 deg against ground truth, OpenLORIS home ~0.5 deg (low parallax, slow robot)
@@ -771,7 +761,6 @@ class VggtImuFrontend:
         if gated:
             pass_ok = False
             self.stats["trans_gated"] = self.stats.get("trans_gated", 0) + 1
-        self.klt_last = None
         if pnp is not None:
             R_p, t_p, cov_p = pnp
             # the translation only (its marginal covariance): the corners' rotation stays the essential matrix's

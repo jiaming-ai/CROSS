@@ -209,7 +209,6 @@ def cmd_compare(a):
     cfg = dev_cfg(a.datasets)
     out, data = Path(a.out), Path(a.data)
     runs = [load_run(out, r, cfg, a.tier) for r in a.runs]
-    base = runs[0]
     keys = sorted(set().union(*[set(r) for r in runs]), key=lambda k: (k[2], k[0], k[1], str(k[3])))
     w = max(len(r) for r in a.runs) + 2
     head = "".join(f"{r:>{w}}" for r in a.runs)

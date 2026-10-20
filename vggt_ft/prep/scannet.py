@@ -102,7 +102,7 @@ def main():
     ap.add_argument("--cap", type=int, default=600)
     ap.add_argument("--splits", nargs="*", default=["scans_train"])
     ap.add_argument("--sizes", nargs="*", help="download queue files (part list and expected sizes)")
-    ap.add_argument("--scratch", default="/data0/jz/scratch/scannet_stream")
+    ap.add_argument("--scratch", default="/tmp/scannet_stream", help="local folder for parts being converted")
     a = ap.parse_args()
     if a.dir:
         print(convert_dir(a.dir, Path(a.dir).name, Path(a.dir).parent.name, a.out, a.cap, a.every))

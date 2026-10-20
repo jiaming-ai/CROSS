@@ -72,8 +72,6 @@ class MonocularSystem(Pipeline):
         else:
             self.frontend = MonoFrontend(K, self.config, device)
         cfg = system_config or SystemConfig()
-        if cfg.async_update:
-            raise ValueError("MonocularSystem currently requires synchronous mapping updates")
         cfg.pose_est.type = PoseEstType.DA3 if self.config.retrieval_pose == "da3" else PoseEstType.METRIC_PNP
         # CROSS-mono ran with these two core behaviours always on (flag-gated in the merged core)
         cfg.mapping.hypothesis.reset_evidence_on_slot_reuse = True
@@ -90,7 +88,7 @@ class MonocularSystem(Pipeline):
             # informative-only; override with --cross-config mapping.hypothesis.h0_informative_only=true), and the
             # earlier loop-closure behaviour: DPVO loses tracking and drifts in scale, session recovery re-joins its
             # charts through merges / adoption, and the new options did not improve its development split.  The other
-            # modes' back end was tested on the full benchmark (2026-10-11, outputs/2026-10-11_config_confirm; tag
+            # modes' back end was tested on the full benchmark (2026-10-11; tag
             # opt-mono-new-backend): better on ROVER only without the benchmark's outdoor odometry-noise lines (T3 482 ->
             # 517, T1 17.9 -> 5.7 m), but KITTI T1 17.7 -> 81 m without them (and ROVER 482 -> 358 with them): it needs
             # dataset-specific noise, so not adopted

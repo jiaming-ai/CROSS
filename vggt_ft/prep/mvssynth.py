@@ -12,7 +12,7 @@ road), so the data is stored as non-metric (`units_for`: median depth ~2).
 
 One output scene per sequence (each is one place; their world frames are not related), every frame.
 
-python -m vggt_ft.prep.mvssynth <raw_dir> <cache_root> --tmp /data0/jz/tmp/mvssynth [--workers 16]
+python -m vggt_ft.prep.mvssynth <raw_dir> <cache_root> --tmp /tmp/mvssynth [--workers 16]
 """
 from __future__ import annotations
 

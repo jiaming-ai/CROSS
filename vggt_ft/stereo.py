@@ -5,8 +5,8 @@ licence): depth = fx * baseline / disparity, where the scale comes from the ster
     disp, ok = fs.disparity(left, right)                       # (B,H,W) float32, (B,H,W) bool (left-right consistent)
     depth = disparity_to_depth(disp, ok, fx, baseline, min_disp=3.0)
 
-Left-right consistency: the right image's disparity comes from matching the horizontally flipped (right, left) pair
-(the same trick as cross-uw's uwvggt/data/stereo.py); a left pixel is kept when the right disparity at its match agrees
+Left-right consistency: the right image's disparity comes from matching the horizontally flipped (right, left) pair;
+a left pixel is kept when the right disparity at its match agrees
 within `lr_thresh` px.  A disparity floor keeps far pixels, where a one-pixel error is a large depth error, out.
 """
 from __future__ import annotations

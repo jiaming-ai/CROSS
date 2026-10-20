@@ -27,7 +27,7 @@ from cross.core.config import HypothesisConfig
 # in the frame-count gates of realization (realize_min_frames) and detection (detect_min_frames).  Without it, a short
 # real overlap after non-overlapping views (rightly rejected) gives too few frames, and the passes split over several
 # components (OpenLORIS office1-7, mono: relocalization ~175 frames late).  Mono feed-forward: OpenLORIS T3 +9 / -1
-# (2026-10-09); neutral in every other mode on the full benchmark (2026-10-11, outputs/2026-10-09_config_profiles H2:
+# (2026-10-09); neutral in every other mode on the full benchmark (2026-10-11:
 # stereo, + Basalt, + IMU, RGB-D, mono DA3), so on everywhere (the option: tag opt-strong-pass-frames).
 STRONG_PASS_FRAMES = 3
 STRONG_PASS_MIN_REFS = 2
@@ -493,16 +493,6 @@ class HypothesisManager:
         return new_comp_id
 
 
-    def graph_cost_now(self) -> tuple:
-        """Diagnostics: cost of the hypothesis-0 graph at the current poses (no optimisation), its factor counts and
-        the five most expensive factors."""
-        pg = PoseGraph(self, depth=1000, k_hop=2, device=self.device, noise_fn=self.pgo_noise_fn(), skip_fn=self.pgo_skip_fn())
-        pg.eval_only = True
-        with self.graph_lock:
-            pg.construct_for_loop_closure(target_node_id=max(self.nodes.keys()), other_hypothesis_id=0)
-        ids = [v.id for v in pg.vertices if v.id in self.nodes]
-        pg.solve(optim_node_ids=set(ids) - {min(ids)}, fixed_node_ids={min(ids)})
-        return pg.initial_cost, getattr(pg, "n_factors", None), getattr(pg, "factor_costs", None)
 
     def pgo_noise_fn(self):
         """Calibrated noise model of the verified loop closure for the pose-graph optimisation (None: stored stds)."""
@@ -581,119 +571,6 @@ class HypothesisManager:
             with self.graph_lock:
                 self.hypotheses[to_comp_id].add_visual_edge(id1, id2, factor)
 
-    @timeit
-    def remove_temporary_keyframe(self, last_k: int = 30):
-        """Remove temporary keyframes from the hypothesis manager.
-        It iterate from n-k to n (last kf), and check if they are temporary.
-        1. add a odom edge between k-1 and k+1 kf (if it's not the last)
-        2. remove the temporary kf
-        Args:
-            last_k (int): The number of last keyframes to keep.
-        """
-        if not self.nodes or len(self.nodes) < 20:
-            return
-            
-        # Get all keyframe IDs sorted by ID (which should be chronological order)
-        sorted_kf_ids = sorted(self.nodes.keys())
-        
-        # Identify temporary keyframes to remove
-        temp_kfs_to_remove = [
-            kf_id for kf_id in sorted_kf_ids if self.nodes[kf_id].temporary
-        ][:-last_k]
-        
-        if not temp_kfs_to_remove:
-            logger.debug("No temporary keyframes to remove")
-            return
-            
-        logger.debug(f"Removing {len(temp_kfs_to_remove)} temporary keyframes: {temp_kfs_to_remove}")
-
-        # Structural remove guarded by graph lock
-        with self.graph_lock:
-            # Process each temporary keyframe for removal
-            for temp_kf_id in temp_kfs_to_remove:
-                # Find predecessor and successor in odometry chain
-                predecessor_id = None
-                successor_id = None
-            
-            # Find predecessor (keyframe that has odometry edge TO this temp keyframe)
-            for (id1, id2), _ in self.odom_edges.items():
-                if id2 == temp_kf_id:
-                    predecessor_id = id1
-                    break
-                    
-            # Find successor (keyframe that this temp keyframe has odometry edge TO)
-            for (id1, id2), _ in self.odom_edges.items():
-                if id1 == temp_kf_id:
-                    successor_id = id2
-                    break
-            
-            # If we have both predecessor and successor, create a bridging odometry edge
-            if predecessor_id is not None and successor_id is not None:
-                # Get the two odometry edges to combine
-                pred_edge = self.odom_edges.get((predecessor_id, temp_kf_id))
-                succ_edge = self.odom_edges.get((temp_kf_id, successor_id))
-                
-                if pred_edge and succ_edge:
-                    # Compose the relative poses: T_pred_to_succ = T_pred_to_temp @ T_temp_to_succ
-                    combined_pose = pred_edge.mean @ succ_edge.mean
-                    
-                    # Combine the uncertainties (add variances in tangent space)
-                    combined_std_squared = pred_edge.std.tensor()**2 + succ_edge.std.tensor()**2
-                    combined_std = pp.se3(combined_std_squared**0.5)
-                    
-                    # Create new bridging odometry edge
-                    bridging_factor = Edge(combined_pose, combined_std, EdgeType.ODOMETRY)
-                    bridging_factor.n_frames = (getattr(pred_edge, "n_frames", None) or 1) + (getattr(succ_edge, "n_frames", None) or 1)
-                    # odometry-fault inflation of the odometry scale guard (lc_verify): the larger of the two
-                    fault = max(float(getattr(pred_edge, "odom_fault", 0.0) or 0.0), float(getattr(succ_edge, "odom_fault", 0.0) or 0.0))
-                    if fault > 0:
-                        bridging_factor.odom_fault = fault
-                    self.odom_edges[(predecessor_id, successor_id)] = bridging_factor
-                    
-                    # Note: No need to maintain adjacency list since odometry edges are sequential
-                    
-                    logger.debug(f"Created bridging odometry edge from KF {predecessor_id} to KF {successor_id}")
-            
-            # Remove odometry edges involving the temporary keyframe
-            edges_to_remove = []
-            for edge_key in list(self.odom_edges.keys()):
-                id1, id2 = edge_key
-                if id1 == temp_kf_id or id2 == temp_kf_id:
-                    edges_to_remove.append(edge_key)
-            
-            for edge_key in edges_to_remove:
-                del self.odom_edges[edge_key]
-                logger.debug(f"Removed odometry edge {edge_key}")
-            self.odom_edges_version = getattr(self, "odom_edges_version", 0) + 1
-            
-            # Note: No odometry adjacency list to update since odometry edges are sequential
-            
-            # Remove visual edges involving the temporary keyframe from all hypotheses
-            for hypothesis in self.hypotheses.values():
-                visual_edges_to_remove = []
-                for edge_key in hypothesis.visual_edges.keys():
-                    id1, id2 = edge_key
-                    if id1 == temp_kf_id or id2 == temp_kf_id:
-                        visual_edges_to_remove.append(edge_key)
-                
-                for edge_key in visual_edges_to_remove:
-                    del hypothesis.visual_edges[edge_key]
-                    logger.debug(f"Removed visual edge {edge_key} from hypothesis {hypothesis.component_id}")
-                
-                # Update visual adjacency lists
-                if temp_kf_id in hypothesis.visual_adjacency:
-                    # Remove temp_kf_id from its neighbors' adjacency lists
-                    for neighbor_id in hypothesis.visual_adjacency[temp_kf_id]:
-                        if neighbor_id in hypothesis.visual_adjacency and temp_kf_id in hypothesis.visual_adjacency[neighbor_id]:
-                            hypothesis.visual_adjacency[neighbor_id].remove(temp_kf_id)
-                    # Remove temp_kf_id's own adjacency list
-                    del hypothesis.visual_adjacency[temp_kf_id]
-            
-            # Finally, remove the temporary keyframe from nodes
-            del self.nodes[temp_kf_id]
-            logger.debug(f"Removed temporary keyframe {temp_kf_id}")
-        
-        logger.debug(f"Successfully removed {len(temp_kfs_to_remove)} temporary keyframes")
 
     def remove_hypothesis(self, component_id: int):
         """
@@ -750,18 +627,6 @@ class HypothesisManager:
     @staticmethod
     def _is_strong(proposal: Dict) -> bool:
         return int(proposal.get("strong_refs", 0)) >= STRONG_PASS_MIN_REFS
-
-    def reset_tracking_dist(self):
-        """
-        Reset the tracking distribution to the identity so that it has
-        identity pose and std, and all zero weights
-        """
-        B = self.dist[0].shape[0]
-        device = self.dist[0].device
-        mu = pp.identity_SE3(B, device=device)
-        sigma = pp.identity_se3(B, device=device)
-        weights = torch.zeros(B, device=device)
-        self.dist = (mu, sigma, weights)
 
 
     def motion_update(
@@ -1652,7 +1517,6 @@ class HypothesisManager:
                     R0 = self.nodes[k0].pose_mu[0].matrix().detach().cpu().numpy().astype(np.float64)[:3, :3]
                     pg.soft_priors = {k0: geo.soft_gauge_cov(R0)}
                     fixed_ids = set()
-        fixed_node_id = pg.preferred_fixed_node if self.chart_aware else (min(fixed_ids) if fixed_ids else None)
         optim_node_ids = set(original_kf_ids + temp_vertex_ids) - fixed_ids
 
         if self.visualize_pose_graph:
@@ -1699,47 +1563,6 @@ class HypothesisManager:
                 self._lc_reject_until[int(hypo_id)] = int(self.step_counter) + self.detect_reject_cooldown_steps
                 result["message"] = message
                 return result
-        # --- diagnostics (merges only): how far did the session keyframes move, and where are their twins ---
-        # (per-edge pypose residuals on the device: seconds for a 500-keyframe graph, so never for hypothesis 0)
-        try:
-            if hypo_id == 0:
-                raise StopIteration
-            start_idx = self.hypotheses[hypo_id].start_idx
-            n_map_v = sum(1 for v in pg.vertices if v.id in self.nodes and v.id < start_idx)
-            n_sess_v = sum(1 for v in pg.vertices if v.id in self.nodes and v.id >= start_idx)
-            types = {}
-            for (a, b, fs) in pg.edges:
-                for f in fs:
-                    types[f.type.name] = types.get(f.type.name, 0) + 1
-            twins = {v.original_kf_id: v for v in pg.vertices if v.id not in self.nodes}
-            lines = []
-            for v in pg.vertices:
-                if v.id in self.nodes and v.id >= start_idx:
-                    init_p = v.pose.tensor()[:3].tolist()
-                    twin_p = twins[v.id].pose.tensor()[:3].tolist() if v.id in twins else None
-                    opt_p = pg.optimized_poses[v.id].tensor()[:3].tolist() if v.id in pg.optimized_poses else None
-                    lines.append(f"kf {v.id}: init {[round(x, 1) for x in init_p]} twin {[round(x, 1) for x in twin_p] if twin_p else None} opt {[round(x, 1) for x in opt_p] if opt_p else None}")
-            # residuals of edges touching the session at the *initial* poses
-            import pypose as _pp
-            vm = pg.vertex_map
-            sess_ids = {v.id for v in pg.vertices if (v.id in self.nodes and v.id >= start_idx) or v.id not in self.nodes}
-            res_lines = []
-            for (a, b, fs) in pg.edges:
-                if a in sess_ids or b in sess_ids:
-                    if a not in vm or b not in vm:
-                        continue
-                    pred = vm[a].pose.Inv() @ vm[b].pose
-                    for f in fs:
-                        r = (f.mean.Inv() @ pred).Log().tensor()
-                        res_lines.append((float(r[:3].norm()), f"{f.type.name} {a}->{b} |t_res|={float(r[:3].norm()):.1f} |r_res|={float(r[3:].norm()):.2f} std={[round(x, 3) for x in f.std.tensor()[:3].tolist()]}"))
-            res_lines.sort(key=lambda x: -x[0])
-            lines.append("worst initial residuals: " + " ; ".join(t for _, t in res_lines[:6]))
-            logger.debug(f"LC-PGO diag: fixed={len(fixed_ids)} map_vertices={n_map_v} session_vertices={n_sess_v} twins={len(twins)} edges={types}\n" + "\n".join(lines[-4:]))
-        except StopIteration:
-            pass
-        except Exception as e:  # diagnostics must never break the pipeline
-            logger.debug(f"LC-PGO diag failed: {e}")
-
         # Step 3: Apply updates via unified method (also used by async engine); apply=False returns the solution without
         # writing it back (the verified loop closure tests it first and discards it when new edges turn out outliers)
         if apply and hypo_id != 0 and int(hypo_id) in self._placement_pending:
@@ -2017,15 +1840,6 @@ class HypothesisManager:
             self.component_charts[mask] = pg.output_chart
         return affected
 
-    def rebuild_topology_graph(self):
-        """
-        Rebuild the SimpleTopo proximity graph from scratch.
-
-        This clears existing proximity edges and recomputes them using current
-        node poses. Useful when incremental proximity is disabled.
-        """
-        if self.system.topo_map is not None:
-            self.system.topo_map.rebuild_graph()
 
     def _h0_unlocalized(self) -> bool:
         """Relocalization session whose hypothesis 0 is not (or no longer) anchored to the stored map."""
@@ -2056,8 +1870,6 @@ class HypothesisManager:
         logger.debug(f"Merging hypothesis {comp_idx} after loop closure")
         with self.graph_lock:
             # copy edges and adjs
-            # cache start index for keyframe cleanup before deleting hypothesis object
-            start_idx = self.hypotheses[comp_idx].start_idx if comp_idx in self.hypotheses else None
             # first update the edge comp_ids to 0
             for edge_key, edge_factors in self.hypotheses[comp_idx].visual_edges.items():
                 for edge_factor in edge_factors:
@@ -2191,7 +2003,7 @@ class HypothesisManager:
         """Adoption of a dominant hypothesis by a relocalization session that has not joined the map (it joins the map
         by it; the placement rule does not gate it: tested, no benefit, tag opt-placement-gate-adoption).  Debug tooling
         only: recorded with CROSS_PLACEMENT_RECORD and held (False) with CROSS_PLACEMENT_HOLD_ALL, for the offline
-        replay of merge rules (outputs/2026-10-13_placement_variants)."""
+        replay of merge rules."""
         tracker = getattr(self.system, "_placement", None)
         if tracker is None or tracker.rec is None or int(getattr(self.system, "_session_start_kf_id", 0)) == 0 \
                 or tracker.current is not None or self.system.session_localized():

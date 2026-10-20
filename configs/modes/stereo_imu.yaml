@@ -21,5 +21,5 @@ mapping:
 # ImuConfig of the frontend (cross/imu/scale_filter.py), applied before --mono-args '--imu-config ...'
 imu:
   # measure on the back end's forward passes (development split: T1 0.33 -> 0.31 m, odometry 0.66 -> 0.53 m, T3 29/33
-  # both, 20 % fewer uploads in remote sessions; outputs/2026-10-07_remote_cadence)
+  # both, 20 % fewer uploads in remote sessions)
   vgio_align: true

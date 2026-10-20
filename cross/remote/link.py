@@ -15,7 +15,7 @@ import heapq
 import numpy as np
 
 # server seconds per message: a frame, plus an observation of the back end, an own pass of the odometry, learned depth,
-# stereo matching (placeholders until measured; see outputs/2026-10-06_remote_mode)
+# stereo matching (placeholders until measured)
 COMPUTE_MODEL = {"frame": 0.004, "observe": 0.110, "own_pass": 0.040, "depth": 0.030, "stereo": 0.020}
 
 

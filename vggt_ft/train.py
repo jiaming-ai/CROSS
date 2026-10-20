@@ -170,7 +170,7 @@ def compute_losses(pred, batch, lc, hw, teach=None, meta=None, steach=None, da3_
     if lc.get("scale_align") == "invariant":
         # predictions divided by their window gauge (median predicted / GT depth, gradient through the median): every
         # loss below is in GT units and exactly invariant to a global rescale of the outputs, so shrinking all outputs
-        # cannot lower it (the GT-side version below can drift without an anchor such as distillation; cross-uw v19)
+        # cannot lower it (the GT-side version below can drift without an anchor such as distillation)
         ratio = pred["depth"][..., 0].float() / d_n.clamp(min=1e-6)
         s_al = torch.stack([ratio[b][dm[b]].median() if dm[b].sum() > 100 else ratio.new_ones(())
                             for b in range(ratio.shape[0])]).clamp(0.2, 5.0)

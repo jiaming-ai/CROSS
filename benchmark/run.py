@@ -240,6 +240,10 @@ class Job:
             cmd += ["--config"] + [str(ROOT / c) for c in cfgs]
         if self.odom_file:
             cmd += ["--odom-file", self.odom_file]
+        if self.a.odom_source == "vio":
+            # the Basalt VIO file is the shipped *_basalt mode (its configuration, e.g. the VIO odometry noise), not the
+            # *_wheel file the system's own arguments select
+            cmd += ["--odometry", "basalt"]
         # experiments: synchronous PGO for reproducibility; the shipped default is the background optimisation
         # (configs/base/common.yaml), whose results land at machine-dependent times (PROTOCOL.md, DEV.md)
         cmd += ["--reproducible"]

@@ -13,8 +13,6 @@ import pypose as pp
 class SimpleTopoConfig:
     """Configuration for SimpleTopo behavior."""
     proximity_distance_thresh: float = 0.5
-    proximity_std_trans: float = 0.05
-    proximity_std_rot: float = 0.1
     use_proximity_grid: bool = False
     enable_incremental_proximity: bool = False
     enabled: bool = True     # False: no proximity graph (planning only); its refresh after a PGO is O(N^2)

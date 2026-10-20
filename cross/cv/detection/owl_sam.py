@@ -113,16 +113,4 @@ class OwlSam:
                 }
                 return res
 
-    def test_predict(self, image, texts):
-        """Test the predict function."""
-        res = self.predict(image, texts)
-        self.visualize_results(image, res)
 
-    @staticmethod
-    def visualize_results(image, res, label_list=None):
-        """Visualize the results."""
-        if label_list is not None:
-            idx_mask = [i for i, label in enumerate(res["labels"].numpy()) if label in label_list]
-            show_masks(image, res["masks"].numpy()[idx_mask], res["boxes"].numpy()[idx_mask])
-        else:
-            show_masks(image, res["masks"].numpy(), res["boxes"].numpy())

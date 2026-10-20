@@ -18,7 +18,7 @@ One scene per video (each video has its own ARKit world frame; several videos of
 other here, so they are separate worlds), one sequence cut into consecutive chunks of <= --cap frames.  Every frame is
 kept by default (10 Hz).  Split `Training` only by default (--splits).
 
-python -m vggt_ft.prep.arkitscenes <raw_dir> <cache_root> [--workers 16] [--sizes q.txt] [--scratch /data0/jz/scratch]
+python -m vggt_ft.prep.arkitscenes <raw_dir> <cache_root> [--workers 16] [--sizes q.txt] [--scratch /tmp/arkitscenes_stream]
 python -m vggt_ft.prep.arkitscenes --dir <extracted scene dir> <cache_root>     (one extracted scene, tests)
 """
 from __future__ import annotations
@@ -243,7 +243,7 @@ def main():
     ap.add_argument("--cap", type=int, default=600)
     ap.add_argument("--splits", nargs="*", default=["Training"])
     ap.add_argument("--sizes", nargs="*", help="download queue files (part list and expected sizes)")
-    ap.add_argument("--scratch", default="/data0/jz/scratch/arkitscenes_stream")
+    ap.add_argument("--scratch", default="/tmp/arkitscenes_stream", help="local folder for parts being converted")
     a = ap.parse_args()
     if a.dir:
         print(convert_dir(a.dir, Path(a.dir).name, Path(a.dir).parent.name, a.out, a.cap, a.every))

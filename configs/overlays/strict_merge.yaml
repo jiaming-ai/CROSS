@@ -3,7 +3,7 @@
 # rule (configs/base/placement.yaml), the placement a merge implies must be supported from positions >= 1.5 m apart along
 # the walk (more than one viewpoint), with >= 3 supporting steps instead of 6.  It acts only in the modes whose file
 # enables the rule (stereo_wheel, stereo_basalt, mono_wheel, mono_imu, mono_vio); elsewhere it changes nothing.
-# Full benchmark (outputs/2026-10-14_placement_full_bench), against no rule: ROVER wrong-pose trials stereo 22 -> 10,
+# Full benchmark, against no rule: ROVER wrong-pose trials stereo 22 -> 10,
 # mono + wheel 41 -> 12 (default mode 12 / 26), at 34-67 fewer correct trials of ~1150; indoors (OpenLORIS) 9-20 % fewer
 # correct trials and T2@1 down 0.1-0.17: not for small indoor places.
 mapping:

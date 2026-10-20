@@ -95,7 +95,7 @@ class FPSRegistry:
             lines.append(f"{func_name:40} : {fps:8.2f} FPS")
 
         lines.append("=" * 60)
-        logger.info("\n".join(lines))
+        logger.debug("\n".join(lines))
     
     def start_periodic_printing(self, interval: float = 5.0):
         """Start periodic printing of FPS statistics."""
@@ -106,14 +106,14 @@ class FPSRegistry:
         self._running = True
         self._print_thread = threading.Thread(target=self._print_loop, daemon=True)
         self._print_thread.start()
-        logger.info(f"Started FPS monitoring with {interval}s interval")
+        logger.debug(f"Started FPS monitoring with {interval}s interval")
     
     def stop_periodic_printing(self):
         """Stop periodic printing of FPS statistics."""
         self._running = False
         if self._print_thread and self._print_thread.is_alive():
             self._print_thread.join(timeout=1.0)
-        logger.info("Stopped FPS monitoring")
+        logger.debug("Stopped FPS monitoring")
     
     def _print_loop(self):
         """Main loop for periodic printing."""
@@ -122,11 +122,6 @@ class FPSRegistry:
             if self._running:  # Check again after sleep
                 self.print_fps_stats(self._print_interval)
     
-    def clear_stats(self):
-        """Clear all stored statistics."""
-        with self._lock:
-            self._functions.clear()
-        logger.info("Cleared FPS statistics")
 
 
 # Global registry instance
@@ -182,11 +177,6 @@ def fps_monitor(func_name: Optional[str] = None,
     return decorator
 
 
-def get_fps_stats(window_seconds: float = 5.0) -> Dict[str, float]:
-    """Get current FPS statistics for all monitored functions."""
-    return _global_registry.get_all_fps(window_seconds)
-
-
 def print_fps_stats(window_seconds: float = 5.0):
     """Print current FPS statistics for all monitored functions."""
     _global_registry.print_fps_stats(window_seconds)
@@ -200,63 +190,3 @@ def start_fps_monitoring(interval: float = 5.0):
 def stop_fps_monitoring():
     """Stop periodic FPS monitoring and printing."""
     _global_registry.stop_periodic_printing()
-
-
-def clear_fps_stats():
-    """Clear all FPS statistics."""
-    _global_registry.clear_stats()
-
-
-# Context manager for temporary FPS monitoring
-class fps_monitoring:
-    """Context manager for temporary FPS monitoring."""
-    
-    def __init__(self, interval: float = 5.0):
-        self.interval = interval
-        self.was_running = False
-    
-    def __enter__(self):
-        self.was_running = _global_registry._running
-        if not self.was_running:
-            start_fps_monitoring(self.interval)
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if not self.was_running:
-            stop_fps_monitoring()
-
-
-if __name__ == "__main__":
-    # Example usage
-    import random
-    
-    @fps_monitor("fast_function")
-    def fast_func():
-        time.sleep(0.01)  # 10ms
-    
-    @fps_monitor("slow_function")
-    def slow_func():
-        time.sleep(0.1)   # 100ms
-    
-    @fps_monitor()  # Uses default name
-    def variable_func():
-        time.sleep(random.uniform(0.01, 0.05))
-    
-    print("Running FPS monitoring example...")
-    print("Functions will be called for 15 seconds with FPS printed every 5s")
-    
-    # Run functions for demonstration
-    start_time = time.time()
-    while time.time() - start_time < 15:
-        fast_func()
-        if random.random() < 0.3:  # 30% chance
-            slow_func()
-        if random.random() < 0.5:  # 50% chance
-            variable_func()
-        time.sleep(0.005)  # Small delay between calls
-    
-    # Final stats
-    print("\nFinal statistics:")
-    print_fps_stats()
-    
-    stop_fps_monitoring()

@@ -92,7 +92,7 @@ class DescriptorIndexConfig:
     # projection always uses its own.
     # On by default: below fit_at nothing changes (full descriptors, original scores); above it the stored scores keep
     # the full cosine's meaning (exact re-scoring in session) and maps were identical on KITTI 07 (projection forced at
-    # 128 keyframes) and NCLT (5.5 km, fitted at 1024): see outputs/2026-10-07_retrieval_index
+    # 128 keyframes) and NCLT (5.5 km, fitted at 1024).
     projection: Optional[str] = "map"
     fit_at: int = 4096
     fit_dim: int = 0               # 0: the fewest dimensions with held-out explained energy >= fit_energy (<= max_dim)
@@ -159,7 +159,7 @@ class NoiseModelConfig:
     readings), sigma_pair (two references registered in one feed-forward pass) and sigma_map (relative pose of two
     stored map keyframes) are linear in the distance as well.  Rotations in radians, translations in metres.
     Defaults are conservative values from the simulator (indoor and outdoor scenes).  Calibrating them on a minute of the
-    robot's own data without ground truth gave no benefit (outputs/2026-10-12_noise_calibration; code in tag
+    robot's own data without ground truth gave no benefit (code in tag
     opt-noise-calibration)."""
     visual_scale: float = 1.0      # metric scale of the estimator's translations relative to the odometry (measured / true); calibrated, translations are divided by it
     visual_t_a: float = 0.03
@@ -256,7 +256,7 @@ class LoopClosureConfig:
     # length of every odometry edge from the departing windows on; a faulty stretch shares one scale error in the chain
     # prediction), so the visual measurements the faulty chain had been rejecting pass and the pose graph corrects the
     # stretch; only spans after the latest correction are samples, and the guard follows the fault window by window.
-    # See outputs/2026-10-06_odom_guard_response/REPORT.md (ROVER night stereo 11.2 -> 1.9 m with VIO).
+    # ROVER night stereo with VIO: map ATE 11.2 -> 1.9 m.
     # the departure must hold in this many consecutive windows (same direction) before the odometry is rescaled: PnP at
     # night has 2x departures lasting a few seconds that revert (ROVER night RGB-D: single windows of 30 fired 6 times before the VIO runaway, 2 windows of 20 7 times, 2 of 30 only in it)
     odom_guard_persist: int = 2
@@ -326,7 +326,7 @@ class LoopClosureConfig:
     # keyframes that share a factor with that window enter as fixed vertices.  A loop back to the start still optimises
     # the whole session; local revisits optimise only what they can move.  The map is optimised as a whole when it is
     # saved.  Applies once the session graph has pgo_window_min_nodes keyframes; 0 = off (every keyframe, as before).
-    # On from 1000 keyframes (outputs/2026-10-07_pgo_scale): smaller maps bit-identical; ROVER day T1 equal, KITTI 00
+    # On from 1000 keyframes: smaller maps bit-identical; ROVER day T1 equal, KITTI 00
     # +0.0002 m, NCLT 6.5 km 5.80 / 5.88 m vs 9.00 / 7.25 m whole-session (two runs each); PGO time per session -30..-45 %.
     pgo_window_min_nodes: int = 1000
     pgo_window_margin: int = 50
@@ -553,8 +553,6 @@ class HypothesisConfig:
 class TopoConfig:
     """Configuration for SimpleTopo (proximity graph for planning)."""
     proximity_distance_thresh: float = 0.5
-    proximity_std_trans: float = 0.05
-    proximity_std_rot: float = 0.1
     use_proximity_grid: bool = False
     enable_incremental_proximity: bool = False
     # the proximity graph serves the planner only; its refresh after every pose-graph optimisation is O(N^2) with a GPU
@@ -657,7 +655,6 @@ class MappingConfig:
 
 @dataclass
 class PGOConfig:
-    std_reduction_factor: float = 0.3
     visual_robust_enabled: bool = True
     visual_robust_type: RobustKernelType = RobustKernelType.HUBER
     visual_robust_delta: float = 1.0
@@ -719,7 +716,7 @@ class FeedForwardConfig:
     # stored and, in remote sessions, not sent.  The opt-in overlay configs/overlays/stereo_lowband.yaml sets it (with trusted
     # external odometry: half the uplink on the development split) - not the default: with the left image no
     # translation is metric without the odometry, and the odometry scale guard cannot see an odometry failure (ROVER
-    # night with a VIO runaway: map ATE 36-38 m vs 11 m with the pair; outputs/2026-10-07_remote_cadence)
+    # night with a VIO runaway: map ATE 36-38 m vs 11 m with the pair)
     right_image: str = "pair"
     use_odom_anchor: bool = False        # previous frame + odometry as an additional metric anchor
     odom_anchor_min_translation: float = 0.15
@@ -873,7 +870,7 @@ class GeoConfig:
     decimate: bool = True
     robust: bool = True
     # factors keep the prior noise: the relative test's inflation steers the gate only, and the prior noise is not
-    # rescaled from the posterior residuals (both tested and removed: outputs/2026-10-08_option_pruning).  GNSS
+    # rescaled from the posterior residuals (both tested and removed).  GNSS
     # altitude always enters the factors (vertical noise sigma_v_factor x horizontal): horizontal-only factors let the
     # optimisation tilt the map (NCLT 27 sessions: vertical 30.7 vs 4.7 m)
     retrieval_gate: bool = True               # the current fix is a location prior of retrieval (System.add_location_prior;
@@ -884,7 +881,7 @@ class GeoConfig:
     # keyframes within sqrt(chi2_2(confidence)) x sigma + focus_margin_m of it (horizontal; sigma = the fix's, the
     # anchor's and the odometry since the fix) take the map retrieval budget, ranked by appearance; focus_global_slots
     # of it stay with the global ranking as a safety net for a wrong fix.  Acts only with GNSS input and a geo-anchored
-    # map.  NCLT relocalization in the GNSS-anchored 2012-01-08 map (outputs/2026-10-08_gps_retrieval): 60 vs 56 of 75
+    # map.  NCLT relocalization in the GNSS-anchored 2012-01-08 map: 60 vs 56 of 75
     # trials within 5 m (2012-11-17 22 vs 20, 2013-02-23 21 vs 18, 2012-08-04 17 vs 18; null rerun spread up to 2)
     retrieval_focus: bool = True
     focus_margin_m: float = 5.0
@@ -955,7 +952,6 @@ class StorageConfig:
 @dataclass
 class SystemConfig:
     """Root configuration for the CROSS system."""
-    async_update: bool = False
     # device of the filter state (hypotheses, odometry, keyframe poses, pose graph); None: the compute device.  The
     # state is a few dozen numbers per hypothesis: on the CPU each operation costs microseconds instead of a GPU kernel
     # launch and a synchronisation (an observation step makes ~180 of them).  Images and networks stay on the GPU.
@@ -999,27 +995,34 @@ def _resolve_type(field_type):
     return field_type
 
 
+# top-level sections of a mode file that are not SystemConfig fields: the monocular / inertial frontends' settings,
+# read by cross.pipeline (MonoConfig, ImuConfig)
+NON_SYSTEM_SECTIONS = frozenset({"mono", "imu"})
+
+
 def _from_dict(cls: Type[T], data: dict) -> T:
     """Recursively convert a plain dict into a dataclass instance of *cls*.
 
     Handles nested dataclasses and Enum fields automatically.
-    Unknown keys in *data* are silently ignored so that forward-compatible
-    YAML files don't break older code.
+    Unknown keys in *data* are ignored with a warning (a typo in a user's
+    file would otherwise change nothing without notice), so that
+    forward-compatible YAML files don't break older code.
     """
     if not isinstance(data, dict):
         return data  # type: ignore[return-value]
 
     field_map = {f.name: f for f in dataclasses.fields(cls)}
+    known = set(field_map)
+    if cls is SystemConfig:
+        known |= NON_SYSTEM_SECTIONS
+    unknown = sorted(str(k) for k in data if k not in known)
+    if unknown:
+        logging.getLogger(__name__).warning(f"config: unknown key(s) {unknown} for {cls.__name__} (ignored)")
     kwargs: Dict[str, Any] = {}
     for name, fld in field_map.items():
-        # Handle YAML key mapping: async_ <-> async
-        yaml_key = name.rstrip("_") if name.endswith("_") else name
-        if yaml_key in data:
-            raw = data[yaml_key]
-        elif name in data:
-            raw = data[name]
-        else:
+        if name not in data:
             continue  # use default
+        raw = data[name]
 
         ftype = _resolve_type(fld.type) if not isinstance(fld.type, str) else fld.type
 
@@ -1044,13 +1047,12 @@ def _to_dict(obj) -> dict:
     result = {}
     for fld in dataclasses.fields(obj):
         value = getattr(obj, fld.name)
-        key = fld.name.rstrip("_") if fld.name.endswith("_") else fld.name
         if dataclasses.is_dataclass(value):
-            result[key] = _to_dict(value)
+            result[fld.name] = _to_dict(value)
         elif isinstance(value, Enum):
-            result[key] = value.value
+            result[fld.name] = value.value
         else:
-            result[key] = value
+            result[fld.name] = value
     return result
 
 

@@ -103,7 +103,6 @@ def make_config(args) -> SystemConfig:
     # the mode's shipped configuration (cross.pipeline.mode_config_files: configs/modes/<mode>.yaml), then the
     # user's --config and --set
     cfg = load_config(*shipped_config_files(args), *(args.config or []), sets=args.set)
-    cfg.async_update = False
     if args.top_k is not None:
         cfg.retrieval.top_k = args.top_k
     if getattr(args, "gnss", False):
@@ -187,7 +186,7 @@ def run_mapping(args, out: Path) -> dict:
     logger.info(f"Mapping done: {n} frames in {elapsed:.1f}s ({n / elapsed:.2f} FPS), {len(nodes)} keyframes ({n_perm} permanent)")
     map_file = out / "map.pkl"
     system.save_map(map_file)
-    ids, src, dst, kf_est = [], [], [], {}
+    src, dst, kf_est = [], [], {}
     for kid, kf in nodes.items():
         if kf.temporary or kid not in kf_gt:
             continue
@@ -224,7 +223,7 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
     T_gt_from_map = np.asarray(meta["T_gt_from_map"])
     q_start, q_end = args.query_start, args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
-    rows, n_obs, remote_trials = [], 0, []
+    rows, remote_trials = [], []
     from reloc_metrics import step_diagnostics, quality_summary
     quality_trials = []
     t0 = time.time()
@@ -289,13 +288,15 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
     return summary
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--map", required=True, help="posed RGB-D folder of the mapping sequence")
     ap.add_argument("--query", required=True, help="posed RGB-D folder of the query sequence")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--config", nargs="*", default=[])
-    ap.add_argument("--set", nargs="*", default=[], help="config overrides section.sub.key=value (YAML-parsed values)")
+    ap.add_argument("--config", nargs="*", action="extend", default=[],
+                    help="config files merged left to right after the mode's shipped file (repeatable)")
+    ap.add_argument("--set", nargs="*", action="extend", default=[],
+                    help="config overrides section.sub.key=value (YAML-parsed values; repeatable)")
     ap.add_argument("--snr", type=float, default=10.0, help="odometry noise SNR (<= 0: perfect odometry)")
     ap.add_argument("--odom-scale-bias", type=float, default=0.0, help="systematic odometry scale error (0.02 = 2 %%)")
     ap.add_argument("--odom-yaw-drift", type=float, default=0.0, help="systematic heading drift (deg per metre)")
@@ -321,6 +322,11 @@ def main():
     ap.add_argument("--dump-steps", action="store_true", help="per-step diagnostics (keyframe quality, retrieved keyframes): "
                     "steps_map.json of the map run, 'diag' in every query row")
     add_session_args(ap)
+    return ap
+
+
+def main():
+    ap = build_parser()
     args = finish_session_args(ap.parse_args())
     if args.snr is not None and args.snr <= 0:
         args.snr = None

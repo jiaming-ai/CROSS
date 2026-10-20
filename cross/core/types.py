@@ -62,38 +62,6 @@ class Atlas:
 
 
         
-def serialize_keyframes(keyframes, path: str, method: str = "pickle"):
-    """Serialize a list of Keyframe objects to disk.
-    
-    Args:
-        keyframes: list of Keyframe
-        path: output file path
-        method: "pickle" (default) or "json"
-    """
-    data = []
-    for kf in keyframes:
-        data.append({
-            "id": kf.id,
-            "raw_rgb_image": kf.raw_rgb_image.cpu().numpy() if kf.raw_rgb_image is not None else None,
-            "depth_image": kf.depth_image.cpu().numpy() if kf.depth_image is not None else None,
-            "pose_mu": kf.pose_mu.tensor().cpu().numpy() if kf.pose_mu is not None else None,
-            "pose_std": kf.pose_std.tensor().cpu().numpy() if kf.pose_std is not None else None,
-            "pose_weights": kf.pose_weights.cpu().numpy() if kf.pose_weights is not None else None,
-            "pose_charts": kf.pose_charts.cpu().numpy() if kf.pose_charts is not None else None,
-            "atlas": kf.atlas.id if kf.atlas is not None else None,
-            "timestamp": kf.timestamp
-        })
-
-    if method == "pickle":
-        with open(path, "wb") as f:
-            pickle.dump(data, f)
-    elif method == "json":
-        # convert numpy arrays to lists for JSON
-        json_ready = [{k: (v.tolist() if isinstance(v, np.ndarray) else v) for k,v in item.items()} for item in data]
-        with open(path, "w") as f:
-            json.dump(json_ready, f)
-    else:
-        raise ValueError(f"Unknown method {method}")
     
 # ---------------------------------------------------------------------------------------------- compact tensor fields
 # A map holds millions of graph objects.  A pypose LieTensor of 7 floats costs ~1.5 KB of RAM (a plain tensor ~0.7 KB,
@@ -281,22 +249,6 @@ class Keyframe:
     def __repr__(self):
         return f"Keyframe(id={self.id}, timestamp={self.timestamp})"
 
-@dataclass
-class Particle:
-    """
-    A class for a particle.
-    """
-    pose: torch.Tensor # (7, ) translation and quaternion SE3
-    weight: Optional[float] = 1.0
-    id: int = field(init=False)
-    _next_id: ClassVar[int] = 0  # Class variable for ID counter only
-
-    def __post_init__(self):
-        self.id = Particle._next_id
-        Particle._next_id += 1
-
-    def __repr__(self):
-        return f"Particle(id={self.id}, weight={self.weight})"
 
         
 

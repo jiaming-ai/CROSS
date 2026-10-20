@@ -205,7 +205,6 @@ class Anchor:
         except np.linalg.LinAlgError:
             return False
         self.R, self.t = R, t
-        up = R @ self.up_map
         self.yaw = float(math.atan2(R[1, 0], R[0, 0]))
         self.n_used = int((w > 0.5).sum())
         self.weights = w

@@ -265,29 +265,6 @@ def project_SE3(T: pp.LieTensor, use_heights: bool = False, projection: "SE3Proj
         return torch.stack([x, z, yaw_cos, yaw_sin], dim=1)
 
 
-def so3_angle_between(
-    q1: torch.Tensor,
-    q2: torch.Tensor,
-    eps: float = 1e-8
-) -> torch.Tensor:
-    """
-    Geodesic angle between two rotations given in quaternion (…,4).
-    Returns a tensor of shape (…) with values in [0, π] (radians).
-    """
-    w1, v1 = q1[..., 3:4], q1[..., :3]        # split scalar / vector
-    w2, v2 = q2[..., 3:4], q2[..., :3]
-
-    w_rel = w2 * w1 + (v2 * v1).sum(-1, keepdim=True)   # scalar part
-    v_rel = (w2 * (-v1) + w1 * v2 +
-             torch.cross(v2, -v1, dim=-1))              # vector part
-
-    # Δθ = 2·atan2(‖v_rel‖, w_rel)
-    angle = 2.0 * torch.atan2(torch.linalg.norm(v_rel, dim=-1),
-                              w_rel.squeeze(-1).clamp(-1.0, 1.0))
-
-    # Numerical safety: map tiny negatives to zero, huge to π
-    return angle.clamp(min=0.0, max=math.pi)
-
 def rotation_angle_from_quat(q: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     """
     Extracts the rotation angle θ ∈ [0, π] from a unit quaternion q = [ x, y, z, w].

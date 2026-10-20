@@ -552,7 +552,7 @@ def vgio_frontend(K, mc, mode, T_right_in_left=None, device="cuda", system=None,
         else dict(local_service=False)
     frontend = VggtImuFrontend(K, mc, device, interval=mc.imu.visual_interval, depth_every=mc.imu.depth_every,
                                context=mc.imu.vgio_context, keyframe_age=mc.imu.vgio_keyframe_age,
-                               visual_rotation=mc.imu.vgio_visual_rotation, graph=mc.imu.vgio_graph,
+                               visual_rotation=mc.imu.vgio_visual_rotation,
                                T_right_in_left=T_right_in_left if mode == "stereo" else None, **service)
     frontend.standalone = False
     return frontend
@@ -639,7 +639,6 @@ def server_session(open_msg, device="cuda"):
                                   fast=bool(open_msg.get("fast"))) \
             + [os.path.join(CONFIG_DIR, n) for n in names]
         cfg = load_config(*files, sets=open_msg.get("set"))
-        cfg.async_update = False
     mc = None if open_msg.get("mono_config") is None else _from_dict(MonoConfig, open_msg["mono_config"])
     p = build_session(mode, odometry, camera, cfg, T_right_in_left=open_msg.get("T_right_in_left"),
                       mono_config=mc, device=device, mono_estimator=open_msg.get("mono_estimator", "da3"))
@@ -718,14 +717,14 @@ def add_session_args(ap):
     g.add_argument("--remote-max-backlog", type=float, default=0.3,
                    help="overload policy (s, 0: off): a frame that waited longer than this on the server is stepped "
                         "without its observation (the back end observes the next fresh frame); measurements are kept.  "
-                        "It acts only when the server is behind (outputs/2026-10-06_remote_mode: it never fired where "
+                        "It acts only when the server is behind (it never fired where "
                         "the server kept up, and it kept every overloaded case close to the local session)")
     g.add_argument("--remote-obs-cap", type=float, default=0.1,
                    help="rate cap (s, 0: off): the edge sends an observation only if the server can start it within "
                         "this time (a model of the server's queue from the server time of each kind of message, learned "
                         "from the replies); otherwise the back end observes at the next frame it can.  It acts only "
                         "when the server is behind; there it kept the results of the overload policy and sent 9-35 %% "
-                        "fewer images (outputs/2026-10-07_remote_cadence)")
+                        "fewer images")
     g.add_argument("--remote-server", default="",
                    help="HOST:PORT of a remote-session server (scripts/remote/serve.py): a real gRPC link instead of the "
                         "simulated one; this process runs only the edge")
@@ -853,7 +852,7 @@ def placement_odometry_ok(mode: str, odometry: str) -> bool:
     """Whether the placement rule (mapping.hypothesis.reloc_placement) can work with a session's odometry: it treats the
     odometry as one rigid placement away from the map, so it needs a metric scale.  Monocular DPVO (mono --odometry
     visual) has none: one session's measurements imply scattered placements and the rule never lets it join
-    (VGGT + DPVO, outputs/2026-10-14_placement_full_bench: ROVER T3 387 -> 162).  That combination reuses
+    (VGGT + DPVO: ROVER T3 387 -> 162).  That combination reuses
     configs/modes/mono_wheel.yaml, so the rule is turned off in code."""
     return not (mode == "mono" and odometry == "visual")
 

@@ -10,7 +10,7 @@
 # supervision is the lever. Clean A/B against vden3_s0. Launch with EXTRA_PYTHONPATH = the labelers' packages.
 # vden3_s0: vden2_s0 + the local dense head (vdenL_s0) + canonical focal (vdfoc_s0): at step 1000 vden2 helps the indoor
 # sets with people / single frames, the local head the CROSS sets; the canonical focal targets the wide cameras.
-# vden2_s0: vden_s0 + fixes for the domains where the head is weaker than DA3 (outputs/2026-10-06_scale_head):
+# vden2_s0: vden_s0 + fixes for the domains where the head is weaker than DA3:
 # single-frame windows (frames [1, 24]: the head over-estimates more with fewer views, NYUv2 is single-frame), BEDLAM
 # (synthetic people with metric GT: TUM / Bonn are scenes with people), stronger sensor degradations (blur, noise,
 # JPEG, low resolution: they raise the over-estimate on OpenLORIS).

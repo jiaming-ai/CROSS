@@ -13,7 +13,7 @@ A window is a list of frames (scene, sequence, index).  Three kinds, drawn per w
            global descriptor (vpr.npy) is closest to frame 0's.  Labels always come from the GT geometry
            (geometry.gt_covisibility), so the sampler only proposes likely non-overlapping frames.
 
-Lessons carried over from the underwater fine-tune (cross-uw memo sec. 7): isolated negatives teach an "isolated frame"
+Lessons carried over from an earlier underwater fine-tune of VGGT: isolated negatives teach an "isolated frame"
 shortcut, so negatives come in groups; the pose of a frame sharing no scene with frame 0 is unobservable and is not
 supervised (the trainer masks it); multi-session windows should be frequent.
 

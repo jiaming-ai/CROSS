@@ -108,7 +108,6 @@ def make_config(args) -> SystemConfig:
         sets = ([f"pose_est.ff.backend={args.backend}"] if args.backend else []) + \
             ([f"pose_est.ff.checkpoint={args.checkpoint or 'auto'}"] if args.backend or args.checkpoint else []) + sets
     cfg = load_config(*configs, sets=sets)
-    cfg.async_update = False
     if getattr(args, "no_intra_lc", False):
         cfg.mapping.loop_closure.intra_enabled = False
     lc = cfg.mapping.loop_closure
@@ -574,7 +573,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="its weights: a path, or finetuned / released (install.sh's VGGT-Omega checkpoints); default: "
                          "the configuration's (auto: the fine-tuned VGGT-Omega when installed, else the released one; "
                          "DA3: models/DA3-LARGE-1.1)")
-    ap.add_argument("--config", nargs="*", default=[])
+    ap.add_argument("--config", nargs="*", action="extend", default=[],
+                    help="config files merged left to right after the mode's shipped file (repeatable)")
     ap.add_argument("--depth-source", default="none", help="depth for keyframes when using ff (none|sgbm|gt)")
     ap.add_argument("--pnp-depth", default="sgbm", help="depth source of the rgbd mode, PnP or the feed-forward "
                     "estimator's scale (sgbm|gt; gt = the sequence's depth/ folder, e.g. an RGB-D sensor)")

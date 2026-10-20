@@ -9,6 +9,7 @@ import os
 import lzfse
 import numpy as np
 import tqdm
+from loguru import logger
 from PIL import Image
 
 from cross.utils.rotation import quaternion_to_rotation_matrix_numpy
@@ -39,7 +40,6 @@ class RosbagLoader(Dataloader):
       - __len__, __getitem__ -> dict with keys: rgb, depth, conf, delta_pose, world_pose, timestamp
       - get_sequence_frequency()
       - get_idx_from_timestamp(timestamp)
-      - load_test_json()
       - replay_data(fps=None, start_idx=0, end_idx=None)
 
     Notes
@@ -235,7 +235,7 @@ class RosbagLoader(Dataloader):
         with open(self._processed_dir / "metadata.pkl", "wb") as f:
             pickle.dump(meta, f)
 
-        print(f"Wrote metasdata {meta}")
+        logger.info(f"Wrote metadata {meta}")
 
         prev_base = None
 
@@ -244,7 +244,6 @@ class RosbagLoader(Dataloader):
 
             rgb_images = []
             depth_images = []
-            conf_images = []
             delta_poses = []
             world_poses = []  # transformed to OpenCV-ish
 
@@ -304,7 +303,7 @@ class RosbagLoader(Dataloader):
                 for j, rgb_img in enumerate(rgb_images, start=chunk_start):
                     Image.fromarray(rgb_img).save(rgb_dir / f"{j}.jpg")
 
-        print(f"[rosbag] Processed data saved to {self._processed_dir}")
+        logger.info(f"[rosbag] Processed data saved to {self._processed_dir}")
 
 
     def _load_metadata(self):
@@ -401,13 +400,6 @@ class RosbagLoader(Dataloader):
             return None
         return idx
 
-    def load_test_json(self):
-        # no test.json in r3d; return an OpenLoris-compatible default
-        self._test_json = {
-            "map_start_timestamp": None,
-            "map_end_timestamp": None
-        }
-        return self._test_json
 
     # def replay_data(
     #     self,

@@ -73,7 +73,6 @@ class DPVOFrontend:
         self.last_metric_index = -self.config.scale.interval
         self.rgb_memory = {}
         self.scale_history = []
-        self.initialized_before = False
         self.provide_mapping_depth = True
         self.bootstrap_metric_calls = 0
         self.background_patchifier = None
@@ -369,7 +368,6 @@ class DPVOFrontend:
             delta = inverse(self.metric_pose) @ next_metric
             self.unit_pose = current
             self.metric_pose = next_metric
-            self.initialized_before = True
         diagnostics['valid'] = bool(diagnostics['valid'] and self.scale_filter.initialized)
         diagnostics.update(unit_translation=unit_translation, scale_application='anchored_startup_v1',
                            position_units=('tracker' if self.config.scale.mode == 'relative' else
@@ -529,12 +527,3 @@ class DPVOFrontend:
         self.time_offset_done = True
         self.rate_log = []
 
-    def finalized_trajectory(self):
-        """Return offline-refined unit poses; never overwrite causal outputs."""
-        if not self.tracker or not self.tracker.is_initialized:
-            return None
-        poses, timestamps = self.tracker.terminate()
-        matrices = np.broadcast_to(np.eye(4), (len(poses), 4, 4)).copy()
-        matrices[:, :3, :3] = Rotation.from_quat(poses[:, 3:]).as_matrix()
-        matrices[:, :3, 3] = poses[:, :3]
-        return timestamps, matrices

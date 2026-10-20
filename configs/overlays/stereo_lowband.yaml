@@ -3,7 +3,7 @@
 # thin link: the back end observes on the left image only (pose_est.ff.right_image: the scale of a pass from the
 # previous observation with the odometry between them and from pairs of map references; the right image is not
 # stored and, in remote sessions, not sent) and half as often.
-#   Development split (outputs/2026-10-07_remote_cadence; wheel / OXTS / simulated odometry, Basalt VIO on KITTI 07
+#   Development split (wheel / OXTS / simulated odometry, Basalt VIO on KITTI 07
 #   and SimChange, none of which fails): T1 0.144 vs 0.157 m, T2 LR@1 0.886 vs 0.885, T3 27 vs 29 of 33, a third of
 #   the uplink, a third fewer observations.
 #   Not the default: without the right image no translation is metric without the odometry, so the odometry scale

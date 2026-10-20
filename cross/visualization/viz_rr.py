@@ -91,7 +91,6 @@ class RRViz:
         if self.visualize:
             rr.init(self.recording_id, spawn=True)
 
-            bg = rrb.Background(color=(255, 255, 255, 255))
             blueprint = rrb.Blueprint(
                 rrb.Horizontal(
                     rrb.Spatial3DView(
@@ -1047,7 +1046,6 @@ class RRViz:
         rr.log("/hypothesis_lifecycle", rr.TextDocument(lifecycle_content, media_type=rr.MediaType.MARKDOWN))
 
 
-
     def _determine_component_stage(self, comp_idx: int) -> tuple[str, str]:
         """Determine the lifecycle stage of a component.
 
@@ -1071,35 +1069,6 @@ class RRViz:
         else:
             return "❓", "Unknown"
 
-    def _create_text_progress_bar(self, value: float, max_value: float, width: int = 10,
-                                   threshold: float = None) -> str:
-        """Create ASCII progress bar with optional threshold indicator.
-
-        Args:
-            value: Current value
-            max_value: Maximum value for the bar
-            width: Width in characters
-            threshold: Optional threshold to mark on the bar
-        """
-        if max_value <= 0:
-            return "░" * width
-
-        filled = int((value / max_value) * width)
-        filled = max(0, min(width, filled))
-
-        # Create bar
-        bar = "█" * filled + "░" * (width - filled)
-
-        # Add threshold marker if provided
-        if threshold is not None and max_value > 0:
-            threshold_pos = int((threshold / max_value) * width)
-            threshold_pos = max(0, min(width - 1, threshold_pos))
-            bar_list = list(bar)
-            if threshold_pos < len(bar_list):
-                bar_list[threshold_pos] = "│"
-            bar = "".join(bar_list)
-
-        return bar
 
     def _create_llr_heatmap_row(self, llr_values: torch.Tensor) -> str:
         """Create block character heatmap for LLR history.
@@ -1287,165 +1256,8 @@ class RRViz:
 
         return "".join(lines)
 
-    def _log_graph_legend(self):
-        """Log graph visualization legend as a static text document."""
-        legend_text = """# Pose Graph Visualization Legend
-
-## Node Colors
-- 🔴 **Red**: Optimizable nodes (will be adjusted during optimization)
-- 🟢 **Green**: Fixed nodes (anchors, held constant)
-- ⚪ **Gray**: Other nodes
-
-## Edge Colors
-- 🟢 **Green**: Odometry edges (sequential motion between keyframes)
-- 🔵 **Blue**: Visual edges (loop closures from visual recognition)
-- 🔴 **Red**: Loop closure edges (constraints between hypotheses)
-
-## Node Labels
-Format: `comp_id | kf_id`
-- `comp_id`: Hypothesis/component ID
-- `kf_id`: Keyframe ID (or Temp ID for auxiliary vertices)
-
-## Graph Structure
-Each hypothesis is visualized as a separate directed graph showing the pose optimization problem structure.
-"""
-        rr.log("/graph/legend", rr.TextDocument(legend_text, media_type=rr.MediaType.MARKDOWN), static=True)
-
-    def _visualize_graph(self, pgo_info: Dict[str, Any]):
-        """Visualize pose graph with nodes (Vertex) and edges.
-        
-        Node colors:
-        - Red: Optimizable nodes
-        - Green: Fixed nodes
-        - Gray: Other nodes
-        
-        Edge colors:
-        - Green: Odometry edges
-        - Blue: Visual edges
-        - Red: Loop closure edges
-        
-        Args:
-            pgo_info: Dictionary containing:
-                - nodes: List[Vertex] - List of graph vertices
-                - edges: List[Tuple[int, int, List[Edge]]] - List of edges with their factors
-                - hypothesis_id: int - Which hypothesis this graph represents
-                - optim_nodes_ids: Optional[Set[int]] - IDs of nodes to be optimized
-                - fixed_nodes_ids: Optional[Set[int]] - IDs of fixed nodes
-        """
-        nodes = pgo_info.get("nodes", [])
-        edges = pgo_info.get("edges", [])
-        hypothesis_id = pgo_info.get("hypothesis_id", 0)
-        optim_nodes_ids = pgo_info.get("optim_nodes_ids", set())
-        fixed_nodes_ids = pgo_info.get("fixed_nodes_ids", set())
-        
-        if not nodes:
-            return
-        
-        # Build node information
-        node_ids = []
-        node_labels = []
-        node_colors = []
-        
-        for vertex in nodes:
-            node_id = vertex.kf_id
-            node_ids.append(node_id)
-            
-            # Node label: "comp_id | kf_id"
-            # For temp vertices (created for other hypotheses), kf_id is the temp ID
-            # We need to map back to the original keyframe if possible
-            if node_id in self.hypothesis_manager.nodes:
-                # Original keyframe
-                original_kf = self.hypothesis_manager.nodes[node_id]
-                label = f"{hypothesis_id} | KF{node_id}"
-            else:
-                # Temp vertex (likely from another hypothesis merged for LC)
-                label = f"? | Temp{node_id}"
-            
-            node_labels.append(label)
-            
-            # Node color based on optimization status
-            if node_id in optim_nodes_ids:
-                node_colors.append([255, 100, 100])  # Red for optimizable nodes
-            elif node_id in fixed_nodes_ids:
-                node_colors.append([100, 255, 100])  # Green for fixed nodes
-            else:
-                node_colors.append([150, 150, 150])  # Gray for other nodes
-        
-        # Build edge information with different colors per edge type
-        edge_list = []
-        edge_colors = []
-        
-        # Color scheme:
-        # - Odometry: Green [0, 200, 0]
-        # - Visual: Blue [0, 100, 255]
-        # - Loop Closure: Red [255, 0, 0]
-        
-        edge_type_colors = {
-            "odometry": [0, 200, 0],
-            "visual": [0, 100, 255],
-            "loop_closure": [255, 0, 0],
-        }
-        
-        for u, v, edge_factors in edges:
-            # Determine edge type (use the first factor's type if multiple)
-            if edge_factors:
-                edge_type = edge_factors[0].type
-                color = edge_type_colors.get(edge_type, [128, 128, 128])  # Default gray
-            else:
-                color = [128, 128, 128]
-            
-            edge_list.append((u, v))
-            edge_colors.append(color)
-        
-        # Log the graph
-        graph_entity = f"graph/hypothesis_{hypothesis_id}"
-        
-        if node_ids and edge_list:
-            rr.log(
-                graph_entity,
-                [
-                    rr.GraphNodes(
-                        node_ids=node_ids,
-                        labels=node_labels,
-                        colors=node_colors,
-                    ),
-                    rr.GraphEdges(
-                        edges=edge_list,
-                        colors=edge_colors,
-                        graph_type="directed"
-                    ),
-                ]
-            )
-        elif node_ids:
-            # Only nodes, no edges
-            rr.log(
-                graph_entity,
-                rr.GraphNodes(
-                    node_ids=node_ids,
-                    labels=node_labels,
-                    colors=node_colors,
-                )
-            )
-        
-        # Log graph legend/info (static, only needs to be logged once)
-        self._log_graph_legend()
 
     
-    def visualize_pgo_step(self, pgo_info: Dict[str, Any], idx: int = None):
-        """Visualize PGO step.
-
-        Args:
-            pgo_info: PGO information dictionary
-            idx: (Deprecated) Ignored - uses current visualizer step counter
-        """
-        _ = idx  # Suppress unused parameter warning (kept for backward compatibility)
-        if not self.visualize:
-            return
-
-        # Use visualizer's own step counter (don't increment, PGO happens within a step)
-        rr.set_time("step", sequence=self.step_idx - 1)
-
-        self._visualize_graph(pgo_info)
         
 
     

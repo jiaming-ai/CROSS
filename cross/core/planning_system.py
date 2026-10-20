@@ -93,11 +93,11 @@ class PlanningSystem:
          visited waypoints to avoid repeats and reports whether the goal is reached.
 
     Integration with System
-    - The planning system registers itself on initialization so the mapping system can
-      notify it of events:
-      - `on_new_permanent_keyframe()` to update the backbone and shortcuts.
-      - `on_loop_closure(affected_kf_ids)` to rebuild affected regions.
-    - `rebuild_graph()` can be called after loading a map to rebuild from scratch.
+    - The planning graph is built from the map as it is when the planning system is
+      created. System does not notify it of later changes: after new keyframes or a
+      loop closure, call `rebuild_graph()` (or create a new PlanningSystem), or feed
+      the events yourself with `on_new_permanent_keyframe()` and
+      `on_loop_closure(affected_kf_ids)`.
     """
 
     def __init__(
@@ -172,7 +172,7 @@ class PlanningSystem:
             self.planner = None
             logger.info("Planning system disabled")
 
-    # ============ Notification Handlers (called by System) ============
+    # ============ Notification handlers (call them when the map changes) ============
 
     def on_new_permanent_keyframe(self, kf_id: Optional[int] = None):
         """
@@ -382,17 +382,3 @@ class PlanningSystem:
 
         return self.sparse_graph.get_edge_cost(from_kf_id, to_kf_id)
 
-    def get_neighbors(self, kf_id: int) -> set:
-        """
-        Get all sparse graph neighbors of a keyframe.
-
-        Args:
-            kf_id: Keyframe ID
-
-        Returns:
-            Set of neighbor keyframe IDs (empty if planning disabled)
-        """
-        if not self.enabled or self.sparse_graph is None:
-            return set()
-
-        return self.sparse_graph.get_sparse_graph_neighbors(kf_id)

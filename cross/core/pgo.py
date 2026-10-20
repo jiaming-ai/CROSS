@@ -742,129 +742,6 @@ class PoseGraph:
             raise ValueError("Graph does not connect to its proposed reference chart")
         self.preferred_fixed_node = min(anchors)
 
-    def validate_edge_uncertainties(
-        self,
-        expected_ranges: Optional[Dict[EdgeType, Tuple[float, float]]] = None,
-        clamp: bool = False,
-    ) -> Dict[str, any]:
-        """Validate edge uncertainties are in expected ranges.
-
-        Args:
-            expected_ranges: Dict mapping EdgeType to (min_std, max_std) tuples
-            clamp: Whether to clamp values to expected ranges (modifies edges in-place)
-
-        Returns:
-            Statistics about edge uncertainties including warnings
-        """
-        if expected_ranges is None:
-            expected_ranges = {
-                EdgeType.LOOP_CLOSURE: (0.005, 0.05),
-                EdgeType.ODOMETRY: (0.01, 0.1),
-                EdgeType.VISUAL: (0.05, 0.5),
-            }
-
-        stats = {}
-        warnings = []
-
-        for (id1, id2, factors) in self.edges:
-            for factor in factors:
-                std_vals = factor.std.tensor().cpu().numpy().flatten()
-                edge_type = factor.type
-
-                if edge_type not in expected_ranges:
-                    continue
-
-                min_expected, max_expected = expected_ranges[edge_type]
-
-                # Check if any std values are outside expected range
-                mean_std = std_vals.mean()
-                min_std = std_vals.min()
-                max_std = std_vals.max()
-
-                if edge_type.name not in stats:
-                    stats[edge_type.name] = {
-                        'count': 0,
-                        'mean_std': [],
-                        'min_std': [],
-                        'max_std': [],
-                        'out_of_range': 0,
-                    }
-
-                stats[edge_type.name]['count'] += 1
-                stats[edge_type.name]['mean_std'].append(mean_std)
-                stats[edge_type.name]['min_std'].append(min_std)
-                stats[edge_type.name]['max_std'].append(max_std)
-
-                if min_std < min_expected or max_std > max_expected:
-                    stats[edge_type.name]['out_of_range'] += 1
-                    warnings.append(
-                        f"{edge_type.name} edge ({id1}, {id2}): "
-                        f"std range [{min_std:.4f}, {max_std:.4f}] "
-                        f"outside expected [{min_expected:.4f}, {max_expected:.4f}]"
-                    )
-
-                    if clamp:
-                        # Clamp the values
-                        clamped_std = np.clip(std_vals, min_expected, max_expected)
-                        factor.std = pp.se3(torch.from_numpy(clamped_std).to(
-                            dtype=torch.float32, device=self.device
-                        ))
-
-        # Aggregate statistics
-        for edge_type_name in stats:
-            stats[edge_type_name]['mean_std'] = np.mean(stats[edge_type_name]['mean_std'])
-            stats[edge_type_name]['min_std'] = np.min(stats[edge_type_name]['min_std'])
-            stats[edge_type_name]['max_std'] = np.max(stats[edge_type_name]['max_std'])
-
-        return {'stats': stats, 'warnings': warnings}
-
-    def inspect_edge_uncertainties(self, max_edges_per_type: int = 5) -> None:
-        """Print detailed edge uncertainty information for debugging.
-
-        Args:
-            max_edges_per_type: Maximum number of edges to display per type
-        """
-        edge_data = collections.defaultdict(list)
-
-        for (id1, id2, factors) in self.edges:
-            for factor in factors:
-                std_vals = factor.std.tensor().cpu().numpy().flatten()
-                edge_data[factor.type.name].append({
-                    'edge': (id1, id2),
-                    'std_full': std_vals,
-                    'std_mean': std_vals.mean(),
-                    'std_trans': std_vals[:3].mean(),
-                    'std_rot': std_vals[3:].mean(),
-                })
-
-        logger.debug("=" * 80)
-        logger.debug("EDGE UNCERTAINTY INSPECTION")
-        logger.debug("=" * 80)
-
-        for edge_type, data in sorted(edge_data.items()):
-            logger.debug(f"{edge_type} Edges: {len(data)} total")
-            logger.debug("-" * 80)
-
-            if data:
-                # Show summary statistics
-                all_means = [item['std_mean'] for item in data]
-                all_trans = [item['std_trans'] for item in data]
-                all_rot = [item['std_rot'] for item in data]
-
-                logger.debug(f"  Overall mean std: {np.mean(all_means):.6f}")
-                logger.debug(f"  Translation mean std: {np.mean(all_trans):.6f}")
-                logger.debug(f"  Rotation mean std: {np.mean(all_rot):.6f}")
-                logger.debug(f"  Min/Max mean std: {np.min(all_means):.6f} / {np.max(all_means):.6f}")
-                logger.debug(f"  Sample edges (first {min(max_edges_per_type, len(data))}):")
-
-                for i, item in enumerate(data[:max_edges_per_type]):
-                    logger.debug(f"    Edge {item['edge']}: "
-                                 f"mean={item['std_mean']:.6f}, "
-                                 f"trans={item['std_trans']:.6f}, "
-                                 f"rot={item['std_rot']:.6f}")
-                    logger.debug(f"      Full std: {item['std_full']}")
-
-        logger.debug("=" * 80)
 
     @timeit
     def solve(
@@ -979,26 +856,6 @@ class PoseGraph:
                     used.add(id1)
                     used.add(id2)
 
-        # Log edge statistics for debugging
-        if has_edges and logger.level("DEBUG").no >= 100:   # disabled: costs a device sync per factor
-            edge_stats = {'LOOP_CLOSURE': [], 'ODOMETRY': [], 'VISUAL': []}
-            for (id1, id2, factors) in self.edges:
-                if id1 in all_node_ids and id2 in all_node_ids:
-                    for factor in factors:
-                        stds = factor.std.tensor().cpu().numpy().flatten().copy()
-                        # Apply scaling factor if applicable
-                        if factor.type in self.uncertainty_scales:
-                            stds *= self.uncertainty_scales[factor.type]
-                        edge_stats[factor.type.name].append(stds)
-
-            for edge_type, std_list in edge_stats.items():
-                if std_list:
-                    std_array = np.array(std_list)
-                    logger.debug(f"{edge_type} edges: count={len(std_list)}, "
-                                f"mean_std={std_array.mean(axis=0)}, "
-                                f"min_std={std_array.min(axis=0)}, "
-                                f"max_std={std_array.max(axis=0)}")
-
         if not has_edges and len(optim_node_ids) > 0:
             logger.warning("No edges found in the pose graph to optimize.")
             self.optimization_cost = 0.0
@@ -1016,19 +873,10 @@ class PoseGraph:
             optim_node_ids = [n for n in optim_node_ids if n not in set(unused)]
         params = gtsam.LevenbergMarquardtParams()
         self.initial_cost = graph.error(initial)
-        if getattr(self, "eval_only", False):          # diagnostics: cost at the initial values, no optimisation
-            self.lm_iterations = 0
-            self.optimization_cost = self.initial_cost
-            self.optimized_poses = {}
-            # per-factor costs (largest first) for the diagnostics
-            self.factor_costs = sorted(((float(graph.at(i).error(initial)), str(graph.at(i).keys())) for i in range(graph.size())), reverse=True)[:5]
-            self._graph, self._initial = graph, initial
-            return
         optimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial, params)
         with timeblock("GTSAM PGO"):
             result = optimizer.optimize()
         self.lm_iterations = int(optimizer.iterations())
-        self._graph, self._result, self._initial = graph, result, initial     # diagnostics
         
         # 5. Extract results
         self.optimization_cost = graph.error(result)

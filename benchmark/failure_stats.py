@@ -129,7 +129,7 @@ def orb_tracking(roots, ds_cfg, data: Path):
     for root in roots:
         for f in sorted(Path(root).glob("*/*/orbslam3/*/s0/maps/**/map_poses.txt")):
             rel = f.relative_to(root).parts
-            dataset, scene, setup = rel[0], rel[1], rel[3]
+            dataset, _scene, setup = rel[0], rel[1], rel[3]
             seq = "/".join(rel[6:-1])
             if (dataset, setup, seq) in seen or dataset not in ds_cfg:
                 continue

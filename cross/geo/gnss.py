@@ -148,7 +148,6 @@ class GnssGateConfig:
     holdoff_s: float = 10.0            # and the epoch's age (receivers converge for a while after reacquisition)
     gap_factor: float = 5.0            # a gap longer than gap_factor x the median fix interval starts a new epoch
     min_gap_s: float = 1.0
-    min_spread_for_yaw: float = 0.0    # (diagnostic) spread of the window's track below which its yaw is not fitted
 
 
 @dataclass

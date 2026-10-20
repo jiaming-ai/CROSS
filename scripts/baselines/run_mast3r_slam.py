@@ -71,7 +71,6 @@ def main():
     if args.map_only:                    # the map sequence alone: one "trial" with no query frames
         trials, lq = [(0, 0)], []
     all_rows, per_trial_time = [], []
-    map_poses_ref = None
     for ti, (a, b) in enumerate(trials):
         stream = out / f"stream_t{ti}"
         stream.mkdir(exist_ok=True)

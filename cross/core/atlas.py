@@ -18,12 +18,11 @@ def new_atlas_center(system):
 
     # Compute bounding box of existing map
     x_min, x_max = all_poses[:, 0].min(), all_poses[:, 0].max()
-    y_min, y_max = all_poses[:, 1].min(), all_poses[:, 1].max()
+    y_max = all_poses[:, 1].max()
     z_min, z_max = all_poses[:, 2].min(), all_poses[:, 2].max()
 
     # Compute map extents
     x_extent = x_max - x_min
-    y_extent = y_max - y_min
     z_extent = z_max - z_min
 
     # Use the maximum horizontal extent (x and z) to determine margin

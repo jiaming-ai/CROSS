@@ -9,9 +9,9 @@ include:
 mapping:
   hypothesis:
     # merge hypotheses in mapping sessions too, and update hypothesis 0 with every observation (the defaults are false /
-    # true since 2026-10-03).  Full benchmark 2026-10-12 (outputs/2026-10-11_config_confirm, "ob3", which also adopted in
+    # true since 2026-10-03).  Full benchmark 2026-10-12 ("ob3", which also adopted in
     # mapping sessions), against the defaults: ROVER T3 652 -> 1012 of 1159, T2 0.25 / 0.46 -> 0.41 / 0.69.
-    # No adoption in mapping sessions (outputs/2026-10-12_ob3_kitti10): with hypothesis 0 moved by every observation, the
+    # No adoption in mapping sessions: with hypothesis 0 moved by every observation, the
     # VGGT-Omega / DPVO scale disagreement on fast drives makes the session's own recent keyframes fail the prior test and
     # be born as hypotheses 3-40 m away; adopting them teleported the map (KITTI 10 8.8 -> 39 / 86 m, keyframes left at
     # the origin).  Without adoption (merges still verified): ROVER T3 1012 / 1159, T2 0.40 / 0.69 (ob3 1012, 0.41 / 0.69);

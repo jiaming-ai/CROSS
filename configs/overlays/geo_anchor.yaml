@@ -1,8 +1,8 @@
 # Opt-in overlay (--config configs/overlays/geo_anchor.yaml, with --gnss): GNSS anchors the map to latitude / longitude
 # without moving it.  The map's geometry stays what vision and odometry make it (no GNSS factors in the pose graph);
 # every used fix of every session of the map is stored with it and fitted by one rigid anchor (heading + translation),
-# which later sessions keep refining and use for GNSS-gated retrieval / relocalization.  Under evaluation
-# (outputs/2026-10-16_geo_anchor/).  Compass headings join the fit with --set geo.compass_anchor=true once the
+# which later sessions keep refining and use for GNSS-gated retrieval / relocalization.  Under evaluation.
+# Compass headings join the fit with --set geo.compass_anchor=true once the
 # compass -> camera heading offset is known (geo.compass_offset_deg, or a loaded map's calibration).
 geo:
   pose_graph: false

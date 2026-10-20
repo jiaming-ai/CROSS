@@ -66,7 +66,7 @@ BASALT = os.environ.get("BASALT_VIO", "basalt_vio")
 # Basalt's EuRoC configuration with a 4-level image pyramid (EuRoC: 3).  With 3 levels the tracker loses the large image
 # motion of fast turns at 10 Hz (KITTI 00: 19 deg of heading lost in one turn, ATE 77 m) and the weak texture of the
 # night (ROVER night: velocity runaway, ATE 26 m); with 4 both are fixed (4.1 m, 1.9 m), SimChange improves
-# (mean ATE 0.18 -> 0.10 m) and the other sequences stay within noise (outputs/2026-10-09_basalt_fix)
+# (mean ATE 0.18 -> 0.10 m) and the other sequences stay within noise
 DEFAULT_BASALT_OVERRIDES = {"optical_flow_levels": 4}
 OKVIS2 = os.environ.get("OKVIS2_APP", "okvis_app_synchronous")
 
@@ -418,7 +418,7 @@ def run_okvis2(seq: ViSequence, work: Path, args) -> tuple[dict, dict]:
         import csv
         with open(causal[0]) as f:
             r = csv.reader(f)
-            head = next(r)
+            next(r)              # header
             for row in r:
                 v = [float(x) for x in row[:8]]
                 T = np.eye(4)

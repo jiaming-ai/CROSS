@@ -60,7 +60,6 @@ def test_no_anchor_invalid():
 
 
 def test_odom_anchor_direction_not_required():
-    B = _rig(0.5)
     rng = np.random.default_rng(2)
     left = _random_traj(3, rng)
     T_pc = invert_poses(left[0]) @ left[1]

@@ -128,7 +128,7 @@ class ScoreCalibration:
     the re-scoring margin.  Code scores are used as they are: on NCLT (projection fitted on the whole map) they are
     within 0.002-0.004 of the full cosine at 2048 dims; models mapping them back to the cosine (isotonic, residual
     regression) reduced the in-map error but increased it for another season's queries and were removed
-    (outputs/2026-10-08_option_pruning; code in the tag large-scale-options-2026-10-08)."""
+    (code in the tag large-scale-options-2026-10-08)."""
 
     def __init__(self, meta: Optional[dict] = None):
         self.meta = dict(meta or {})
@@ -197,7 +197,7 @@ class DescriptorIndex:
 
     def __init__(self, dim_in: int, device: str = "cuda", initial_capacity: int = 1000,
                  projection: Optional[PCAProjection] = None, store_dtype: str = "auto", backend: str = "exact",
-                 ivf_nlist: int = 0, ivf_nprobe: int = 16, ivf_min_rows: int = 200000, ann_shortlist: int = 256,
+                 ivf_nlist: int = 0, ivf_nprobe: int = 16, ivf_min_rows: int = 200000,
                  fit_at: int = 0, fit_dim: int = 0, fit_energy: float = 0.9, extend: bool = True,
                  extend_margin: float = 0.05, extend_dims: int = 64, max_dim: int = 2048, recent: int = 1024,
                  shortlist: int = 64, max_rescore: int = 256, keep_full_max: int = 131072):
@@ -211,7 +211,6 @@ class DescriptorIndex:
         self.dtype = getattr(torch, store_dtype)
         self.backend = backend
         self.ivf_nlist, self.ivf_nprobe, self.ivf_min_rows = int(ivf_nlist), int(ivf_nprobe), int(ivf_min_rows)
-        self.ann_shortlist = int(ann_shortlist)
         self.fit_at, self.fit_dim, self.fit_energy = int(fit_at), int(fit_dim), float(fit_energy)
         self.extend, self.extend_margin, self.extend_dims = bool(extend), float(extend_margin), int(extend_dims)
         self.max_dim, self.recent_size = int(max_dim), int(recent)

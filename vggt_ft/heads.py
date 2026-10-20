@@ -8,7 +8,7 @@ Depends on torch only.
 ScaleHead : one number per window, log s, such that  metric depth = s * predicted depth  (and metric camera translation
             = s * predicted translation).  Attention pooling over all frames' camera / register / mean-patch tokens.
 CovisHead : pairwise covisibility logits (S x S): the overlap fraction of two views, the quantity CROSS thresholds to
-            accept a relative pose.  Same module as the underwater fine-tune (cross-uw `covis_head.py`).
+            accept a relative pose.
 """
 from __future__ import annotations
 

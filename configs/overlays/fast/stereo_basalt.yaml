@@ -1,6 +1,6 @@
 # Fast overlay of the stereo_basalt mode (--fast; layered on configs/modes/stereo_basalt.yaml): 6
 # images per pass (the current pair and 4 references, no reference anchors) at 416 px instead of 512 px, set here
-# whatever the stereo base is.  Config confirmation 2026-10-11 (outputs/2026-10-11_config_confirm), against 6 images at
+# whatever the stereo base is.  Config confirmation 2026-10-11, against 6 images at
 # 512 px: ROVER subset (map + winter / night / dusk / autumn) T3 602 -> 589 of 630 (-2.2 %), T2 at 3 m 0.995 -> 0.984,
 # KITTI T1 median ratio 1.00; config tests H6 (h6a): ROVER subset 565 -> 562.  RTX 4000 Ada: 20.7 query FPS (the same
 # passes timed in the stereo + wheel mode; its default 10.6).  A map built with this overlay stores 416 px images:

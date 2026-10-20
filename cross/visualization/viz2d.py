@@ -21,32 +21,6 @@ if os.environ.get("DISPLAY") and not os.environ.get("MPLBACKEND"):
 else:
     matplotlib.use('Agg')
 
-def cm_RdGn(x):
-    """Custom colormap: red (0) -> yellow (0.5) -> green (1)."""
-    x = np.clip(x, 0, 1)[..., None] * 2
-    c = x * np.array([[0, 1.0, 0]]) + (2 - x) * np.array([[1.0, 0, 0]])
-    return np.clip(c, 0, 1)
-
-
-def cm_BlRdGn(x_):
-    """Custom colormap: blue (-1) -> red (0.0) -> green (1)."""
-    x = np.clip(x_, 0, 1)[..., None] * 2
-    c = x * np.array([[0, 1.0, 0, 1.0]]) + (2 - x) * np.array([[1.0, 0, 0, 1.0]])
-
-    xn = -np.clip(x_, -1, 0)[..., None] * 2
-    cn = xn * np.array([[0, 0.1, 1, 1.0]]) + (2 - xn) * np.array([[1.0, 0, 0, 1.0]])
-    out = np.clip(np.where(x_[..., None] < 0, cn, c), 0, 1)
-    return out
-
-
-def cm_prune(x_):
-    """Custom colormap to visualize pruning"""
-    if isinstance(x_, torch.Tensor):
-        x_ = x_.cpu().numpy()
-    max_i = max(x_)
-    norm_x = np.where(x_ == max_i, -1, (x_ - 1) / 9)
-    return cm_BlRdGn(norm_x)
-
 
 def plot_images(imgs, titles=None, cmaps="gray", dpi=100, pad=0.5, adaptive=True, fig=None):
     """Plot a set of images horizontally.
@@ -122,41 +96,6 @@ def plot_keypoints(kpts, colors="lime", ps=4, axes=None, a=1.0, fig=None):
             k = k.cpu().numpy()
         ax.scatter(k[:, 0], k[:, 1], c=c, s=ps, linewidths=0, alpha=alpha)
 
-def plot_masks(masks, colors=(1, 0, 0), alpha=0.3, axes=None, fig=None):
-    """Plot masks as an overlay on existing images.
-    Args:
-        masks: list of ndarrays of size (H, W) or (H, W, 1).
-        colors: tuple of (R, G, B) values (0-1 range), or list of such tuples.
-        alpha: float or list of floats for the opacity of the masks.
-        axes: list of axes to plot on. If None, use current figure axes.
-        fig: optional existing figure to plot on.
-    """
-    if not isinstance(masks, list):
-        masks = [masks]
-    if not isinstance(colors[0], tuple):
-        colors = [colors] * len(masks)
-    if not isinstance(alpha, list):
-        alpha = [alpha] * len(masks)
-    if axes is None:
-        if fig is None:
-            axes = plt.gcf().axes
-        else:
-            axes = fig.axes
-    
-    for ax, mask, color, a in zip(axes, masks, colors, alpha):
-        if isinstance(mask, torch.Tensor):
-            mask = mask.cpu().numpy()
-        
-        # Ensure mask is 2D
-        if mask.ndim == 3:
-            mask = mask.squeeze()
-        
-        # Create a colored mask
-        colored_mask = np.zeros((*mask.shape, 4))
-        colored_mask[mask > 0] = (*color, a)
-        
-        # Plot the mask
-        ax.imshow(colored_mask, interpolation='nearest')
 
 def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axes=None):
     """Plot matches for a pair of existing images.
@@ -211,30 +150,6 @@ def plot_matches(kpts0, kpts1, color=None, lw=1.5, ps=4, a=1.0, labels=None, axe
     if ps > 0:
         ax0.scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
         ax1.scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
-
-
-def add_text(
-    idx,
-    text,
-    pos=(0.01, 0.99),
-    fs=15,
-    color="w",
-    lcolor="k",
-    lwidth=2,
-    ha="left",
-    va="top",
-):
-    ax = plt.gcf().axes[idx]
-    t = ax.text(
-        *pos, text, fontsize=fs, ha=ha, va=va, color=color, transform=ax.transAxes
-    )
-    if lcolor is not None:
-        t.set_path_effects(
-            [
-                path_effects.Stroke(linewidth=lwidth, foreground=lcolor),
-                path_effects.Normal(),
-            ]
-        )
 
 
 def save_plot(path, **kw):

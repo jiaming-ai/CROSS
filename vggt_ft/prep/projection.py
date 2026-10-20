@@ -76,36 +76,3 @@ def drop_see_through(depth: np.ndarray, win: int = 7, rel: float = 0.08) -> np.n
     return d
 
 
-def fill_sparse(depth: np.ndarray, iters: int = 3) -> np.ndarray:
-    """Holes of a sparse depth map filled from their nearest (smallest) valid neighbour, up to `iters` px (for edge
-    checks only; the stored depth stays sparse)."""
-    d = depth.copy()
-    for _ in range(iters):
-        m = d <= 0
-        if not m.any():
-            break
-        big = np.where(d > 0, d, np.float32(1e6)).astype(np.float32)
-        n = cv2.erode(big, np.ones((3, 3), np.uint8))
-        d[m & (n < 1e6)] = n[m & (n < 1e6)]
-    return d
-
-
-def edge_alignment(rgb: np.ndarray, depth: np.ndarray, tol_px: int = 2, rel_jump: float = 0.1) -> float:
-    """Share of depth-discontinuity pixels within tol_px of an RGB (Canny) edge: high when the projection lines up with
-    the image, low for a wrong pose / frame index (a check, not a filter on its own)."""
-    g = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    e = cv2.Canny(cv2.GaussianBlur(g, (5, 5), 0), 50, 150) > 0
-    d = fill_sparse(depth.astype(np.float32))
-    v = d > 0
-    big = np.where(v, d, 0)
-    dx = np.zeros_like(d, bool)
-    dy = np.zeros_like(d, bool)
-    both = v[:, 1:] & v[:, :-1]
-    dx[:, 1:] = both & (np.abs(big[:, 1:] - big[:, :-1]) > rel_jump * np.minimum(big[:, 1:], big[:, :-1]))
-    both = v[1:] & v[:-1]
-    dy[1:] = both & (np.abs(big[1:] - big[:-1]) > rel_jump * np.minimum(big[1:], big[:-1]))
-    de = dx | dy
-    if de.sum() < 50:
-        return float("nan")
-    near_e = cv2.dilate(e.astype(np.uint8), np.ones((2 * tol_px + 1, 2 * tol_px + 1), np.uint8)) > 0
-    return float(near_e[de].mean())

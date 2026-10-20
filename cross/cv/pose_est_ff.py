@@ -213,7 +213,7 @@ class _VGGTOmegaBackend(_Backend):
         """Camera head (all views) and depth head (first k views); the camera head runs on a side stream, concurrently
         with the depth head (both only read the tokens), except inside a CUDA-graph capture: there it runs first, on
         the capture stream.  A side-stream branch in the captured graphs made replays die with "illegal memory access"
-        (~2 % of benchmark jobs with the fine-tuned checkpoint, H20 2026-10-07; never without graphs)."""
+        (~2 % of benchmark jobs with the fine-tuned checkpoint, 2026-10-07; never without graphs)."""
         m = self.model
         main = torch.cuda.current_stream()
         side = not torch.cuda.is_current_stream_capturing()
@@ -235,7 +235,7 @@ class _VGGTOmegaBackend(_Backend):
             main.wait_stream(self._head_stream)
         # the fine-tune's covisibility / scale heads (small) run on the main stream after the join: on the side stream,
         # concurrently with the dense head, they made the side-stream race (illegal memory access with CUDA graphs)
-        # frequent (H20 benchmark, 2026-10-06)
+        # frequent (benchmark, 2026-10-06)
         with torch.autocast(device_type="cuda", enabled=False):
             final = tokens[-1]
             covis = self.covis_head(final[:, :, :start]) if self.covis_head is not None else pose_enc.new_zeros(0)
@@ -810,8 +810,6 @@ class PoseEstFeedForward:
                 self.last_bev_shadow[want] = done.get(k)
         self._gravity_cam = None
 
-    def set_stereo_calibration(self, T_right_in_left: np.ndarray):
-        self.T_right_in_left = np.asarray(T_right_in_left, dtype=np.float64)
 
     def _as_model_input(self, views: List[torch.Tensor]) -> torch.Tensor:
         images = torch.stack([v.to(self.device) for v in views], dim=0).float()

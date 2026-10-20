@@ -111,12 +111,9 @@ class ImuConfig:
     visual_interval: int = 3
     depth_every: int = 3
     vgio_visual_std_rel: float = 0.03
-    vgio_visual_std_depth: float = 0.003
-    vgio_scale_drift: float = 0.04               # chained VGGT-Omega gauges drift faster than DPVO's
     vgio_context: int = 2                        # measured frames besides the current one in a pass of the frontend
     vgio_keyframe_age: float = 2.0               # s; > 0: passes also contain a keyframe this old (graph: its pairs)
     vgio_visual_rotation: bool = False           # report VGGT-Omega's orientation (from the keyframe), not the gyro's
-    vgio_graph: bool = True                      # local pose graph (cross.imu.vgi_graph) instead of this filter
     vgio_graph_window: int = 20                  # nodes
     vgio_depth_bias: bool = True                 # the graph estimates the learned-depth bias
     vgio_rot_std: float = 0.0087                 # rad, relative rotation of a pass in the graph (0.5 deg)
@@ -200,14 +197,6 @@ class ImuConfig:
     vgio_stereo_gate_pairs: bool = True
     vgio_debug_costs: bool = False               # graph: log the cost of each factor type per solve (diagnostics)
     vgio_trace: str = ""                         # diagnostics: a JSON line per visual measurement to this file ("": none)
-
-
-@dataclass
-class _Observation:      # the fields of cross.mono.scale.ScaleObservation that the filter reads
-    log_scale: float
-    variance: float
-    accepted: bool = True
-    reason: str = ""
 
 
 @dataclass
@@ -602,5 +591,3 @@ class InertialScaleFilter:
         # the scale stays usable (it was known before); its uncertainty restarts from the learned-depth prior level
         self._log_std = max(self._log_std, self.config.depth_prior_std_floor)
 
-    def as_observation(self):
-        return _Observation(self.mean, self.uncertainty_variance)

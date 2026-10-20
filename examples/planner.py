@@ -1,42 +1,37 @@
 """
-Save/load a map and run topological planning with CROSS.
+Save/load a map and run topological planning with CROSS (RGB-D mode, configs/modes/rgbd_wheel.yaml).
 
 Usage:
     # Full pipeline: build map, save, load, relocalize, plan
-    python examples/planner.py --map-scene data/r3d/lab_obj.r3d --reloc-scene data/rosbag/lab_office_dog
+    python examples/planner.py --map-scene data/posed/office1-1 --reloc-scene data/posed/office1-2
 
     # Skip mapping, load existing map and relocalize
-    python examples/planner.py --skip-map --map-file data/saved_maps/lab_office.pkl --reloc-scene data/rosbag/lab_office_dog
+    python examples/planner.py --skip-map --map-file maps/office/map.pkl --reloc-scene data/posed/office1-2
 
     # Just build and save a map
-    python examples/planner.py --map-scene data/r3d/lab_obj.r3d --map-file my_map.pkl --skip-reloc
+    python examples/planner.py --map-scene data/posed/office1-1 --map-file maps/office/map.pkl --skip-reloc
+
+Sequences: any format run.py reads (posed RGB-D folders, R3D files, ...). --sem-query needs pip install -e ".[detection]".
 """
 
 import argparse
 import os
+from pathlib import Path
 
 from loguru import logger
 
-from cross.core.config import SystemConfig, LoopClosureConfig, MappingConfig
+from cross.core.config import load_config
 from cross.core.system import System
-from cross.core.mem import SemanticMemoryManager
 from cross.core.types import Camera
+from cross.dataloader.auto import load_dataset
 
-
-def load_dataset(path: str, **kwargs):
-    """Load a dataset by path, auto-detecting format."""
-    if path.endswith(".r3d"):
-        from cross.dataloader.r3d_loader import R3DDataset
-        return R3DDataset(path, **kwargs)
-    else:
-        from cross.dataloader.rosbag_loader import RosbagLoader
-        return RosbagLoader(path, **kwargs)
+MODE_FILE = Path(__file__).resolve().parents[1] / "configs" / "modes" / "rgbd_wheel.yaml"
 
 
 def run_planner(
     map_scene: str | None = None,
     reloc_scene: str | None = None,
-    map_file: str = "data/saved_maps/map.pkl",
+    map_file: str = "maps/map.pkl",
     skip_map: bool = False,
     skip_reloc: bool = False,
     reloc_start: int = 0,
@@ -79,11 +74,7 @@ def run_planner(
             from cross.visualization.viz_rr import RRViz
             visualizer = RRViz(camera=camera, hypothesis_manager=None, visualize=True, visualize_pointcloud=False)
 
-        system = System(
-            visualize=visualize, debug=False,
-            camera=camera, visualizer=visualizer,
-            config=SystemConfig(async_update=False),
-        )
+        system = System(visualize=visualize, camera=camera, visualizer=visualizer, config=load_config(MODE_FILE))
 
         for idx, d in enumerate(dataset.replay_data()):
             if idx == 0:
@@ -93,14 +84,16 @@ def run_planner(
         logger.info(f"Map built: {len(system.hypothesis_manager.nodes)} keyframes")
 
         if sem_query:
+            from cross.core.mem import SemanticMemoryManager
             logger.info(f"Semantic memory search: '{sem_query}'")
             mem = SemanticMemoryManager(system)
             res = mem.search_semantic_memory(sem_query)
             top_kfs = [r["kf_id"] for r in (res.get("results") or [])[:20]]
             logger.info(f"Top keyframes: {top_kfs}")
+            os.makedirs("logs", exist_ok=True)
             mem.visualize(res, k=5, save_path=f"logs/sem_mem_{sem_query}.png", show=False)
 
-        os.makedirs(os.path.dirname(map_file), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(map_file)), exist_ok=True)
         system.save_map(map_file)
         logger.info(f"Map saved to {map_file}")
 
@@ -119,17 +112,7 @@ def run_planner(
     dataset = load_dataset(reloc_scene, target_height=target_height, target_width=target_width)
     camera = Camera(K=dataset.rgb_K, frame_width=dataset.rgb_width, frame_height=dataset.rgb_height)
 
-    reloc_config = SystemConfig(
-        async_update=False,
-        mapping=MappingConfig(
-            loop_closure=LoopClosureConfig(),
-        ),
-    )
-    system = System(
-        visualize=visualize, debug=False,
-        camera=camera, visualizer=visualizer,
-        config=reloc_config,
-    )
+    system = System(visualize=visualize, camera=camera, visualizer=visualizer, config=load_config(MODE_FILE))
     system.load_map(map_file)
     logger.info(f"Map loaded: {len(system.hypothesis_manager.nodes)} keyframes")
 
@@ -187,8 +170,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--map-scene", help="Dataset path for building the initial map")
     parser.add_argument("--reloc-scene", help="Dataset path for relocalization")
-    parser.add_argument("--map-file", default="data/saved_maps/map.pkl",
-                        help="Path to save/load the map (default: data/saved_maps/map.pkl)")
+    parser.add_argument("--map-file", default="maps/map.pkl",
+                        help="Path to save/load the map (default: maps/map.pkl)")
     parser.add_argument("--skip-map", action="store_true",
                         help="Skip map building; load from --map-file instead")
     parser.add_argument("--skip-reloc", action="store_true",

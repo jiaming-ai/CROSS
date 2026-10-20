@@ -173,7 +173,6 @@ def collect_matches(recA: Recording, recB: Recording, d: float, n_frames: int = 
     calm = iB[half]
     pick = calm[np.linspace(0, len(calm) - 1, min(n_frames, len(calm))).astype(int)]
     lookup = dict(zip(iB.tolist(), jA.tolist()))
-    KB, KA = recB.K(), recA.K()
     out = []
     for i in pick:
         j = lookup[int(i)]

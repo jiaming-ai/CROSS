@@ -9,7 +9,6 @@ from __future__ import annotations
 import numpy as np
 
 DMIN, DMAX = 0.01, 1000.0
-_LR = np.log(DMAX / DMIN)
 
 
 def encode(depth: np.ndarray, dmin: float = DMIN, dmax: float = DMAX) -> np.ndarray:

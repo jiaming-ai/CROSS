@@ -7,7 +7,7 @@ vggt_finetuned:
   pose_est:
     ff:
       # the checkpoint's learned covisibility head, through its covis_head_map (the head's probability on the geometric
-      # score's scale), instead of the geometric score.  Full benchmark 2026-10-09/10 (outputs/2026-10-09_covis_head_gap),
+      # score's scale), instead of the geometric score.  Full benchmark 2026-10-09/10,
       # ROVER T3 vs the geometric score with the same checkpoint: stereo +49, stereo fast +25, mono + odometry +43,
       # stereo + Basalt VIO +59 trials; neutral on OpenLORIS, SimChange and KITTI.  The VGGT-inertial odometry keeps the
       # geometric score (modes/stereo_imu.yaml, modes/mono_imu.yaml, layered after this file)

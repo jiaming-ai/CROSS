@@ -52,7 +52,6 @@ FORMAT_VERSION = 2
 SIDECAR_SUFFIX = ".store"
 IMAGE_FIELDS = ("raw_rgb_image", "depth_image", "raw_rgb_right")
 COLOUR_CODECS = ("png", "webp_lossless", "jpeg", "webp", "raw")
-LOSSLESS_CODECS = ("png", "webp_lossless", "png16", "raw", "zstd")
 _CODEC_IDS = {"raw": 0, "png": 1, "webp_lossless": 2, "jpeg": 3, "webp": 4, "png16": 5, "zstd": 6}
 _CODEC_NAMES = {v: k for k, v in _CODEC_IDS.items()}
 

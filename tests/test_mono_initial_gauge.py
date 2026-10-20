@@ -50,9 +50,7 @@ def mapper():
     value.db = Database()
     value.hypothesis_manager = HypothesisManager(value, 2, HypothesisConfig(chart_aware=True, session_recovery=True))
     value.odom_accumulator = OdomAccumulator(device='cpu')
-    value.async_update = False
     value.visualize = False
-    value._cur_obs_queue, value._cur_obs_lock = deque(), Lock()
     value.rgb_transform = torch.as_tensor
     value.depth_transform = lambda x: x
     value.shutdown = lambda: None

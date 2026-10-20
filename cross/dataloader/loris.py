@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+from loguru import logger
 from cross.utils.rotation import quaternion_to_rotation_matrix_numpy
 import pickle
 import cv2
@@ -50,12 +51,15 @@ GT_TO_OPENCV_TRANSFORM = np.array([
 GT_TO_OPENCV_TRANSFORM_INV = np.linalg.inv(GT_TO_OPENCV_TRANSFORM)
 
 class OpenLorisLoader():
-    """Loader for the OpenLoris dataset
+    """Loader for the OpenLoris dataset in its original layout (a scene folder with one folder per sequence); the
+    posed folders of scripts/datasets/convert_openloris.py are the usual input instead.
     The coordinates are x forward, y left, z up
     (https://lifelong-robotic-vision.github.io/dataset/scene.html)
     """
     
-    def __init__(self, scene_path: str, seq_idx: int = 0):
+    def __init__(self, scene_path: str, seq_idx: int = 0, **kwargs):
+        if kwargs:      # the robot's own wheel odometry is used: no simulated noise, no other odometry file
+            logger.warning(f"OpenLorisLoader ignores {sorted(kwargs)}")
         self.scene_path = scene_path
 
         # get all sequences in the scene
@@ -71,11 +75,11 @@ class OpenLorisLoader():
         self._depth_files = None
         self._ground_truth_poses = None
         # preprocess the data
-        for seq_idx, seq_path in enumerate(self._sequence_paths):
+        for seq_path in self._sequence_paths:
             # try to read aligned odometry timestamps
             aligned_odometry_path = os.path.join(seq_path, "aligned_odometry.pkl")
             if not os.path.exists(aligned_odometry_path):
-                print(f"Processing {seq_path}")
+                logger.info(f"Processing {seq_path}")
                 self._align_odometry(seq_path)
 
             if not os.path.exists(os.path.join(seq_path, "ground_truth_poses.pkl")):
@@ -281,19 +285,6 @@ class OpenLorisLoader():
             "conf": None
         }
 
-    def load_test_json(self):
-        assert self._cur_seq_path is not None, "A sequence must be loaded first"
-        if os.path.exists(os.path.join(self._cur_seq_path, "test.json")):
-            with open(os.path.join(self._cur_seq_path, "test.json"), "r") as f:
-                self._test_json = json.load(f)
-        else:
-            # return a default test.json
-            self._test_json = {
-                "map_start_timestamp": None,
-                "map_end_timestamp": None
-            }
-
-        return self._test_json
 
     def get_idx_from_timestamp(self, timestamp):
         """Get the index of the frame closest to the given timestamp.
@@ -360,20 +351,3 @@ class OpenLorisLoader():
             yield self[i]
             time.sleep(interval)
 
-    def replay_data_msckf(
-        self,
-        start_timestamp=None,
-        end_timestamp=None,
-        start_idx=0,
-        end_idx=None,
-    ):
-        # get the start index
-        if start_timestamp is not None and start_idx == 0:
-            start_idx = self.get_idx_from_timestamp(start_timestamp)
-
-        if end_idx is not None:
-            end_idx = min(end_idx, len(self._rgb_files))
-        elif end_timestamp is not None:
-            end_idx = self.get_idx_from_timestamp(end_timestamp)
-        else:
-            end_idx = len(self._rgb_files)

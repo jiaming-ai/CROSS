@@ -204,10 +204,3 @@ def print_timing_registry(indent="   ", root=None, output_file=None, max_depth=5
     else:
         logger.info(full_output)
 
-def reset_timing_registry():
-    global timing_registry
-    with _registry_lock:
-        timing_registry.clear()
-    # Clear current thread's stack if it exists
-    if hasattr(_thread_local, 'stack'):
-        _thread_local.stack = []

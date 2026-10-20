@@ -90,7 +90,6 @@ class KeyframeDatabase:
         # keyframe image storage (cross/db/store.py): decoded-image cache and, with max_ram_images, the live spool
         from cross.db.store import ImageSpool, set_decode_cache
         scfg = getattr(getattr(system, "config", None), "storage", None)
-        self.storage_config = scfg
         self.image_device = None            # set by System (host RAM); None: keep images where they come
         self._spool = None
         if scfg is not None:
@@ -116,9 +115,6 @@ class KeyframeDatabase:
             shortlist=g("shortlist", 64), max_rescore=g("max_rescore", 256),
             keep_full_max=g("keep_full_max", 131072))
 
-    def _extend_buffer(self, min_size: int):
-        """Extend the descriptor buffer if needed."""
-        self.index.reserve(min_size)
 
     @property
     def _embedding_buffer(self) -> torch.Tensor:
@@ -128,8 +124,6 @@ class KeyframeDatabase:
     def _current_size(self) -> int:
         return self.index.n
 
-    def keyframe_at(self, row: int) -> Keyframe:
-        return self._row_kf[row]
 
     def get_all_keyframes(self, atlas: Atlas= None) -> List[Keyframe]:
         """Get all keyframes from the database."""
@@ -401,7 +395,6 @@ class KeyframeDatabase:
             kf.id = kf_data["id"]
 
             # Add to database storage
-            list_idx = len(self._keyframe_by_atlas[atlas])
             self._keyframe_by_atlas[atlas].append(kf)
             
             all_keyframes_map[kf.id] = kf

@@ -242,7 +242,6 @@ def prepare_images(prep: Path, session: str, source, u2d_dir: Path, cams_used=(1
                     continue
                 yield cam, utime, tf.extractfile(m).read()
 
-    pending = []
     for res in pool.imap_unordered(_process_member, members(), chunksize=4):
         rows.append(res)
         n_ok += res[2]
@@ -529,7 +528,6 @@ def session_stats(prep: Path, session: str) -> dict:
     po, _, oko = _interp_gt(gt, odom[::100, 0])
     st["odom_vs_gt_end_err_m"] = None
     try:
-        tt = odom[::100, 0][oko]
         q = odom[::100, 1:3][oko]
         pg = po[oko][:, :2]
         n0 = min(50, len(q) - 1)
