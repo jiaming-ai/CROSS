@@ -174,7 +174,7 @@ def main():
             info["sim3_scale"] = s
         (out / "map_time.json").write_text(json.dumps(info))
         print(json.dumps(info, indent=1))
-        return
+        sys.exit(0 if rc == 0 else 1)     # a crashed / timed-out mapping run is a failed T1 session (benchmark/run.py)
 
     lq = images(q)
     gt_query = np.loadtxt(q / "poses_left.txt").reshape(-1, 4, 4)
