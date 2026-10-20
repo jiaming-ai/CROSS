@@ -65,9 +65,9 @@ scripts/baselines/build/
 *.fls
 *.synctex.gz
 
-# Private project notes (never pushed)
-/docs/
+# Private project notes and local development scripts (never pushed)
 /memo/
+/dev/
 third_party/ORB_SLAM3
 third_party/Pangolin
 third_party/rtabmap
