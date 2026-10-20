@@ -13,13 +13,13 @@ import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
+from vggt_omega.utils.pose_enc import encoding_to_camera
 
 from vggt_ft import load_yaml
 from vggt_ft.dataio.transforms import target_shape
 from vggt_ft.dataio.windows import DatasetPool, WindowSampler, materialise
 from vggt_ft.evaluate import load_model
 from vggt_ft.geometry import gt_covisibility
-from vggt_omega.utils.pose_enc import encoding_to_camera
 
 
 def bins(p, y):
@@ -37,7 +37,7 @@ def geo_pairs(o, b, gt, lg, hw):
     import os
     import sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from eval_covis_reloc import covis          # CROSS's geometric score (the fine-tune env has no pypose for cross)
+    from eval_covis_reloc import covis  # CROSS's geometric score (the fine-tune env has no pypose for cross)
     E, Ki = encoding_to_camera(o["pose_enc"].float(), hw)
     S = E.shape[1]
     w2c = np.tile(np.eye(4), (S, 1, 1))

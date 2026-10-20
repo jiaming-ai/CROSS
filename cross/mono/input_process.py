@@ -5,8 +5,8 @@ each original or simulated arrival, and every selected image must be read.
 Overflow fails the run; the implementation never substitutes or drops RGB.
 """
 
-from math import isfinite
 import multiprocessing as mp
+from math import isfinite
 from queue import Empty, Full
 from time import perf_counter
 

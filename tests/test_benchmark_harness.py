@@ -36,6 +36,7 @@ def session_args(command):
     """The arguments the runner the harness calls (scripts/map_and_reloc*.py) parses from its command line."""
     import map_and_reloc
     import map_and_reloc_rgbd
+
     from cross.pipeline import finish_session_args
     rgbd_runner = command[1].endswith("map_and_reloc_rgbd.py")
     runner = map_and_reloc_rgbd if rgbd_runner else map_and_reloc

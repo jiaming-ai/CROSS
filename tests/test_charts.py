@@ -1,6 +1,6 @@
 """Chart isolation, persistence and actual graph joins without neural models."""
-from types import SimpleNamespace
 import copy
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -11,7 +11,7 @@ pp = pytest.importorskip("pypose")
 from cross.core.charts import cluster_by_chart, restore_node_charts
 from cross.core.config import HypothesisConfig, SystemConfig
 from cross.core.hypothesis import HypothesisManager
-from cross.core.types import Keyframe, Edge, EdgeType, VisualEdge
+from cross.core.types import Edge, EdgeType, Keyframe, VisualEdge
 
 
 def manager(components=3):

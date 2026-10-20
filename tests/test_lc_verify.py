@@ -9,8 +9,17 @@ import pytest
 import torch
 
 from cross.core.config import LoopClosureConfig, NoiseModelConfig
-from cross.core.lc_verify import (ChainPredictor, LoopClosureVerifier, NoiseModel, chi2_of, chi2_threshold, logmap,
-                                  residual, to_gtsam, transport)
+from cross.core.lc_verify import (
+    ChainPredictor,
+    LoopClosureVerifier,
+    NoiseModel,
+    chi2_of,
+    chi2_threshold,
+    logmap,
+    residual,
+    to_gtsam,
+    transport,
+)
 from cross.core.types import Edge, EdgeType, Keyframe
 
 
@@ -131,11 +140,15 @@ def test_chi2_threshold_and_residual():
 def test_chain_cache_follows_edge_replacement():
     """A removed temporary keyframe (bridged) plus a new keyframe leaves the edge count unchanged: the chain
     predictor must still see the new edge (the stale cache made every reference untestable and 'informative')."""
-    import types, yaml, torch, pypose as pp
-    from cross.core.hypothesis import HypothesisManager
+    import types
+
+    import pypose as pp
+    import torch
+
     from cross.core.config import HypothesisConfig, LoopClosureConfig
-    from cross.core.types import EdgeType, Keyframe
+    from cross.core.hypothesis import HypothesisManager
     from cross.core.lc_verify import LoopClosureVerifier, NoiseModel
+    from cross.core.types import EdgeType, Keyframe
     sys_ = types.SimpleNamespace(_lc_verifier=None, topo_map=None, _session_start_kf_id=0)
     hm = HypothesisManager(sys_, n_components=3, config=HypothesisConfig()); sys_.hypothesis_manager = hm
     sd = pp.se3(torch.full((6,), 0.1)); step = pp.SE3(torch.tensor([0.3, 0, 0, 0, 0, 0, 1.0]))
@@ -163,11 +176,17 @@ def test_chain_cache_follows_edge_replacement():
 
 def test_chain_prefix_matches_walk():
     """The prefix-product chain predictor equals edge-by-edge compounding (both orders, inflation, appends, bridging)."""
-    import types, torch, pypose as pp, numpy as np, gtsam
-    from cross.core.hypothesis import HypothesisManager
+    import types
+
+    import gtsam
+    import numpy as np
+    import pypose as pp
+    import torch
+
     from cross.core.config import HypothesisConfig, LoopClosureConfig
-    from cross.core.types import EdgeType, Keyframe
+    from cross.core.hypothesis import HypothesisManager
     from cross.core.lc_verify import LoopClosureVerifier
+    from cross.core.types import EdgeType, Keyframe
     rng = np.random.default_rng(0)
     sys_ = types.SimpleNamespace(_lc_verifier=None, topo_map=None, _session_start_kf_id=0)
     hm = HypothesisManager(sys_, n_components=3, config=HypothesisConfig()); sys_.hypothesis_manager = hm
@@ -205,11 +224,15 @@ def test_chain_prefix_matches_walk():
 
 def test_online_metric_scale():
     """Measurements 1.2x longer than the odometry chain: the verifier's scale ratio converges to 1.2."""
-    import types, torch, pypose as pp, numpy as np
-    from cross.core.hypothesis import HypothesisManager
+    import types
+
+    import pypose as pp
+    import torch
+
     from cross.core.config import HypothesisConfig, LoopClosureConfig
-    from cross.core.types import EdgeType, Keyframe
+    from cross.core.hypothesis import HypothesisManager
     from cross.core.lc_verify import LoopClosureVerifier
+    from cross.core.types import EdgeType, Keyframe
     sys_ = types.SimpleNamespace(_lc_verifier=None, topo_map=None, _session_start_kf_id=0)
     hm = HypothesisManager(sys_, n_components=3, config=HypothesisConfig()); sys_.hypothesis_manager = hm
     sd = pp.se3(torch.full((6,), 0.1)); step = pp.SE3(torch.tensor([0.3, 0, 0, 0, 0, 0, 1.0]))
@@ -228,9 +251,13 @@ def test_online_metric_scale():
 
 def test_pgo_result_keeps_keyframe_std():
     """Applying an optimisation result must not shrink the keyframe std (repeated halving underflowed to zero)."""
-    import types, torch, pypose as pp
-    from cross.core.hypothesis import HypothesisManager
+    import types
+
+    import pypose as pp
+    import torch
+
     from cross.core.config import HypothesisConfig
+    from cross.core.hypothesis import HypothesisManager
     from cross.core.types import Keyframe
     sys_ = types.SimpleNamespace(_lc_verifier=None, topo_map=None, _session_start_kf_id=0, last_added_kf_id=None)
     hm = HypothesisManager(sys_, n_components=3, config=HypothesisConfig()); sys_.hypothesis_manager = hm
@@ -244,8 +271,11 @@ def test_pose_conversion_round_trip_stays_unit():
     """pypose -> gtsam -> pypose round trips (one per optimisation) must not de-normalise the quaternion: gtsam
     builds a scaled, non-orthonormal rotation from a non-unit quaternion and the error compounded to |q| = 1.67
     after ~100 optimisations of an HSSD map."""
-    import numpy as np, torch, pypose as pp
-    from cross.core.pgo import pypose_to_gtsam_pose3, gtsam_to_pypose_pose3
+    import numpy as np
+    import pypose as pp
+    import torch
+
+    from cross.core.pgo import gtsam_to_pypose_pose3, pypose_to_gtsam_pose3
     q = np.array([0.1, 0.2, -0.3, 0.9]); q = q / np.linalg.norm(q) * 1.02      # slightly off unit, as float32 storage can leave it
     p = pp.SE3(torch.tensor([1.0, -2.0, 0.5, *q], dtype=torch.float32))
     P0 = pypose_to_gtsam_pose3(p)
@@ -287,6 +317,7 @@ def test_contradict_anchor_drops_wrong_anchor_on_separated_consensus():
     """A session anchored to a wrong place: true map measurements of three separated places, all rejected, agree with
     each other through the odometry chain and drop the anchor; without enough separation they do not."""
     from collections import deque
+
     from cross.core.system import System
     hm = FakeHM()
     gt, edges = make_chain(n=120)
@@ -324,6 +355,7 @@ def test_contradict_anchor_drops_wrong_anchor_on_separated_consensus():
 
 def test_corroborate_anchor_needs_a_separated_earlier_map_edge():
     from collections import deque
+
     from cross.core.system import System
     hm = FakeHM()
     gt, edges = make_chain(n=120)
@@ -434,6 +466,7 @@ def test_loop_closure_skips_a_graph_that_cannot_be_built(monkeypatch):
     """A proposal whose pose graph cannot be built (construct_for_loop_closure raises ValueError, e.g. a chart-aware
     graph that does not reach the proposed reference chart) is skipped (success False), not raised to the session."""
     import threading
+
     import cross.core.hypothesis as hyp
 
     class _Graph:

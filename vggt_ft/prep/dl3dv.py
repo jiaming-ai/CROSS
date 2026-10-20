@@ -14,7 +14,6 @@ python -m vggt_ft.prep.dl3dv <raw_root containing <batch>/<hash>.zip> <cache_roo
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import zipfile
 from pathlib import Path

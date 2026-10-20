@@ -95,6 +95,7 @@ def test_pairwise_covisibility_matches_per_destination_scores():
 def test_covis_source_auto():
     """auto = the head only when the checkpoint has a covisibility head with a covis_head_map, else geometric."""
     from types import SimpleNamespace
+
     from cross.core.config import FeedForwardConfig
     from cross.cv.pose_est_ff import PoseEstFeedForward, auto_covis_source
     assert FeedForwardConfig().covis_source == "geometric"      # auto: configs/base/vggt_finetuned.yaml
@@ -112,6 +113,7 @@ def test_set_camera_registers_calibrated_focal_and_principal_point():
     """set_camera gives the backend the calibrated focal (canonical-camera scale heads) and sets the principal-point
     correction (one definition: a second `def set_camera` once silently dropped the focal part)."""
     from types import SimpleNamespace
+
     from cross.core.config import FeedForwardConfig
     from cross.cv.pose_est_ff import PoseEstFeedForward, principal_point_rotation
     K = np.array([[300.0, 0, 270.0], [0, 300.0, 180.0], [0, 0, 1]])

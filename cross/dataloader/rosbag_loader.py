@@ -1,10 +1,8 @@
 import json
-import time
+import pickle
 from pathlib import Path
 from typing import Optional
 from zipfile import ZipFile
-import pickle
-import os
 
 import lzfse
 import numpy as np
@@ -12,8 +10,9 @@ import tqdm
 from loguru import logger
 from PIL import Image
 
-from cross.utils.rotation import quaternion_to_rotation_matrix_numpy
 from cross.dataloader.dataloader import Dataloader
+from cross.utils.rotation import quaternion_to_rotation_matrix_numpy
+
 # Map ROS/REP convention (x forward, y left, z up) -> OpenCV (x right, y down, z forward)
 ROS_TO_OPENCV = np.array([
         [ 0, -1,  0,  0],
@@ -132,7 +131,7 @@ class RosbagLoader(Dataloader):
     #    [0.00, 0.00, 1.00]])
         # self.camera_matrix = np.array([[611.45, 0.00, 611.49], [0.00, 433.20, 249.47], [0.00, 0.00, 1.00]])
         self.image_size = (self.rgb_width, self.rgb_height)
-        
+
         # Read odometry data from single file
         with self._open("odom.pkl", "rb") as f:
             odom_list_ = pickle.load(f)
@@ -276,7 +275,7 @@ class RosbagLoader(Dataloader):
                     delta_cam = np.eye(4)
                 else:
                     delta_cam = BASE_LINK_TO_CAMERA_LINK_INV @ np.linalg.inv(prev_base) @ T_base @ BASE_LINK_TO_CAMERA_LINK
-                
+
                 prev_base = T_base
 
                 # --- Transform pose from odom frame -> opencv frame ---

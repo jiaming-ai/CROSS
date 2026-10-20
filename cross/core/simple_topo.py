@@ -1,13 +1,14 @@
 import heapq
 from dataclasses import dataclass
-from typing import Dict, Tuple, Set, List, Optional, Any
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+import pypose as pp
 import torch
 from loguru import logger
 
 from cross.core.types import Edge, EdgeType
 from cross.utils.spatial_hash import SpatialHashGrid3D
-import pypose as pp
+
 
 @dataclass
 class SimpleTopoConfig:

@@ -197,6 +197,7 @@ def rover_stereo(raw: Path, bench: Path, names):
 def kitti(raw: Path, bench: Path, seqs):
     sys.path.insert(0, str(ROOT / "benchmark" / "datasets"))
     from prepare_kitti import SEQUENCES
+
     from cross.dataloader.kitti_calib import load_kitti_calibration
     for s in seqs or list(SEQUENCES):
         date, drive, lo, hi = SEQUENCES[s]

@@ -135,6 +135,7 @@ def verify(dataset_dir: Path, n_scenes: int = 20, n_pairs: int = 10, gaps=(1, 3)
     """Median GT overlap (geometry.gt_covisibility) of pairs of nearby frames, per scene, and of the closest
     cross-session pairs; plus depth / intrinsics statistics."""
     import torch
+
     from vggt_ft.dataio.scene import list_scenes, load_scene
     from vggt_ft.dataio.transforms import centred_crop_resize
     from vggt_ft.geometry import gt_covisibility

@@ -163,6 +163,7 @@ def test_evaluator_exposes_metric_error_hidden_by_similarity(tmp_path):
 
 def test_scale_replay_is_causal_and_preserves_source_geometry():
     from dataclasses import asdict
+
     from cross.mono.replay_scale import replay
 
     # Unit increments of one metre; a changed teacher prior changes only new
@@ -203,6 +204,7 @@ def test_fixed_rotation_metric_translation_with_moving_outliers():
 
 def test_rotation_model_selection_preserves_observable_translation():
     import cv2
+
     from cross.mono.observability import rotation_only_model
     rng = np.random.default_rng(123)
     xyz = rng.uniform([-1., -1., 2.], [1., 1., 5.], (300, 3))
@@ -217,6 +219,7 @@ def test_rotation_model_selection_preserves_observable_translation():
 
 def test_subpixel_alignment_recovers_fractional_motion_and_rejects_bad_matches():
     import cv2
+
     from cross.mono.photometric import refine_correspondences
     rng = np.random.default_rng(7)
     reference = cv2.GaussianBlur(rng.integers(0, 255, (160, 240), dtype=np.uint8), (3, 3), 0.7)
@@ -233,6 +236,7 @@ def test_subpixel_alignment_recovers_fractional_motion_and_rejects_bad_matches()
 
 def test_persistent_metric_tracks_follow_subpixel_translation():
     import cv2
+
     from cross.mono.tracks import MetricAnchorTracks
     rng = np.random.default_rng(7)
     image = cv2.GaussianBlur(rng.integers(0, 255, (240, 320), dtype=np.uint8), (3, 3), .7)

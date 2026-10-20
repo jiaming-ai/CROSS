@@ -21,7 +21,6 @@ from typing import List, Optional
 
 import numpy as np
 
-
 _REC = []
 
 
@@ -32,7 +31,8 @@ def _recorder():
     if not d:
         return None
     if not _REC:
-        import atexit, sys
+        import atexit
+        import sys
         os.makedirs(d, exist_ok=True)
         f = open(os.path.join(d, f"placement_{os.getpid()}.jsonl"), "a", buffering=1 << 16)
         f.write(json.dumps({"e": "argv", "argv": sys.argv}) + "\n")

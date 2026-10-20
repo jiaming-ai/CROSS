@@ -1,42 +1,49 @@
+import atexit
+import copy
+import json
 import math
-import numpy as np
-from typing import Tuple, Union
+import os
+import pickle
+import sys
+import time
 from collections import deque
+from pathlib import Path
+from typing import Tuple, Union
+
+import numpy as np
+import pypose as pp
+import torch
+from loguru import logger
+from sklearn.cluster import DBSCAN
+
 from cross.core.atlas import new_atlas_center
-from cross.utils.lie_tensor import (normalize_se3, project_SE3, rotation_angle_from_quat, SE3Projection, estimate_vertical,
-                                    split_clusters_by_vertical, vertical_vector)
-from cross.utils.profile import timeit
-from cross.utils.fps import fps_monitor, start_fps_monitoring, stop_fps_monitoring
+from cross.core.config import (
+    PoseEstType,
+    SystemConfig,
+    config_to_dict,
+    load_config,
+)
 from cross.core.hypothesis import STRONG_PASS_MIN_COVIS, HypothesisManager
 from cross.core.odom_accum import OdomAccumulator
-from cross.core.types import Camera, Keyframe, EdgeType
 from cross.core.simple_topo import SimpleTopo, SimpleTopoConfig
-from cross.core.config import (
-    SystemConfig, load_config, config_to_dict,
-    PoseEstType,
-)
-import torch
-import threading
-import time
-import json
-import atexit
-from loguru import logger
-import sys
+from cross.core.types import Camera, EdgeType, Keyframe
 from cross.db.db import KeyframeDatabase
+from cross.utils.fps import fps_monitor, start_fps_monitoring, stop_fps_monitoring
+from cross.utils.lie_tensor import (
+    SE3Projection,
+    estimate_vertical,
+    normalize_SE3,
+    normalize_se3,
+    project_SE3,
+    rotation_angle_from_quat,
+    split_clusters_by_vertical,
+    vertical_vector,
+)
 from cross.utils.probabilities import (
     convolve_gmm_batch_SE3,
 )
-import pypose as pp
+from cross.utils.profile import timeit
 from cross.visualization.viz_rr import RRViz
-from cross.core.pgo import PoseGraph
-from cross.utils.lie_tensor import normalize_SE3
-from sklearn.cluster import DBSCAN
-import copy
-from pathlib import Path
-
-import pickle
-
-import os
 
 # console at INFO instead of loguru's default DEBUG handler (a host application's own handlers are kept); the
 # debug log goes to a file only when asked: CROSS_LOG_FILE (the scripts/ runners set it per run; run.py --log-file)
@@ -209,7 +216,7 @@ class System:
         self._intra_lc_events: deque = deque()
         self._last_intra_pgo_step = -10**9
         self.T_right_in_left = T_right_in_left
-        
+
         # pose estimation model
         self.pose_est_type = self.config.pose_est.type
         if pose_estimator is not None:
@@ -392,7 +399,7 @@ class System:
     def get_all_keyframes(self):
         """Get all keyframes from the database."""
         return self.db.get_all_keyframes()
-    
+
     def _init_system(
         self,
         rgb_image: torch.Tensor,
@@ -409,7 +416,7 @@ class System:
         choice, not another measurement or a constraint on a loaded map.
         Existing maps retain the original independent-atlas initialization.
         """
-        
+
         # currently atlas not used. So we just use the last atlas.
         all_atlases = self.db.get_all_atlases()
         if len(all_atlases) == 0:
@@ -485,14 +492,14 @@ class System:
         if getattr(self, "_lc_verifier", None) is not None:
             self._lc_verifier.reset_session()
         return kf
-        
+
     def get_current_pose(self):
         """Get the current pose.
-        Note: this is not accurate in the global frame. 
+        Note: this is not accurate in the global frame.
         It should be only used for local planning.
         """
         return self.hypothesis_manager.dist[0][0]
-    
+
     def get_current_kf(self):
         """Get the current node.
         This is used for planning.
@@ -510,7 +517,7 @@ class System:
             num = two * (qw * qz + qx * qy)
             den = 1.0 - two * (qy * qy + qz * qz)
             return torch.atan2(num, den)
-    
+
         current_pose = self.hypothesis_manager.dist[0][0]
 
         # TODO: we only consider the first component. is it ok?
@@ -526,7 +533,7 @@ class System:
         # consider only the translation part
         distances = torch.norm(all_node_poses.tensor()[:, :3] - \
             current_pose.tensor()[None,:3], dim=1)
-        
+
         closest_node_id = torch.argmin(distances).item()
         closest_node = all_nodes[closest_node_id]
 
@@ -545,7 +552,7 @@ class System:
         # and return the earliest kf
         threshold = 1.5
         within_nodes_idx = torch.where(distances < threshold)[0].tolist()
-        
+
         if len(within_nodes_idx) == 0:
             # if no nodes are within threshold, return the closest node
             nearby_earliest_node = closest_node
@@ -580,15 +587,15 @@ class System:
                 aligned_nodes = [all_nodes[i] for i in aligned_global_indices]
                 aligned_nodes = sorted(aligned_nodes, key=lambda x: x.id)
                 nearby_earliest_node_aligned = aligned_nodes[0]
-        
+
         return {
             "nearby_earliest_node": nearby_earliest_node,
             "closest_node": closest_node,
             "closest_perm_node": closest_perm_node,
             "nearby_earliest_node_aligned": nearby_earliest_node_aligned,
         }
-    
-    
+
+
     def save_map(self, save_path: str):
         """Save the map.
         Saves only persistent graph structure:
@@ -751,7 +758,7 @@ class System:
         logger.info(f"  - Saved {n_rec(hypo_data['temp_keyframes'])} temporary keyframes")
         logger.info(f"  - Saved {n_rec(hypo_data['odom_edges'])} odometry edges")
         logger.info(f"  - Saved {sum(n_rec(h['visual_edges']) for h in hypo_data['hypotheses_data'].values())} visual edges (hypothesis 0)")
-        logger.info(f"  - Tracking state (GMM dist, metadata) NOT saved - will re-initialize on first step")
+        logger.info("  - Tracking state (GMM dist, metadata) NOT saved - will re-initialize on first step")
 
         # Note: planning system (sparse graph) will be rebuilt on load if enabled
 
@@ -963,7 +970,7 @@ class System:
         )
 
         # Recompute next ID: object re-instantiation during load bumps the counter
-        Keyframe._next_id = (max(self.hypothesis_manager.nodes.keys()) + 1) if self.hypothesis_manager.nodes else 0  
+        Keyframe._next_id = (max(self.hypothesis_manager.nodes.keys()) + 1) if self.hypothesis_manager.nodes else 0
         self.loaded_node_ids = frozenset(self.hypothesis_manager.nodes)
         self.hypothesis_manager.reference_support.start(self.loaded_node_ids)
         self._session_start_kf_id = Keyframe._next_id
@@ -1028,7 +1035,7 @@ class System:
         logger.info(f"  - Loaded {len(save_data['hypo_data']['odom_edges'])} odometry edges")
         logger.info(f"  - Loaded {sum(len(h['visual_edges']) for h in save_data['hypo_data']['hypotheses_data'].values())} visual edges (hypothesis 0)")
         logger.info(f"  - Current Keyframe ID counter: {Keyframe._next_id}")
-        logger.info(f"  - Tracking state (GMM dist) NOT loaded - will initialize on first step()")
+        logger.info("  - Tracking state (GMM dist) NOT loaded - will initialize on first step()")
 
         # Note: Planning system will rebuild sparse graph automatically when initialized (see PlanningSystem.__init__)
 
@@ -1059,7 +1066,7 @@ class System:
         if v is not None and v.odom_scale != 1.0 and obs.get("delta_pose") is not None:
             obs = dict(obs, delta_pose=_scale_translation(obs["delta_pose"], v.odom_scale))
         self.odom_accumulator.update_odom(obs["delta_pose"], covariance=obs.get("motion_covariance"))
-        
+
         # a remote session (cross.remote) steps every frame the edge maps, but sends the image only of the frames it
         # expects the back end to observe (remote_frame without rgb: the step without an observation)
         if obs.get("rgb", None) is not None or obs.get("remote_frame", False):
@@ -1100,7 +1107,7 @@ class System:
         logger.debug(f"Step work at step {self._processed_frame_num}")
         self.last_step_diagnostics = {"loop_closure_detected": False, "loop_closure_applied": False}
         self._processed_frame_num += 1
-        
+
         rgb_image = last_obs["rgb"]
         self._frontend_anchor = last_obs.get("frontend_anchor")
         g = last_obs.get("gravity")
@@ -1111,8 +1118,8 @@ class System:
 
         if timestamp is None:
             timestamp = self._processed_frame_num
- 
-        
+
+
         ############ preprocess the image ############
         if rgb_image is None and (self._processed_frame_num == 1 or self.hypothesis_manager.dist is None):
             raise ValueError("A remote session must send the image of its first mapped frame")
@@ -1122,7 +1129,7 @@ class System:
             rgb_right = self.rgb_transform(rgb_right)
         if depth_image is not None:
             depth_image = torch.from_numpy(depth_image).float().unsqueeze(0) # (1, H, W)
-            depth_image = self.depth_transform(depth_image) 
+            depth_image = self.depth_transform(depth_image)
 
         ############ initialize the system ############
         if self._processed_frame_num == 1:
@@ -1150,7 +1157,7 @@ class System:
         pose_update_mask = torch.ones(self.kf_gmm_n_components, dtype=torch.bool, device=self.state_device)
 
         ################################
-        # first update motion prior 
+        # first update motion prior
         ################################
         # update the motion model gmm with odometry
         if not ret["kidnapped"]:
@@ -1165,7 +1172,7 @@ class System:
                 self._placement.odometry(None if d is None else
                                          d.matrix().detach().cpu().numpy().astype(np.float64).reshape(4, 4),
                                          step=int(self._processed_frame_num))
-        
+
         else:
             # NOTE: we assumes that the system will always have some odom / imu readings
             # and when not supplied, it's kidnapped event.
@@ -1293,17 +1300,17 @@ class System:
             return
         else:
             self._unsuccessful_retrieval_steps = 0
-        
+
         #########################################################
         # analytical gmm filtering
-        # first merge the proposal with DBSCAN clustering, 
+        # first merge the proposal with DBSCAN clustering,
         # then align the components with the current GMM
         # then filter the components with the current GMM
         #########################################################
-        (proposal_gmm_mu, 
-         proposal_gmm_sigma, 
-         proposal_gmm_weights, 
-         proposal_gmm_confidence, 
+        (proposal_gmm_mu,
+         proposal_gmm_sigma,
+         proposal_gmm_weights,
+         proposal_gmm_confidence,
          edge_mapping) = self._merge_and_align_components(ret)
         self.hypothesis_manager.reference_support.observe(
             self._processed_frame_num, edge_mapping,
@@ -1387,7 +1394,7 @@ class System:
                 gt_info = kwargs.get("data"),
                 step_idx = self._processed_frame_num,
             )
-   
+
 
     def _add_keyframe_and_detect_loop(self, rgb_image, depth_image, ret, edge_mapping, timestamp, rgb_right=None):
         """Check newly realized branches after their current graph edges exist.
@@ -2004,7 +2011,7 @@ class System:
         # handle kidnapped event
         if delta_pose is None:
             ret["kidnapped"] = True
-        
+
         return ret
 
     def _gravity_attach(self, kf):
@@ -2075,9 +2082,9 @@ class System:
                 self._processed_frame_num,
                 rgb_image.to(self.device),               # descriptor on the compute device (see _init_system)
                 depth_image.to(self.device) if depth_image is not None else None,
-                mu=mu.to(self.state_device), 
-                sigma=sigma.to(self.state_device), 
-                weights=weights.to(self.state_device),    
+                mu=mu.to(self.state_device),
+                sigma=sigma.to(self.state_device),
+                weights=weights.to(self.state_device),
                 atlas=self.current_atlas,
                 timestamp=timestamp,
                 temporary=is_temp_kf,
@@ -2098,7 +2105,7 @@ class System:
                 pose_charts=pose_charts,
             )
             logger.debug(f"Add temporary keyframe at step {self._processed_frame_num}. Total keyframes: {self.db.get_size()}")
-        
+
         keyframe.step_created = int(self._processed_frame_num)
         self.hypothesis_manager.add_node(keyframe)
         self._gravity_attach(keyframe)
@@ -2110,7 +2117,7 @@ class System:
         if ret is not None:
             # The results from pose estimation are our new edges
             valid_keyframes = ret["valid_keyframes"]
-            
+
             # adding visual constraints
             confs = ret.get("pose_est_conf")
             h0_ok = ret.get("h0_ok")
@@ -2447,7 +2454,7 @@ class System:
         # change batch_id to kf_id
         kf_ids = torch.tensor([kf.id for kf in ret['valid_keyframes']], device=self.state_device)
         source_indices_map[:, 0] = kf_ids[source_indices_map[:, 0]]
-        
+
 
         # --- 1. Project to Clustering Space (place coordinates: horizontal position, [vertical], heading) ---
         samples_se3 = pp.SE3(flat_mus)
@@ -2455,7 +2462,7 @@ class System:
         projected_data = project_SE3(samples_se3, projection=self.place_projection)
         clustering_data = projected_data.cpu().numpy()
 
-        
+
         # --- 2. Run DBSCAN ---
         if self.hypothesis_manager.chart_aware:
             from cross.core.charts import cluster_by_chart
@@ -2487,9 +2494,9 @@ class System:
                     labels[m & bad] = next_label
                     next_label += 1
         unique_labels = sorted(set(labels))
-        
+
         hypotheses = []
-        
+
         # --- 3. Find Best Representative for Each Cluster ---
 
         # config: weighting and floors for dispersion-based std
@@ -2502,16 +2509,16 @@ class System:
             if k == -1: continue # Ignore noise points
 
             cluster_mask = (labels == k)
-            
+
             # Get all candidates belonging to this cluster
             cluster_indices = np.where(cluster_mask)[0]
-            
+
             # combine the retrieval score and the inlier count
             combined_scores = flat_scores[cluster_indices]
 
             # Find the best candidate within this cluster based on the number of inliers
             best_candidate_in_cluster_idx = cluster_indices[torch.argmax(combined_scores)]
-            
+
             # The representative pose is the highest-scoring in cluster.
             representative_pose = pp.SE3(flat_mus[best_candidate_in_cluster_idx])
 
@@ -2722,9 +2729,9 @@ class System:
             return results
         else:
             return self._last_retrieved_results
-    
+
     def _get_std_diag(
-        self, 
+        self,
         confidences: torch.Tensor,
         retrieval_scores: torch.Tensor,
         poses: torch.Tensor = None,
@@ -2758,7 +2765,7 @@ class System:
             std_diag = std_diag.clone()
             std_diag[:, :3] = torch.sqrt(std_diag[:, :3] ** 2 + (rel * t_norm) ** 2)
         return pp.se3(std_diag)
-    
+
     @timeit
     def _map_anchor_pairs(self, keyframes):
         """Pairs of references with their metric relative pose from the map (component-0 means), used as
@@ -2885,14 +2892,14 @@ class System:
             "retrieval_audit": [],
         }
         # first retrieve the image
-        results = self._retrieve_keyframes(rgb_image) 
+        results = self._retrieve_keyframes(rgb_image)
         # a BEV head in the feed-forward pass (pose_est.ff.nav_bev_head): nearby keyframes that cover more ground join
         # the pass for the BEV, and without references a pass is made for the BEV alone
         n_nav = self.pose_est.nav_extra_count() if self.pose_est_type == PoseEstType.FF and \
             hasattr(self.pose_est, "nav_extra_count") else 0
         nav_on = self.pose_est_type == PoseEstType.FF and getattr(getattr(self.pose_est, "backend", None), "nav", None) is not None
         if len(results["scores"]) == 0:
-            logger.debug(f"No valid retrieval results found.")
+            logger.debug("No valid retrieval results found.")
             if nav_on:
                 from cross.db.db import as_float_image
                 nav_images = [as_float_image(k.raw_rgb_image.to(self.device))
@@ -2959,12 +2966,12 @@ class System:
             ret["retrieval_audit"].append(item)
         # no valid pose
         if valid_masks.sum() == 0:
-            logger.debug(f"No valid pose found.")
+            logger.debug("No valid pose found.")
             return ret
 
         valid_keyframes = [k for k, m in zip(keyframes, valid_masks) if m]
         if len(valid_keyframes) == 0:
-            logger.debug(f"No valid keyframes found.")
+            logger.debug("No valid keyframes found.")
             return ret
         if self._placement is not None and self._session_start_kf_id > 0:
             # every raw measurement to the stored map votes for a placement of the session (cross/core/placement.py)

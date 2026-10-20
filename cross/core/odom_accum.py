@@ -1,9 +1,11 @@
-import pypose as pp
 from typing import Tuple, Union
-import torch
+
 import numpy as np
+import pypose as pp
+import torch
+
 from cross.utils.lie_tensor import normalize_se3
-from cross.utils.lie_tensor import normalize_SE3
+
 MAX_STD = torch.tensor([0.3, 0.3, 0.3, 0.3, 0.3, 0.3])
 
 class OdomAccumulator():
@@ -60,7 +62,7 @@ class OdomAccumulator():
             "max_std": max_std,
         }
         self._measurement_std_sums[name] = torch.zeros(6)
-    
+
     def get_since_last_reading(
         self,
         name: str,
@@ -124,9 +126,9 @@ class OdomAccumulator():
             self.reset_item(name)
 
         return delta.to(self.device), std
-    
+
     def update_odom(
-        self, 
+        self,
         odom_reading: Union[pp.SE3, np.ndarray],
         covariance=None,
     ):
@@ -136,7 +138,7 @@ class OdomAccumulator():
             for key in self._odoms_means.keys():
                 self._odoms_means[key] = None
                 self._count_since_last_reading[key] = 0
-            
+
         else:
             if isinstance(odom_reading, np.ndarray):
                 odom_reading = pp.from_matrix(odom_reading, pp.SE3_type).float()

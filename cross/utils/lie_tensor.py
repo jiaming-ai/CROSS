@@ -1,8 +1,10 @@
 # some of the functions are borrowed from pypose
 
 import math
+
 import pypose as pp
 import torch
+
 from cross.utils.rotation import quaternion_to_euler_torch
 
 
@@ -71,7 +73,7 @@ def vec2skew(input:torch.Tensor) -> torch.Tensor:
     return torch.stack([torch.stack([        O, -v[...,2],  v[...,1]], dim=-1),
                         torch.stack([ v[...,2],         O, -v[...,0]], dim=-1),
                         torch.stack([-v[...,1],  v[...,0],         O], dim=-1)], dim=-2)
-    
+
 # def SO3_Adj(X: pp.LieTensor) -> pp.LieTensor:
 #     I3x3 = torch.eye(3, device=X.device, dtype=X.dtype).expand(X.shape[:-1]+(3, 3))
 #     Xv, Xw = X[..., :3], X[..., 3:]
@@ -88,10 +90,10 @@ def vec2skew(input:torch.Tensor) -> torch.Tensor:
 #     Adj[..., 3:, 3:] = R3x3
 #     return Adj
 
-    
+
 def SE3_Adj(T: pp.LieTensor) -> torch.Tensor:
     """Manually constructs the 6x6 Adjoint matrix for a batch of SE3 objects.
-    
+
     Args:
         T (pp.SE3): A pypose.SE3 tensor of shape (B, K) or any other shape.
 
@@ -258,7 +260,7 @@ def project_SE3(T: pp.LieTensor, use_heights: bool = False, projection: "SE3Proj
         # Map yaw to the unit circle to avoid discontinuity
         yaw_cos = torch.cos(yaw)
         yaw_sin = torch.sin(yaw)
-        
+
         translations = T.tensor()[:, :3]
         x = translations[:, 0]
         z = translations[:, 2]

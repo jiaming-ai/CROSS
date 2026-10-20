@@ -8,14 +8,13 @@ import numpy as np
 import pypose as pp
 import pytest
 import torch
+from test_pgo_scale import _lie, make_manager
 
 from cross.core import async_pgo as ap_mod
 from cross.core.async_pgo import AsyncPgo, ForkedJob, JobError
-from cross.core.config import SystemConfig
 from cross.core.lc_verify import LoopClosureVerifier
 from cross.core.system import System
 from cross.core.types import Edge, EdgeType, Keyframe, VisualEdge
-from test_pgo_scale import _lie, make_manager
 
 pytestmark = pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork")
 
@@ -374,6 +373,7 @@ def test_mode_files_switch_the_adaptive_background_optimisation_on_and_reproduci
     session synchronous and changes nothing else."""
     import argparse
     import dataclasses
+
     from cross.core.config import load_config
     from cross.pipeline import mode_config_files
     rt = load_config(*mode_config_files("stereo", "external"))

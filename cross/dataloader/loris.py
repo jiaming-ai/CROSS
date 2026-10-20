@@ -1,13 +1,14 @@
-import pandas as pd
-import numpy as np
 import os
-from loguru import logger
-from cross.utils.rotation import quaternion_to_rotation_matrix_numpy
 import pickle
-import cv2
 import time
-import json
-import yaml
+
+import cv2
+import numpy as np
+import pandas as pd
+from loguru import logger
+
+from cross.utils.rotation import quaternion_to_rotation_matrix_numpy
+
 
 def get_delta_t(
     closest_odometry_idx: np.ndarray,
@@ -23,7 +24,7 @@ def get_delta_t(
     """
     delta_T = []
     # add the first delta T, which is the identity
-    delta_T.append(np.eye(4)) 
+    delta_T.append(np.eye(4))
 
     # get T_0
     _, px,py,pz, qx,qy,qz,qw, _, _, _, _, _, _ = odometry_data.iloc[closest_odometry_idx[0]]
@@ -56,7 +57,7 @@ class OpenLorisLoader():
     The coordinates are x forward, y left, z up
     (https://lifelong-robotic-vision.github.io/dataset/scene.html)
     """
-    
+
     def __init__(self, scene_path: str, seq_idx: int = 0, **kwargs):
         if kwargs:      # the robot's own wheel odometry is used: no simulated noise, no other odometry file
             logger.warning(f"OpenLorisLoader ignores {sorted(kwargs)}")
@@ -84,7 +85,7 @@ class OpenLorisLoader():
 
             if not os.path.exists(os.path.join(seq_path, "ground_truth_poses.pkl")):
                 self._align_ground_truth(seq_path)
-            
+
         self.load_sequence(seq_idx)
 
 
@@ -92,10 +93,10 @@ class OpenLorisLoader():
         """Load the camera intrinsics from the yaml file"""
         assert self._cur_seq_path is not None, "A sequence must be loaded first"
         yaml_file = os.path.join(self._cur_seq_path, "sensors.yaml")
-        
+
         # Use cv2.FileStorage to read OpenCV YAML format
         fs = cv2.FileStorage(yaml_file, cv2.FILE_STORAGE_READ)
-        
+
         # Load color camera intrinsics
         color_data = fs.getNode('d400_color_optical_frame')
         # color_data = fs.getNode('d400_depth_optical_frame')
@@ -104,7 +105,7 @@ class OpenLorisLoader():
         self.rgb_width = int(color_data.getNode('width').real())
         self.rgb_height = int(color_data.getNode('height').real())
         self.rgb_K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
-        
+
         # Load depth camera intrinsics
         depth_data = fs.getNode('d400_depth_optical_frame')
         intrinsics = depth_data.getNode('intrinsics').mat()
@@ -112,30 +113,30 @@ class OpenLorisLoader():
         self.depth_width = int(depth_data.getNode('width').real())
         self.depth_height = int(depth_data.getNode('height').real())
         self.depth_K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
-        
+
         fs.release()
 
         # Load the transformation matrix
         trans_matrix_path = os.path.join(self._cur_seq_path, "trans_matrix.yaml")
         fs_trans = cv2.FileStorage(trans_matrix_path, cv2.FILE_STORAGE_READ)
         trans_matrix_node = fs_trans.getNode('trans_matrix')
-        
+
         # Get number of transformations
         num_transforms = trans_matrix_node.size()
-        
+
         # Iterate through transformations
         for i in range(num_transforms):
             transform = trans_matrix_node.at(i)
             child_frame = transform.getNode('child_frame').string()
             parent_frame = transform.getNode('parent_frame').string()
-            
+
             if child_frame == 'd400_color_optical_frame' and \
                parent_frame == 'base_link':
                 self.T_base_rgb = transform.getNode('matrix').mat()
             elif child_frame == 'd400_depth_optical_frame' and \
                  parent_frame == 'd400_color_optical_frame':
                 self.T_rgb_depth = transform.getNode('matrix').mat()
-        
+
         fs_trans.release()
 
     def _align_ground_truth(self, seq_path):
@@ -144,7 +145,7 @@ class OpenLorisLoader():
             os.path.join(seq_path, "groundtruth.txt"),
             comment='#',
             header=None,
-            sep='\s+'
+            sep=r'\s+'
         )
         ground_truth_timestamps = df_gt.iloc[:, 0].to_numpy()
 
@@ -153,7 +154,7 @@ class OpenLorisLoader():
             os.path.join(seq_path, "color.txt"),
             comment='#',
             header=None,
-            sep='\s+'
+            sep=r'\s+'
         )
         rgb_timestamps = df_rgb.iloc[:, 0].to_numpy()
 
@@ -169,26 +170,26 @@ class OpenLorisLoader():
             T[:3, :3] = quaternion_to_rotation_matrix_numpy([qx, qy, qz, qw])
             ground_truth_poses.append(T)
 
-        
+
         with open(seq_path + "/ground_truth_poses.pkl", "wb") as f:
             pickle.dump(ground_truth_poses, f)
-        
+
     def _align_odometry(self, seq_path):
         """Align the rgb timestamps to the odometry timestamps"""
         df = pd.read_csv(
             os.path.join(seq_path, "color.txt"),
             comment='#',
             header=None,
-            sep='\s+'
+            sep=r'\s+'
         )
         rgb_timestamps = df.iloc[:, 0].to_numpy()
-        
+
         # align the rgb timestamps to the odometry timestamps
         df = pd.read_csv(
             os.path.join(seq_path, "odom.txt"),
             comment='#',
             header=None,
-            sep='\s+'
+            sep=r'\s+'
         )
         odometry_timestamps = df.iloc[:, 0].to_numpy()
 
@@ -217,7 +218,7 @@ class OpenLorisLoader():
             rgb_file,
             comment='#',
             header=None,
-            sep='\s+'
+            sep=r'\s+'
         )
         self._rgb_files = df.iloc[:, 1].to_list()
 
@@ -226,7 +227,7 @@ class OpenLorisLoader():
             depth_file,
             comment='#',
             header=None,
-            sep='\s+'
+            sep=r'\s+'
         )
         self._depth_files = df.iloc[:, 1].to_list()
 
@@ -237,10 +238,10 @@ class OpenLorisLoader():
 
     def get_sequence_frequency(self):
         """Calculate the approximate frequency of the image stream for a sequence.
-        
+
         Args:
             seq_idx: Index of the sequence to analyze
-            
+
         Returns:
             float: Approximate frequency in Hz
         """
@@ -248,17 +249,17 @@ class OpenLorisLoader():
             os.path.join(self._cur_seq_path, "color.txt"),
             comment='#',
             header=None,
-            sep='\s+'
+            sep=r'\s+'
         )
         timestamps = df.iloc[:, 0].to_numpy()
-        
+
         # Calculate average time difference between consecutive frames
         time_diffs = timestamps[1:] - timestamps[:-1]
         avg_period = np.mean(time_diffs)
-        
+
         # Frequency is 1/period
         frequency = 1.0 / avg_period
-        
+
         return frequency
 
     def __len__(self):
@@ -289,7 +290,7 @@ class OpenLorisLoader():
     def get_idx_from_timestamp(self, timestamp):
         """Get the index of the frame closest to the given timestamp.
         The index is the immediate next frame.
-        
+
         Args:
             timestamp (float): The timestamp to search for
         Returns:
@@ -297,29 +298,29 @@ class OpenLorisLoader():
             the given timestamp, or None if the timestamp is after the last frame
         """
         assert self._rgb_files is not None, "A sequence must be loaded first"
-        
+
         # Read timestamps from color.txt
         df = pd.read_csv(
             os.path.join(self._cur_seq_path, "color.txt"),
             comment='#',
             header=None,
-            sep='\s+'
+            sep=r'\s+'
         )
         timestamps = df.iloc[:, 0].to_numpy()
-        
+
         # Find index of first timestamp greater than input
         next_indices = np.where(timestamps > timestamp)[0]
-        
+
         if len(next_indices) == 0:  # timestamp is after last frame
             return None
-        
+
         return next_indices[0]  # return first index where timestamp is greater
-        
+
 
     def replay_data(
-        self, 
-        fps=None, 
-        start_timestamp=None, 
+        self,
+        fps=None,
+        start_timestamp=None,
         end_timestamp=None,
         start_idx=0,
         end_idx=None,

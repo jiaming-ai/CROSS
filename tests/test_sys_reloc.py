@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from cross.cv.stereo_scale import ScaleAnchor, estimate_scale
+from cross.cv.stereo_scale import ScaleAnchor
 
 
 def _c2w(centres):

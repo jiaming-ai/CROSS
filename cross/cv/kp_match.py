@@ -1,7 +1,9 @@
-import torch
-from typing import Dict
-import kornia.feature as KF
 from abc import ABC, abstractmethod
+from typing import Dict
+
+import kornia.feature as KF
+import torch
+
 from cross.utils.profile import timeit
 
 default_conf_xfeat = {
@@ -39,9 +41,9 @@ class KpMatchLightGlue(KpMatch):
     """Keypoint Matching using LightGlue"""
 
     def __init__(
-        self, 
+        self,
         feature: str,
-        device: str, 
+        device: str,
         config: Dict,
     ):
         super().__init__(device, config)
@@ -63,7 +65,7 @@ class KpMatchLightGlue(KpMatch):
                 state_dict = {k.replace('matcher.', ''): v for k, v in state_dict.items()}
 
             self.net.load_state_dict(state_dict, strict=False)
-            
+
         elif feature in ["disk", "superpoint"]:
             self.net = KF.LightGlue(
                 features=feature,
@@ -74,7 +76,7 @@ class KpMatchLightGlue(KpMatch):
         self.net.eval()
         self.net.to(self.device)
         self.net.conf.filter_threshold = config["min_conf"]
-        
+
     @timeit
     def match(self, data: Dict):
         """
@@ -87,20 +89,20 @@ class KpMatchLightGlue(KpMatch):
 
 
         Returns:
-            log_assignment: [B x M+1 x N+1] 
-            matches0: [B x M] 
-            matching_scores0: [B x M] 
-            matches1: [B x N] 
-            matching_scores1: [B x N] 
-            matches: List[[Si x 2]], 
+            log_assignment: [B x M+1 x N+1]
+            matches0: [B x M]
+            matching_scores0: [B x M]
+            matches1: [B x N]
+            matching_scores1: [B x N]
+            matches: List[[Si x 2]],
             scores: List[[Si]]
 
         """
         result = self.net(data)
         return result
 
-        
-        
+
+
 
 
 def get_kp_match(kp_match_type: str, feature_type: str, device: str, config: Dict):

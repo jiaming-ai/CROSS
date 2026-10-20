@@ -1,17 +1,17 @@
-import math
 import bisect
 import collections
+import math
 import weakref
-import numpy as np
-import torch
-import pypose as pp
+from typing import Dict, List, Optional, Set, Tuple
+
 import gtsam
-from typing import Tuple, List, Dict, Set, Optional
-from dataclasses import dataclass
+import numpy as np
+import pypose as pp
+import torch
 from loguru import logger
 
 from cross.core.types import Edge, EdgeType
-from cross.utils.profile import timeit, timeblock
+from cross.utils.profile import timeblock, timeit
 
 
 def pypose_to_gtsam_pose3(pose) -> 'gtsam.Pose3':
@@ -23,7 +23,7 @@ def pypose_to_gtsam_pose3(pose) -> 'gtsam.Pose3':
     q = pose_tensor[3:7] / max(float(np.linalg.norm(pose_tensor[3:7])), 1e-12)
     rot = gtsam.Rot3(q[3], q[0], q[1], q[2])
     trans = gtsam.Point3(pose_tensor[0], pose_tensor[1], pose_tensor[2])
-    
+
     return gtsam.Pose3(rot, trans)
 
 
@@ -145,7 +145,7 @@ def chain_poses(start_ids, twins: dict, successor: dict, odom_edges: dict, limit
 class PoseGraph:
     """Pose Graph for Loop Closure
     """
-    
+
     def __init__(
         self,
         hypothesis_manager,
@@ -220,7 +220,7 @@ class PoseGraph:
         self.n_gravity = 0
         self.unary_robust_c: Optional[float] = None
         self.soft_priors: Dict[int, np.ndarray] = {}
-    
+
     def _make_between_noise_model(self, factor, gtsam_sigmas: np.ndarray, gtsam_cov: Optional[np.ndarray] = None) -> 'gtsam.noiseModel.Base':
         """
         Create a GTSAM noise model for a between factor (diagonal sigmas, or a full covariance in gtsam order),
@@ -259,7 +259,7 @@ class PoseGraph:
                 f"for visual factor (type={robust_type}, delta={delta}): {e}"
             )
             return base_noise
-    
+
     # ------------------------------------------------------------------ factor inputs (cached per factor)
     def _measurement(self, factor) -> 'gtsam.Pose3':
         """GTSAM measurement of a factor (from its cached numpy copy of the mean), reused while that copy is the same."""
@@ -356,12 +356,12 @@ class PoseGraph:
     ) -> Tuple[Set[int], List[Vertex]]:
         """
         Expand the odom edges by depth and create vertices for the specified hypothesis.
-        
+
         Args:
             target_node_id: The central node to expand from
             hypothesis_id: Which hypothesis component to use for pose
             depth: Number of keyframes to expand in each direction
-            
+
         Returns:
             Tuple[Set[int], List[Vertex]]: Node IDs and corresponding vertices
         """
@@ -373,7 +373,7 @@ class PoseGraph:
         min_idx = max(0, target_idx - depth)
         max_idx = min(len(all_node_ids), target_idx + depth)
         odom_node_ids.update(all_node_ids[min_idx:max_idx])
-        
+
         odom_nodes = [self._vertex(node_id, hypothesis_id) for node_id in odom_node_ids] if with_vertices else []
 
         return odom_node_ids, odom_nodes
@@ -384,7 +384,7 @@ class PoseGraph:
         return Vertex(id=node_id if vertex_id is None else vertex_id, original_kf_id=node_id,
                       original_comp_id=hypothesis_id, temporary=kf.temporary,
                       src=(kf, hypothesis_id))
-    
+
     def _expand_visual_edges(
         self,
         target_node_ids: Set[int],
@@ -396,16 +396,16 @@ class PoseGraph:
     ) -> Tuple[Set[int], List[Tuple[int, int, List]], List[Vertex]]:
         """
         Extract the visual edges and expand the subgraph via BFS.
-        
+
         It will expand all nodes in target_node_ids by k_hop through visual edges.
         Then collect the visual edges between the expanded nodes in hypothesis_id.
-        We only consider edges either: 
-        1) both vertexes comp ids are from the same hypothesis_id 
+        We only consider edges either:
+        1) both vertexes comp ids are from the same hypothesis_id
         2) from_comp_id is from_hypothesis_id and to_comp_id is hypothesis_id
-        
-        For case 2, we will add an edge from from_hypothesis_id to hypothesis_id, 
+
+        For case 2, we will add an edge from from_hypothesis_id to hypothesis_id,
         but don't further expand the neighborhood.
-        
+
         Args:
             target_node_ids: Initial set of node IDs to expand from
             k_hop: Number of hops to expand
@@ -413,7 +413,7 @@ class PoseGraph:
             from_hypothesis_id: Source hypothesis for cross-hypothesis edges
             hypothesis_visual_edges: Visual edges for the hypothesis
             hypothesis_visual_adjacency: Visual adjacency list for the hypothesis
-        
+
         Returns:
             Tuple containing:
             - Set of expanded node IDs
@@ -424,34 +424,34 @@ class PoseGraph:
         visual_node_ids = target_node_ids.copy()
         q = collections.deque([(node_id, 0) for node_id in target_node_ids])
         visited = target_node_ids.copy()
-        
+
         while q:
             curr_id, hop_depth = q.popleft()
             if hop_depth >= k_hop:
                 continue
-            
+
             # Check all neighbors in visual adjacency
             for neighbor_id in hypothesis_visual_adjacency.get(curr_id, set()):
                 if neighbor_id in visited:
                     continue
-                
+
                 # Get the edge factors for this edge (could be in either direction)
                 edge_key_1 = (curr_id, neighbor_id)
                 edge_key_2 = (neighbor_id, curr_id)
-                
+
                 edge_factors_1 = hypothesis_visual_edges.get(edge_key_1, [])
                 edge_factors_2 = hypothesis_visual_edges.get(edge_key_2, [])
-                
+
                 # Check if any factor satisfies case 1 or case 2
                 has_case_1 = False
                 has_case_2 = False
-                
+
                 for factor in edge_factors_1 + edge_factors_2:
                     if factor.from_comp_id == hypothesis_id and factor.to_comp_id == hypothesis_id:
                         has_case_1 = True
                     elif factor.from_comp_id == from_hypothesis_id and factor.to_comp_id == hypothesis_id:
                         has_case_2 = True
-                
+
                 # Case 1: expand through this neighbor
                 if has_case_1:
                     visited.add(neighbor_id)
@@ -461,20 +461,20 @@ class PoseGraph:
                 elif has_case_2:
                     visited.add(neighbor_id)
                     visual_node_ids.add(neighbor_id)
-        
+
         # Collect all edges between the expanded nodes that satisfy case 1 or case 2
         # iterate over all edges in the hypothesis to avoid re-adding the same edge
         edges = []
         for (u, v), edge_factors in hypothesis_visual_edges.items():
             if u in visual_node_ids and v in visual_node_ids:
                 relevant_factors = [
-                    factor for factor in edge_factors 
+                    factor for factor in edge_factors
                     if (factor.from_comp_id == hypothesis_id and factor.to_comp_id == hypothesis_id) or
                        (factor.from_comp_id == from_hypothesis_id and factor.to_comp_id == hypothesis_id)
                 ]
                 if relevant_factors:
                     edges.append((u, v, relevant_factors))
-        
+
         nodes = [self._vertex(node_id, hypothesis_id) for node_id in visual_node_ids]
         return visual_node_ids, edges, nodes
 
@@ -487,10 +487,10 @@ class PoseGraph:
 
         TODO: this seems not correct. We want to connect visual edges between two nodes
         with odom edges if they're connected by odom edges. the odom edge can be n-hop, not just consecutive nodes.
-        
+
         Args:
             target_node_ids: Set of node IDs to collect edges from
-            
+
         Returns:
             List of edges (u, v, [edge])
         """
@@ -512,13 +512,13 @@ class PoseGraph:
     ) -> None:
         """
         Construct a pose graph for loop closure between two hypotheses.
-        
+
         For hypothesis 0 (current active), we use original keyframe IDs.
         For the other hypothesis, we create temporary vertex IDs to avoid conflicts,
         and add loop closure edges connecting the same keyframe across hypotheses.
-        
+
         The constructed graph is stored in self.vertices and self.edges.
-        
+
         Args:
             target_node_id: The central node to expand from
             other_hypothesis_id: The hypothesis to merge with (0 means no merge)
@@ -531,13 +531,13 @@ class PoseGraph:
         odom_node_ids, odom_nodes = self._expand_odom_nodes(
             target_node_id, hypothesis_id=0, depth=depth, with_vertices=False
         )
-        
+
         # --- Step 2: Expand visual edges by k-hop for hypothesis 0 ---
         hypothesis_0 = hypotheses[0]
         visual_node_ids, visual_edges, vertices = self._expand_visual_edges(
-            odom_node_ids, 
-            k_hop, 
-            hypothesis_id=0, 
+            odom_node_ids,
+            k_hop,
+            hypothesis_id=0,
             from_hypothesis_id=0,
             hypothesis_visual_edges=hypothesis_0.visual_edges,
             hypothesis_visual_adjacency=hypothesis_0.visual_adjacency,
@@ -545,21 +545,21 @@ class PoseGraph:
 
         # --- Step 3: Collect odometry edges for hypothesis 0 ---
         odom_edges = self._expand_odom_edges(visual_node_ids)
-        
+
         edges = visual_edges + odom_edges
 
         # --- Step 4: Merge with the other hypothesis if needed ---
         if other_hypothesis_id != 0 and other_hypothesis_id in hypotheses:
             other_hypothesis = hypotheses[other_hypothesis_id]
-            
+
             # Map from original kf_id to temp vertex ID for the other hypothesis
             kf_to_temp_vertex = {}
-            
+
             # Get all keyframes that belong to the other hypothesis
             # (from start_idx onwards)
             sorted_kf_ids = sorted(self.nodes.keys())
             start_idx = other_hypothesis.start_idx
-            
+
             # Find keyframes that exist in both hypotheses (for LC edges)
             # These are keyframes >= start_idx that are also in visual_node_ids
             common_kf_ids = [kf_id for kf_id in sorted_kf_ids if kf_id >= start_idx]
@@ -567,7 +567,7 @@ class PoseGraph:
                 common_kf_ids = [i for i in common_kf_ids
                                 if int(self.nodes[i].pose_charts[other_hypothesis_id]) == self.source_component_charts[other_hypothesis_id]
                                 and self.nodes[i].pose_weights[other_hypothesis_id] > 0]
-            
+
             # --- Step 4.1: Create temp vertices for the other hypothesis ---
             previous_temp_id = None
             previous_kf_id = None
@@ -576,7 +576,7 @@ class PoseGraph:
             # (must not collide with any keyframe id: ids are not dense once temporary keyframes are
             # pruned or a map is loaded, so len(nodes) can be far below the maximum id)
             temp_vertex_id = max(self.nodes.keys()) + 1
-            
+
             for kf_id in common_kf_ids:
                 kf = self.nodes[kf_id]
                 # keyframes created before the hypothesis carried any weight have no pose in it
@@ -585,18 +585,18 @@ class PoseGraph:
                     previous_temp_id = None
                     previous_kf_id = None
                     continue
-                
+
                 # Create a temp vertex for this keyframe in the other hypothesis
                 kf_to_temp_vertex[kf_id] = temp_vertex_id
-                
+
                 v = self._vertex(kf_id, other_hypothesis_id, vertex_id=temp_vertex_id)
                 vertices.append(v)
-                
+
                 # --- Step 4.2: Add odometry edge between consecutive temp vertices ---
                 if previous_kf_id is not None and (previous_kf_id, kf_id) in self.odom_edges:
                     odom_edge = self.odom_edges[(previous_kf_id, kf_id)]
                     edges.append((previous_temp_id, temp_vertex_id, [odom_edge]))
-                
+
                 # --- Step 4.3: Add LC edge between original and temp vertex ---
                 # LC edge is identity because they represent the same physical location
                 # but only add if this keyframe exists in hypothesis 0's subgraph
@@ -607,11 +607,11 @@ class PoseGraph:
                         type=EdgeType.LOOP_CLOSURE,
                     )
                     edges.append((kf_id, temp_vertex_id, [lc_edge]))
-                
+
                 previous_temp_id = temp_vertex_id
                 temp_vertex_id += 1
                 previous_kf_id = kf_id
-            
+
             # --- Step 4.4: Add visual edges for the other hypothesis ---
             # We need to remap vertex IDs from original to temp IDs
             for (u, v), edge_factors in other_hypothesis.visual_edges.items():
@@ -636,15 +636,15 @@ class PoseGraph:
                 # 1. Both from_comp_id and to_comp_id are from other_hypothesis_id
                 # 2. from_comp_id is from current hypothesis (0) and to_comp_id is other_hypothesis_id
                 relevant_factors = [
-                    factor for factor in edge_factors 
+                    factor for factor in edge_factors
                     if (not cross_hypo and factor.from_comp_id == other_hypothesis_id and factor.to_comp_id == other_hypothesis_id) or
                         (cross_hypo and factor.from_comp_id == 0 and factor.to_comp_id == other_hypothesis_id)
                 ]
                 # this can happen and not necessarily an error, i just want to check when it happens
                 # assert len(relevant_factors) == len(edge_factors), f"Edge factors length mismatch for edge ({u}, {v})"
-                
+
                 edges.append((temp_u, temp_v, relevant_factors))
-        
+
         # Store constructed graph
         # Initialize the new-session vertices of hypothesis 0 (kf_id >= start_idx) from their twins in the
         # other hypothesis: their hypothesis-0 poses form an odometry chain hanging off the new atlas
@@ -751,9 +751,9 @@ class PoseGraph:
     ) -> None:
         """
         Optimizes the constructed pose graph using GTSAM.
-        
+
         Results are stored in self.optimized_poses and self.optimization_cost.
-        
+
         Args:
             optim_node_ids: Set of vertex IDs to optimize
             fixed_node_ids: Set of vertex IDs to fix
@@ -764,11 +764,11 @@ class PoseGraph:
             if len(charts) != 1:
                 raise ValueError("Fixed vertices must share one coordinate chart")
             self.output_chart = charts.pop()
-        
+
         graph = gtsam.NonlinearFactorGraph()
         initial = gtsam.Values()
         all_node_ids = optim_node_ids.union(fixed_node_ids)
-        
+
         # 1. Prepare initial estimates for all nodes (one device transfer for all vertices)
         ids_list = [i for i in all_node_ids]
         for node_id in ids_list:
@@ -776,7 +776,7 @@ class PoseGraph:
         poses_np = torch.stack([self.vertex_map[i].pose_row().reshape(-1) for i in ids_list]).detach().cpu().numpy().astype(np.float64) if ids_list else np.zeros((0, 7))
         for node_id, p in zip(ids_list, poses_np):
             initial.insert(node_id, pypose_to_gtsam_pose3(p))
-        
+
         # 2. Add prior factors for fixed nodes
         used = set()                       # keys of the factors added (variables without any factor are dropped below)
         prior_noise = gtsam.noiseModel.Diagonal.Sigmas(np.full(6, 1e-9))
@@ -785,7 +785,7 @@ class PoseGraph:
             fixed_pose_gtsam = initial.atPose3(node_id)
             graph.add(gtsam.PriorFactorPose3(node_id, fixed_pose_gtsam, prior_noise))
             used.add(node_id)
-        
+
         for node_id, cov in self.soft_priors.items():
             if node_id in all_node_ids:
                 graph.add(gtsam.PriorFactorPose3(node_id, initial.atPose3(node_id),
@@ -861,7 +861,7 @@ class PoseGraph:
             self.optimization_cost = 0.0
             self.optimized_poses = {}
             return
-        
+
         # 4. Setup and run optimizer
         # a vertex without any factor (all its edges skipped or quarantined) is not part of the elimination ordering
         # and makes GTSAM abort ("inconsistent arguments"): drop such variables, they keep their current pose
@@ -877,10 +877,10 @@ class PoseGraph:
         with timeblock("GTSAM PGO"):
             result = optimizer.optimize()
         self.lm_iterations = int(optimizer.iterations())
-        
+
         # 5. Extract results
         self.optimization_cost = graph.error(result)
-        
+
         self.optimized_poses = {}
         rows, kept_ids = [], []
         for node_id in optim_node_ids:

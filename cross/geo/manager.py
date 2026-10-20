@@ -26,7 +26,7 @@ from scipy.stats import chi2
 from .anchor import Anchor, AnchorConfig, wrap
 from .compass import Compass, CompassConfig
 from .geodesy import LocalFrame, geojson_linestring, geojson_points
-from .gnss import GnssErrorModel, GnssFix, GnssGate, GnssGateConfig, GnssModelConfig, GnssNoiseModel, MEDIAN_CHI2_2
+from .gnss import GnssErrorModel, GnssFix, GnssGate, GnssGateConfig, GnssModelConfig, GnssNoiseModel
 
 
 def pose7_to_matrix(v) -> np.ndarray:

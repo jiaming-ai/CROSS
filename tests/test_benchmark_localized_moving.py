@@ -11,9 +11,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "benchmark"))
 sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
 
-from cross.core.system import System  # noqa: E402
 from metrics import moving_fraction, moving_frames, moving_rule, still_intervals  # noqa: E402
 from reloc_metrics import drop_unlocalized, first_map_link, is_localized, map_relative_errors  # noqa: E402
+
+from cross.core.system import System  # noqa: E402
 
 
 def _session(adjacency, loaded=frozenset({0, 1, 2}), start=10):

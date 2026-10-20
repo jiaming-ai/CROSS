@@ -120,6 +120,7 @@ class RotationMetricFrontend(MetricPnPFrontend):
     """
     def __init__(self, K, config=None, device="cuda"):
         from dataclasses import replace
+
         from .dpvo_frontend import DPVOFrontend
         super().__init__(K, config, device)
         config = replace(self.config, frontend="dpvo", dpvo_metric_bootstrap=False,

@@ -5,14 +5,13 @@ from types import SimpleNamespace
 import numpy as np
 import pypose as pp
 import torch
+from test_map_store import _db, _state
 
 from cross.core import bulk_load
 from cross.core.config import HypothesisConfig, StorageConfig, SystemConfig
 from cross.core.hypothesis import HypothesisManager
-from cross.core.types import Edge, Keyframe, VisualEdge
+from cross.core.types import Keyframe
 from cross.db import store
-
-from test_map_store import _db, _state
 
 
 def _rich_state(monkeypatch):
@@ -176,7 +175,8 @@ def test_save_columns_equal_record_encoding(tmp_path, monkeypatch):
 def test_save_columns_live_graph(monkeypatch):
     """The same for a graph built in a session (tensors set through the compact fields, no map file involved)."""
     from test_map_store import _state as state
-    import cross.db.db as db_module   # noqa: F401
+
+    import cross.db.db as db_module  # noqa: F401
     data, db = state(monkeypatch, n=5)
     # the hypothesis manager of _state is not returned: rebuild one from its records through the record path
     system = SimpleNamespace(device="cpu", topo_map=None, loaded_node_ids=frozenset(), config=SystemConfig())

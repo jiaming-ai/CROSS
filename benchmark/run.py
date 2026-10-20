@@ -41,8 +41,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts" / "baselines"))
-from metrics import (COMPLETENESS_RULE, ate, completeness, moving_fraction, moving_frames, moving_rule,  # noqa: E402
-                     multisession, wilson)
+from metrics import (  # noqa: E402
+    COMPLETENESS_RULE,
+    ate,
+    completeness,
+    moving_fraction,
+    moving_frames,
+    moving_rule,
+    multisession,
+    wilson,
+)
 
 PY = sys.executable
 # --odom-source: the odometry file the systems that take odometry read in each sequence folder (None = the dataset's

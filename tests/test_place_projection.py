@@ -5,8 +5,13 @@ import numpy as np
 import pypose as pp
 import torch
 
-from cross.utils.lie_tensor import (SE3Projection, estimate_vertical, project_SE3, split_clusters_by_vertical,
-                                    vertical_vector)
+from cross.utils.lie_tensor import (
+    SE3Projection,
+    estimate_vertical,
+    project_SE3,
+    split_clusters_by_vertical,
+    vertical_vector,
+)
 
 
 def _poses(t, R):

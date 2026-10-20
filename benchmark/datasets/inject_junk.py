@@ -34,7 +34,7 @@ KINDS = {"person": 0.35, "object": 0.2, "blank": 0.15, "dark": 0.1, "blur": 0.1,
 # ------------------------------------------------------------------------------------------------------------- bank
 def build_bank(a):
     import torch
-    from torchvision.models.detection import maskrcnn_resnet50_fpn_v2, MaskRCNN_ResNet50_FPN_V2_Weights
+    from torchvision.models.detection import MaskRCNN_ResNet50_FPN_V2_Weights, maskrcnn_resnet50_fpn_v2
     rng = np.random.default_rng(a.seed)
     out = Path(a.out)
     (out / "person").mkdir(parents=True, exist_ok=True)

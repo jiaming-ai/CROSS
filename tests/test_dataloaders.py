@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from cross.dataloader.posed_rgbd import PosedRGBDLoader          # noqa: E402
+from cross.dataloader.posed_rgbd import PosedRGBDLoader  # noqa: E402
 from cross.dataloader.stereo_loader import StereoSequenceLoader  # noqa: E402
 
 W, H, N = 64, 48, 5

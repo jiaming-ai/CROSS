@@ -26,11 +26,10 @@ import math
 from collections import defaultdict
 from pathlib import Path
 
-import numpy as np
-import yaml
-
 import build_site as bs
 import make_tables as mt
+import numpy as np
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 

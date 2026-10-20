@@ -212,6 +212,7 @@ def test_run_against_a_fake_server(tmp_path):
     odometry, the outputs are written."""
     grpc = pytest.importorskip("grpc")
     from concurrent import futures
+
     from cross_edge import PROTOCOL_VERSION
     from cross_edge.cli import main
     from cross_edge.codec import decode, encode
@@ -282,6 +283,7 @@ def test_no_torch():
 
 def test_confirm_risks_needs_the_flag_or_a_yes(monkeypatch):
     import io
+
     from cross_edge.cli import confirm_risks
     monkeypatch.setattr("sys.stdin", io.StringIO(""))          # not a terminal
     assert not confirm_risks(["left image with a VIO"]) and confirm_risks(["left image with a VIO"], accept=True)

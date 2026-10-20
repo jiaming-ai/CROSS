@@ -3,7 +3,6 @@ without a GPU rasterizer."""
 import gzip
 import json
 import struct
-from types import SimpleNamespace
 
 import numpy as np
 import pytest

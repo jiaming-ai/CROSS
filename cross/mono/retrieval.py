@@ -1,8 +1,9 @@
 """Scale-aware learned pose proposals for CROSS's existing hypothesis filter."""
 
-import cv2
-from collections import OrderedDict
 import hashlib
+from collections import OrderedDict
+
+import cv2
 import numpy as np
 import torch
 

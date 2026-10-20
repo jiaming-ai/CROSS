@@ -45,11 +45,11 @@ if "--out" in sys.argv and "CROSS_LOG_FILE" not in os.environ:
     os.environ["CROSS_LOG_FILE"] = str(_out / "system.log")
 
 from cross.core.config import PoseEstType, SystemConfig, load_config
-from cross.core.system import System
+from cross.core.system import System  # noqa: F401  (importing it sets up logging and the run's CROSS_LOG_FILE)
 from cross.core.types import Camera
-from cross.db import store as map_store
 from cross.cv.stereo_scale import invert_poses, rotation_angle_deg
 from cross.dataloader.stereo_loader import StereoSequenceLoader
+from cross.db import store as map_store
 from cross.pipeline import add_session_args, apply_settings, finish_session_args, session_factory, shipped_config_files
 
 
@@ -235,7 +235,7 @@ def run_mapping(args, out: Path):
     step_log = open(out / "steps.csv", "w") if getattr(args, "step_log", False) else None
     if step_log is not None:
         step_log.write("frame,dt_s,nodes,db_keyframes,loop_closure,rss_mb,gpu_mb\n")
-    from reloc_metrics import step_diagnostics, quality_summary
+    from reloc_metrics import quality_summary, step_diagnostics
     steps = [] if getattr(args, "dump_steps", False) else None
     mem_trace = [] if getattr(args, "mem_trace", 0) else None   # (frame, nodes, permanent, GPU allocated, host RSS)
     for idx, d in enumerate(ds.replay_data(start_idx=args.map_start, end_idx=args.map_end, stride=args.stride)):
@@ -451,7 +451,7 @@ def run_reloc(args, out: Path, meta: dict):
     rows = []
     t0 = time.time()
     n_obs = 0
-    from reloc_metrics import build_trials, drop_unlocalized, is_localized, step_diagnostics, quality_summary
+    from reloc_metrics import build_trials, drop_unlocalized, is_localized, quality_summary, step_diagnostics
     quality_trials = []
     q_start = args.query_start
     q_end = args.query_end or len(ds)

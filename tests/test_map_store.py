@@ -15,11 +15,12 @@ pytest.importorskip("cv2")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+from convert_map import same  # noqa: E402
+
 from cross.core.config import HypothesisConfig, StorageConfig, SystemConfig  # noqa: E402
 from cross.core.hypothesis import HypothesisManager  # noqa: E402
 from cross.core.types import Edge, EdgeType, Keyframe, VisualEdge  # noqa: E402
 from cross.db import store  # noqa: E402
-from convert_map import same  # noqa: E402
 
 
 def _rng_image(rng, h=48, w=64):

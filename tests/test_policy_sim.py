@@ -154,6 +154,7 @@ def _fake_server(conn, log):
 
 def test_socket_planner_drives_the_robot_agent_over_the_wire():
     import threading
+
     from cross_nav.policy.robot import NavigationAgent
     from cross_nav.policy.sim.rollout import SocketPlanner, odometry_step
     a, b = Pipe()
@@ -259,7 +260,9 @@ def test_real_cache_cast_splits_follow_the_gnm_recordings():
 
 def test_real_cache_skips_incomplete_episodes(tmp_path):
     import json as js
+
     from PIL import Image
+
     from cross_nav.policy.real_cache import windows
     def episode(name, frames):
         d = tmp_path / name; d.mkdir()

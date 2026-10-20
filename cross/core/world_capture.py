@@ -25,7 +25,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import cv2
 import numpy as np

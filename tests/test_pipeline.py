@@ -136,6 +136,7 @@ def test_mode_config_files_and_left_image():
     images per pass (stereo DPVO 10, the others 8); the opt-in low-bandwidth overlay observes on the left image (no stereo anchors) with
     6 references at half the rate; the fast overlays (Basalt, DPVO) keep the pair, at 416 px."""
     import os
+
     from cross.core.config import load_config
     from cross.pipeline import CONFIG_DIR, apply_right_image, mode_config_files
     lowband = os.path.join(CONFIG_DIR, "overlays", "stereo_lowband.yaml")
@@ -164,6 +165,7 @@ def test_mode_files():
     overlay changes only the image size of the feed-forward modes (not RGB-D, not mono DPVO)."""
     import dataclasses
     import os
+
     from cross.core.config import load_config, load_yaml_layers
     from cross.pipeline import CONFIG_DIR, MODE_FILES
     modes = sorted(f for f in os.listdir(os.path.join(CONFIG_DIR, "modes")) if f.endswith(".yaml"))
@@ -190,7 +192,9 @@ def test_mono_section_builds_the_frontend_config():
     """The mode files' `mono` / `imu` sections are the MonoConfig of the mono modes and the VGGT-inertial odometry
     (formerly the JSON mono profile); --mono-args takes --imu-config / --cross-config only."""
     import argparse
+
     import pytest
+
     from cross.pipeline import add_session_args, finish_session_args, session_mono_config
     ap = argparse.ArgumentParser()
     ap.add_argument("--odom-file", default=None)
@@ -215,6 +219,7 @@ def test_mono_section_builds_the_frontend_config():
 
 def test_named_odometry_and_fast_arguments():
     import argparse
+
     from cross.pipeline import BASALT_ODOM_FILE, add_session_args, finish_session_args, shipped_config_files
     ap = argparse.ArgumentParser()
     ap.add_argument("--odom-file", default=None)
@@ -233,7 +238,9 @@ def test_named_odometry_and_fast_arguments():
 
 def test_mode_file_names_select_the_mode():
     import argparse
+
     import pytest
+
     from cross.pipeline import BASALT_ODOM_FILE, MODE_FILES, add_session_args, finish_session_args, shipped_config_files
     ap = argparse.ArgumentParser()
     ap.add_argument("--odom-file", default=None)
@@ -279,6 +286,7 @@ def test_vgio_stereo_structural_settings():
 
 def test_mono_ff_shipped_defaults():
     import os
+
     from cross.core.config import load_config
     from cross.pipeline import mode_config_files
     files = mode_config_files("mono", "visual", mono_estimator="ff")
@@ -328,8 +336,14 @@ def test_vggt_checkpoint_selection(tmp_path, monkeypatch):
     """pose_est.ff.checkpoint "auto" = the fine-tuned VGGT-Omega when installed, else the released one; a checkpoint is
     fine-tuned when it carries a covis_head_map, and then the files' vggt_finetuned sections apply."""
     import torch
-    from cross.core.config import (FINETUNED_VGGT_CHECKPOINT, RELEASED_VGGT_CHECKPOINT, is_finetuned_vggt, load_config,
-                                   resolve_ff_checkpoint)
+
+    from cross.core.config import (
+        FINETUNED_VGGT_CHECKPOINT,
+        RELEASED_VGGT_CHECKPOINT,
+        is_finetuned_vggt,
+        load_config,
+        resolve_ff_checkpoint,
+    )
     monkeypatch.chdir(tmp_path)
     assert resolve_ff_checkpoint("auto") == FINETUNED_VGGT_CHECKPOINT           # nothing installed: install.sh's default
     (tmp_path / RELEASED_VGGT_CHECKPOINT).parent.mkdir(parents=True)
@@ -398,6 +412,7 @@ def test_config_risks_of_the_left_image():
     """The left-image overlay warns with odometry that can run away and with the fast passes, not with trusted
     external odometry (the low-bandwidth use) or with the stereo pair."""
     import os
+
     from cross.core.config import load_config
     from cross.pipeline import CONFIG_DIR, config_risks, mode_config_files
     lowband = os.path.join(CONFIG_DIR, "overlays", "stereo_lowband.yaml")
@@ -424,7 +439,9 @@ def test_config_risks_of_the_left_image():
 def test_confirm_config_risks(monkeypatch):
     """No terminal: abort unless --accept-config-risk; at a terminal: the answer decides; asked once per process."""
     import io
+
     import pytest
+
     import cross.pipeline as P
     monkeypatch.setattr(P, "_ACCEPTED_RISKS", set())
     P.confirm_config_risks([])                                 # nothing to confirm

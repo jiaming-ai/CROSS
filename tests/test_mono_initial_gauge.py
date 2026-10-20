@@ -1,6 +1,4 @@
 """Delayed map initialization must preserve the already emitted pose frame."""
-from collections import deque
-from threading import Lock
 from types import SimpleNamespace
 
 import numpy as np

@@ -17,8 +17,6 @@ Usage (RGB-D mode; stereo sequences: scripts/map_and_reloc.py):
 from __future__ import annotations
 
 import argparse
-import atexit
-import gc
 import json
 import os
 import sys
@@ -38,6 +36,7 @@ if "--out" in sys.argv and "CROSS_LOG_FILE" not in os.environ:
 # headless runs: some CROSS versions select the interactive TkAgg backend at import, which fails without a usable
 # display (also when DISPLAY is set by ssh but Tk is missing): fall back to Agg
 import matplotlib  # noqa: E402
+
 _mpl_use = matplotlib.use
 
 
@@ -50,17 +49,22 @@ def _safe_mpl_use(backend, *a, **k):
 
 matplotlib.use = _safe_mpl_use
 
-import torch  # noqa: E402
 from loguru import logger  # noqa: E402
+from reloc_metrics import (  # noqa: E402
+    build_trials,
+    drop_unlocalized,
+    is_localized,
+    map_relative_errors,
+    summarize_errors,
+    summarize_trials,
+)
 
 from cross.core.config import SystemConfig, load_config  # noqa: E402
-from cross.core.system import System  # noqa: E402
+from cross.core.system import System  # noqa: E402,F401  (importing it sets up logging and the run's CROSS_LOG_FILE)
 from cross.core.types import Camera  # noqa: E402
-from cross.db import store as map_store  # noqa: E402
 from cross.dataloader.posed_rgbd import PosedRGBDLoader  # noqa: E402
+from cross.db import store as map_store  # noqa: E402
 from cross.pipeline import add_session_args, finish_session_args, session_factory, shipped_config_files  # noqa: E402
-from reloc_metrics import (build_trials, drop_unlocalized, is_localized, map_relative_errors, summarize_errors,  # noqa: E402
-                           summarize_trials)
 
 
 def umeyama_se3(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
@@ -157,7 +161,7 @@ def run_mapping(args, out: Path) -> dict:
     ds = make_loader(args.map, args, args.seed)
     system = new_system(args, ds)
     kf_gt, kf_frame, n, last_kf, gts = {}, {}, 0, None, []
-    from reloc_metrics import step_diagnostics, quality_summary
+    from reloc_metrics import quality_summary, step_diagnostics
     steps = [] if getattr(args, "dump_steps", False) else None
     t0 = time.time()
     online = [] if getattr(args, "online_poses", False) else None
@@ -224,7 +228,7 @@ def run_reloc(args, out: Path, meta: dict) -> dict:
     q_start, q_end = args.query_start, args.query_end or len(ds)
     trials = build_trials(q_end - q_start, args.trial_len, args.trial_stride)
     rows, remote_trials = [], []
-    from reloc_metrics import step_diagnostics, quality_summary
+    from reloc_metrics import quality_summary, step_diagnostics
     quality_trials = []
     t0 = time.time()
     t_steps = 0.0

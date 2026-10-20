@@ -4,7 +4,7 @@ import pytest
 
 def test_shared_patch_mask_uses_the_current_padded_boxes_once():
     torch=pytest.importorskip('torch')
-    from cross.mono.background_patches import BackgroundPatchifier,background_indices
+    from cross.mono.background_patches import BackgroundPatchifier, background_indices
     patchifier=BackgroundPatchifier(torch.nn.Identity(),device='cpu',external_masks=True)
     boxes=np.array([[10.,20.,30.,40.]],np.float32)
     patchifier.observe(np.zeros((48,64,3),np.uint8),boxes)

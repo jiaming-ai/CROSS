@@ -18,6 +18,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
 from metrics import moving_fraction, moving_rule  # noqa: E402
+
 SETUP_LABEL = {"rgbd": "RGB-D", "stereo": "stereo", "mono": "mono"}
 PENDING, NA, FAIL = "·", "", "✗"
 

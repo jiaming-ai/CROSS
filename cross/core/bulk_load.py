@@ -88,7 +88,7 @@ def keyframes(enc: dict, atlas_of, normalize_mu: bool = False, images: Optional[
     """Keyframes of an encoded record list (database keyframes or temporary keyframes), in record order.
     `atlas_of(atlas_id or None)` gives the Atlas; `images` = (index, pack) of the map's stored images (database
     keyframes)."""
-    from cross.db.store import IMAGE_FIELDS, ImageRef, _CODEC_NAMES
+    from cross.db.store import _CODEC_NAMES, IMAGE_FIELDS, ImageRef
     n, cols = enc["n"], enc["cols"]
     if n == 0:
         return []

@@ -1,10 +1,12 @@
 
 
-import numpy as np
+from typing import List, Optional, Set
+
 import matplotlib.pyplot as plt
 import networkx as nx
-from typing import Optional, Set, Dict, Any, List
+import numpy as np
 from loguru import logger
+
 from cross.core.pgo import PoseGraph
 from cross.core.types import EdgeType
 
@@ -15,26 +17,26 @@ def _get_subgraph_nodes(
 ) -> Set[int]:
     """
     Get a subset of nodes for visualization: last k nodes + their first-order neighbors.
-    
+
     Args:
         pose_graph: PoseGraph object
         last_k_nodes: Number of most recent nodes to include
-        
+
     Returns:
         Set of node IDs (kf_ids) to visualize
     """
     if last_k_nodes <= 0 or last_k_nodes >= len(pose_graph.vertices):
         # Return all nodes if k is invalid or larger than graph
         return {v.id for v in pose_graph.vertices}
-    
-    # Get last k vertices 
+
+    # Get last k vertices
     last_k_vertices = pose_graph.vertices.copy()
     # sort by kf_id
     last_k_vertices.sort(key=lambda x: x.id)
     last_k_vertices = last_k_vertices[-last_k_nodes:]
 
     subset_ids = {v.id for v in last_k_vertices}
-    
+
     # Find first-order neighbors
     neighbor_ids = set()
     for (u, v, _) in pose_graph.edges:
@@ -42,14 +44,14 @@ def _get_subgraph_nodes(
             neighbor_ids.add(v)
         if v in subset_ids:
             neighbor_ids.add(u)
-    
+
     # Combine subset and neighbors
     result = subset_ids | neighbor_ids
     logger.info(
         f"Subgraph: {last_k_nodes} core nodes + {len(neighbor_ids - subset_ids)} "
         f"neighbors = {len(result)} total nodes"
     )
-    
+
     return result
 
 
@@ -65,13 +67,13 @@ def visualize_pose_graph(
 ) -> None:
     """
     Visualize a pose graph using networkx with matplotlib.
-    
+
     Features:
     - Interactive plot (pan, zoom)
     - Node labels: V_id:KF_id:Comp_id
     - Edge colors by type (odometry, visual, loop_closure)
     - Edge labels showing std magnitude
-    
+
     Args:
         pose_graph: PoseGraph object with constructed vertices and edges
         title: Plot title
@@ -83,16 +85,16 @@ def visualize_pose_graph(
                       first-order neighbors. Useful for large graphs. Set to None
                       to visualize all nodes.
     """
-    
+
     # Determine which nodes to visualize
     if last_k_nodes is not None:
         visible_nodes = _get_subgraph_nodes(pose_graph, last_k_nodes)
     else:
         visible_nodes = {v.id for v in pose_graph.vertices}
-    
+
     # Create a directed graph
     G = nx.DiGraph()
-    
+
     # Add nodes with attributes (only visible ones)
     for vertex in pose_graph.vertices:
         if vertex.id not in visible_nodes:
@@ -104,7 +106,7 @@ def visualize_pose_graph(
             temporary=vertex.temporary,
             label=f"V{vertex.id}:KF{vertex.original_kf_id}:C{vertex.original_comp_id}",
         )
-    
+
     # Color map for edge types
     edge_color_map = {
         EdgeType.ODOMETRY: "blue",
@@ -120,20 +122,20 @@ def visualize_pose_graph(
         # Skip edges that connect to nodes outside visible set
         if u not in visible_nodes or v not in visible_nodes:
             continue
-            
+
         assert u in G.nodes and v in G.nodes, f"Node {u} or {v} not found in graph"
-        
+
         # Process each factor (there might be multiple factors per edge)
         for factor in factors:
             # Compute std magnitude (L2 norm of std vector)
             std_magnitude = np.linalg.norm(
                 factor.std.tensor().cpu().numpy().flatten()
             )
-            
+
             edge_type = getattr(factor, 'type', 'unknown')
             assert edge_type in edge_color_map, f"Edge type {edge_type} not found in edge_color_map"
             color = edge_color_map.get(edge_type)
-            
+
             G.add_edge(u, v)
             edge_data.append({
                 'u': u,
@@ -142,11 +144,11 @@ def visualize_pose_graph(
                 'color': color,
                 'std': std_magnitude,
             })
-    
+
     # Create figure
     fig, ax = plt.subplots(figsize=figsize)
     ax.set_title(title, fontsize=14, fontweight='bold')
-    
+
     # Use spring layout for better visualization
     # For larger graphs, you might want to use other layouts
     try:
@@ -154,14 +156,14 @@ def visualize_pose_graph(
     except Exception as e:
         logger.warning(f"Spring layout failed: {e}, using shell layout instead")
         pos = nx.shell_layout(G)
-    
+
     # Draw nodes with different colors based on temporary status
     # Create color list based on temporary attribute
     node_colors = []
     for node_id in G.nodes():
         is_temporary = G.nodes[node_id]['temporary']
         node_colors.append('orange' if is_temporary else 'lightblue')
-    
+
     nx.draw_networkx_nodes(
         G, pos,
         node_size=node_size,
@@ -170,7 +172,7 @@ def visualize_pose_graph(
         linewidths=1.5,
         ax=ax,
     )
-    
+
     # Draw node labels
     node_labels = nx.get_node_attributes(G, 'label')
     nx.draw_networkx_labels(
@@ -180,7 +182,7 @@ def visualize_pose_graph(
         font_weight='bold',
         ax=ax,
     )
-    
+
     # Group edges by type and draw them separately with different colors
     edge_types = {}
     for edge in edge_data:
@@ -188,7 +190,7 @@ def visualize_pose_graph(
         if edge_type not in edge_types:
             edge_types[edge_type] = []
         edge_types[edge_type].append(edge)
-    
+
     # Draw edges by type with varying thickness based on std (weight)
     # Collect all std values to normalize
     all_stds = [e['std'] for e in edge_data]
@@ -220,7 +222,7 @@ def visualize_pose_graph(
                 ax=ax,
                 label=edge_type if edge == edges[0] else "",  # Only label once per type
             )
-    
+
     # Add edge labels (std magnitude)
     # Only show labels for a subset to avoid clutter
     edge_labels = {}
@@ -228,7 +230,7 @@ def visualize_pose_graph(
         key = (edge['u'], edge['v'])
         if key not in edge_labels:  # Only show first factor if multiple
             edge_labels[key] = f"{edge['std']:.2e}"
-    
+
     # Only show edge labels if graph is not too large
     if len(edge_labels) < 500:
         nx.draw_networkx_edge_labels(
@@ -237,14 +239,14 @@ def visualize_pose_graph(
             font_size=max(6, font_size - 2),
             ax=ax,
         )
-    
+
     # Add legend for edge types
     ax.legend(loc='upper right', fontsize=10)
-    
+
     # Count temporary vs permanent nodes
     temp_count = sum(1 for n in G.nodes() if G.nodes[n]['temporary'])
     perm_count = len(G.nodes) - temp_count
-    
+
     # Add graph statistics as text
     stats_text = (
         f"Nodes: {len(G.nodes)} ({perm_count} permanent, {temp_count} temporary)\n"
@@ -261,15 +263,15 @@ def visualize_pose_graph(
         verticalalignment='top',
         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5)
     )
-    
+
     ax.axis('off')
     plt.tight_layout()
-    
+
     # Save if requested
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         logger.info(f"Pose graph visualization saved to {save_path}")
-    
+
     # Show with interactive controls
     if show_interactive:
         plt.show(block=False)
@@ -285,9 +287,9 @@ def visualize_pose_graph_3d(
 ) -> None:
     """
     Visualize pose graph with 3D trajectory overlay.
-    
+
     Shows both the graph structure and the actual spatial positions of poses.
-    
+
     Args:
         pose_graph: PoseGraph object with constructed vertices and edges
         title: Plot title
@@ -297,23 +299,24 @@ def visualize_pose_graph_3d(
                       first-order neighbors. Useful for large graphs. Set to None
                       to visualize all nodes.
     """
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers the 3d projection on older matplotlib)
+
     from cross.core.pgo import PoseGraph as PG
-    from mpl_toolkits.mplot3d import Axes3D
-    
+
     if not isinstance(pose_graph, PG):
         logger.error("Input must be a PoseGraph object")
         return
-    
+
     if not pose_graph.vertices:
         logger.warning("Pose graph is empty. No visualization to show.")
         return
-    
+
     # Determine which nodes to visualize
     if last_k_nodes is not None:
         visible_nodes = _get_subgraph_nodes(pose_graph, last_k_nodes)
     else:
         visible_nodes = {v.id for v in pose_graph.vertices}
-    
+
     # Extract 3D positions from poses (only visible ones)
     positions = {}
     for vertex in pose_graph.vertices:
@@ -322,7 +325,7 @@ def visualize_pose_graph_3d(
         pose_tensor = vertex.pose.tensor().cpu().numpy()
         # pypose SE3: [x, y, z, qx, qy, qz, qw]
         positions[vertex.id] = pose_tensor[:3]
-    
+
     # Create figure with 3D subplot
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, projection='3d')
@@ -344,14 +347,14 @@ def visualize_pose_graph_3d(
             continue
         if u not in positions or v not in positions:
             continue
-        
+
         for factor in factors:
             edge_type = getattr(factor, 'type', 'unknown')
             color = edge_color_map.get(edge_type, "gray")
-            
+
             pos_u = positions[u]
             pos_v = positions[v]
-            
+
             ax.plot(
                 [pos_u[0], pos_v[0]],
                 [pos_u[1], pos_v[1]],
@@ -360,14 +363,14 @@ def visualize_pose_graph_3d(
                 alpha=0.6,
                 linewidth=1.5,
             )
-    
+
     # Plot nodes with different colors based on temporary status
     node_positions = np.array(list(positions.values()))
     node_colors = []
     for vertex_id in positions.keys():
         vertex = pose_graph.vertex_map[vertex_id]
         node_colors.append('orange' if vertex.temporary else 'lightblue')
-    
+
     ax.scatter(
         node_positions[:, 0],
         node_positions[:, 1],
@@ -378,21 +381,21 @@ def visualize_pose_graph_3d(
         linewidths=1.0,
         marker='o',
     )
-    
+
     # Add labels for key nodes (first, last, and some intermediate)
     num_nodes = len(positions)
     label_indices = [0, num_nodes // 2, num_nodes - 1] if num_nodes > 2 else range(num_nodes)
-    
+
     for i, (vertex_id, pos) in enumerate(positions.items()):
         if i in label_indices:
             vertex = pose_graph.vertex_map[vertex_id]
             label = f"V{vertex_id}:KF{vertex.original_kf_id}:C{vertex.original_comp_id}"
             ax.text(pos[0], pos[1], pos[2], label, fontsize=8)
-    
+
     ax.set_xlabel('X (m)')
     ax.set_ylabel('Y (m)')
     ax.set_zlabel('Z (m)')
-    
+
     # Add legend
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
@@ -404,14 +407,14 @@ def visualize_pose_graph_3d(
         Patch(facecolor='orange', edgecolor='black', label='Temporary Node'),
     ]
     ax.legend(handles=legend_elements, loc='upper right')
-    
+
     plt.tight_layout()
-    
+
     # Save if requested
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         logger.info(f"3D pose graph visualization saved to {save_path}")
-    
+
     # Show with interactive controls
     plt.show(block=False)
     logger.info("3D pose graph visualization displayed. Use matplotlib controls to rotate/zoom.")

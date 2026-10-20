@@ -7,9 +7,9 @@ import pytest
 torch = pytest.importorskip("torch")
 pp = pytest.importorskip("pypose")
 
-from cross.core.config import HypothesisConfig, SystemConfig   # noqa: E402
-from cross.core.hypothesis import HypothesisManager             # noqa: E402
-from cross.core.types import Edge, EdgeType, Keyframe            # noqa: E402
+from cross.core.config import HypothesisConfig, SystemConfig  # noqa: E402
+from cross.core.hypothesis import HypothesisManager  # noqa: E402
+from cross.core.types import Edge, EdgeType, Keyframe  # noqa: E402
 
 # a U-shaped corridor on the ground plane (camera x, z): 10 m out along x, back 2 m to the side; ids 0..20
 POSITIONS = [(float(x), 0.0) for x in range(11)] + [(float(x), 2.0) for x in range(10, 0, -1)]

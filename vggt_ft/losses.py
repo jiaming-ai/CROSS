@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-
 from vggt_omega.utils.pose_enc import encoding_to_camera, extri_intri_to_pose_encoding
 
 from .geometry import cam_to_ref, unproject

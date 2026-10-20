@@ -1,9 +1,7 @@
-import torch
 import numpy as np
+import torch
 
-from kornia.geometry import conversions as KC
 
-    
 def quaternion_to_rotation_matrix_numpy(q: np.ndarray) -> np.ndarray:
     """
     Convert a quaternion to a rotation matrix.
@@ -35,10 +33,10 @@ def quaternion_to_rotation_matrix_numpy(q: np.ndarray) -> np.ndarray:
     return rotation_matrix
 
 
-    
 
 
-    
+
+
 
 def quaternion_to_euler_torch(
     q: torch.Tensor,

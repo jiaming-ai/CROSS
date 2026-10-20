@@ -34,6 +34,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "scripts/baselines"))
 from reloc_metrics import build_trials  # noqa: E402
+
 BIN = Path(os.environ.get("BASELINE_BIN", ROOT / "scripts/baselines/build"))
 ORB = ROOT / "third_party/ORB_SLAM3"
 ORB_VOC = Path(os.environ.get("ORB_VOC", ORB / "Vocabulary/ORBvoc.txt"))
@@ -434,7 +435,7 @@ def evaluate_trials(map_poses_file, query_files, map_seq, query_seq, out: Path, 
     scored with the system's online (causal) output: the pose it reported at that frame (PROTOCOL.md, T2 / T3), not a
     trajectory written after the session ended."""
     from eval_traj import evaluate, load_poses
-    from reloc_metrics import summarize_trials, summarize_errors
+    from reloc_metrics import summarize_errors, summarize_trials
     gt_map = np.loadtxt(Path(map_seq) / "poses_left.txt").reshape(-1, 4, 4)
     gt_query = np.loadtxt(Path(query_seq) / "poses_left.txt").reshape(-1, 4, 4)
     fps = json.loads((Path(map_seq) / "calib.json").read_text()).get("fps", 10.0)

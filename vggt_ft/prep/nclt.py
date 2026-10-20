@@ -281,8 +281,9 @@ def depth_for(vel, gt, T_body_vel, E, K, hw, t, a):
 
 def convert_scene(job):
     """One (session, world) scene: all runs of the session inside the tile."""
-    from vggt_ft.prep.common import SceneWriter, _atomic_write_bytes
     import torch
+
+    from vggt_ft.prep.common import SceneWriter, _atomic_write_bytes
     torch.set_num_threads(2)
     session, world, runs, a = job
     root = Path(a.root)

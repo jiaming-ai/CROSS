@@ -129,10 +129,14 @@ packages = ["cross", "cross_world", "vggt_ft", "cross_nav"]
 [tool.ruff]
 line-length = 120
 target-version = "py310"
+# vendored code, and the optional packages with their own conventions
+extend-exclude = ["third_party", "cross_nav", "cross_world", "scripts/nav_*.py", "dev", "memo", "outputs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
-ignore = ["E501"]
+# the code base's idiom: several short statements on one line, single-letter math names (R, I, l), imports after a
+# sys.path setup in scripts and tests, small lambdas
+ignore = ["E501", "E701", "E702", "E731", "E741", "E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "edge/tests"]

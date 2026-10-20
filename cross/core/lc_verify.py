@@ -29,7 +29,7 @@ from __future__ import annotations
 import collections
 import itertools
 import math
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import gtsam
 import numpy as np

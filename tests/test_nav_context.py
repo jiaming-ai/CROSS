@@ -2,7 +2,6 @@ import pytest
 
 from cross_nav.context import past_frames, validate_lags
 
-
 LAGS = [0, 4, 8, 16, 32, 64, 128, 256]
 
 
@@ -35,6 +34,7 @@ def test_invalid_recipe_rejected(lags):
 
 def test_causal_mode_rejects_bad_anchor_instead_of_swapping_to_past():
     from types import SimpleNamespace
+
     from cross_nav.data import NavStream
 
     frames = [(SimpleNamespace(world="world"), object(), i) for i in [10, 9]]

@@ -11,7 +11,6 @@ within `lr_thresh` px.  A disparity floor keeps far pixels, where a one-pixel er
 """
 from __future__ import annotations
 
-import importlib.util
 import sys
 import types
 from pathlib import Path
@@ -58,9 +57,9 @@ class FoundationStereo:
         create = timm.create_model
         timm.create_model = lambda *a, **k: create(*a, **dict(k, pretrained=False))
         try:
-            from omegaconf import OmegaConf
             from core.foundation_stereo import FoundationStereo as FS
             from core.utils.utils import InputPadder
+            from omegaconf import OmegaConf
             cfg = OmegaConf.load(ckpt_dir / "cfg.yaml")
             if "vit_size" not in cfg:
                 cfg["vit_size"] = "vitl"

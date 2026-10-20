@@ -1,14 +1,16 @@
-from loguru import logger
-from .boq import BoQ
-from .index import DescriptorIndex, PCAProjection, ScoreCalibration, SpatialIndex
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import torch
-from cross.core.types import Atlas, Keyframe
-from cross.utils.profile import timeit
-from typing import Dict, List, Tuple, Optional, Union
-from collections import defaultdict
+from loguru import logger
 
 from cross.core.config import RetrievalConfig, VPRModelType
+from cross.core.types import Atlas, Keyframe
+from cross.utils.profile import timeit
+
+from .boq import BoQ
+from .index import DescriptorIndex, PCAProjection, ScoreCalibration, SpatialIndex
 
 
 def to_uint8_image(t):
@@ -138,7 +140,7 @@ class KeyframeDatabase:
 
     @timeit
     def insert(
-        self, 
+        self,
         id: int,
         raw_rgb_image: torch.Tensor,
         depth_image: torch.Tensor,
@@ -175,7 +177,7 @@ class KeyframeDatabase:
             raw_rgb_image = raw_rgb_image.to(self.image_device) if raw_rgb_image is not None else None
             raw_rgb_right = raw_rgb_right.to(self.image_device) if raw_rgb_right is not None else None
             depth_image = depth_image.to(self.image_device) if depth_image is not None else None
-        
+
         # Create PosedRGBD object
         keyframe = Keyframe(
             raw_rgb_image=raw_rgb_image,
@@ -190,11 +192,11 @@ class KeyframeDatabase:
             last_pgo_step=last_pgo_step,
             pose_charts=pose_charts,
         )
-        
+
         # Add to storage
         list_idx = len(self._keyframe_by_atlas[atlas])
         self._keyframe_by_atlas[atlas].append(keyframe)
-        
+
         # Add the descriptor (the index grows its buffer by 100 rows at least, as before)
         row = self.index.add(embedding, keyframe.id)
         self._atlas_to_indices[atlas].append(row)
@@ -209,10 +211,10 @@ class KeyframeDatabase:
         return keyframe
 
     def remove(
-        self, 
+        self,
         idx: int,
         buffer_idx: int,
-        atlas: Atlas = 0, 
+        atlas: Atlas = 0,
     ):
         """Remove a Keyframe from the database.
         Args:
@@ -221,24 +223,24 @@ class KeyframeDatabase:
         """
         if atlas not in self._keyframe_by_atlas or idx >= len(self._keyframe_by_atlas[atlas]):
             return
-            
+
         # Find the buffer index for this place
         buffer_idx = None
         for i, (a, list_i) in self._index_to_atlas_idx.items():
             if a == atlas and list_i == idx:
                 buffer_idx = i
                 break
-                
+
         if buffer_idx is None:
             return
-            
+
         # Remove from storage
         self._keyframe_by_atlas[atlas].pop(idx)
-        
+
         # Remove from indices
         self._atlas_to_indices[atlas].remove(buffer_idx)
         del self._index_to_atlas_idx[buffer_idx]
-        
+
         kf_removed = self._row_kf[buffer_idx]
         self._id_to_row.pop(int(kf_removed.id), None)
         moved = self.index.remove_row(buffer_idx)
@@ -266,22 +268,22 @@ class KeyframeDatabase:
 
     def get_size(self):
         return self._current_size
-    
+
     def create_atlas(self) -> Atlas:
         """Create a new atlas and return it."""
         atlas = Atlas(id=self._next_atlas_id)
         self._atlases[self._next_atlas_id] = atlas
         self._next_atlas_id += 1
         return atlas
-    
+
     def get_atlas(self, atlas_id: int) -> Optional[Atlas]:
         """Get an atlas by ID."""
         return self._atlases.get(atlas_id)
-    
+
     def get_all_atlases(self) -> List[Atlas]:
         """Get all atlases."""
         return list(self._atlases.values())
-    
+
     def save_state(self, columns: bool = False):
         """Save the database state for map persistence.
 
@@ -325,7 +327,7 @@ class KeyframeDatabase:
                     "temporary": kf.temporary,
                     "last_pgo_step": kf.last_pgo_step,
                 })
-        
+
         return {
             "keyframes": db_keyframes,
             "embeddings": self._embedding_buffer[:self._current_size].cpu(),
@@ -336,14 +338,14 @@ class KeyframeDatabase:
             "atlases": {atlas_id: {"id": atlas.id} for atlas_id, atlas in self._atlases.items()},
             "next_atlas_id": self._next_atlas_id,
         }
-    
+
     def load_state(self, db_data: dict, storage_device: str, pose_device=None):
         """Load the database state from saved data.
-        
+
         Args:
             db_data: Dictionary containing saved database state
             storage_device: Device to store tensors
-            
+
         Returns:
             dict: Mapping from keyframe ID to Keyframe object
         """
@@ -351,13 +353,13 @@ class KeyframeDatabase:
         self._atlas_to_indices.clear()
         self._index_to_atlas_idx.clear()
         self._atlases.clear()
-        
+
         # Restore atlases
         for atlas_id, atlas_data in db_data["atlases"].items():
             atlas = Atlas(id=atlas_data["id"])
             self._atlases[atlas_data["id"]] = atlas
         self._next_atlas_id = db_data["next_atlas_id"]
-        
+
         # Create a map to track all keyframes by ID
         all_keyframes_map = {}
 
@@ -375,7 +377,7 @@ class KeyframeDatabase:
         # Restore permanent keyframes from database
         for kf_data in (db_data["keyframes"] if bulk is None else ()):
             atlas = self._atlases[kf_data["atlas_id"]] if kf_data["atlas_id"] is not None else None
-            
+
             # Create Keyframe object
             kf = Keyframe(
                 raw_rgb_image=kf_data["raw_rgb_image"].to(storage_device) if kf_data["raw_rgb_image"] is not None else None,
@@ -396,14 +398,14 @@ class KeyframeDatabase:
 
             # Add to database storage
             self._keyframe_by_atlas[atlas].append(kf)
-            
+
             all_keyframes_map[kf.id] = kf
-        
+
         # Restore database index mappings
         for atlas_id, indices in db_data["atlas_to_indices"].items():
             atlas = self._atlases[int(atlas_id)]
             self._atlas_to_indices[atlas] = indices
-        
+
         atlas_by_id = self._atlases
         self._index_to_atlas_idx.update((buffer_idx, (atlas_by_id[atlas_id], list_idx))
                                         for buffer_idx, (atlas_id, list_idx) in db_data["index_to_atlas_idx"].items())
@@ -447,7 +449,7 @@ class KeyframeDatabase:
         return mask
 
     def query(
-        self, 
+        self,
         img: torch.Tensor,
         target_atlases: Optional[List[Atlas]] = None,
         reserved_keyframe_ids=(),
@@ -512,7 +514,7 @@ class KeyframeDatabase:
 
         # Filter and sort scores
         # `scores` are similarity scores against the rows `valid` (or all rows)
-        
+
         # Find the indices in `scores` that pass the threshold
         thr_high = self.score_threshold_high if score_threshold is None else score_threshold
         thr_low = self.score_threshold_low if score_threshold is None else score_threshold
@@ -536,17 +538,17 @@ class KeyframeDatabase:
             if historical.numel():
                 original_indices_passing_threshold = torch.unique(torch.cat([
                     original_indices_passing_threshold, historical.to(torch.long)]), sorted=True)
-        
+
         if original_indices_passing_threshold.numel() == 0:
             return empty
-            
+
         # Get the actual scores for these candidates
         scores_of_candidates = scores[original_indices_passing_threshold]
-        
+
         # Sort these candidate scores and get their relative indices (i.e., indices into scores_of_candidates)
         # in descending order of score.
         sorted_relative_indices = scores_of_candidates.argsort(descending=True)
-        
+
         # Select the top_k relative indices
         top_k_relative_indices = sorted_relative_indices[:top_k]
         if reserved_count:
@@ -560,15 +562,15 @@ class KeyframeDatabase:
                 chosen.add(pos)
             top_k_relative_indices = sorted_relative_indices[torch.tensor(sorted(chosen), dtype=torch.long,
                                                                           device=scores.device)]
-        
+
         # Use these top_k relative indices to get the actual top_k scores
         final_top_k_scores = scores_of_candidates[top_k_relative_indices]
-        
+
         # And use them to get the top_k original indices (indices into `scores`)
         final_top_k_original_db_indices = original_indices_passing_threshold[top_k_relative_indices]
         if valid is not None:
             final_top_k_original_db_indices = valid[final_top_k_original_db_indices]
-        
+
         # one transfer for all results
         result_scores = final_top_k_scores.tolist()
         result_keyframes = [self._row_kf[r] for r in final_top_k_original_db_indices.tolist()]

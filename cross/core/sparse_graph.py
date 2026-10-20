@@ -12,10 +12,12 @@ Key Features:
 - Loop closure support with incremental rebuilding
 """
 
-import torch
+from typing import Dict, List, Optional, Set, Tuple
+
 import pypose as pp
-from typing import Dict, List, Tuple, Set, Optional
+import torch
 from loguru import logger
+
 from cross.core.types import Edge, EdgeType
 from cross.utils.profile import timeit
 

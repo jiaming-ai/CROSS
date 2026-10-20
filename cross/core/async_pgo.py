@@ -30,14 +30,11 @@ import select
 import signal
 import time
 import traceback
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
-import pypose as pp
 import torch
 from loguru import logger
-
-from cross.core.pgo import as_se3
 
 _live_children: set = set()
 
@@ -53,6 +50,7 @@ def _kill_children():
 
 
 import atexit
+
 atexit.register(_kill_children)
 
 

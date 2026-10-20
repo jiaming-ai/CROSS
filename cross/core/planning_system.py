@@ -11,10 +11,12 @@ The PlanningSystem:
 - Provides unified API for planning operations
 """
 
-from typing import List, Optional, Dict, Any, Literal
+from typing import Any, Dict, List, Literal, Optional
+
 from loguru import logger
-from cross.core.sparse_graph import SparseGraph
+
 from cross.core.planner import Planner
+from cross.core.sparse_graph import SparseGraph
 
 
 class PlanningSystem:

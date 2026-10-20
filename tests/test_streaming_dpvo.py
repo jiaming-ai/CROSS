@@ -220,6 +220,7 @@ def test_degenerate_views_hold_the_pose_and_discard_hallucinated_motion(monkeypa
 
 def test_synchronous_frontend_gives_depth_to_the_first_valid_frame():
     from types import SimpleNamespace
+
     from cross.mono.dpvo_frontend import DPVOFrontend
     f = DPVOFrontend.__new__(DPVOFrontend)
     f.provide_mapping_depth, f.config = True, SimpleNamespace(mapping_interval=2)

@@ -1,7 +1,8 @@
-from abc import ABC, abstractmethod
 import time
-import numpy as np
+from abc import ABC, abstractmethod
+
 import cv2
+import numpy as np
 from PIL import Image
 
 np.random.seed(42)

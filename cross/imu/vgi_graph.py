@@ -34,7 +34,7 @@ relative-pose factors with later nodes are dropped)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 from scipy.spatial.transform import Rotation

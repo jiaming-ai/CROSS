@@ -1,6 +1,7 @@
 import numpy as np
 import torch
-from cross_nav.policy.data import arc_window,split_group
+
+from cross_nav.policy.data import arc_window, split_group
 from cross_nav.policy.head import TrajectoryHead
 
 
@@ -77,6 +78,7 @@ def test_eight_metre_target():
 
 def test_small_rgb_fills_letterbox(tmp_path):
     from PIL import Image
+
     from cross_nav.policy.data import ImageWindows
     p=tmp_path/'rgb.jpg';Image.new('RGB',(85,64),(255,0,0)).save(p)
     images,_=ImageWindows([{'images':[str(p)]}],256)[0]

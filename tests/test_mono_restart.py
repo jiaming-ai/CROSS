@@ -139,6 +139,7 @@ def test_mapping_accounting_requires_the_emitted_camera_diagnostics(tmp_path):
 
 def test_openloris_gt_preserves_shared_world_and_camera_lever_arm(tmp_path):
     import cv2
+
     from cross.mono.openloris_groundtruth import camera_groundtruth
     base = np.broadcast_to(np.eye(4), (3, 4, 4)).copy()
     base[:, :3, 3] = [[10, 2, 0], [10, 3, 0], [11, 3, 0]]

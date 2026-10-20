@@ -68,6 +68,7 @@ def test_normalize_window_unit_scale():
 
 def test_losses_zero_at_ground_truth():
     from vggt_omega.utils.pose_enc import extri_intri_to_pose_encoding
+
     from vggt_ft.losses import camera_loss, covis_loss
     depth, mask, E, K = _window()
     E_n, d_n, pts, scale = normalize_window(E, depth, mask, K)
@@ -100,7 +101,9 @@ def test_scene_cache_round_trip(tmp_path):
 
 def test_scale_distill_target():
     import math
+
     import torch
+
     from vggt_ft.train import scale_distill_target
     d_s = torch.rand(2, 3, 8, 8, 1) + 0.5
     steach = {"depth": 2.0 * d_s, "log_scale": torch.full((2,), math.log(3.0))}
@@ -110,6 +113,7 @@ def test_scale_distill_target():
 
 def test_pseudo_metric_scale(tmp_path):
     import json
+
     from vggt_ft.dataio.windows import DatasetPool
     from vggt_ft.prep.common import SceneWriter
     sw = SceneWriter(tmp_path, "toy", "s0", metric=False)
@@ -132,6 +136,7 @@ def test_pseudo_metric_scale(tmp_path):
 
 def test_multilayer_scale_head_shapes():
     import torch
+
     from vggt_ft.heads import build_scale_head
     head = build_scale_head({"arch": "multilayer", "layers": [-1, 4, 23], "grid": 4})
     B, S, h, w = 2, 3, 6, 8
@@ -145,6 +150,7 @@ def test_multilayer_scale_head_shapes():
 def test_invariant_alignment_ignores_global_rescale():
     """scale_align: invariant -> the geometric losses do not change when every output is scaled by the same factor."""
     from vggt_omega.utils.pose_enc import extri_intri_to_pose_encoding
+
     from vggt_ft.train import compute_losses
     depth, mask, E, K = _window()
     S, H, W = depth.shape[1:]

@@ -88,6 +88,7 @@ def small(dep, K):
 def pair_covis(deps, Ks, Es, i, js):
     """GT covisibility of frame i with each frame in js (low-res depth; frames of different sizes: per pair)."""
     import torch
+
     from vggt_ft.geometry import gt_covisibility
     out = np.zeros(len(js))
     for n, j in enumerate(js):

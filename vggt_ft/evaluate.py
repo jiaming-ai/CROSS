@@ -21,19 +21,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import time
 from pathlib import Path
 
 import numpy as np
 import torch
-
 from vggt_omega.utils.pose_enc import encoding_to_camera
 
 from . import load_yaml
 from .dataio.scene import list_scenes, load_scene
-from .dataio.windows import materialise
 from .dataio.transforms import target_shape
+from .dataio.windows import materialise
 from .geometry import connected_to_ref, gt_covisibility
 from .model import VGGTOmegaFT
 

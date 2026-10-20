@@ -211,6 +211,7 @@ def prepare_images(prep: Path, session: str, source, u2d_dir: Path, cams_used=(1
     requests, nothing stored), rectify every frame of the chosen cameras with LB3Rectifier, write
     <prep>/<session>/lb3/Cam<k>/<utime>.jpg and lb3/frames.txt (cam utime ok)."""
     import multiprocessing as mp
+
     from nclt_download import BASE, RangeStream
     cams = {int(k): v for k, v in json.loads((prep / session / "geo_ref.json").read_text())["cameras"].items()}
     out = prep / session / "lb3"

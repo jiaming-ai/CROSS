@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from cross_nav.local_plan import LocalWaypointPlanner, AdaptiveVisibilityPlanner
+from cross_nav.local_plan import AdaptiveVisibilityPlanner, LocalWaypointPlanner
 from cross_nav.observed_plan import ObservedAudit
 
 

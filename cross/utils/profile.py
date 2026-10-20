@@ -1,9 +1,10 @@
-import time
 import os
 import threading
-from functools import wraps
+import time
 from collections import defaultdict
 from contextlib import contextmanager
+from functools import wraps
+
 from loguru import logger
 
 # Profiling configuration
@@ -172,7 +173,7 @@ def print_timing_registry(indent="   ", root=None, output_file=None, max_depth=5
 
         for child_name, child_info in sorted_children:
             print_entry(child_name, child_info, depth + 1, new_visited)
-    
+
     if root is None:
         top_level_funcs = []
         for func_name, info in registry_snapshot.items():
@@ -193,10 +194,10 @@ def print_timing_registry(indent="   ", root=None, output_file=None, max_depth=5
             print_entry(func_name, info)
     else:
         print_entry(root, registry_snapshot[root])
-    
+
     # Join all lines
     full_output = '\n'.join(output)
-    
+
     # Either print or write to file
     if output_file:
         with open(output_file, 'w') as f:

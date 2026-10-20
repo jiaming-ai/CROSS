@@ -14,9 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from cross.dataloader.imu import ImuCalibration       # noqa: E402
-from cross.imu.simulate import simulate_imu           # noqa: E402
-from test_imu_scale import robot_path                  # noqa: E402
+from test_imu_scale import robot_path  # noqa: E402
+
+from cross.dataloader.imu import ImuCalibration  # noqa: E402
+from cross.imu.simulate import simulate_imu  # noqa: E402
 
 FPS = 10.0
 
@@ -155,6 +156,7 @@ def test_grpc_link():
     images intact, an extra delay holds the replies, control messages are answered, close releases the server."""
     import socket
     import time
+
     import pytest
     pytest.importorskip("grpc")
     from cross.remote.grpc_link import GrpcLink, serve
@@ -229,6 +231,7 @@ def test_rate_cap():
     the server could start it within 0.1 s (by its model of the server's queue, learned from the replies), the back
     end observes at the next frame instead, and the lag stays bounded."""
     from types import SimpleNamespace
+
     from cross.remote.edge import ObservationCadence, RemotePipeline
     from cross.remote.link import SimLink
 

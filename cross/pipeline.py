@@ -200,6 +200,7 @@ class Pipeline:
     def advance(self, frame: dict):
         """Frontend step, back-end step, alignment.  Returns (estimate with the pose in the map frame, mapped now)."""
         from time import perf_counter
+
         import cv2
         frontend = self.frontend
         estimate = frontend.track(frame) if hasattr(frontend, "track") else frontend.step(frame["rgb"], frame["timestamp"])
@@ -328,10 +329,12 @@ def mono_config_from_files(files, dpvo_checkpoint=None, imu=False, imu_items=(),
     `scale` = ScaleConfig fields) and `imu` section (ImuConfig fields; skipped with file_imu=False), then imu_items ("key=value", e.g. a user's
     --mono-args --imu-config) and cross_config (SystemConfig lines of the DA3 back end, appended to the files')."""
     import dataclasses
+
     import yaml
+
     from cross.core.config import load_yaml_layers
-    from cross.mono.config import MonoConfig, ScaleConfig
     from cross.imu.scale_filter import ImuConfig
+    from cross.mono.config import MonoConfig, ScaleConfig
     merged = load_yaml_layers(*files) if files else {}
     sec = dict(merged.get("mono") or {})
     names = {f.name for f in dataclasses.fields(MonoConfig)}
@@ -582,8 +585,7 @@ def edge_session(mode: str, odometry: str, camera, system_config, link_factory, 
     """The edge of a remote session behind a real link (cross/remote/grpc_link.py): the odometry only, no GPU model.
     link_factory(open message) -> link; the open message carries what the server needs to build the same session
     (build_session): mode, odometry, camera, stereo calibration and the resolved configurations."""
-    from cross.core.config import config_to_dict
-    from cross.core.config import _to_dict
+    from cross.core.config import _to_dict, config_to_dict
     from cross.remote.edge import ObservationCadence, RemotePipeline
     if odometry not in ("external", "vgio"):
         raise ValueError("Remote sessions: external odometry or VGGT-inertial odometry (--odometry vgio)")
@@ -771,6 +773,7 @@ def confirm_config_risks(risks, accept: bool = False):
     """Warn about each caveat (config_risks); continue only when accepted: --accept-config-risk, or "y" at the prompt
     when stdin is a terminal.  Otherwise SystemExit.  Asked once per process (a runner builds a session per trial)."""
     import sys
+
     from loguru import logger
     risks = [r for r in risks if r not in _ACCEPTED_RISKS]
     if not risks:

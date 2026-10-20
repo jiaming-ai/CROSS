@@ -16,7 +16,6 @@ import types
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
-
 from vggt_omega.models import VGGTOmega
 
 from .heads import CovisHead, DenseScaleHead, MultiLayerScaleHead, build_scale_head

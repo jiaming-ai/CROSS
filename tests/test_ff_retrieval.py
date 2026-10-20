@@ -31,7 +31,6 @@ def test_depth_scale_recovers_ratio_and_rejects_missing_depth():
 
 def test_fallback_keeps_primary_poses_and_fills_rejected_references_in_order():
     pp = pytest.importorskip("pypose")
-    from types import SimpleNamespace
     from cross.mono.ff_retrieval import FallbackFeedForwardRelativePose
 
     def poses(xs):

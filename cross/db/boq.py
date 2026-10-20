@@ -1,8 +1,9 @@
 import os
+from collections import OrderedDict
+
 import torch
 import torchvision.transforms as T
-import numpy as np
-from collections import OrderedDict
+
 from cross.utils.fingerprint import content_keys
 from cross.utils.hub import hub_load, hub_local_dir
 
@@ -24,10 +25,10 @@ def load_boq_hub_model(backbone_name: str, output_dim: int):
 
 class BoQ():
     def __init__(
-        self, 
-        backbone_name: str = "resnet50", 
-        device: str = "cuda", 
-        cache_size: int = 1000, 
+        self,
+        backbone_name: str = "resnet50",
+        device: str = "cuda",
+        cache_size: int = 1000,
         enable_cache: bool = True
     ):
         # ResNet50 + BoQ
@@ -46,7 +47,7 @@ class BoQ():
             T.Resize(self.im_size, interpolation=T.InterpolationMode.BICUBIC, antialias=True),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ])
-        
+
         # Initialize cache
         self.enable_cache = enable_cache
         self.cache_size = cache_size if enable_cache else 0
@@ -105,20 +106,20 @@ class BoQ():
         elif img.ndim == 4:  # Batch of images
             if img.shape[1] == 3:  # BCHW format
                 img = img.permute(0, 2, 3, 1)  # Convert to BHWC
-        
+
         # Check cache only for single images and if cache is enabled
         is_single_image = img.shape[0] == 1
         if is_single_image and self.enable_cache:
             cache_key = self._get_cache_key(img)
             if cache_key in self.cache:
                 return self.cache[cache_key]
-        
+
         # Apply transformations
         torch_img = self.transform(img.permute(0, 3, 1, 2)).to(self.device)  # Convert to BCHW for transform
-        
+
         # Get embeddings
         output, _ = self.vpr_model(torch_img)
-        
+
         # Cache single image result if cache is enabled
         if is_single_image and self.enable_cache:
             self._update_cache(cache_key, output.squeeze(0))

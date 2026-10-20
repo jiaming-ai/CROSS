@@ -1,4 +1,5 @@
 import numpy as np
+
 from cross_nav.planability import classify_goals, evaluate_goals, summarize_goals
 
 

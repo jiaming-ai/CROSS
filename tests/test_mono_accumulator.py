@@ -24,7 +24,9 @@ def test_shared_scale_uncertainty_is_not_clipped_or_counted_independently():
 
 def test_skipped_retrieval_cannot_reduce_motion_prior_uncertainty():
     from types import SimpleNamespace
+
     import pypose as pp
+
     from cross.core.hypothesis import HypothesisManager
 
     manager = HypothesisManager(SimpleNamespace(device="cpu"), 1)
@@ -54,8 +56,10 @@ def test_background_patch_selection_excludes_people_and_reports_no_support():
 
 def test_vectorized_detector_retains_high_score_outputs_and_global_cap():
     from types import SimpleNamespace
-    from torchvision.models.detection.ssd import SSD
+
     from torchvision.models.detection._utils import BoxCoder
+    from torchvision.models.detection.ssd import SSD
+
     from cross.mono.person_detector import high_confidence_postprocess
     generator = torch.Generator().manual_seed(73)
     anchors = torch.rand(500, 4, generator=generator)*200

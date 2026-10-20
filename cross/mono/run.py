@@ -1,14 +1,14 @@
 """Run image-only CROSS; evaluate separately with cross.mono.evaluate."""
 
 import argparse
-from dataclasses import asdict
-import hashlib
 import gc
+import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import subprocess
+from dataclasses import asdict
+from pathlib import Path
 from time import perf_counter, sleep
 
 import cv2
@@ -115,6 +115,7 @@ def build_parser():
 
 def imu_config_from_args(args):
     import yaml
+
     from cross.imu.scale_filter import ImuConfig
     cfg = ImuConfig(enabled=bool(getattr(args, "imu", False)))
     for item in getattr(args, "imu_config", None) or []:
@@ -233,7 +234,12 @@ def main():
         frontend = DPVOFrontend(sequence.K, config, args.device)
         frontend.provide_mapping_depth = not args.frontend_only
     elif args.frontend in {"metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt"}:
-        from .pnp_frontend import MetricPnPFrontend, RotationMetricFrontend, LearnedRotationPnPFrontend, MetricKLTFrontend
+        from .pnp_frontend import (
+            LearnedRotationPnPFrontend,
+            MetricKLTFrontend,
+            MetricPnPFrontend,
+            RotationMetricFrontend,
+        )
         factory = {"metric_pnp": MetricPnPFrontend, "rotation_metric": RotationMetricFrontend,
                    "learned_rotation_pnp": LearnedRotationPnPFrontend, "metric_klt": MetricKLTFrontend}[args.frontend]
         frontend = factory(sequence.K, config, args.device)
@@ -250,6 +256,7 @@ def main():
             metadata["model_parameters"]["person_detector"] = sum(p.numel() for p in frontend.refiner.detector.parameters())
             metadata["person_detector"] = "torchvision SSDLite320 MobileNet V3 Large COCO_V1; score>=0.5; bbox padding 8+4*age px"
     from huggingface_hub import try_to_load_from_cache
+
     from .models import MODEL_REVISIONS
     metadata["model_checkpoint_revisions"] = {
         model: MODEL_REVISIONS.get(model) for model in [config.pose_model, config.metric_model] if model

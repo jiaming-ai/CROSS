@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from cross_nav.uncertainty import attenuated_bce
 from cross_nav.train import bev_losses
+from cross_nav.uncertainty import attenuated_bce
 
 
 def test_attenuation_branch_backpropagates_through_decoder():

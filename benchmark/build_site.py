@@ -21,10 +21,9 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+import make_tables as mt
 import numpy as np
 import yaml
-
-import make_tables as mt
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "benchmark/site"

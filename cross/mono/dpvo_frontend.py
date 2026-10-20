@@ -11,8 +11,8 @@ from time import perf_counter
 
 import cv2
 import numpy as np
-from scipy.spatial.transform import Rotation
 import torch
+from scipy.spatial.transform import Rotation
 
 from cross.imu import InertialScaleFilter, preintegrate
 

@@ -32,8 +32,9 @@ PY = ROOT / ".venv-mast3r/bin/python"
 sys.path.insert(0, str(ROOT / "scripts/baselines"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import shutil  # noqa: E402
+
 from eval_traj import evaluate  # noqa: E402
-from reloc_metrics import build_trials, first_map_link, summarize_trials, summarize_errors  # noqa: E402
+from reloc_metrics import build_trials, first_map_link, summarize_errors, summarize_trials  # noqa: E402
 
 
 def main():

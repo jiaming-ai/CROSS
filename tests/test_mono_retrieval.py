@@ -108,7 +108,6 @@ def _database(embeddings, ids, atlas=None, atlas_rows=None, embedding=None):
 
 
 def test_historical_slot_preserves_budget_thresholds_scores_and_embedding_cost():
-    from cross.db.db import KeyframeDatabase
 
     calls = []
     def embedding(image):
@@ -126,7 +125,6 @@ def test_historical_slot_preserves_budget_thresholds_scores_and_embedding_cost()
 
 
 def test_historical_exploration_does_not_admit_weak_query_nodes_or_exceed_budget():
-    from cross.db.db import KeyframeDatabase
 
     atlas = object()
     database = _database([[.29], [.25], [.2], [.15], [-.1]], [i + 10 for i in range(5)], atlas=atlas,
@@ -145,9 +143,8 @@ def test_historical_exploration_does_not_admit_weak_query_nodes_or_exceed_budget
 
 @pytest.mark.parametrize("old_weight", [0., .5])
 def test_recycled_hypothesis_cannot_inherit_a_previous_places_evidence(old_weight):
-    from cross.core.hypothesis import HypothesisManager
-
     from cross.core.config import HypothesisConfig
+    from cross.core.hypothesis import HypothesisManager
     manager = HypothesisManager(SimpleNamespace(device="cpu", topo_map=None), 2,
                                 HypothesisConfig(reset_evidence_on_slot_reuse=True))
     manager.dist = (pp.identity_SE3(2), pp.se3(torch.ones(2, 6) * .1), torch.tensor([1.-old_weight, old_weight]))

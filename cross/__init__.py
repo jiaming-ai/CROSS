@@ -1,3 +1,3 @@
-"""CROSS: Pose-aware topological mapping for RGB-D and monocular inputs."""
+"""CROSS: long-term relocalization with a probabilistic topological map (RGB-D, stereo and monocular cameras)."""
 
 __version__ = "0.2.0"

@@ -5,13 +5,13 @@
 3) Optionally: save a .png or .pdf plot (nice in papers!) with `save_plot`.
 """
 
+import os
+
 import matplotlib
-import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-import os
 if os.environ.get("DISPLAY") and not os.environ.get("MPLBACKEND"):
     try:
         matplotlib.use('TkAgg')  # interactive plotting when a display is available
@@ -48,7 +48,7 @@ def plot_images(imgs, titles=None, cmaps="gray", dpi=100, pad=0.5, adaptive=True
     else:
         ratios = [4 / 3] * n
     figsize = [sum(ratios) * 4.5, 4.5]
-    
+
     if fig is None:
         fig, ax = plt.subplots(
             1, n, figsize=figsize, dpi=dpi, gridspec_kw={"width_ratios": ratios}
@@ -56,7 +56,7 @@ def plot_images(imgs, titles=None, cmaps="gray", dpi=100, pad=0.5, adaptive=True
     else:
         fig.clear()
         ax = fig.subplots(1, n, gridspec_kw={"width_ratios": ratios})
-    
+
     if n == 1:
         ax = [ax]
     for i in range(n):

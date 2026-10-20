@@ -1,12 +1,10 @@
-import pickle
-import json
-import numpy as np
-from typing import List, Dict, Tuple
-import torch
-from typing import Optional, ClassVar
 from dataclasses import dataclass, field
-import pypose as pp
 from enum import Enum, auto
+from typing import ClassVar, Optional
+
+import numpy as np
+import pypose as pp
+import torch
 
 
 class EdgeType(Enum):
@@ -31,7 +29,7 @@ class Camera:
     py: float
     frame_width: int
     frame_height: int
-    
+
     def __init__(self, K: np.array, frame_width: int, frame_height: int):
         self.K = K
         self.fx = K[0, 0]
@@ -48,10 +46,10 @@ class Atlas:
     A class for an atlas.
     """
     id: int
-    
+
     def __hash__(self):
         return self.id
-    
+
     def __eq__(self, other):
         if not isinstance(other, Atlas):
             return False
@@ -61,8 +59,8 @@ class Atlas:
         return f"Atlas(id={self.id})"
 
 
-        
-    
+
+
 # ---------------------------------------------------------------------------------------------- compact tensor fields
 # A map holds millions of graph objects.  A pypose LieTensor of 7 floats costs ~1.5 KB of RAM (a plain tensor ~0.7 KB,
 # a numpy array ~0.18 KB), and every keyframe holds four pose tensors and every edge two.  So keyframe pose fields and
@@ -240,7 +238,7 @@ class Keyframe:
 
     def __hash__(self):
         return self.id
-    
+
     def __eq__(self, other):
         if not isinstance(other, Keyframe):
             return False
@@ -250,7 +248,7 @@ class Keyframe:
         return f"Keyframe(id={self.id}, timestamp={self.timestamp})"
 
 
-        
+
 
 class Edge:
     """

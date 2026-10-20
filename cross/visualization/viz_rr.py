@@ -1,15 +1,16 @@
-import numpy as np
-import rerun as rr
-from typing import Optional, Dict, Any, List, Union
-
-import torch
-from cross.core.types import Keyframe, Camera
-from cross.core.config import VisualizationConfig
 from collections import defaultdict
-import rerun.blueprint as rrb
+from typing import Any, Dict, List, Union
+
+import numpy as np
 import pypose as pp
-from loguru import logger
-from cross.core.hypothesis import HypothesisManager, Hypothesis
+import rerun as rr
+import rerun.blueprint as rrb
+import torch
+
+from cross.core.config import VisualizationConfig
+from cross.core.hypothesis import Hypothesis, HypothesisManager
+from cross.core.types import Camera, Keyframe
+
 
 class RRViz:
     # Transformation from GT (X-Fwd, Y-Left, Z-Up) to OpenCV/Rerun (X-Right, Y-Down, Z-Fwd)
@@ -81,7 +82,7 @@ class RRViz:
 
         self.min_weight_for_gmm = 1e-5
         self.max_points_per_cloud = 10000  # For downsampling
-        self.voxel_size = 0.2  # 
+        self.voxel_size = 0.2  #
 
         self._init_rerun()
 
@@ -122,100 +123,100 @@ class RRViz:
             # Set up world coordinate system to RDF (X-Right, Y-Down, Z-Forward)
             rr.log("world", rr.ViewCoordinates.RDF, static=True)
 
-    def _voxel_downsample(self, points: np.ndarray, colors: np.ndarray, 
+    def _voxel_downsample(self, points: np.ndarray, colors: np.ndarray,
                         voxel_size: float) -> tuple[np.ndarray, np.ndarray]:
         """Downsample point cloud using voxel grid (one point per voxel).
-        
+
         Args:
             points: (N, 3) array of 3D points
             colors: (N, 3) array of RGB colors
             voxel_size: Size of each voxel
-            
+
         Returns:
             Downsampled points and colors
         """
         if len(points) == 0:
             return points, colors
-            
+
         # Quantize points to voxel grid
         voxel_coords = np.floor(points / voxel_size).astype(np.int32)
-        
+
         # Use dictionary to keep track of unique voxels
         voxel_dict = {}
-        
+
         for i, (voxel_coord, point, color) in enumerate(zip(voxel_coords, points, colors)):
             voxel_key = tuple(voxel_coord)
             if voxel_key not in voxel_dict:
                 voxel_dict[voxel_key] = (point, color)
-        
+
         # Extract downsampled points and colors
         if len(voxel_dict) == 0:
             return np.empty((0, 3)), np.empty((0, 3))
-            
+
         downsampled_points = np.array([item[0] for item in voxel_dict.values()])
         downsampled_colors = np.array([item[1] for item in voxel_dict.values()])
-        
+
         return downsampled_points, downsampled_colors
 
     def _project_depth_to_pointcloud(self, depth: np.ndarray, rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Project depth image to 3D point cloud using camera intrinsics.
-        
+
         Args:
             depth: Depth image (H, W) in meters
             rgb: RGB image (H, W, 3)
-            
+
         Returns:
             points: (N, 3) array of 3D points
             colors: (N, 3) array of RGB colors
         """
         if self.camera is None:
             raise ValueError("Camera intrinsics not set")
-            
+
         h, w = depth.shape
         fx, fy = self.camera.fx, self.camera.fy
         cx, cy = self.camera.px, self.camera.py
-        
+
         # Create pixel coordinates
         u, v = np.meshgrid(np.arange(w), np.arange(h))
-        
+
         # Filter out invalid depth values
         valid_mask = (depth > 0) & (depth < 10.0)  # Reasonable depth range
-        
+
         u_valid = u[valid_mask]
         v_valid = v[valid_mask]
         depth_valid = depth[valid_mask]
         colors_valid = rgb[valid_mask]
-        
+
         # Project to 3D
         z = depth_valid
         x = (u_valid - cx) * z / fx
         y = (v_valid - cy) * z / fy
-        
+
         points = np.stack([x, y, z], axis=1)
 
         # remove ceilling points
         mask = (points[:, 1] > -0.5) & (points[:, 1] < 1.5)  # -y is up
         points = points[mask]
         colors_valid = colors_valid[mask]
-        
+
         return points, colors_valid
 
     def _process_gt_pose(self, world_pose_gt: np.ndarray) -> np.ndarray:
         """Process GT pose and apply coordinate transformations.
-        
+
         Args:
             world_pose_gt: 4x4 transformation matrix in GT coordinates
-            
+
         Returns:
             world_pose_transformed_gt: Transformed pose relative to first frame
         """
         # M = self.GT_TO_OPENCV_TRANSFORM  # Transforms points from GT to RDF
         # inv_M = np.linalg.inv(M)
-        
+
         # Convert world_pose_gt to be T_World(RDF) <- Camera(RDF)
         # Original world_pose_gt is T_World(GT) <- Camera(GT)
         # current_pose_rdf_convention = M @ world_pose_gt @ inv_M
-        
+
         if self.is_first_frame:
             # self.first_camera_pose_inv becomes T_Cam1(RDF) <- World(RDF_initial)
             self.first_camera_pose_inv = np.linalg.inv(world_pose_gt)
@@ -232,10 +233,10 @@ class RRViz:
         self.gt_trajectory_segments[-1].append(current_position_gt)
         return world_pose_transformed_gt
 
-    def _process_pointcloud(self, is_kf: bool, depth: np.ndarray, rgb: np.ndarray, 
+    def _process_pointcloud(self, is_kf: bool, depth: np.ndarray, rgb: np.ndarray,
                           world_pose_transformed_gt: np.ndarray):
         """Process point cloud for keyframes and accumulate global map.
-        
+
         Args:
             is_kf: Whether this step is a keyframe
             depth: Depth image
@@ -244,31 +245,31 @@ class RRViz:
         """
         if not is_kf:
             return
-            
+
         # Project depth to point cloud, only for keyframes
         points_cam, colors = self._project_depth_to_pointcloud(depth, rgb)
-        
+
         # Transform points to world coordinates
         points_cam_homo = np.hstack([points_cam, np.ones((len(points_cam), 1))])
         points_world_homo = (world_pose_transformed_gt @ points_cam_homo.T).T
         points_world = points_world_homo[:, :3]
-        
+
         # Downsample current frame points using voxel grid
         points_world, colors = self._voxel_downsample(
             points_world, colors, self.voxel_size)
 
         self.accumulated_points.append(points_world)
         self.accumulated_colors.append(colors)
-        
+
         # Combine all accumulated points
         all_points = np.vstack(self.accumulated_points) if self.accumulated_points else np.empty((0, 3))
         all_colors = np.vstack(self.accumulated_colors) if self.accumulated_colors else np.empty((0, 3))
-        
+
         # Global voxel downsampling if too many points
         if len(all_points) > self.max_points_per_cloud:
             all_points, all_colors = self._voxel_downsample(
                 all_points, all_colors, self.voxel_size)  # Larger voxels for global map
-        
+
         # Log accumulated point cloud
         rr.log("world/pointcloud", rr.Points3D(
             positions=all_points,
@@ -276,7 +277,7 @@ class RRViz:
             ),
             static=True,
         )
-        
+
     def _log_trajectory(self):
         """Log GT trajectory with support for multiple segments (after kidnapping)."""
         # Collect all non-empty segments with at least 2 points
@@ -344,10 +345,10 @@ class RRViz:
                 colors=[[0, 150, 255]] * len(valid_segments)  # Cyan/blue trajectory for odometry
             ))
 
-    def _log_camera_poses(self, is_kf: bool, step_idx: int, rgb: np.ndarray, 
+    def _log_camera_poses(self, is_kf: bool, step_idx: int, rgb: np.ndarray,
                          world_pose_transformed_gt: np.ndarray):
         """Log camera poses and images for current frame and keyframes.
-        
+
         Args:
             is_kf: Whether this step is a keyframe
             step_idx: Current step index
@@ -365,9 +366,9 @@ class RRViz:
             resolution=[self.camera.frame_width, self.camera.frame_height],
             focal_length=[self.camera.fx, self.camera.fy],
             principal_point=[self.camera.px, self.camera.py],
-            camera_xyz=rr.ViewCoordinates.RDF, 
+            camera_xyz=rr.ViewCoordinates.RDF,
         ))
-        
+
         # Only log pinhole camera for keyframes and make them persistent
         if is_kf:
             keyframe_entity_gt = f"world/gt_keyframes/keyframe_{step_idx}"
@@ -377,7 +378,7 @@ class RRViz:
                 translation=world_pose_transformed_gt[:3, 3],
                 mat3x3=world_pose_transformed_gt[:3, :3]
             ))
-            
+
             # Log transform for keyframe camera GT
             rr.log(keyframe_entity_gt, rr.Image(rgb))
             if self.visualize_pinhole_camera:
@@ -385,19 +386,19 @@ class RRViz:
                     resolution=[self.camera.frame_width, self.camera.frame_height],
                     focal_length=[self.camera.fx, self.camera.fy],
                     principal_point=[self.camera.px, self.camera.py],
-                    camera_xyz=rr.ViewCoordinates.RDF, 
+                    camera_xyz=rr.ViewCoordinates.RDF,
                     ),
                 )
 
     def _visualize_current_gmm_state(self, state_info: Dict[str, Any]):
         """Visualize current estimated GMM state.
-        
+
         Args:
             state_info: Dictionary containing current GMM state
         """
         if not state_info or "current_mu" not in state_info:
             return
-            
+
         current_mu_se3 = state_info["current_mu"] # pypose.SE3 (K, 7)
         current_sigma_se3 = state_info["current_sigma"] # pypose.se3 (K, 6)
         current_weights = state_info["current_weights"] # torch.Tensor (K,)
@@ -405,7 +406,7 @@ class RRViz:
         # The estimated poses are T_world_origin <- T_camera_current
         # No need for GT_TO_OPENCV_TRANSFORM or first_camera_pose_inv
         # as these are already in the correct frame (first camera is origin, RDF)
-        
+
         for i in range(current_mu_se3.shape[0]):
             gmm_component_entity = f"world/estimated_pose/component_{i}"
 
@@ -418,14 +419,14 @@ class RRViz:
             if i not in self.alive_pose_components:
                 self.alive_pose_components.add(i)
 
-            
+
             # Extract translation and rotation for rr.Transform3D
             # pypose.SE3 stores as [x, y, z, qx, qy, qz, qw]
             # rr.Transform3D needs translation as (x,y,z) and rotation as mat3x3 or quaternion [x,y,z,w]
-            pose_tensor = current_mu_se3[i].tensor() 
+            pose_tensor = current_mu_se3[i].tensor()
             translation = pose_tensor[:3].cpu().numpy()
             # pypose quat is [x,y,z,w], rerun also expects [x,y,z,w] for RotationQuat
-            rotation_quat = pose_tensor[3:].cpu().numpy() 
+            rotation_quat = pose_tensor[3:].cpu().numpy()
 
             rr.log(
                 gmm_component_entity,
@@ -438,7 +439,7 @@ class RRViz:
             # Visualize the mean pose as a set of axes
             # Scale axes by weight for emphasis
             axis_length = 0.1
-            
+
             rr.log(
                 f"{gmm_component_entity}/mean_axes",
                 rr.Arrows3D(
@@ -458,8 +459,8 @@ class RRViz:
             clamped_sigma_vec = np.maximum(sigma_vec, 1e-6)
 
             # Scale the box size by a factor for visibility, can be adjusted
-            box_half_sizes = np.clip(clamped_sigma_vec[:3], 0.05, 0.5) 
-            
+            box_half_sizes = np.clip(clamped_sigma_vec[:3], 0.05, 0.5)
+
             rr.log(
                 f"{gmm_component_entity}/uncertainty_translation",
                 rr.Ellipsoids3D(
@@ -470,7 +471,7 @@ class RRViz:
                 )
             )
 
-            
+
 
         if state_info and "proposal_mu" in state_info:
             proposal_mu = state_info["proposal_mu"]
@@ -493,14 +494,14 @@ class RRViz:
                 if i not in self.alive_proposal_components:
                     self.alive_proposal_components.add(i)
 
-                
+
                 # Extract translation and rotation for rr.Transform3D
                 # pypose.SE3 stores as [x, y, z, qx, qy, qz, qw]
                 # rr.Transform3D needs translation as (x,y,z) and rotation as mat3x3 or quaternion [x,y,z,w]
-                pose_tensor = proposal_mu[i].tensor() 
+                pose_tensor = proposal_mu[i].tensor()
                 translation = pose_tensor[:3].cpu().numpy()
                 # pypose quat is [x,y,z,w], rerun also expects [x,y,z,w] for RotationQuat
-                rotation_quat = pose_tensor[3:].cpu().numpy() 
+                rotation_quat = pose_tensor[3:].cpu().numpy()
 
                 rr.log(
                     gmm_component_entity,
@@ -512,8 +513,8 @@ class RRViz:
 
                 # Visualize the mean pose as a set of axes
                 # Scale axes by weight for emphasis
-                axis_length = 0.1 
-                
+                axis_length = 0.1
+
                 rr.log(
                     f"{gmm_component_entity}/mean_axes",
                     rr.Arrows3D(
@@ -532,8 +533,8 @@ class RRViz:
                 # Clamp sigma values to avoid very small or negative (if any instability) values before sqrt
                 clamped_sigma_vec = np.maximum(sigma_vec, 1e-6)
                 # Scale the box size by a factor for visibility, can be adjusted
-                box_half_sizes = np.clip(clamped_sigma_vec[:3]*2, 0.01, 0.5) 
-                
+                box_half_sizes = np.clip(clamped_sigma_vec[:3]*2, 0.01, 0.5)
+
                 rr.log(
                     f"{gmm_component_entity}/uncertainty_translation",
                     rr.Ellipsoids3D(
@@ -545,21 +546,21 @@ class RRViz:
                 )
 
 
-           
+
 
     def _log_system_data(self, is_kf: bool, state_info: Dict[str, Any]):
         """Log system data to rerun."""
         if not state_info:
             return
-            
+
         markdown_content = self._generate_system_data_markdown(is_kf, state_info)
-        
+
         # Add hypotheses information if available
         hypotheses = state_info.get("hypotheses", [])
         if hypotheses:
             hypotheses_content = self._generate_hypotheses_markdown(hypotheses)
             markdown_content += "\n\n" + hypotheses_content
-        
+
         # Log the markdown document
         rr.log("/system_data", rr.TextDocument(markdown_content, media_type=rr.MediaType.MARKDOWN))
 
@@ -567,7 +568,7 @@ class RRViz:
         """Generate markdown content for system data visualization."""
         lines = []
         lines.append("# System Data Summary\n")
-        
+
         # Extract data from state_info
         keyframe_timestamps = [kf.timestamp for kf in state_info.get("retrieved_keyframes", [])]
         valid_keyframe_timestamps = [kf.timestamp for kf in state_info.get("valid_keyframes", [])]
@@ -575,7 +576,7 @@ class RRViz:
         valid_masks = state_info.get("valid_masks", [])
         valid_retrieval_weights = state_info.get("valid_retrieval_weights", [])
         confidences = state_info.get("pose_est_conf", [])
-        
+
         # Check if we have pose estimation data
         # Need to verify: key exists, has data (len > 0), and all required keys are present
         has_pose_data = (
@@ -583,7 +584,7 @@ class RRViz:
             "valid_ref_stds" in state_info and
             "valid_ref_component_weights" in state_info
         )
-        
+
         if has_pose_data:
             valid_ref_mus = state_info["valid_ref_mus"]  # (B, K, 7)
             valid_ref_sigmas = state_info["valid_ref_stds"]  # (B, K, 6)
@@ -595,92 +596,92 @@ class RRViz:
 
         # proposal GMM
         proposal_mu = state_info.get("proposal_mu", None)
-        proposal_sigma = state_info.get("proposal_sigma", None) 
+        proposal_sigma = state_info.get("proposal_sigma", None)
         proposal_weights = state_info.get("proposal_weights", None)
-        
+
         # Current State Estimate GMM
         if proposal_mu is not None and proposal_weights is not None:
             lines.append("## Proposal GMM\n")
             lines.append("| Component | Weight | Mean (x,y,z) | Mean (qx,qy,qz,qw) | Variance (vx,vy,vz,wx,wy,wz) |\n")
             lines.append("|-----------|--------|--------------|-------------------|-----------------------------|\n")
-            
+
             for comp_idx in range(proposal_mu.shape[0]):
                 weight = proposal_weights[comp_idx].item()
-                
+
                 # Skip components with negligible weight
                 if weight < self.min_weight_for_gmm:
                     continue
-                    
+
                 pose_tensor = proposal_mu[comp_idx].tensor().cpu().numpy()
                 trans = pose_tensor[:3]
                 rot = pose_tensor[3:]  # qx,qy,qz,qw
-                
+
                 if proposal_sigma is not None:
                     sigma_tensor = proposal_sigma[comp_idx].tensor().cpu().numpy()
                     sigma_str = (f"({sigma_tensor[0]:.2f},{sigma_tensor[1]:.2f},{sigma_tensor[2]:.2f},"
                                f"{sigma_tensor[3]:.2f},{sigma_tensor[4]:.2f},{sigma_tensor[5]:.2f})")
                 else:
                     sigma_str = "N/A"
-                
+
                 lines.append(f"| {comp_idx} | {weight:.2f} | "
                            f"({trans[0]:.2f},{trans[1]:.2f},{trans[2]:.2f}) | "
                            f"({rot[0]:.2f},{rot[1]:.2f},{rot[2]:.2f},{rot[3]:.2f}) | "
                            f"{sigma_str} |\n")
-            
-            lines.append("\n")           
+
+            lines.append("\n")
         # Current state GMM
         current_mu = state_info.get("current_mu", None)
-        current_sigma = state_info.get("current_sigma", None) 
+        current_sigma = state_info.get("current_sigma", None)
         current_weights = state_info.get("current_weights", None)
-        
+
         # Current State Estimate GMM
         if current_mu is not None and current_weights is not None:
             lines.append("## Current State Estimate GMM\n")
             lines.append("| Component | Weight | Mean (x,y,z) | Mean (qx,qy,qz,qw) | Variance (vx,vy,vz,wx,wy,wz) |\n")
             lines.append("|-----------|--------|--------------|-------------------|-----------------------------|\n")
-            
+
             for comp_idx in range(current_mu.shape[0]):
                 weight = current_weights[comp_idx].item()
-                
+
                 # Skip components with negligible weight
                 if weight < self.min_weight_for_gmm:
                     continue
-                    
+
                 pose_tensor = current_mu[comp_idx].tensor().cpu().numpy()
                 trans = pose_tensor[:3]
                 rot = pose_tensor[3:]  # qx,qy,qz,qw
-                
-               
-                
+
+
+
                 if current_sigma is not None:
                     sigma_tensor = current_sigma[comp_idx].tensor().cpu().numpy()
                     sigma_str = (f"({sigma_tensor[0]:.2f},{sigma_tensor[1]:.2f},{sigma_tensor[2]:.2f},"
                                f"{sigma_tensor[3]:.2f},{sigma_tensor[4]:.2f},{sigma_tensor[5]:.2f})")
                 else:
                     sigma_str = "N/A"
-                
+
                 lines.append(f"| {comp_idx} | {weight:.2f} | "
                            f"({trans[0]:.2f},{trans[1]:.2f},{trans[2]:.2f}) | "
                            f"({rot[0]:.2f},{rot[1]:.2f},{rot[2]:.2f},{rot[3]:.2f}) | "
                            f"{sigma_str} |\n")
-            
+
             lines.append("\n")
 
         # Retrieved Keyframes Table
         lines.append("## Retrieved Keyframes\n")
         lines.append("| KF Timestamp | Retrieval Score | Valid |  Pose_est_conf| Rel Pose (x,y,z) | Rel Pose (qx,qy,qz,qw) | Rel Pose Variance |\n")
         lines.append("|-------|------------|-------------|-----------|------------------|----------------------|------------------|\n")
-        
+
         valid_kf_idx = 0
         for i, (score, is_valid) in enumerate(zip(retrieval_scores, valid_masks)):
             valid_str = "✓" if is_valid else "✗"
-            
+
             # Extract relative pose information if available
             if is_valid and valid_poses is not None:
                 pose_tensor = valid_poses[valid_kf_idx].tensor().cpu().numpy()
                 rel_pose_trans = f"({pose_tensor[0]:.2f},{pose_tensor[1]:.2f},{pose_tensor[2]:.2f})"
                 rel_pose_rot = f"({pose_tensor[3]:.2f},{pose_tensor[4]:.2f},{pose_tensor[5]:.2f},{pose_tensor[6]:.2f})"
-                
+
                 if valid_stds is not None:
                     cov_tensor = valid_stds[valid_kf_idx].tensor().cpu().numpy()
                     rel_pose_var = f"({cov_tensor[0]:.2f},{cov_tensor[1]:.2f},{cov_tensor[2]:.2f})"
@@ -693,29 +694,29 @@ class RRViz:
                 rel_pose_rot = "N/A"
                 rel_pose_var = "N/A"
                 confidence = "N/A"
-            
+
             lines.append(f"| {keyframe_timestamps[i]} | {score:.2f} | {valid_str} | {confidence} | {rel_pose_trans} | {rel_pose_rot} | {rel_pose_var} |\n")
-        
+
         lines.append("\n")
-        
+
         # 2. Valid Keyframe GMMs
         if has_pose_data and len(valid_ref_mus) > 0:
             lines.append("## Valid Keyframe GMMs\n")
-            
+
             valid_kf_idx = 0
             for i, is_valid in enumerate(valid_masks):
                 if not is_valid:
                     continue
-                    
+
                 lines.append(f"##### Keyframe {valid_keyframe_timestamps[valid_kf_idx]} GMM Components\n")
                 lines.append("| Component | Weight | Mean (x,y,z) | Mean (qx,qy,qz,qw) | Variance (vx,vy,vz,wx,wy,wz) | Convolved Mean (x,y,z) | Convolved Mean (qx,qy,qz,qw) | Convolved Variance |\n")
                 lines.append("|-----------|--------|--------------|-------------------|-----------------------------|-----------------------|-----------------------------|-----------------|\n")
-                
+
                 # Get GMM components for this keyframe
                 kf_mus = valid_ref_mus[valid_kf_idx]  # (K, 7)
                 kf_sigmas = valid_ref_sigmas[valid_kf_idx]  # (K, 6)
                 kf_weights = valid_ref_component_weights[valid_kf_idx]  # (K,)
-                
+
                 # Get convolved data if available
                 conv_mus = None
                 conv_sigmas = None
@@ -723,20 +724,20 @@ class RRViz:
                     conv_mus = convolved_mus[valid_kf_idx]  # (K, 7)
                 if convolved_sigmas is not None:
                     conv_sigmas = convolved_sigmas[valid_kf_idx]  # (K, 6)
-                
+
                 for comp_idx in range(kf_mus.shape[0]):
                     weight = kf_weights[comp_idx].item()
-                    
+
                     # Skip components with negligible weight
                     if weight < self.min_weight_for_gmm:
                         continue
-                        
+
                     pose_tensor = kf_mus[comp_idx].tensor().cpu().numpy()
                     trans = pose_tensor[:3]
                     rot = pose_tensor[3:]  # qx,qy,qz,qw
-                    
+
                     sigma_tensor = kf_sigmas[comp_idx].tensor().cpu().numpy()
-                    
+
                     # Convolved data
                     if conv_mus is not None:
                         conv_pose_tensor = conv_mus[comp_idx].tensor().cpu().numpy()
@@ -745,49 +746,49 @@ class RRViz:
                     else:
                         conv_trans = "N/A"
                         conv_rot = "N/A"
-                    
+
                     if conv_sigmas is not None:
                         conv_sigma_tensor = conv_sigmas[comp_idx].tensor().cpu().numpy()
                         conv_var = f"({conv_sigma_tensor[0]:.2f},{conv_sigma_tensor[1]:.2f},{conv_sigma_tensor[2]:.2f})"
                     else:
                         conv_var = "N/A"
-                    
+
                     lines.append(f"| {comp_idx} | {weight:.2f} | "
                                f"({trans[0]:.2f},{trans[1]:.2f},{trans[2]:.2f}) | "
                                f"({rot[0]:.2f},{rot[1]:.2f},{rot[2]:.2f},{rot[3]:.2f}) | "
                                f"({sigma_tensor[0]:.2f},{sigma_tensor[1]:.2f},{sigma_tensor[2]:.2f},"
                                f"{sigma_tensor[3]:.2f},{sigma_tensor[4]:.2f},{sigma_tensor[5]:.2f}) | "
                                f"{conv_trans} | {conv_rot} | {conv_var} |\n")
-                
+
                 lines.append("\n")
                 valid_kf_idx += 1
-        
-        
+
+
         # Additional Statistics
         lines.append("## Statistics\n")
         lines.append(f"- **Is Keyframe**: {is_kf}\n")
-        
+
         # Count total, temporary, and permanent keyframes
         all_keyframes = self.hypothesis_manager.nodes.values()
         total_num_kf = len(all_keyframes)
         temp_kf_count = sum(1 for kf in all_keyframes if kf.temporary)
         permanent_kf_count = total_num_kf - temp_kf_count
-        
+
         lines.append(f"- **Total Number of Keyframes**: {total_num_kf}\n")
         lines.append(f"- **Permanent Keyframes**: {permanent_kf_count}\n")
         lines.append(f"- **Temporary Keyframes**: {temp_kf_count}\n")
-        
+
         if valid_retrieval_weights is not None and len(valid_retrieval_weights) > 0:
             lines.append(f"- **Valid Retrievals**: {len(valid_retrieval_weights)}\n")
             lines.append(f"- **Max Retrieval Score**: {max(valid_retrieval_weights).item():.2f}\n")
             lines.append(f"- **Mean Retrieval Score**: {valid_retrieval_weights.mean().item():.2f}\n")
-        
+
         # if len(match_counts) > 0:
         #     valid_match_counts = [mc for mc, vm in zip(match_counts, valid_masks) if vm]
         #     if valid_match_counts:
         #         lines.append(f"- **Max Matches**: {max(valid_match_counts)}\n")
         #         lines.append(f"- **Mean Matches**: {sum(valid_match_counts)/len(valid_match_counts):.2f}\n")
-        
+
         return "".join(lines)
 
 
@@ -850,15 +851,15 @@ class RRViz:
         for kf_idx, keyframe in enumerate(all_keyframes):
             if keyframe.temporary:
                 continue
-                
+
             if keyframe.pose_mu is None or keyframe.pose_weights is None:
                 continue
-                
+
             # Keyframe GMM components
             pose_mu_se3 = keyframe.pose_mu  # pypose.SE3 (K, 7)
-            pose_sigma_se3 = keyframe.pose_std  # pypose.se3 (K, 6) 
+            pose_sigma_se3 = keyframe.pose_std  # pypose.se3 (K, 6)
             pose_weights = keyframe.pose_weights  # torch.Tensor (K,)
-            
+
             for comp_idx in range(pose_mu_se3.shape[0]):
                 kf_component_entity = f"world/keyframe_gmms/kf_{kf_idx}/component_{comp_idx}"
 
@@ -867,7 +868,7 @@ class RRViz:
                         rr.log(kf_component_entity, rr.Clear(recursive=True))
                         self.alive_kf_components[kf_idx].remove(comp_idx)
                     continue
-                    
+
                 if comp_idx not in self.alive_kf_components[kf_idx]:
                     self.alive_kf_components[kf_idx].add(comp_idx)
 
@@ -875,7 +876,7 @@ class RRViz:
                 pose_tensor = pose_mu_se3[comp_idx].tensor()
                 translation = pose_tensor[:3].cpu().numpy()
                 rotation_quat = pose_tensor[3:].cpu().numpy()
-                
+
                 # Log the transform
                 rr.log(
                     kf_component_entity,
@@ -884,13 +885,13 @@ class RRViz:
                         rotation=rr.Quaternion(xyzw=rotation_quat)
                     )
                 )
-                
+
                 # Visualize mean pose with axes scaled by weight
                 # Use different base size for keyframe vs current estimate
                 base_axis_length = 0.05  # Smaller for keyframes to reduce clutter
                 weight_scale = pose_weights[comp_idx].item()
                 axis_length = base_axis_length + weight_scale * 0.2  # Scale between 0.05 and 0.25
-                
+
                 rr.log(
                     f"{kf_component_entity}/axes",
                     rr.Arrows3D(
@@ -899,16 +900,16 @@ class RRViz:
                         colors=[[200,100,100],[100,200,100],[100,100,200]]  # Muted colors for keyframes
                     )
                 )
-                
+
                 # Visualize uncertainty if available
                 if pose_sigma_se3 is not None:
                     sigma_vec = pose_sigma_se3[comp_idx].tensor().cpu().numpy()
                     clamped_sigma_vec = np.maximum(sigma_vec, 1e-6)
                     std_devs = np.sqrt(clamped_sigma_vec[:3])  # Translational uncertainties
-                    
+
                     # Smaller uncertainty boxes for keyframes
                     box_half_sizes = np.clip(std_devs * 0.05, 0.02, 0.5)
-                    
+
                     rr.log(
                         f"{kf_component_entity}/uncertainty",
                         rr.Boxes3D(
@@ -991,19 +992,19 @@ class RRViz:
 
         if self.visualize_system_data:
             self._log_system_data(is_kf, state_info)
-        
+
         # Extract GT data
         rgb = gt_info["rgb"]
-        depth = gt_info["depth"] 
+        depth = gt_info["depth"]
         world_pose_gt = gt_info["world_pose"]  # 4x4 transformation matrix in GT coordinates
 
         # Process GT pose transformations
         world_pose_transformed_gt = self._process_gt_pose(world_pose_gt)        # Add keyframe position for trajectory
-        
+
         # Process point cloud for keyframes
         if self.visualize_pointcloud:
             self._process_pointcloud(is_kf, depth, rgb, world_pose_transformed_gt)
-        
+
         # Log trajectory
         if self.visualize_trajectory:
             self._log_trajectory()
@@ -1016,11 +1017,11 @@ class RRViz:
         # Log camera poses and images
         if self.visualize_camera:
             self._log_camera_poses(is_kf, step_idx, rgb, world_pose_transformed_gt)
-        
+
         # Visualize current estimated GMM state
         if self.visualize_current_gmm_state:
             self._visualize_current_gmm_state(state_info)
-        
+
         # Visualize all keyframe GMM distributions (called periodically or on keyframes)
         if is_kf and self.visualize_keyframe_gmms:  # Update keyframe visualizations when we have a new keyframe
             self._visualize_keyframe_gmms()
@@ -1030,7 +1031,7 @@ class RRViz:
 
         if self.visualize_hypotheses:
             self._visualize_hypo_dict(state_info)
-        
+
         # Mark kidnapping boundary after all processing
         if is_kidnapped_frame:
             self.kidnapped_kf_ids.add(kf.id)
@@ -1257,7 +1258,6 @@ class RRViz:
         return "".join(lines)
 
 
-    
-        
 
-    
+
+

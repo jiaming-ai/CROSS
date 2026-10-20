@@ -22,7 +22,7 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple, List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pypose as pp

@@ -34,7 +34,7 @@ def test_vpr_buffer_grows_on_map_load():
 
 
 def test_uint8_keyframe_storage_roundtrip():
-    from cross.db.db import to_uint8_image, as_float_image
+    from cross.db.db import as_float_image, to_uint8_image
     x = torch.rand(3, 8, 8)
     y = as_float_image(to_uint8_image(x))
     assert y.dtype == torch.float32 and float((y - x).abs().max()) <= 0.5 / 255 + 1e-6
@@ -45,6 +45,7 @@ def test_uint8_keyframe_storage_roundtrip():
 def _reloc_manager(unique: bool):
     """Relocalization session (map loaded, hypothesis 0 not anchored) with three places 10 m apart."""
     import types
+
     from cross.core.config import HypothesisConfig
     from cross.core.hypothesis import HypothesisManager
     cfg = HypothesisConfig(unmatched_evidence="miss", reloc_unique_evidence=unique)

@@ -11,7 +11,6 @@ only; the scale head is supervised on metric windows only.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import datetime
 import json
 import math

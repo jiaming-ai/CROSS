@@ -101,6 +101,7 @@ def main():
 def compute(a):
     import torch
     from torchvision import transforms
+
     from cross.core.types import Camera
     from cross.db.boq import BoQ
     from cross.utils.camera import get_transforms_ff

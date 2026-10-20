@@ -118,6 +118,7 @@ KITTI_NOISE = {"gyro_noise_density": 1.2e-3, "accel_noise_density": 2.0e-2,
 
 def kitti(bench: Path, raw: Path, extract: Path, seqs):
     from prepare_kitti import SEQUENCES
+
     from cross.dataloader.kitti_calib import load_kitti_calibration
     out = []
     for s in seqs or list(SEQUENCES):
@@ -151,7 +152,6 @@ def kitti(bench: Path, raw: Path, extract: Path, seqs):
 
 # ---------------------------------------------------------------------------------------------------- ROVER
 def rover(bench: Path, raw: Path, seqs):
-    import yaml
     from prepare_rover import read_calib, stereo_rectification
     cal_d, cal_t = read_calib(raw)
     T_camleft_imu = np.asarray(cal_t["IMU-To-CamLeft"], dtype=np.float64)       # Kalibr: x_camleft = T x_imu
@@ -197,6 +197,7 @@ def rover(bench: Path, raw: Path, seqs):
 def openloris(bench: Path, raw: Path, seqs):
     from prepare_imu import _openloris_intrinsic
     from prepare_openloris import fisheye_rectifier, read_child_extrinsic
+
     from cross.imu.simulate import BMI055
     names = seqs or sorted(p.name for p in bench.iterdir() if (p / "stereo" / "times.txt").is_file())
     out = []

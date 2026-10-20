@@ -1,6 +1,7 @@
+from typing import List, Literal
+
 import numpy as np
 import torch
-from typing import List, Literal
 from loguru import logger
 
 
@@ -66,7 +67,7 @@ class Planner:
             self._set_goal_by_image(goal_image)
         else:
             raise ValueError("Either goal_kf_id or goal_image or goal_text must be set")
-        
+
         if plan_to_goal:
             self.plan_to_goal()
 
@@ -150,7 +151,7 @@ class Planner:
         current_pose = self.hypothesis_manager.dist[0][0].unsqueeze(0)
         waypoint_poses_tensor = torch.stack(waypoint_poses)
         waypoint_poses_local = current_pose.Inv() @ waypoint_poses_tensor
-        
+
         # Count remaining waypoints (including those beyond next_n_waypoints)
         remaining_count = 0
         for i in range(current_idx + 1, len(path)):

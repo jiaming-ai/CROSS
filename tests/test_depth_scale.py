@@ -109,6 +109,7 @@ def test_estimator_scales_the_pass_by_the_measured_depth(monkeypatch):
 
 def test_rgbd_ff_mode_files_and_arguments():
     import argparse
+
     from cross.pipeline import CONFIG_DIR, add_session_args, finish_session_args, mode_file_name, shipped_config_files
     for odo in ("wheel", "basalt"):
         cfg = load_config(os.path.join(CONFIG_DIR, "modes", f"rgbd_ff_{odo}.yaml"))

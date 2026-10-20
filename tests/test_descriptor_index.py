@@ -92,9 +92,10 @@ def test_spatial_index_radius_queries_with_pending_rows_and_rebuild():
 
 def _db_with_keyframes(n=60, d=16):
     """A KeyframeDatabase (no VPR model) with keyframes on a line, 2 m apart; embedding of image i = row i."""
+    import pypose as pp
+
     from cross.db.db import KeyframeDatabase
     from cross.db.index import DescriptorIndex
-    import pypose as pp
     X = _unit(n + 5, d, seed=3)
     db = KeyframeDatabase.__new__(KeyframeDatabase)
     db.device, db.top_k = "cpu", 5
@@ -126,9 +127,10 @@ def test_query_restricted_to_rows_and_rows_near():
 
 
 def test_locality_merge_puts_in_region_keyframes_first():
+    import pypose as pp
+
     from cross.core.config import SystemConfig
     from cross.core.system import System
-    import pypose as pp
     db, X = _db_with_keyframes()
     cfg = SystemConfig()
     cfg.retrieval.locality.enabled = True
@@ -161,7 +163,10 @@ def test_locality_merge_puts_in_region_keyframes_first():
 
 def _topo_pair():
     """Random keyframes (some temporary) for the proximity graph."""
-    import threading, pypose as pp
+    import threading
+
+    import pypose as pp
+
     from cross.core import simple_topo as new
     g = torch.Generator().manual_seed(5)
     nodes = {}

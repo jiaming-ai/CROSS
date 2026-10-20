@@ -17,10 +17,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from cross.imu.preintegration import preintegrate      # noqa: E402
-from cross.imu.simulate import simulate_imu            # noqa: E402
-from cross.imu.vgi_graph import GraphConfig, VgiGraph   # noqa: E402
-from test_imu_scale import robot_path                   # noqa: E402
+from test_imu_scale import robot_path  # noqa: E402
+
+from cross.imu.preintegration import preintegrate  # noqa: E402
+from cross.imu.simulate import simulate_imu  # noqa: E402
+from cross.imu.vgi_graph import GraphConfig, VgiGraph  # noqa: E402
 
 REFERENCE_COMMIT = "0207e1b"
 
@@ -281,6 +282,7 @@ def test_translation_gate():
     within seconds (its uncertainty grows with the time since the last accepted translation); an IMU whose gyro
     disagrees with the passes (dropout, clock jump) outvotes nothing; never more than the maximum gap."""
     import types
+
     from cross.mono.config import MonoConfig
     from cross.mono.vggt_imu_frontend import VggtImuFrontend
     fe = VggtImuFrontend(np.eye(3), MonoConfig(), device="cpu")
@@ -312,6 +314,7 @@ def test_translation_tests_of_a_runaway_scale():
     the gate's other rules stay (an IMU inconsistent with the passes outvotes nothing; beyond the maximum gap the pass
     is accepted whatever it says), and a pass at the right scale is accepted as before."""
     import types
+
     from cross.mono.config import MonoConfig
     from cross.mono.vggt_imu_frontend import VggtImuFrontend
     fe = VggtImuFrontend(np.eye(3), MonoConfig(), device="cpu")
@@ -417,6 +420,7 @@ def test_stereo_depth_scale_observation():
     rectified pair (0.1 m baseline), the pass's depth at half the true depth: SGBM depth against it gives log 2."""
     import cv2
     import torch
+
     from cross.mono.config import MonoConfig
     from cross.mono.vggt_imu_frontend import VggtImuFrontend
     h, w, f, b = 240, 320, 300.0, 0.1
@@ -507,6 +511,7 @@ def test_stereo_gate():
     while the IMU is trustworthy, even when both visual cues agree with each other; with an untrustworthy IMU the pass
     is kept and a corner motion that disagrees with it is dropped."""
     import types
+
     from cross.mono.config import MonoConfig
     from cross.mono.vggt_imu_frontend import VggtImuFrontend
     fe = VggtImuFrontend(np.eye(3), MonoConfig(), device="cpu", T_right_in_left=np.eye(4))
@@ -543,6 +548,7 @@ def test_stereo_gate_failure_model():
     sides (noise) is held to the same tolerance on both; with every recent test passed the test is (nearly) the 4
     sigma one."""
     import types
+
     from cross.mono.config import MonoConfig
     from cross.mono.vggt_imu_frontend import VggtImuFrontend
 

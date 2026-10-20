@@ -17,7 +17,6 @@ windows); --poses colmap: COLMAP scaled to metres (per-sequence world).  One sce
 python -m vggt_ft.prep.oxford_spires <sequence processed dir> <root> [--hfov 90] [--size 768 576] [--every 1]
 """
 import argparse
-import io
 import json
 import math
 import re

@@ -1,12 +1,8 @@
 import torch
-
-import numpy as np
-from transformers import Owlv2Processor, Owlv2ForObjectDetection
-import torch
 from sam2.sam2_image_predictor import SAM2ImagePredictor
-import matplotlib.pyplot as plt
+from transformers import Owlv2ForObjectDetection, Owlv2Processor
+
 from cross.utils.profile import timeblock
-from .utils import show_masks
 
 
 class OwlSam:
@@ -16,8 +12,8 @@ class OwlSam:
         "detection_threshold": 0.1,
         "mask_threshold": 0.9,
     }
-    def __init__(self, 
-                 device='cuda:0', 
+    def __init__(self,
+                 device='cuda:0',
                  config=None,
                  ):
 
@@ -54,12 +50,12 @@ class OwlSam:
 
             with timeblock("detection"):
                 inputs = self.processor(text=texts, images=image, return_tensors="pt")
-                
-                outputs = self.owl(input_ids=inputs["input_ids"].to(self.device), 
+
+                outputs = self.owl(input_ids=inputs["input_ids"].to(self.device),
                                 pixel_values=inputs["pixel_values"].to(self.device),
                                 attention_mask=inputs["attention_mask"].to(self.device))
-                results = self.processor.post_process_grounded_object_detection(outputs=outputs, 
-                                                                    target_sizes=target_sizes, 
+                results = self.processor.post_process_grounded_object_detection(outputs=outputs,
+                                                                    target_sizes=target_sizes,
                                                                     threshold=self.default_config["detection_threshold"])
             if batch:
                 # TODO: batch sam
@@ -69,7 +65,7 @@ class OwlSam:
                 #     boxes=boxes,
                 #     multimask_output=False,
                 # )
-                
+
             else:
                 boxes = results[0]["boxes"].cpu()
                 det_scores = results[0]["scores"].cpu()

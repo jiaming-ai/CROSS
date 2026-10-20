@@ -1,8 +1,8 @@
-from typing import Tuple
 import numpy as np
-
 from torchvision import transforms
+
 from cross.core.types import Camera
+
 
 def get_transforms_target_max(
     camera: Camera,
@@ -13,15 +13,15 @@ def get_transforms_target_max(
     rgb_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Resize(
-            resize_target_short_side, 
-            interpolation=transforms.InterpolationMode.BILINEAR, 
+            resize_target_short_side,
+            interpolation=transforms.InterpolationMode.BILINEAR,
             max_size=max_overall_dimension,
         ),
     ])
     depth_transform = transforms.Compose([
         transforms.Resize(
-            resize_target_short_side, 
-            interpolation=transforms.InterpolationMode.BILINEAR, 
+            resize_target_short_side,
+            interpolation=transforms.InterpolationMode.BILINEAR,
             max_size=max_overall_dimension,
         ),
     ])
@@ -41,23 +41,23 @@ def get_transforms_target_max(
     camera.fy *= scale_h
     camera.px *= scale_w
     camera.py *= scale_h
-    
+
     camera.K[0, 0] = camera.fx
     camera.K[1, 1] = camera.fy
     camera.K[0, 2] = camera.px
     camera.K[1, 2] = camera.py
-    
+
     camera.frame_width = int(new_w)
     camera.frame_height = int(new_h)
 
     return rgb_transform, depth_transform
-    
-    
-    
-    
-    
-    
-    
+
+
+
+
+
+
+
 
 
 def get_transforms_ff(

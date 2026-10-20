@@ -13,12 +13,11 @@ A recording can also be read straight from a capture zip: "capture.zip::path/ins
 """
 from __future__ import annotations
 
+import io
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
-import io
-import zipfile
 
 import numpy as np
 import pandas as pd

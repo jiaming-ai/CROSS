@@ -35,7 +35,7 @@ import uuid
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import numpy as np
 import torch

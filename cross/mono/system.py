@@ -1,8 +1,6 @@
 """Image-only entry point into the original CROSS topological mapper."""
 
-from time import perf_counter
 
-import cv2
 import numpy as np
 
 from cross.pipeline import Pipeline
@@ -56,6 +54,7 @@ class MonocularSystem(Pipeline):
         from cross.core.config import PoseEstType, SystemConfig
         from cross.core.system import System
         from cross.core.types import Camera
+
         from .retrieval import DA3RelativePose, MetricRelativePose
 
         self.config = config or MonoConfig()
@@ -65,7 +64,12 @@ class MonocularSystem(Pipeline):
             from .dpvo_frontend import DPVOFrontend
             self.frontend = DPVOFrontend(K, self.config, device)
         elif self.config.frontend in {"metric_pnp", "rotation_metric", "learned_rotation_pnp", "metric_klt"}:
-            from .pnp_frontend import MetricPnPFrontend, RotationMetricFrontend, LearnedRotationPnPFrontend, MetricKLTFrontend
+            from .pnp_frontend import (
+                LearnedRotationPnPFrontend,
+                MetricKLTFrontend,
+                MetricPnPFrontend,
+                RotationMetricFrontend,
+            )
             factory = {"metric_pnp": MetricPnPFrontend, "rotation_metric": RotationMetricFrontend,
                        "learned_rotation_pnp": LearnedRotationPnPFrontend, "metric_klt": MetricKLTFrontend}[self.config.frontend]
             self.frontend = factory(K, self.config, device)

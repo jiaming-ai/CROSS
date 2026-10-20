@@ -47,8 +47,8 @@ def test_two_view_is_a_fallback_not_a_retrieval_pose():
 def test_fallback_keeps_one_component_after_a_rejected_primary_pose(monkeypatch):
     torch = pytest.importorskip('torch')
     pytest.importorskip('pypose')
-    from cross.mono.two_view_retrieval import MetricTwoViewRelativePose
     from cross.mono import two_view_retrieval as module
+    from cross.mono.two_view_retrieval import MetricTwoViewRelativePose
 
     estimator = MetricTwoViewRelativePose.__new__(MetricTwoViewRelativePose)
     estimator.device = 'cpu'

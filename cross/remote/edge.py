@@ -169,6 +169,7 @@ class _RemoteKeyframes:
     @property
     def nodes(self):
         from types import SimpleNamespace
+
         import pypose as pp
         import torch
         self.link.flush()
@@ -181,8 +182,9 @@ class _RemoteKeyframes:
 def remote_session(pipeline, link_factory, upload="predicted", obs_cap=0.0):
     """A local session (cross.pipeline.build_session: a Pipeline with external or VGGT-inertial odometry) split into a
     server (its back end and the odometry's pass service) and an edge behind the link link_factory(server)."""
-    from .server import MapServer
     from cross.pipeline import Pipeline
+
+    from .server import MapServer
     if not isinstance(pipeline, Pipeline):
         raise ValueError("Remote sessions: the rgbd / stereo modes and the mono mode with the ff back end")
     if pipeline.odometry not in ("external", "vgio"):

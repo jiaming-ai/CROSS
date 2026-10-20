@@ -4,10 +4,10 @@ import math
 import numpy as np
 import pytest
 
-from cross.geo.geodesy import LocalFrame, ecef_to_lla, lla_to_ecef
 from cross.geo.anchor import Anchor, AnchorConfig, rot_z, rotation_between, wrap
-from cross.geo.gnss import GnssFix, GnssGate, GnssGateConfig, GnssNoiseModel, FIX_3D, FIX_NONE
 from cross.geo.compass import Compass, CompassConfig, tilt_compensated_yaw
+from cross.geo.geodesy import LocalFrame, ecef_to_lla, lla_to_ecef
+from cross.geo.gnss import FIX_3D, FIX_NONE, GnssFix, GnssGate, GnssGateConfig, GnssNoiseModel
 
 
 def test_geodesy_round_trip():
@@ -161,8 +161,10 @@ def test_manager_factors_correct_a_drifting_chain_in_the_pose_graph():
     """GeoManager + PoseGraph: a camera-convention odometry chain that drifts in heading is pulled back to the GNSS
     track by decimated GNSS factors with the soft gauge; indoor (no fix) and stale-receiver stretches are ignored."""
     import types
+
     import pypose as pp
     import torch
+
     from cross.core.config import GeoConfig
     from cross.core.pgo import PoseGraph
     from cross.core.types import Edge, EdgeType, Keyframe
@@ -297,6 +299,7 @@ def test_geo_state_columns_round_trip():
     """The geo state stored with a map (format v2 keeps per-keyframe data as numpy columns) loads back, and the
     version-1 dict form still loads."""
     import pickle
+
     from cross.core.config import GeoConfig
     from cross.geo.manager import GeoManager
     g = GeoManager(GeoConfig(enabled=True))
@@ -325,13 +328,14 @@ def test_geo_anchor_kept_when_a_map_is_saved_again_without_gnss(tmp_path, monkey
     anchor, its GNSS factors and every keyframe's latitude / longitude (map format v2, System.save_map / load_map)."""
     import pypose as pp
     import torch
+    from test_map_store import _db, _rng_image
+
     from cross.core.config import HypothesisConfig, PoseEstType, SystemConfig
     from cross.core.hypothesis import HypothesisManager
     from cross.core.system import System
-    from cross.core.types import Edge, EdgeType, Keyframe
+    from cross.core.types import Edge, EdgeType
     from cross.db import store
     from cross.geo.manager import GeoManager
-    from test_map_store import _db, _rng_image
 
     def stub(monkeypatch):
         cfg = SystemConfig()
@@ -414,9 +418,9 @@ def test_manager_focus_region_follows_the_trusted_fix():
 
 def test_batched_fix_positions_equal_the_per_fix_positions_exactly():
     """GeoManager._positions (one batched pose -> matrix conversion) must give the values of _position per fix."""
-    import types
     import pypose as pp
     import torch
+
     from cross.core.config import GeoConfig
     from cross.core.types import Keyframe
     from cross.geo.manager import GeoManager
@@ -444,6 +448,7 @@ def _session_into(geo, nodes, n, yaw_true, t_true, frame, rng, start, heading_of
     to `geo` with GNSS fixes (5 m noise, correlated over 30 s) and optionally compass headings; returns the positions."""
     import pypose as pp
     import torch
+
     from cross.core.types import Keyframe
     a_true = Anchor(AnchorConfig(), vertical_map=np.array([0, -1.0, 0]))
     R_true = rot_z(yaw_true) @ a_true.R_level
@@ -502,6 +507,7 @@ def test_pooled_sessions_anchor_a_map_no_single_session_can():
     """Two short walks in a small site: each alone leaves the heading unobservable (std > 3 deg); pooled through the
     map's stored fixes (pool_sessions) the anchor is observable, and its fixes survive a save / load."""
     import pickle
+
     from cross.core.config import GeoConfig
     from cross.core.types import Keyframe
     from cross.geo.manager import GeoManager

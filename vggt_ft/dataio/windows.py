@@ -31,7 +31,7 @@ import torch
 from scipy.spatial import cKDTree
 from torch.utils.data import IterableDataset, get_worker_info
 
-from .scene import Scene, load_scene, list_scenes
+from .scene import Scene, list_scenes, load_scene
 from .transforms import augment_frame, centred_crop_resize, target_shape
 
 DEFAULTS = dict(

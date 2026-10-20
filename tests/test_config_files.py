@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from cross.core.config import load_config   # noqa: E402
+from cross.core.config import load_config  # noqa: E402
 
 CONFIGS = ROOT / "configs"
 MODES = sorted((CONFIGS / "modes").glob("*.yaml"))
@@ -37,6 +37,7 @@ def test_mode_files_and_overlays_have_only_known_keys(mode, caplog):
 
 def test_mono_and_imu_sections_have_only_known_keys():
     import dataclasses
+
     from cross.imu.scale_filter import ImuConfig
     from cross.mono.config import MonoConfig
 

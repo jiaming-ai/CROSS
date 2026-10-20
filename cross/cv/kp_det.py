@@ -1,12 +1,12 @@
-import numpy as np
-from typing import Dict
-import torch
 from abc import ABC, abstractmethod
-from loguru import logger
-import kornia.feature as KF
-from cross.utils.profile import timeit
 from collections import namedtuple
+from typing import Dict
+
+import kornia.feature as KF
+import torch
+
 from cross.utils.hub import hub_load
+from cross.utils.profile import timeit
 
 DetectionResult = namedtuple("DetectionResult", ["keypoints", "descriptors"])
 
@@ -14,8 +14,8 @@ class KpDet(ABC):
     """Keypoint Detection and Description"""
 
     def __init__(
-        self, 
-        device: str, 
+        self,
+        device: str,
         config: Dict,
         ):
         self.device = torch.device(device)
@@ -41,7 +41,7 @@ class KpDetDisk(KpDet):
 
         self.disk = KF.DISK.from_pretrained("depth").to(self.device)
         self.disk.eval()
-    
+
     def detect(self, image: torch.Tensor):
         """
 
@@ -75,9 +75,9 @@ class KpDetXfeat(KpDet):
         super().__init__(device, config)
 
         self.xfeat = hub_load(
-            'verlab/accelerated_features', 
-            'XFeat', 
-            pretrained = True, 
+            'verlab/accelerated_features',
+            'XFeat',
+            pretrained = True,
             top_k = self.config["n_keypoints"],
             detection_threshold=self.config["detection_threshold"]
         )
@@ -97,7 +97,7 @@ class KpDetXfeat(KpDet):
         if len(image.shape) == 3:
             image = image.unsqueeze(0)
             batch = False
-        
+
         elif len(image.shape) == 4:
             batch = True
 
@@ -106,7 +106,7 @@ class KpDetXfeat(KpDet):
             return [DetectionResult(f["keypoints"], f["descriptors"]) for f in res]
         else:
             return DetectionResult(res[0]["keypoints"], res[0]["descriptors"])
-        
+
 
 class KpDetDeDoDe(KpDet):
     def __init__(self, device: str, config: Dict):
@@ -126,14 +126,14 @@ class KpDetDeDoDe(KpDet):
         if len(image.shape) == 3:
             image = image.unsqueeze(0)
             batch = False
-        
+
         elif len(image.shape) == 4:
             batch = True
-        
+
         keypoints, scores, features = self.dedode(
             image,
             n=self.config["n_keypoints"],
-        ) 
+        )
 
         # TODO: filter the keypoints based on the scores
 

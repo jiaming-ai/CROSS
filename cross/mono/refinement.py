@@ -4,8 +4,9 @@ import cv2
 import numpy as np
 import torch
 
-from .geometry import inverse
 from cross.utils.hub import hub_load
+
+from .geometry import inverse
 
 
 class XFeatRefiner:

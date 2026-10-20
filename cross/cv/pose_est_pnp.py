@@ -1,37 +1,32 @@
+import dataclasses
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Tuple, List, Union
-import torch
+from typing import Dict, List, Optional, Tuple, Union
 
+import cv2
+import numpy as np
 import pypose as pp
+import torch
+from loguru import logger
 
+from cross.core.config import PoseEstConfig
 from cross.core.types import Camera, Keyframe
-from cross.core.config import PoseEstConfig, PoseEstType, config_to_dict as _cfg_to_dict
-from cross.utils.profile import timeit
 from cross.cv.kp_det import get_kp_det
 from cross.cv.kp_match import get_kp_match
-from loguru import logger
-import numpy as np
-import cv2
-import matplotlib.pyplot as plt
-import dataclasses
-
 from cross.utils.points import depth_to_xyz
-from cross.visualization.viz2d import create_window, show_plot
-from cross.utils.rotation import quaternion_to_rotation_matrix_numpy
-from kornia.geometry import conversions as KC
+from cross.utils.profile import timeit
 
 
 @timeit
 def pnp_ransac(
-    points3d: torch.Tensor, 
-    points2d: torch.Tensor, 
+    points3d: torch.Tensor,
+    points2d: torch.Tensor,
     camera: Camera,
     iterations_count: int = 50,
     reprojection_error: float = 3.0,
     confidence: float = 0.99
 ) -> Optional[torch.Tensor]:
     """Estimate camera pose using PnP RANSAC.
-    
+
     Args:
         points3d: Model 3D coordinates (N x 3)
         points2d: Scene 2D coordinates (N x 2)
@@ -39,7 +34,7 @@ def pnp_ransac(
         iterations_count: Number of RANSAC iterations
         reprojection_error: Maximum reprojection error
         confidence: RANSAC confidence level
-    
+
     Returns:
         pose: 7-dim tensor [tx, ty, tz, qx, qy, qz, qw] or None if failed
     """
@@ -55,7 +50,7 @@ def pnp_ransac(
     points3d_np = points3d.detach().cpu().numpy().astype(np.float64)
     points2d_np = points2d.detach().cpu().numpy().astype(np.float64)
     camera_matrix_np = camera.K.astype(np.float64)
-    
+
     # Solve PnP with RANSAC
     success, rvec, tvec, inliers = cv2.solvePnPRansac(
         points3d_np, points2d_np,
@@ -65,10 +60,10 @@ def pnp_ransac(
         reprojectionError=reprojection_error,
         confidence=confidence,
     )
-    
+
     if not success:
         return None, 0
-    
+
     R_opencv, _ = cv2.Rodrigues(rvec)
 
     # OpenCV returns R, t that transform points from the reference (object)
@@ -155,25 +150,25 @@ class PoseEstPnP(PoseEst):
     def _match_keypoints_batched(self, ref_kp_det_res: List, curr_kp_det_res, img_size: Tuple[int, int]):
         """
         Perform batched keypoint matching when all reference images have the same number of keypoints.
-        
+
         Args:
             ref_kp_det_res: List of DetectionResult objects for reference images
             curr_kp_det_res: Single DetectionResult object for current image
             img_size: Image size (W, H)
-            
+
         Returns:
             matches: Match results from kp_match.match()
         """
         batch_size = len(ref_kp_det_res)
-        
+
         # Extract keypoints and descriptors from detection results
         ref_keypoints = torch.stack([res.keypoints for res in ref_kp_det_res])  # [B x M x 2]
         ref_descriptors = torch.stack([res.descriptors for res in ref_kp_det_res])  # [B x M x D]
-        
+
         # curr_kp_det_res is a single DetectionResult object, expand to batch
         curr_keypoints = curr_kp_det_res.keypoints.unsqueeze(0).repeat(batch_size, 1, 1)  # [B x N x 2]
         curr_descriptors = curr_kp_det_res.descriptors.unsqueeze(0).repeat(batch_size, 1, 1)  # [B x N x D]
-        
+
         data = {
             "image0": {
                 "image_size": img_size,
@@ -186,24 +181,24 @@ class PoseEstPnP(PoseEst):
                 "descriptors": curr_descriptors,  # [B x N x D]
             }
         }
-        
+
         return self.kp_match.match(data)
 
     def _match_keypoints_grouped(self, ref_kp_det_res: List, curr_kp_det_res, img_size: Tuple[int, int]):
         """
         Perform grouped keypoint matching when reference images have different numbers of keypoints.
         Groups images by keypoint count and performs batched inference within each group.
-        
+
         Args:
             ref_kp_det_res: List of DetectionResult objects for reference images
             curr_kp_det_res: Single DetectionResult object for current image
             img_size: Image size (W, H)
-            
+
         Returns:
             matches: Match results organized by original batch order
         """
         batch_size = len(ref_kp_det_res)
-        
+
         # Group indices by keypoint count
         kp_count_groups = {}
         for i, res in enumerate(ref_kp_det_res):
@@ -211,10 +206,10 @@ class PoseEstPnP(PoseEst):
             if kp_count not in kp_count_groups:
                 kp_count_groups[kp_count] = []
             kp_count_groups[kp_count].append(i)
-        
+
         # Process each group with batched inference
         all_matches = {}
-        
+
         for kp_count, indices in kp_count_groups.items():
             if kp_count == 0:
                 # Skip images with no keypoints
@@ -225,13 +220,13 @@ class PoseEstPnP(PoseEst):
                 # Single image - process individually
                 idx = indices[0]
                 ref_res = ref_kp_det_res[idx]
-                
+
                 # Create single-item batch
                 ref_keypoints = ref_res.keypoints.unsqueeze(0)  # [1 x M x 2]
                 ref_descriptors = ref_res.descriptors.unsqueeze(0)  # [1 x M x D]
                 curr_keypoints = curr_kp_det_res.keypoints.unsqueeze(0)  # [1 x N x 2]
                 curr_descriptors = curr_kp_det_res.descriptors.unsqueeze(0)  # [1 x N x D]
-                
+
                 data = {
                     "image0": {
                         "image_size": img_size,
@@ -244,23 +239,23 @@ class PoseEstPnP(PoseEst):
                         "descriptors": curr_descriptors,
                     }
                 }
-                
+
                 group_matches = self.kp_match.match(data)
                 all_matches[idx] = group_matches["matches"][0]  # Extract single result
-                
+
             else:
                 # Multiple images with same keypoint count - batch process
                 group_ref_res = [ref_kp_det_res[i] for i in indices]
                 group_batch_size = len(group_ref_res)
-                
+
                 # Stack keypoints and descriptors for this group
                 ref_keypoints = torch.stack([res.keypoints for res in group_ref_res])  # [Group_B x M x 2]
                 ref_descriptors = torch.stack([res.descriptors for res in group_ref_res])  # [Group_B x M x D]
-                
+
                 # Expand current keypoints/descriptors for this group
                 curr_keypoints = curr_kp_det_res.keypoints.unsqueeze(0).repeat(group_batch_size, 1, 1)  # [Group_B x N x 2]
                 curr_descriptors = curr_kp_det_res.descriptors.unsqueeze(0).repeat(group_batch_size, 1, 1)  # [Group_B x N x D]
-                
+
                 data = {
                     "image0": {
                         "image_size": img_size,
@@ -273,33 +268,33 @@ class PoseEstPnP(PoseEst):
                         "descriptors": curr_descriptors,
                     }
                 }
-                
+
                 group_matches = self.kp_match.match(data)
-                
+
                 # Store results for each index in this group
                 for group_idx, original_idx in enumerate(indices):
                     all_matches[original_idx] = group_matches["matches"][group_idx]
-        
+
         # Reconstruct matches in original batch order
         matches = {"matches": [all_matches[i] for i in range(batch_size)]}
-        
+
         return matches
 
     def match_keypoints_adaptive(self, ref_kp_det_res: List, curr_kp_det_res, img_size: Tuple[int, int]):
         """Adaptively match keypoints using batched inference when possible.
         Falls back to grouped matching when keypoint counts differ.
-        
+
         Args:
             ref_kp_det_res: List of DetectionResult objects for reference images
             curr_kp_det_res: Single DetectionResult object for current image
             img_size: Image size (W, H)
-            
+
         Returns:
             matches: Match results from kp_match.match()
         """
         # Check if all ref images have the same number of keypoints
         ref_kp_counts = [len(res.keypoints) for res in ref_kp_det_res]
-        
+
         if len(set(ref_kp_counts)) == 1:
             # All have same number of keypoints - use efficient batched inference
             return self._match_keypoints_batched(ref_kp_det_res, curr_kp_det_res, img_size)
@@ -311,8 +306,8 @@ class PoseEstPnP(PoseEst):
     @timeit
     @torch.inference_mode()
     def estimate_pose(
-        self, 
-        ref_image: torch.Tensor, 
+        self,
+        ref_image: torch.Tensor,
         ref_depth: torch.Tensor,
         curr_image: torch.Tensor,
         curr_depth: torch.Tensor,
@@ -346,17 +341,17 @@ class PoseEstPnP(PoseEst):
         # Batch detect: concatenate ref and curr images for single forward pass
         combined_images = torch.cat([curr_image.unsqueeze(0), ref_image], dim=0)  # [B+1, 3, H, W]
         all_kp_det_res = self.kp_det.detect(combined_images)  # Returns list of (B+1) DetectionResult
-        ref_kp_det_res = all_kp_det_res[1:]  
-        curr_kp_det_res = all_kp_det_res[0]  
+        ref_kp_det_res = all_kp_det_res[1:]
+        curr_kp_det_res = all_kp_det_res[0]
 
         # Match keypoints in batch
         img_size = curr_image.shape[1:][::-1] # H, W
-        
+
         matches = self.match_keypoints_adaptive(ref_kp_det_res, curr_kp_det_res, img_size)
 
         ref_points_3d = depth_to_xyz(ref_depth, self.camera) # [B x H x W x 3]
         valid_depth_mask = (ref_depth > 0) & (ref_depth < self.max_depth)  # 0 = invalid (SGBM / GT holes), max depth is 20m
-        
+
 
         # Process matches and estimate pose for each batch
         poses = []
@@ -364,7 +359,7 @@ class PoseEstPnP(PoseEst):
         match_counts = []
         valid_masks = []
         for b in range(batch_size):
-                
+
             # Get matched keypoint indices (following the example pattern)
             match_indices = matches["matches"][b]  # [N_matches x 2]
             ref_matched_kps = ref_kp_det_res[b].keypoints[match_indices[:, 0]].long()  # [N_matches x 2]
@@ -372,7 +367,7 @@ class PoseEstPnP(PoseEst):
 
             # Get the corresponding current keypoints that have valid reference depth
             ref_matched_kps_3d = ref_points_3d[b][ref_matched_kps[:, 1], ref_matched_kps[:, 0]]
-            
+
             # Filter out 3D points that are too far away using valid_depth_mask
             ref_matched_depth_mask = valid_depth_mask[b][ref_matched_kps[:, 1], ref_matched_kps[:, 0]]
             ref_matched_kps_3d_filtered = ref_matched_kps_3d[ref_matched_depth_mask]
@@ -381,7 +376,7 @@ class PoseEstPnP(PoseEst):
             if len(ref_matched_kps_3d_filtered) < self.config.kf_match_threshold:
                 valid_masks.append(False)
                 continue
-            
+
             # Estimate pose using PnP RANSAC
             # Use filtered reference 3D points and corresponding current 2D points
             pose, inliers = pnp_ransac(
@@ -395,7 +390,7 @@ class PoseEstPnP(PoseEst):
             if pose is None or inliers < self.config.inlier_count_threshold:
                 valid_masks.append(False)
                 continue
-            
+
             poses.append(pose)
             inlier_counts.append(inliers)
             match_counts.append(len(ref_matched_kps_3d_filtered))
@@ -408,5 +403,5 @@ class PoseEstPnP(PoseEst):
         if valid_masks.sum() > 0:
             confidences = torch.tensor(inlier_counts)
             poses = torch.stack(poses, dim=0)
-        
+
         return poses, valid_masks, confidences

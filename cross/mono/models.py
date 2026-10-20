@@ -8,7 +8,6 @@ import torch
 
 from .geometry import homogeneous
 
-
 MODEL_REVISIONS = {
     "depth-anything/DA3-SMALL": "e08cab65ca0ec38e7826075418411ab90cab4da3",
     "depth-anything/DA3METRIC-LARGE": "4010e39f3634a45bc60553321fb49fb760bd594e",

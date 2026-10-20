@@ -43,6 +43,7 @@ def test_worker_propagates_failure_instead_of_silent_pose_freeze():
 
 def test_paced_input_does_not_decode_future_frames_before_capture_time():
     from time import perf_counter
+
     from cross.mono.stream_input import PacedRGBStream
     start = perf_counter()
     class Sequence:
@@ -63,6 +64,7 @@ def test_paced_input_does_not_decode_future_frames_before_capture_time():
 
 def test_input_overload_is_reported_instead_of_accumulating_latency():
     from time import perf_counter
+
     from cross.mono.stream_input import PacedRGBStream
     source = PacedRGBStream(list(range(10)), 1000, perf_counter(), capacity=1)
     source.thread.join(timeout=3)
@@ -76,6 +78,7 @@ def test_input_overload_is_reported_instead_of_accumulating_latency():
 
 def test_timestamp_replay_preserves_irregular_capture_times_and_gaps():
     from time import perf_counter
+
     from cross.mono.stream_input import PacedRGBStream
     offsets = [0., .007, .029, .052]
     start = perf_counter()

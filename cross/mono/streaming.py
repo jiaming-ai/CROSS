@@ -61,8 +61,9 @@ class StreamingMonocularSystem(MonocularSystem):
             frontend = StreamingDPVOFrontend(K, config, device)
         self.pool = None
         if config is not None and config.mapping_process:
-            from concurrent.futures import ProcessPoolExecutor
             import multiprocessing
+            from concurrent.futures import ProcessPoolExecutor
+
             from .mapping_process import initialize
             self.config, self.frontend = config, frontend
             self.map_alignment, self.initialized, self.last_estimate = np.eye(4), False, None

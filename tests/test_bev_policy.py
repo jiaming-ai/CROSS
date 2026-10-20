@@ -6,9 +6,23 @@ import pytest
 
 from cross_nav.bev import BEVSpec, points_to_cells
 from cross_nav.local_plan import AdaptiveVisibilityPlanner
-from cross_nav.policy.bev_policy import (FROZEN_PLANNER, DEFAULTS, blind_zone_mask, STATUS_GOAL, STATUS_NONE, STATUS_WAYPOINT,
-                                         adaptive_plan, cell_to_robot, cells_to_path, clip_goal, crop_box,
-                                         plan_window, resolve, robot_to_cell, turn_path)
+from cross_nav.policy.bev_policy import (
+    DEFAULTS,
+    FROZEN_PLANNER,
+    STATUS_GOAL,
+    STATUS_NONE,
+    STATUS_WAYPOINT,
+    adaptive_plan,
+    blind_zone_mask,
+    cell_to_robot,
+    cells_to_path,
+    clip_goal,
+    crop_box,
+    plan_window,
+    resolve,
+    robot_to_cell,
+    turn_path,
+)
 from cross_nav.policy.sim.geom import control
 
 

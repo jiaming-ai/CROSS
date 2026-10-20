@@ -1,5 +1,6 @@
 import torch
 
+
 def new_atlas_center(system):
     """Create a new atlas center adaptively based on current map size.
 

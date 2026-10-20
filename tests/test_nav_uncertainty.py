@@ -1,6 +1,6 @@
 import numpy as np
-import torch
 import pytest
+import torch
 
 from cross_nav.plan import Field, evaluate_planning, risk_cost, summarize
 from cross_nav.uncertainty import error_loss

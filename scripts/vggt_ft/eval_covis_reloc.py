@@ -23,10 +23,10 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from vggt_omega.utils.pose_enc import encoding_to_camera
 
 from vggt_ft.dataio.transforms import centred_crop_resize, target_shape
 from vggt_ft.evaluate import load_model
-from vggt_omega.utils.pose_enc import encoding_to_camera
 
 QUERIES = {"office": ["office1-2", "office1-3", "office1-4", "office1-5", "office1-6", "office1-7"],
            "home": ["home1-2", "home1-3", "home1-4", "home1-5"], "cafe": ["cafe1-2"]}

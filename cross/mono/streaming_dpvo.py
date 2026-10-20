@@ -9,8 +9,8 @@ from dataclasses import asdict, dataclass, replace
 from time import perf_counter
 
 import numpy as np
-from scipy.spatial.transform import Rotation
 import torch
+from scipy.spatial.transform import Rotation
 
 from .config import MonoConfig
 from .dpvo_frontend import DPVOFrontend

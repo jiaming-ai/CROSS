@@ -1,26 +1,26 @@
 import bisect
+import collections
+import dataclasses
 import math
 import os
-from cross.visualization.viz_graph import visualize_pose_graph
-from cross.utils.profile import timeit
-import pypose as pp
-from typing import Tuple, List, Dict, Set, Optional, Any
-import torch
-import dataclasses
-from dataclasses import dataclass, field
-from loguru import logger
-import collections
 import threading
-import numpy as np
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from cross.core.types import Keyframe, Edge, VisualEdge, EdgeType, unpacked
-from cross.utils.lie_tensor import project_SE3, normalize_se3
-from cross.utils.lie_tensor import project_SE3, normalize_SE3
+import numpy as np
+import pypose as pp
+import torch
+from loguru import logger
+
+from cross.core.config import HypothesisConfig
 from cross.core.pgo import (
     PoseGraph,
     as_se3,
 )
-from cross.core.config import HypothesisConfig
+from cross.core.types import Edge, EdgeType, Keyframe, VisualEdge, unpacked
+from cross.utils.lie_tensor import normalize_SE3, normalize_se3, project_SE3
+from cross.utils.profile import timeit
+from cross.visualization.viz_graph import visualize_pose_graph
 
 # Strong passes: a proposal backed by at least STRONG_PASS_MIN_REFS references, each with covisibility >=
 # STRONG_PASS_MIN_COVIS, is a multi-view check by itself; such a pass counts as STRONG_PASS_FRAMES valid evidence frames
@@ -458,7 +458,7 @@ class HypothesisManager:
         to_realize_indices = torch.where(to_realize_mask)[0].tolist()
         for comp_id in to_realize_indices:
             self.create_hypothesis_branch(comp_id, keyframe.id)
-            
+
     def create_hypothesis_branch(self, new_comp_id: int, start_idx: int) -> int:
         """
         Creates a new hypothesis by branching from an existing one.
@@ -556,7 +556,7 @@ class HypothesisManager:
                 self.odom_edges[(id1, id2)] = factor # it's directed edge, from id1 to id2
                 self.odom_edges_version = getattr(self, "odom_edges_version", 0) + 1
 
-        # --- Logic for Visual Edges 
+        # --- Logic for Visual Edges
         elif type == EdgeType.VISUAL:
             # if to_comp_id is not in the hypotheses, skip
             if to_comp_id not in self.hypotheses:
@@ -630,7 +630,7 @@ class HypothesisManager:
 
 
     def motion_update(
-        self, 
+        self,
         delta_pose: pp.LieTensor,
         delta_std: pp.LieTensor,
     ):
@@ -668,7 +668,7 @@ class HypothesisManager:
         and prepares the GMMs for the filtering step.
 
         Args:
-            proposal_hypotheses: A list of dicts, 
+            proposal_hypotheses: A list of dicts,
             {
                 'pose': pp.LieTensor,
                 'std': pp.LieTensor,
@@ -689,13 +689,13 @@ class HypothesisManager:
         if active_comps_mask.numel() > 0:
             active_comps_mask[0] = True
         active_comp_indices = torch.where(active_comps_mask)[0]
-        
+
         # Key: kf_id (from_node_id), Value: List of (from_comp_id, to_comp_id)
         edge_mapping: Dict[int, Tuple[int, int]] = {}
         self.comp0_informative = None
 
         proposal_mu = torch.stack([h['pose'] for h in proposal_hypotheses])
-        
+
         # Project poses to the place coordinates of the proposal clustering to calculate meaningful distances.
         projection = getattr(self.system, "place_projection", None)
         current_mu_proj = project_SE3(current_mu[active_comps_mask], projection=projection)
@@ -790,7 +790,7 @@ class HypothesisManager:
             min_val = dist_matrix.min()
             if min_val > self.alignment_threshold:
                 break # No more good matches left.
-            
+
             # Get the indices of this best match.
             res = torch.where(dist_matrix == min_val)
             # This gives the index within the *active* components and proposals
@@ -798,7 +798,7 @@ class HypothesisManager:
             # Get the true component index in the full GMM tensor
             true_comp_idx = active_comp_indices[active_comp_idx_in_subset].item()
             self.last_alignment_audit[proposal_idx].update(component=true_comp_idx, action="matched")
-            
+
             # --- A match is found: update the aligned GMM ---
             proposal = proposal_hypotheses[proposal_idx]
             self._pending_strong[true_comp_idx] = self._is_strong(proposal)
@@ -812,11 +812,11 @@ class HypothesisManager:
             # mark component as recently seen
             if true_comp_idx < len(self.last_seen_step):
                 self.last_seen_step[true_comp_idx] = self.step_counter
-            
+
             # For every source that formed this proposal, map it to the matched component.
             for kf_id, source_comp_id in proposal['source_indices']:
                 edge_mapping[kf_id] = (source_comp_id, true_comp_idx)
-                
+
             # Mark as matched so they are not used again.
             matched_proposals.add(proposal_idx)
             matched_components.add(true_comp_idx)
@@ -875,7 +875,7 @@ class HypothesisManager:
             self.last_alignment_audit[proposal_idx].update(component=new_comp_idx, action="born")
             proposal = proposal_hypotheses[proposal_idx]
             self._pending_strong[new_comp_idx] = self._is_strong(proposal)
-            
+
             aligned_mu[new_comp_idx] = proposal['pose']
             self.component_charts[new_comp_idx] = proposal['chart_id'] if self.chart_aware else 0
             aligned_sigma[new_comp_idx] = proposal['std']
@@ -891,14 +891,14 @@ class HypothesisManager:
             self.newborn[new_comp_idx] = True
             if new_comp_idx < self.realized.numel():
                 self.realized[new_comp_idx] = False
-            
+
             logger.debug(f"New pending hypothesis {new_comp_idx} detected. Tracking weights: {self.dist[2]}, Existing: {self.hypotheses.keys()}")
-            
+
         # Renormalize weights to sum to 1.
         total_weight = aligned_weights.sum()
         if total_weight > 1e-6:
             aligned_weights /= total_weight
-        
+
         return aligned_mu, aligned_sigma, aligned_weights, aligned_confidence, edge_mapping
 
     def _select_unrealized_eviction_candidate(self, current_weights: torch.Tensor) -> Optional[int]:
@@ -1097,10 +1097,10 @@ class HypothesisManager:
         prod_weights = prod_weights_unnorm / denom
 
         #################
-        # Newborn weight mixing 
+        # Newborn weight mixing
         #################
         if newborn_mask.any():
-            # Effective mixing coefficient: 
+            # Effective mixing coefficient:
             existing_mask = ~newborn_mask
             existing_sum = prod_weights[existing_mask].sum()
 
@@ -1225,7 +1225,7 @@ class HypothesisManager:
             logger.warning(f"prod_weights is nan: {prod_weights}")
         prod_mu = normalize_se3(prod_mu)
         self.dist = (prod_mu, prod_std_diag, prod_weights)
-        
+
     def detect_loop_closure(self, ret):
         """
         Detect loop closure using overlap-only evidence with a confidence guard.
@@ -1310,7 +1310,7 @@ class HypothesisManager:
             candidate_poses = self.dist[0][realized_ids][:, :3] # (C, 3)
             distances = torch.norm(candidate_poses - current_pose, dim=1) # (C,)
 
-            close_mask = distances < 3 # 
+            close_mask = distances < 3 #
             reference_audits = [self.reference_audit(i) for i in realized_ids.tolist()]
             cross_chart = (self.component_charts[realized_ids] != self.component_charts[0]) if self.chart_aware else torch.tensor(
                 [a["unanchored_reference_candidate"] for a in reference_audits], device=distances.device, dtype=torch.bool)
@@ -1357,7 +1357,7 @@ class HypothesisManager:
                 return { 'loop_closure': True, 'loop_closure_hypo_id': comp_id }
 
         return { 'loop_closure': False, 'loop_closure_hypo_id': None }
-    
+
     def _placement_gate(self, realized_ids, detected_mask, scores=None):
         """Placement hypotheses (hypothesis.reloc_placement), relocalization sessions: a detected merge candidate is
         merged only when its implied session placement dominates the competing ones, or agrees with the placement the
@@ -1399,16 +1399,16 @@ class HypothesisManager:
         2. perform PGO
         3. Update the current active (0) hypo with the new poses
         4. Remove the other hypo and temporary nodes and edges
-        
+
         Args:
             hypo_id: The hypothesis ID to merge with hypothesis 0
             target_node_id: The central node to expand from (defaults to latest keyframe)
             window_ref: the oldest keyframe of the loop edges that trigger this optimisation; with
                 mapping.loop_closure.pgo_window_min_nodes set, a session graph of that size is optimised only from
                 window_ref (minus pgo_window_margin keyframes) on, older keyframes that share a factor with it fixed
-        
+
         Returns:
-            Dict[str, Any]: Information required for visualization and logging. 
+            Dict[str, Any]: Information required for visualization and logging.
         """
         result = {
             "success": False,
@@ -1884,7 +1884,7 @@ class HypothesisManager:
 
                         # add modified edge factor
                         self.hypotheses[0].visual_edges.setdefault(edge_key, []).append(edge_factor)
-                        
+
                         # Sets automatically prevent duplicates
                         self.hypotheses[0].visual_adjacency.setdefault(edge_key[0], set()).add(edge_key[1])
                         self.hypotheses[0].visual_adjacency.setdefault(edge_key[1], set()).add(edge_key[0])
@@ -2142,7 +2142,7 @@ class HypothesisManager:
             "hypotheses_data": hypotheses_data,
             "__columns__": True,
         }
-    
+
     def load_state(self, hypo_data: dict, db, storage_device: str, device: str, existing_keyframes: dict):
         """Load the hypothesis manager state from saved data.
         Only restores hypothesis 0 (ground truth) and resets all tracking state for a new session.
@@ -2154,7 +2154,7 @@ class HypothesisManager:
             device: Device for computation
             existing_keyframes: Dictionary mapping keyframe ID to Keyframe objects from database
         """
-        from cross.db.store import to_device      # .to() skipped on the same device (large maps: 2 LieTensors per edge)
+        from cross.db.store import to_device  # .to() skipped on the same device (large maps: 2 LieTensors per edge)
         # --- 1. Restore temporary keyframes ---
         all_keyframes_map = existing_keyframes.copy()
 

@@ -7,9 +7,14 @@ over the contiguous byte span of the wanted members, parsed locally (~10 MB per 
 
 Writes <out_root>/<date>/<drive>_extract/{oxts/data/*.txt, oxts/timestamps.txt, image_0{2,3}/timestamps.txt}.
 """
-import os, struct, sys, zlib
+import os
+import struct
+import sys
+import zlib
+
 import requests
 from remotezip import RemoteZip
+
 DRIVES = ["2011_10_03_drive_0027", "2011_10_03_drive_0042", "2011_10_03_drive_0034", "2011_09_30_drive_0016",
           "2011_09_30_drive_0018", "2011_09_30_drive_0020", "2011_09_30_drive_0027", "2011_09_30_drive_0028",
           "2011_09_30_drive_0033", "2011_09_30_drive_0034"]
