@@ -107,6 +107,16 @@ def map_frame(Gm, T, near):
 
 
 # ---------------------------------------------------------------------------------------------------------- systems
+def rel_source(d, roots) -> str:
+    """A run folder relative to the run root that holds it (the page data carries no machine paths)."""
+    for r in roots:
+        try:
+            return str(Path(d).relative_to(Path(r)))
+        except ValueError:
+            pass
+    return Path(d).name
+
+
 def find_dir(roots, rel, start=None):
     """Run folders of a cell in the roots, in order; a T3 folder may also hold a single re-run trial (<tag>@<start>)."""
     for r in roots:
@@ -372,7 +382,7 @@ def run_case(c, a, ds_cfg, sy_cfg, published, out_dir: Path):
                         break
             except Exception as e:      # noqa: BLE001
                 print(f"  {c['id']} {key} {rd}: {e!r}")
-        ent["source"] = src
+        ent["source"] = rel_source(src, a.runs) if src else src
         if poses is not None:
             pos, err, trk = [], [], []
             keys = sorted(poses)

@@ -22,5 +22,21 @@
     "evidence": "Nine walks from one two-iPhone capture: pooled median absolute vertical misalignment fell from 1.78 to 1.60 pixels. Per-walk median map deviation against ARKit was 0.00–0.54 m, compared with 0.01–0.53 m for the control. Every walk localized. ARKit is the consistency reference, not independent ground truth.",
     "scope": "Rig preparation only; the KITTI, OpenLORIS and ROVER tables are unchanged.",
     "experiment_code": "c77800f / bb4d1e5"
+  },
+  {
+    "date": "2026-10-14",
+    "title": "Odometry noise preset for low-drift VIO in the Basalt modes",
+    "description": "The loop-closure consistency test and the pose graph allow less odometry drift (configs/base/odometry_vio.yaml) in the modes that read a Basalt VIO file: stereo + Basalt, mono + Basalt, RGB-D + Basalt and RGB-D FF + Basalt. The opt-in overlay configs/overlays/odometry_vio.yaml gives the same values to ARKit / ARCore-class external odometry in a wheel mode.",
+    "evidence": "iPhone stereo + ARKit, nine-walk map: with the generic values, look-alike loop closures bent the map; with the preset each walk matches its own ARKit odometry to 0.0-0.6 m (was 2.6-11.3 m) and false cross-floor links fell from 27 to 5. Benchmark screen: neutral for stereo + Basalt (ROVER T3 1068 -> 1072, flips +16/-12 against a null rerun's +15/-13; KITTI T1 mean 3.02 -> 2.98 m). It rejected genuine loop closures in the modes with CROSS's own IMU fusion or DPVO + IMU (ROVER T3 -161 to -447 trials), which keep the generic values. A later screen of the other Basalt modes found mono + Basalt and RGB-D FF + Basalt worse on KITTI 00 (2.22 -> 2.36 m and 2.20 -> 2.35 m) with better KITTI means; returning those two modes to the generic values is under review.",
+    "scope": "Maps and relocalization in the Basalt modes; the tables still show the earlier runs.",
+    "experiment_code": "9fafa98 / 4bd8fb0"
+  },
+  {
+    "date": "2026-10-13",
+    "title": "VGGT + DPVO + IMU: no hypothesis adoption in mapping sessions",
+    "description": "In a mapping session the mode still merges a competing hypothesis after its verification, but no longer adopts a dominant hypothesis without one. Relocalization sessions are unchanged.",
+    "evidence": "KITTI 10 has no loop, so every hypothesis born there is false: adopting the rejected ones moved parts of the map by 4-40 m. Without adoption the map ATE is back to about 9 m (KITTI 10 8.1-9.7 m, KITTI 08 8.3-10.3 m over runs), and the ROVER gain of merging in mapping sessions is kept (T3 1012 of 1159; OpenLORIS T3 173).",
+    "scope": "Mapping sessions of mono + DPVO + IMU (mono_vio); its T1 cells in the tables come from runs before this change.",
+    "experiment_code": "2609e0e / f9b167f"
   }
 ]
