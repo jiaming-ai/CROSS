@@ -96,6 +96,7 @@ The baselines are built separately; `benchmark/run.py` finds them at these place
 | RTAB-Map | [introlab/rtabmap](https://github.com/introlab/rtabmap) installed into `third_party/install` | `scripts/baselines/rtabmap_reloc.cc` |
 | MASt3R-SLAM | [rmurai0610/MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) in `third_party/MASt3R-SLAM` with `scripts/baselines/mast3r_slam.patch` applied (headless run, relocalization), its environment in `.venv-mast3r` | `scripts/baselines/run_mast3r_slam.py` |
 | VGGT-SLAM 2.0 | `bash scripts/baselines/install_vggt_slam.sh` (pinned commits, into `third_party/vggt_slam`) | `scripts/baselines/run_vggt_slam.py` |
+| LingBot-Map | `bash scripts/baselines/install_lingbot_map.sh` (pinned commit and checkpoint, into `third_party/lingbot_map`) | `scripts/baselines/run_lingbot_map.py` |
 
 The two C++ drivers build with `cmake -S scripts/baselines -B scripts/baselines/build && cmake --build
 scripts/baselines/build` (`-DTHIRD_PARTY=<dir>` for another `third_party/`; `rtabmap_reloc` is skipped when RTAB-Map

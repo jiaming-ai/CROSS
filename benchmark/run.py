@@ -590,7 +590,8 @@ class Job:
 
     # ------------------------------------------------------------------ systems without map persistence
     CONCAT = {"mast3r_slam": ["scripts/baselines/run_mast3r_slam.py", "--sim3"],
-              "vggt_slam": ["scripts/baselines/run_vggt_slam.py"]}
+              "vggt_slam": ["scripts/baselines/run_vggt_slam.py"],
+              "lingbot_map": ["scripts/baselines/run_lingbot_map.py"]}
 
     def concat_cmd(self, map_seq, query_seq, out, extra):
         script, *flags = self.CONCAT[self.a.system]
