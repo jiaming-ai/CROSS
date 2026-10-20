@@ -168,6 +168,8 @@ def run_trials(model, dtype, paths, a, device):
         size = sum(v.numel() * v.element_size() for v in _leaves(snap))
         print(f"state snapshot {size / 1e9:.2f} GB", flush=True)
         for k in ks:
+            model.clean_kv_cache()              # free the previous trial's state before the copy (peak memory)
+            torch.cuda.empty_cache()
             restore(model, snap, device)
             enc_t, _ = stream_poses(model, dtype, trials[k], kfi, a, device, start=len(paths), scale=scale)
             n += len(trials[k])
