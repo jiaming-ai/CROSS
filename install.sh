@@ -145,24 +145,30 @@ if [ "$MONO" = true ]; then
     echo "==> Installing the mono mode / visual odometry (DPVO, LightGlue)..."
     uv pip install -e ".[mono]"
     uv pip install 'git+https://github.com/cvg/LightGlue.git@eb42fee2d71449efb0aa5c10549752b5d75384d8'
-    TORCH_TAG=$("$PYTHON_EXE" -c "import torch; v=torch.__version__.split('+'); print('pt'+''.join(v[0].split('.')[:2])+'0+'+(torch.version.cuda and 'cu'+torch.version.cuda.replace('.','') or 'cpu'))")
-    uv pip install torch-scatter -f "https://data.pyg.org/whl/torch-${TORCH_TAG#pt}.html" \
-        || echo "    !! torch-scatter wheel not found for ${TORCH_TAG}; build it from source"
+    # torch-scatter (DPVO): a prebuilt wheel of PyG for this PyTorch build when there is one, else built from source
+    TORCH_TAG=$("$PYTHON_EXE" -c "import torch; v=torch.__version__.split('+')[0].split('.'); print(f'{v[0]}.{v[1]}.0+' + ('cu' + torch.version.cuda.replace('.', '') if torch.version.cuda else 'cpu'))")
+    uv pip install --only-binary torch-scatter torch-scatter -f "https://data.pyg.org/whl/torch-${TORCH_TAG}.html" \
+        || uv pip install --no-build-isolation torch-scatter \
+        || echo "    !! torch-scatter could not be installed for torch ${TORCH_TAG} (DPVO needs it)"
     DPVO_DIR="thirdparty/DPVO"
     if [ ! -d "$DPVO_DIR" ]; then
         git clone https://github.com/princeton-vl/DPVO.git "$DPVO_DIR"
         git -C "$DPVO_DIR" checkout 0ac95b656d1fda91c271d2a106460d19ad966fc7
         # PyTorch >= 2.8 removed the deprecated tensor dispatch used by DPVO's extensions (patches/)
         git -C "$DPVO_DIR" apply "$(pwd)/patches/dpvo-torch28-dispatch.patch" || echo "    (DPVO patch not applied)"
+        mkdir -p "$DPVO_DIR/thirdparty"
         [ -d "$DPVO_DIR/thirdparty/eigen-3.4.0" ] || (cd "$DPVO_DIR/thirdparty" && \
-            curl -LO https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip && unzip -q eigen-3.4.0.zip)
+            curl -LO https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip && unzip -q eigen-3.4.0.zip) \
+            || echo "    !! Eigen 3.4.0 download failed: unzip it into $DPVO_DIR/thirdparty/eigen-3.4.0"
     fi
     (cd "$DPVO_DIR" && "$PYTHON_EXE" setup.py build_ext --inplace) || echo "    !! DPVO build failed (needs nvcc matching PyTorch's CUDA)"
     # make DPVO importable from the environment (no PYTHONPATH needed)
     SITE_DIR=$("$PYTHON_EXE" -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
     echo "$(pwd)/$DPVO_DIR" > "$SITE_DIR/cross_dpvo.pth"
     mkdir -p models
-    [ -f models/dpvo.pth ] || (TMP=$(mktemp -d) && curl -L -o "$TMP/dpvo_models.zip" https://www.dropbox.com/s/nap0u8zslspdwm4/models.zip && \
+    # the released DPVO weights (the link of DPVO's download_models_and_data.sh)
+    DPVO_MODELS="https://www.dropbox.com/scl/fo/2g6e134ruh1acmaye5bmy/AK0DY9WLZ25elq-7N7sJcB0/models.zip?rlkey=4j336vcc4h324j4p4ji3ppl0t&dl=1"
+    [ -f models/dpvo.pth ] || (TMP=$(mktemp -d) && curl -sL -o "$TMP/dpvo_models.zip" "$DPVO_MODELS" && \
         unzip -o -q "$TMP/dpvo_models.zip" -d "$TMP" && cp "$TMP/dpvo.pth" models/dpvo.pth && rm -rf "$TMP") \
         || echo "    !! place the released DPVO weights at models/dpvo.pth"
 fi

@@ -730,6 +730,7 @@ dependencies = [
     { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.14'" },
     { name = "pillow" },
     { name = "psutil" },
+    { name = "pyarrow" },
     { name = "pypose" },
     { name = "pyyaml" },
     { name = "rerun-sdk" },
@@ -781,7 +782,6 @@ mono = [
     { name = "imageio" },
     { name = "moviepy" },
     { name = "numba" },
-    { name = "numpy" },
     { name = "omegaconf" },
     { name = "pillow-heif" },
     { name = "plyfile" },
@@ -795,7 +795,6 @@ nav = [
     { name = "einops" },
     { name = "huggingface-hub" },
     { name = "numba" },
-    { name = "numpy" },
     { name = "safetensors" },
 ]
 nav-data = [
@@ -805,7 +804,6 @@ nav-data = [
     { name = "einops" },
     { name = "huggingface-hub" },
     { name = "numba" },
-    { name = "numpy" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or python_full_version >= '3.14'" },
     { name = "pandas", version = "3.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and python_full_version < '3.14'" },
     { name = "requests" },
@@ -819,7 +817,6 @@ recording = [
 stereo = [
     { name = "einops" },
     { name = "huggingface-hub" },
-    { name = "numpy" },
     { name = "safetensors" },
 ]
 world = [
@@ -851,8 +848,7 @@ requires-dist = [
     { name = "networkx" },
     { name = "numba", marker = "extra == 'mono'", specifier = ">=0.59,<0.62" },
     { name = "numba", marker = "extra == 'nav'", specifier = ">=0.59,<0.62" },
-    { name = "numpy" },
-    { name = "numpy", marker = "extra == 'stereo'", specifier = "<2" },
+    { name = "numpy", specifier = "<2" },
     { name = "omegaconf", marker = "extra == 'da3'" },
     { name = "open3d" },
     { name = "opencv-contrib-python" },
@@ -864,6 +860,7 @@ requires-dist = [
     { name = "plyfile", marker = "extra == 'da3'" },
     { name = "plyfile", marker = "extra == 'world'" },
     { name = "psutil" },
+    { name = "pyarrow", specifier = "<26" },
     { name = "pycolmap", marker = "extra == 'da3'" },
     { name = "pypose" },
     { name = "pytest", marker = "extra == 'dev'" },
