@@ -7,7 +7,8 @@
 #
 # Then point the runner at it (defaults match DEST=third_party/lingbot_map):
 #   LINGBOT_MAP_DIR=$DEST/lingbot-map LINGBOT_MAP_PY=$DEST/venv/bin/python LINGBOT_MAP_CKPT=$DEST/ckpt/lingbot-map.pt
-# Without FlashInfer, set LINGBOT_MAP_SDPA=1 (the upstream --use_sdpa backend).
+# FlashInfer compiles its kernels at first use and needs a CUDA >= 12 nvcc; without one (or without FlashInfer) set
+# LINGBOT_MAP_SDPA=1 (the upstream --use_sdpa backend; the benchmark runs of 2026-10-20 used it).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DEST="${1:-$ROOT/third_party/lingbot_map}"

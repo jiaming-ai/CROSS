@@ -11,7 +11,10 @@ LingBot-Map has no relocalization or loop-closure step, so nothing tells which q
 every query pose counts (only the protocol's coverage and moving-robot rules apply, as for MASt3R-SLAM without its
 edge log), and its T2 / T3 are upper bounds.  A pose right after the jump between the traversals may be only the
 stream's continuation; it is still scored against the ground truth.
-The model runs through lingbot_map_stream.py (frames read one at a time, upstream model code unmodified).
+The model runs through lingbot_map_stream.py (frames read one at a time, upstream model code unmodified).  T3 trials
+share the map part of their streams: it is computed once and the model's streaming state restored before each trial,
+which gives the poses of a full map + trial stream per trial (the model is causal; --no-share runs every stream in
+full, as a check).
 
     python scripts/baselines/run_lingbot_map.py --map <seq> --query <seq> --out <dir> [--map-only] \
         [--trial-len N] [--trial-stride S] [--max-trials K] [--r-d R] [--timeout SEC] [--keyframe-interval auto]
@@ -85,18 +88,15 @@ def sim3_to_gt(poses, gt_map, n_map):
     return out, float(s)
 
 
-def run_stream(frames, work: Path, tag: str, args):
-    """Run LingBot-Map on `frames`; returns (rc, seconds, info, poses).  info: peak GPU GB, FPS, keyframe interval."""
-    work.mkdir(parents=True, exist_ok=True)
-    lst, traj, log = work / f"stream_{tag}.txt", work / f"lingbot_{tag}_poses.txt", work / f"lingbot_{tag}.log"
-    lst.write_text("\n".join(str(f) for f in frames) + "\n")
-    traj.unlink(missing_ok=True)
-    cmd = [str(PY), str(DRIVER), "--checkpoint", str(CKPT), "--images", str(lst), "--out", str(traj),
-           "--keyframe-interval", str(args.keyframe_interval)]
+def drive(extra, log: Path, timeout, args):
+    """One lingbot_map_stream.py run; returns (rc, seconds, info).  info: peak GPU GB, FPS, keyframe interval."""
+    cmd = [str(PY), str(DRIVER), "--checkpoint", str(CKPT), "--keyframe-interval", str(args.keyframe_interval)] + extra
     if args.use_sdpa:
         cmd += ["--use-sdpa"]
-    env = dict(os.environ, PYTHONUNBUFFERED="1",
-               PYTHONPATH=str(LB_DIR) + (os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else ""))
+    # PYTHONPATH: not the CROSS tree of the harness; PATH: the venv's tools (FlashInfer compiles its kernels with ninja
+    # and needs a CUDA >= 12 nvcc; without one, LINGBOT_MAP_SDPA=1)
+    env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONPATH=str(LB_DIR),
+               PATH=str(PY.parent) + os.pathsep + os.environ.get("PATH", ""))
     t0 = time.time()
     with open(log, "w") as f:
         f.write(" ".join(cmd) + "\n")
@@ -104,7 +104,7 @@ def run_stream(frames, work: Path, tag: str, args):
         # bound every run and kill the whole process group on timeout (no GPU memory left behind)
         proc = subprocess.Popen(cmd, cwd=str(LB_DIR), stdout=f, stderr=subprocess.STDOUT, start_new_session=True, env=env)
         try:
-            rc = proc.wait(timeout=args.timeout)
+            rc = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             rc = -9
             f.write("\nTIMEOUT\n")
@@ -120,9 +120,39 @@ def run_stream(frames, work: Path, tag: str, args):
     for key, pat in (("fps", r"LINGBOT_FPS ([\d.]+)"), ("keyframe_interval", r"LINGBOT_KEYFRAME_INTERVAL (\d+)")):
         m = re.findall(pat, text)
         info[key] = float(m[-1]) if m else None
-    poses = read_poses(traj) if rc == 0 else {}      # a killed / crashed run has no trajectory
+    return rc, dt, info
+
+
+def write_list(path: Path, frames):
+    path.write_text("\n".join(str(f) for f in frames) + "\n")
+    return path
+
+
+def run_stream(frames, work: Path, tag: str, args):
+    """Run LingBot-Map on `frames`; returns (rc, seconds, info, poses)."""
+    work.mkdir(parents=True, exist_ok=True)
+    lst, traj = write_list(work / f"stream_{tag}.txt", frames), work / f"lingbot_{tag}_poses.txt"
+    traj.unlink(missing_ok=True)
+    rc, dt, info = drive(["--images", str(lst), "--out", str(traj)], work / f"lingbot_{tag}.log", args.timeout, args)
     lst.unlink(missing_ok=True)
-    return rc, dt, info, poses
+    return rc, dt, info, (read_poses(traj) if rc == 0 else {})      # a killed / crashed run has no trajectory
+
+
+def run_shared(map_frames, trial_frames, work: Path, args):
+    """All map + trial streams of a query in one run that computes the map part once (lingbot_map_stream.py
+    --trial-images: the streaming state is restored before each trial, so each trial gets the poses of its own map +
+    trial stream).  Returns (rc, seconds, info, [poses per trial])."""
+    work.mkdir(parents=True, exist_ok=True)
+    lst = write_list(work / "stream_map.txt", map_frames)
+    tl = [write_list(work / f"stream_t{k}.txt", fr) for k, fr in enumerate(trial_frames)]
+    to = [work / f"lingbot_t{k}_poses.txt" for k in range(len(trial_frames))]
+    for o in to:
+        o.unlink(missing_ok=True)
+    rc, dt, info = drive(["--images", str(lst), "--trial-images", *map(str, tl), "--trial-out", *map(str, to)],
+                         work / "lingbot_trials.log", args.timeout * max(1, len(trial_frames)), args)
+    for p in [lst, *tl]:
+        p.unlink(missing_ok=True)
+    return rc, dt, info, [read_poses(o) if rc == 0 and o.is_file() else {} for o in to]
 
 
 def main():
@@ -140,6 +170,8 @@ def main():
                                                                 'ceil(frames / 320)) or a fixed interval')
     ap.add_argument("--use-sdpa", action="store_true", default=os.environ.get("LINGBOT_MAP_SDPA") == "1",
                     help="SDPA attention instead of FlashInfer")
+    ap.add_argument("--no-share", action="store_true", help="T3: one full map + trial run per trial instead of the "
+                                                            "shared map part (same poses; check)")
     ap.add_argument("--sim3", action="store_true", help="ignored: monocular, always evaluated with Sim(3)")
     args = ap.parse_args()
     m, q = Path(args.map).resolve(), Path(args.query).resolve()
@@ -177,9 +209,15 @@ def main():
     trials = build_trials(len(lq), args.trial_len, args.trial_stride)
     if args.max_trials and len(trials) > args.max_trials:
         trials = [trials[i] for i in np.linspace(0, len(trials) - 1, args.max_trials).round().astype(int)]
+    shared = args.trial_len > 0 and len(trials) > 1 and args.use_sdpa and not args.no_share
+    if shared:      # map traversal once, then each trial (the same poses as one map + trial stream per trial)
+        rc_s, dt_s, info_s, poses_s = run_shared(lm, [lq[a:b] for a, b in trials], out, args)
     all_rows, per_trial_time = [], []
     for ti, (a, b) in enumerate(trials):
-        rc, dt, info, poses = run_stream(lm + lq[a:b], out, f"t{ti}", args)    # map traversal, then the trial
+        if shared:
+            rc, dt, info, poses = rc_s, dt_s / len(trials), {**info_s, "shared_map_run": True}, poses_s[ti]
+        else:
+            rc, dt, info, poses = run_stream(lm + lq[a:b], out, f"t{ti}", args)    # map traversal, then the trial
         per_trial_time.append({"trial": ti, "rc": rc, "seconds": dt, "start": a, "end": b, "n_poses": len(poses),
                                "map_link": None, **info})
         poses, scale = sim3_to_gt(poses, gt_map, n_map)
