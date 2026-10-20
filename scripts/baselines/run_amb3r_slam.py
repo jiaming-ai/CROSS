@@ -15,16 +15,18 @@ sensor's depth): SE(3).  All poses are expressed in the ground-truth frame befor
 errors are in metres (see sim3_to_gt).
 
     python scripts/baselines/run_amb3r_slam.py --map <seq> --query <seq> --out <dir> --sensor mono|stereo|rgbd \
-        [--outdoor] [--map-only] [--trial-len N] [--trial-stride S] [--max-trials K] [--r-d R] [--timeout SEC]
+        [--map-only] [--trial-len N] [--trial-stride S] [--max-trials K] [--r-d R] [--timeout SEC]
 
 One setting for every run: the upstream configuration (configs/base.yaml + the sensor's layer), DA3 models
 (DA3NESTED-GIANT-LARGE-1.1 back end, DA3-SMALL front end), bf16 encoder weights, DBoW2 loop retrieval, input 518 px on
 the longer side, the sequence's intrinsics (upstream --calib), the sequence's frame rate.  Mono: the colour images
 (rgb/) or the left images.  Stereo: the rectified pair, depth by SGBM on the full-resolution pair (upstream
-StereoDepth) with the sequence's baseline; depth range: upstream's (KITTI) default, at least 3 m, outdoors (--outdoor),
-and the configuration's RGB-D range 0.3-5 m indoors (upstream has no indoor stereo setting; at 3 m the T265 / SimChange
-indoor pairs keep too little depth to measure a scale).  RGB-D: the depth images (uint16, calib.json depth_scale or
-1000 per metre) within the configuration's 0.3-5 m.
+StereoDepth) with the sequence's baseline, depth from 0.3 m (the configuration's RGB-D minimum) without a far limit
+(upstream's stereo default), the same on every dataset.  Upstream's default minimum is 3 m, set for KITTI (the only
+stereo data it evaluates), where SGBM measures nothing closer anyway (fx * baseline / 128 disparities = 2.96 m): there
+the setting is upstream's.  On the T265 pairs (6.4 cm) a 3 m minimum leaves too little depth to measure a scale
+(OpenLORIS home1-1: 5 of 47 submaps metric, ATE 0.84 m, against 43 of 47 and 0.24 m with 0.3-5 m).  RGB-D: the depth
+images (uint16, calib.json depth_scale or 1000 per metre) within the configuration's 0.3-5 m.
 --map-only writes map_poses.txt (idx state t00..t33, camera-to-world, state 2) and map_time.json.  Every run keeps the
 driver's output (each frame's final and online pose, the accepted loops) as amb3r_map.npz / amb3r_t<trial>.npz, so the
 runs can be re-scored without running the system.
@@ -55,7 +57,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from eval_traj import evaluate, umeyama  # noqa: E402
 from reloc_metrics import build_trials, first_map_link, summarize_errors, summarize_trials  # noqa: E402
 
-STEREO_DEPTH = {"outdoor": (3.0, 0.0), "indoor": (0.3, 5.0)}      # (min, max) m; 0 = no limit
+STEREO_DEPTH = (0.3, 0.0)          # (min, max) m of the stereo depth source; 0 = no limit (see the docstring)
 
 
 def image_dir(seq: Path) -> Path:
@@ -103,12 +105,8 @@ def concat(parts):
 
 
 def stereo_range(stream, args):
-    """(min, max) depth (m) of the stereo depth source: --stereo-depth MIN MAX if given, else by --outdoor."""
-    if args.stereo_depth:
-        return [float(v) for v in args.stereo_depth]
-    if args.stereo_depth_rule == "geometric":         # SGBM's closest measurable depth (128 disparities), no far limit
-        return [float(np.asarray(stream["K"])[0, 0]) * float(stream.get("baseline", 0.0)) / 128.0, 0.0]
-    return list(STEREO_DEPTH["outdoor" if args.outdoor else "indoor"])
+    """(min, max) depth (m) of the stereo depth source: STEREO_DEPTH, or --stereo-depth MIN MAX (experiments)."""
+    return [float(v) for v in (args.stereo_depth or STEREO_DEPTH)]
 
 
 def run_stream(stream, sensor, workdir: Path, log: Path, args, keep: Path):
@@ -184,10 +182,8 @@ def main():
     ap.add_argument("--query", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--sensor", choices=["mono", "stereo", "rgbd"], default="mono")
-    ap.add_argument("--outdoor", action="store_true", help="outdoor dataset (stereo depth range)")
     ap.add_argument("--stereo-depth", nargs=2, type=float, default=None, metavar=("MIN", "MAX"),
-                    help="stereo depth range in m (0 = no limit), overriding the rule")
-    ap.add_argument("--stereo-depth-rule", choices=["environment", "geometric"], default="environment")
+                    help="stereo depth range in m (0 = no limit) instead of STEREO_DEPTH (experiments only)")
     ap.add_argument("--map-only", action="store_true", help="run on the map sequence alone (single-session accuracy)")
     ap.add_argument("--trial-len", type=int, default=0)
     ap.add_argument("--trial-stride", type=int, default=None)

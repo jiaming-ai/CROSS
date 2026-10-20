@@ -597,8 +597,6 @@ class Job:
     def concat_cmd(self, map_seq, query_seq, out, extra):
         script, *flags = self.CONCAT[self.a.system]
         flags = [f.replace("{setup}", self.a.setup) for f in flags]
-        if self.outdoor:
-            flags += [str(v) for v in self.scfg.get("outdoor_args", [])]
         return [PY, script, "--map", self.seq(map_seq), "--query", self.seq(query_seq), "--out", out] + flags + extra
 
     def concat_map(self, map_seq, out: Path):

@@ -293,7 +293,11 @@ after their second inertial BA, ~15 s after the IMU initialisation — gates bui
 relocalization trial never passes. The visual-inertial runs set `IMU.fastInit: 1` (ORB-SLAM3's own option, which its
 v1.0 settings loader no longer read) and `LoopClosing.mergeAfterImuInit: 1` (place recognition once the IMU is
 initialised; its merge already completes the inertial initialisation of a map that merges before the second BA, and
-merges are still verified on three consecutive keyframes).
+merges are still verified on three consecutive keyframes). AMB3R-SLAM gets the dataset's intrinsics (its own evaluation runs uncalibrated) and one declared
+deviation, for its stereo rows: the SGBM depth starts at 0.3 m (its RGB-D minimum) instead of its stereo default of 3 m,
+a value set for KITTI, where SGBM measures nothing closer than 2.96 m anyway (its KITTI runs are unchanged). At 3 m the
+6.4 cm T265 pairs of OpenLORIS and ROVER keep too little depth to give its submaps a metric scale (OpenLORIS home1-1:
+5 of 47 submaps metric and ATE 0.84 m at 3 m, 43 of 47 and 0.24 m with 0.3-5 m).
 
 ## 6. Run rules
 
