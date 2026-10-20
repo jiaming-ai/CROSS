@@ -13,7 +13,9 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 - [DEV.md](DEV.md): a development split with the same protocol, to test a change in minutes (`dev.py`).
 - [site/index.html](site/index.html): interactive results page with trajectories, localization error curves, trial outcomes,
   and a failure analysis: what the failed trials have in common across systems, with a video and every system's pose for
-  one representative case per cause. Open it from the file system, or serve the `site/` folder.
+  one representative case per cause. A filter bar above the tables selects methods by sensor (RGB-D / stereo / mono),
+  local motion input (wheel / INS odometry, Basalt VIO odometry, IMU, camera only), CROSS or baselines, and by name.
+  Open it from the file system, or serve the `site/` folder.
 
 ## Layout
 
@@ -28,7 +30,7 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 | `eval/metrics.py` | ATE, completeness, localization recall, Wilson intervals |
 | `xcam_summary.py` | tables of the cross-camera dataset `xcam_simchange` (map with one camera, query / extend the map with another): T2 / T3 per map and query camera, split into the first session's and the extension-only area, and the extension sessions' scores |
 | `make_dataset_assets.py`, `configs/dataset_samples.yaml` | representative images of the Datasets tab: the same place across the sessions of a scene (`site/assets/datasets/`, `results/dataset_samples.json`); run where the prepared data is |
-| `collect.py`, `make_tables.py`, `build_site.py` | merge results, write RESULTS.md, write the page data (`site/data.js`) |
+| `collect.py`, `make_tables.py`, `build_site.py` | merge results, write RESULTS.md, write the page data: `site/data.js` (tables, loaded with the page), `site/runs/<track>_<dataset>_<scene>.js` (the plotted runs, loaded when a cell or plot needs them), `site/failures.js` and `site/history.js` (their tabs) |
 | `failure_stats.py`, `failure_analysis.py` | Failure cases tab: features of every T3 trial from the data (motion, viewpoint, image statistics, SIFT matchability against the map; run where the data is, `results/failure_trials.json`), and the cause analysis (`results/failure_analysis.json`) |
 | `make_failure_assets.py`, `configs/failure_cases.yaml` | the tab's cases and text: per case a video (`site/assets/failures/`) and every system's per-frame pose from the stored runs (`results/failure_cases.json`; CROSS T3 needs `run.py --keep-rows`) |
 | `results/` | merged results (`results.json`: the newest run of every cell), every run of every code version (`history.json`), and earlier results obtained with other protocols (`legacy.*`) |

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Write benchmark/site/data.js (the data of the results page benchmark/site/index.html) from
-benchmark/results/results.json.
+"""Write the data of the results page benchmark/site/index.html from benchmark/results/results.json.
 
   python benchmark/build_site.py [--results benchmark/results/results.json]
 
@@ -10,12 +9,20 @@ error curves and trial outcomes the page plots.  Failure cases: the worst runs p
 from benchmark/failure_analysis.py and benchmark/make_failure_assets.py (benchmark/results/failure_*.json).
 The History tab shows the same tables per code version (the `commit` of the runs, from benchmark/results/history.json
 written by collect.py), one row per commit that has results, so a change can be traced back to the commit that made it.
+
+Files (all loaded with <script> tags, so the page also works from file://):
+  site/data.js           what the page needs to open: tables, summary, systems, datasets (a few hundred KB)
+  site/runs/<chunk>.js   the plotted runs of one track · dataset · scene (trajectories, error curves, trials), loaded
+                         when a cell, plot or tab needs them; table cells reference runs as chunk * RUN_BASE + index
+  site/failures.js       Failure cases tab;  site/history.js  History tab
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import shutil
 import subprocess
 import time
 from collections import defaultdict
@@ -54,21 +61,36 @@ def plane(traj_gt, traj_est):
     return sorted(np.argsort(var)[-2:].tolist())
 
 
-def slim_run(r, rid):
+# the fields of a run the page reads (plus lr@<threshold>); everything else stays in results.json
+RUN_FIELDS = ("track", "dataset", "scene", "system", "setup", "sequence", "map", "query", "status", "rc", "ate_rmse",
+              "completeness", "n_poses", "align", "scale", "failed", "ms_ate", "est_frac", "rs1", "rs2", "n_trials",
+              "concat", "thresholds", "odom_fallback")
+RUN_BASE = 100000          # a run reference = chunk index * RUN_BASE + index in the chunk
+
+
+def path_cm(p):
+    """A 2-D path as flat centimetre integers, the first point absolute and the others as steps (index.html
+    decodePath): about a third of the text of [[x, y], ...] in metres."""
+    a = np.round(np.asarray(p, float) * 100).astype(np.int64)
+    return np.concatenate([a[:1], np.diff(a, axis=0)]).reshape(-1).tolist()
+
+
+def slim_run(r):
+    """The page's copy of a run: RUN_FIELDS, the top-down path of the ground truth (g) and of the aligned estimate (e)
+    as path_cm, the error curve (c, centimetres, -1 = no estimate) and the T3 trials."""
     thr = r.get("thresholds", [1.0, 2.0])
-    keep = {k: v for k, v in r.items() if k not in ("traj_est", "traj_gt", "err_curve", "trials")
-            and not (k.startswith("lr@") and float(k[3:]) not in thr)}
-    keep["id"] = rid
+    keep = {k: r[k] for k in RUN_FIELDS if r.get(k) is not None}
+    keep.update({k: v for k, v in r.items() if k.startswith("lr@") and float(k[3:]) in thr})
     if r.get("traj_gt") is not None:
         ax = plane(r["traj_gt"], r.get("traj_est"))
         g = np.asarray(r["traj_gt"], float)[:, ax]
-        keep["gt2"] = np.round(g[:: max(1, len(g) // 300)], 2).tolist()
+        keep["g"] = path_cm(g[:: max(1, len(g) // 300)])
         if r.get("traj_est") is not None:
             e = np.asarray(r["traj_est"], float)[:, ax]
-            keep["est2"] = np.round(e[:: max(1, len(e) // 300)], 2).tolist()
+            keep["e"] = path_cm(e[:: max(1, len(e) // 300)])
     if r.get("err_curve") is not None:
-        c = np.asarray(r["err_curve"], float)
-        keep["err"] = np.round(c[:: max(1, len(c) // 400)], 2).tolist()
+        c = np.asarray(r["err_curve"], float)[:: max(1, len(r["err_curve"]) // 400)]
+        keep["c"] = [-1 if not np.isfinite(x) or x < 0 else int(round(x * 100)) for x in c]
     if r.get("trials") is not None:
         # [start, success at the larger threshold, final error, success at the smaller threshold, counted (1), or not:
         #  0 = the map does not cover it, 2 = the robot stands still (make_tables.rescore_t3)]
@@ -253,17 +275,20 @@ def main():
     ds_cfg, sy_cfg = mt.load()
     results, sy_cfg = mt.odom_rows(results, sy_cfg, ds_cfg)    # runs with VIO odometry etc. as rows of their own
     results = prepare(results, ds_cfg, sy_cfg, a.seed)
-    runs, runs_by_key = {}, {}
+    # one file of runs per track · dataset · scene, the runs in run_id order (a file changes only when its runs do)
+    groups = defaultdict(list)
     for r in results:
-        rid = run_id(r)
-        runs_by_key[id(r)] = rid
-        runs[rid] = slim_run(r, rid)
+        groups[re.sub(r"[^A-Za-z0-9_.-]", "_", f"{r['track']}_{r['dataset']}_{r['scene']}")].append((run_id(r), r))
+    chunks, runs_by_key = sorted(groups), {}
+    for c, name in enumerate(chunks):
+        groups[name].sort(key=lambda x: x[0])
+        for i, (_, r) in enumerate(groups[name]):
+            runs_by_key[id(r)] = c * RUN_BASE + i
     T = mt.Tables(results, a.seed)
     try:
         commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
     except Exception:       # noqa: BLE001
         commit = None
-    assets = sorted(str(p.relative_to(SITE)) for p in (SITE / "assets").rglob("*.jpg")) if (SITE / "assets").is_dir() else []
     fa, fc = ROOT / "benchmark/results/failure_analysis.json", ROOT / "benchmark/results/failure_cases.json"
     fspec = ROOT / "benchmark/configs/failure_cases.yaml"
     failure_page = {"analysis": json.loads(fa.read_text()) if fa.is_file() else None,
@@ -273,26 +298,43 @@ def main():
     legacy = ROOT / "benchmark/results/legacy.json"
     dstats = ROOT / "benchmark/results/datasets.json"
     samples = ROOT / "benchmark/results/dataset_samples.json"       # make_dataset_assets.py
+    js = lambda x: json.dumps(x, separators=(",", ":"), ensure_ascii=False)       # noqa: E731
+    parts = {"failures": failure_page,
+             "history": history_models(mt.odom_rows(json.loads(Path(a.history).read_text())["runs"], sy_cfg, ds_cfg)[0],
+                                       results, ds_cfg, sy_cfg, a.seed) if Path(a.history).is_file() else None}
+    run_files = {name: "window.BENCH_RUNS(" + js(name) + "," + js([slim_run(r) for _, r in groups[name]]) + ");\n"
+                 for name in chunks}
+    parts_js = {k: f"window.BENCH_PART({js(k)},{js(v)});\n" for k, v in parts.items()}
+    # the version the page appends to the files it loads later (?v=), so a browser never mixes two builds
+    version = hashlib.sha1("".join(run_files[n] for n in chunks).encode() + "".join(parts_js.values()).encode()).hexdigest()[:10]
+    order = [[k, su] for k, v in T.sy.items() if not v.get("hidden") for su in v["setups"]]
     data = {
-        "generated": time.strftime("%Y-%m-%d %H:%M"), "commit": commit, "seed": a.seed,
+        "generated": time.strftime("%Y-%m-%d %H:%M"), "commit": commit, "seed": a.seed, "version": version,
         "systems": T.sy, "datasets": {k: {kk: vv for kk, vv in v.items() if kk != "scenes"} | {"scenes": list(v["scenes"])}
                                       for k, v in T.ds.items()},
-        "summary": T.summary(), "tables": table_models(T, runs_by_key), "runs": runs,
-        "failures": failures(results, runs_by_key), "assets": assets, "failure_page": failure_page,
+        # summary tables: [key, title, note, markdown]; their rows are the methods in `order` (make_tables.summary_table)
+        "summary": T.summary(), "tables": table_models(T, runs_by_key), "chunks": chunks, "run_base": RUN_BASE,
+        "n_runs": len(results), "failures": failures(results, runs_by_key),
         "legacy": json.loads(legacy.read_text()) if legacy.is_file() else None,
         "datastats": json.loads(dstats.read_text()) if dstats.is_file() else {},
         "samples": json.loads(samples.read_text()) if samples.is_file() else {},
-        "order": [[k, su] for k, v in T.sy.items() if not v.get("hidden") for su in v["setups"]],
+        "order": order,
         "splits": {d: [[sc, {"map": v["map"], "queries": v.get("queries", []), "thresholds": c["thresholds"]}]
                        for sc, v in c["scenes"].items()]
                    for d, c in T.ds.items()},
-        "history": history_models(mt.odom_rows(json.loads(Path(a.history).read_text())["runs"], sy_cfg, ds_cfg)[0], results,
-                                  ds_cfg, sy_cfg, a.seed)
-                   if Path(a.history).is_file() else None,
     }
     SITE.mkdir(parents=True, exist_ok=True)
-    (SITE / "data.js").write_text("window.BENCH = " + json.dumps(data, separators=(",", ":")) + ";\n")
-    print(f"wrote {SITE / 'data.js'} ({(SITE / 'data.js').stat().st_size / 1e6:.2f} MB, {len(runs)} runs)")
+    (SITE / "data.js").write_text("window.BENCH = " + js(data) + ";\n")
+    shutil.rmtree(SITE / "runs", ignore_errors=True)
+    (SITE / "runs").mkdir()
+    for name, text in run_files.items():
+        (SITE / "runs" / f"{name}.js").write_text(text)
+    for k, text in parts_js.items():
+        (SITE / f"{k}.js").write_text(text)
+    size = lambda p: p.stat().st_size / 1e6                                         # noqa: E731
+    print(f"wrote {SITE / 'data.js'} ({size(SITE / 'data.js'):.2f} MB, {len(results)} runs), "
+          f"{len(chunks)} run files in {SITE / 'runs'} ({sum(size(p) for p in (SITE / 'runs').glob('*.js')):.1f} MB), "
+          + ", ".join(f"{k}.js ({size(SITE / f'{k}.js'):.2f} MB)" for k in parts))
 
 
 if __name__ == "__main__":
