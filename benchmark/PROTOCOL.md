@@ -11,8 +11,9 @@ paper.
 | **T2 Multi-session localization** | Given a map from an earlier session, how accurately is a new session localized in it? | localization recall and ATE of the new session, in the map frame | OpenLORIS-Scene, ROVER |
 | **T3 Relocalization success** | Starting with no pose, how often does the system relocalize in a map from another session under change? | relocalization success RS@x (CROSS paper, 10 s trials; x = 1 / 2 m indoors, 3 / 5 m outdoors) | SimChange (synthetic), OpenLORIS-Scene, ROVER |
 
-CROSS runs in all six combinations of observation mode (RGB-D with PnP, stereo with VGGT-Omega, monocular with Depth
-Anything 3) and motion source (the dataset's external odometry, or DPVO visual odometry from the images).
+CROSS runs in its shipped modes: RGB-D with PnP, stereo with VGGT-Omega and monocular (VGGT-Omega, or the Depth
+Anything 3 back end), each with the dataset's external odometry, a stereo VIO, its own IMU fusion or DPVO visual
+odometry from the images (§5).
 
 ## 1. Datasets and splits
 
@@ -59,7 +60,7 @@ Notes.
 |---|---|---|
 | **RGB-D** | colour + depth (+ odometry) | RGB-D mode: XFeat + LightGlue + PnP-RANSAC on keyframe depth (`--mode rgbd`, `configs/modes/rgbd_*.yaml`) |
 | **stereo** | rectified stereo pair (+ odometry) | stereo mode: VGGT-Omega multi-view relative pose, stereo-baseline scale (`--mode stereo`, `configs/modes/stereo_*.yaml`) |
-| **mono** | colour only (+ odometry) | monocular mode (in development) |
+| **mono** | colour only (+ odometry or IMU) | mono mode: VGGT-Omega on the single image, scale from the odometry and the map (`configs/modes/mono_*.yaml`), or the Depth Anything 3 back end (`mono_dpvo`) |
 
 CROSS runs with the shipped configuration of its mode (`configs/modes/<mode>.yaml`; the
 `--fast` systems add `configs/overlays/fast/<mode>.yaml`), with one exception: the pose-graph optimisation is
@@ -97,7 +98,7 @@ estimated when that frame arrived). Datasets with wheel odometry keep it (OpenLO
 EuRoC configuration with a 4-level image pyramid instead of 3) and the IMU noise of each sensor's datasheet / calibration
 are used everywhere; nothing is tuned on the ground truth. With 3 levels Basalt lost the heading in sharp turns at 10 Hz
 (KITTI 00: 77 m ATE) and ran away on ROVER's night session (26 m); 4 levels fix both and leave the other sequences within
-noise (`outputs/2026-10-09_basalt_fix`). Inputs:
+noise. CROSS runs these rows with its `*_basalt` mode files. Inputs:
 
 - **KITTI**: the rectified colour pair (10 Hz) and the OXTS RT3003 accelerations / angular rates at 100 Hz from the raw
   `*_extract` drives (`fetch_kitti_oxts.py` downloads only the `oxts/` folders); the camera's own timestamps.
@@ -105,7 +106,7 @@ noise (`outputs/2026-10-09_basalt_fix`). Inputs:
   gets the same trajectory interpolated to its frame times and moved to the D435i camera through the prism calibration.
 - **SimChange**: the rendered pair (0.3 m) and the simulated IMU described below.
 
-Accuracy over the 100-frame trial windows (`odom_vio.json` `eval`, mean; details in the run report): KITTI 1.1–2.1 % of
+Accuracy over the 100-frame trial windows (`odom_vio.json` `eval`, mean): KITTI 1.1–2.1 % of
 the distance (OXTS dead reckoning 0.8–2.0 %), except 01 (highway, 4.7 %); ROVER ~0.3 m per window, about half of which is
 the ground truth's own heading error (heading from the direction of travel), except the night session (no light, 0.7 m);
 SimChange 0.04–0.13 m (10th to 90th percentile over the 100 sequences; simulated SNR 10: 0.27–0.46 m).
@@ -113,7 +114,7 @@ SimChange 0.04–0.13 m (10th to 90th percentile over the 100 sequences; simulat
 A real VIO can fail (with the earlier 3-level pyramid, ROVER's night session ran away to ~30× the true velocity over the
 last 500 frames). CROSS's odometry scale guard (`mapping.loop_closure.odom_guard_factor`, on by default) applies to the RGB-D and stereo
 modes, whose visual translations are metric without the odometry. It compares the measured and the odometry
-translations of short spans, one sample per frame, and fires when their ratio leaves [½, 2]× its long-run value in two
+translations of short spans, one sample per observation, and fires when their ratio leaves [½, 2]× its long-run value in two
 consecutive windows of 30 frames.
 - **Attribution.** A departure counts only when the odometry's own speed changed in the matching direction. A visual
   estimator that loses the motion at car speed (PnP on depth and VGGT-Omega stereo on KITTI 01 / 04 with VIO) leaves
@@ -191,7 +192,8 @@ The map session is mapped as in T1 and the map is saved. The query session is th
 frame, against the loaded map, with no initial pose. Estimates are expressed in the ground-truth frame through the *map
 session's* alignment (T1). The query session is **not** re-aligned: a system that localizes in the wrong place or in a disjoint map
 is penalized.
-- **Localization recall LR@x**: the fraction of *all* query frames whose position error is below x. Each frame is scored with
+- **Localization recall LR@x**: the fraction of the evaluated query frames (see Coverage and Moving robot below) whose
+  position error is below x; a frame without a pose counts as a failure. Each frame is scored with
   the system's latest pose, if that pose is at most 1 s old; this is the pose a robot would get by asking the system at that frame,
   and it matters for systems that report poses only at keyframes. Frames with no pose that recent count as failures. The pose
   must be the one the system reported at that time, not a trajectory it writes after the session: ORB-SLAM3 counts as
@@ -220,7 +222,8 @@ is penalized.
   sessions (localized frames / all frames), so each session counts in proportion to its length, as T3 pools trials.
 - **Overall LR** of a system: the mean over OpenLORIS, ROVER and SimChange of its pooled LR at each dataset's smaller and
   larger threshold, as for the overall RS (T3).
-- **Time to localize**: the first frame after which the error stays below 1 m (indoor) or 5 m (outdoor) for 5 consecutive frames.
+- **Time to localize**: the first frame after which the error stays below the smaller threshold (1 m indoors, 3 m
+  outdoors) for 5 consecutive frames.
 
 ### T3 — relocalization success (CROSS paper, §5.1)
 The query session is split into independent trials. Each trial loads the stored map, starts without knowing its pose, and runs
@@ -231,7 +234,8 @@ latest pose in the trial, as reported at that time (see T2). It must be at most 
 keyframes. Monocular systems are aligned with Sim(3) on the map session, so their errors are in metres too.
 - Only trials whose last frame is covered by the map (see T2, Coverage) and in which the robot moves in at least half of
   the frames (see T2, Moving robot) are counted. A trial's final estimate must be a pose in the stored map (see T2).
-- Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset. The CROSS paper used
+- Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset (the last trial of a
+  session may be shorter, down to 50 frames). The CROSS paper used
   200-frame trials at the native 30 Hz, about 7 s. At the benchmark's 10 Hz, 200 frames would be 20 s, which makes
   relocalization easier. The same trials are used for the SimChange v2 runs. Trials overlap by half, so the Wilson intervals
   are approximate.
@@ -260,10 +264,13 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 | CROSS (PnP) | RGB-D, RGB-D\* | visual odometry (DPVO, metric scale from the depth) | save / load map | `--mode rgbd --odometry visual` |
 | CROSS (VGGT-Omega) | stereo | external odometry | save / load map | `--mode stereo` |
 | CROSS (VGGT-Omega) | stereo | visual odometry (DPVO, scale from stereo depth) | save / load map | `--mode stereo --odometry visual` |
+| CROSS (VGGT-Omega) | stereo | VGGT-Omega + IMU (its own IMU fusion) | save / load map | `--mode stereo_imu` |
 | CROSS (Depth Anything 3) | mono | external odometry | save / load map | `--mode mono --odometry external` |
 | CROSS (Depth Anything 3) | mono | visual odometry (DPVO + learned metric scale) | save / load map | `--mode mono --odometry visual` |
 | CROSS (VGGT-Omega mono) | mono | external odometry | save / load map | `--mode mono --mono-estimator ff` |
+| CROSS (VGGT-Omega mono) | mono | visual odometry (DPVO) | save / load map | `--mode mono --mono-estimator ff --odometry visual` |
 | CROSS (VGGT-Omega mono) | mono | visual-inertial odometry (DPVO + IMU scale) | save / load map | `--mode mono --mono-estimator ff --odometry vio` |
+| CROSS (VGGT-Omega mono) | mono | VGGT-Omega + IMU (its own IMU fusion) | save / load map | `--mode mono_imu` |
 | ORB-SLAM3 | mono, stereo, RGB-D | none (visual) | atlas save / load, multi-map merge | [UZ-SLAMLab/ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) + `scripts/baselines/orbslam3_reloc.cc` |
 | RTAB-Map | RGB-D, stereo | same odometry as CROSS | database, localization mode | [introlab/rtabmap](https://github.com/introlab/rtabmap) + `scripts/baselines/rtabmap_reloc.cc`; every frame processed, `Mem/STMSize 30` (RTAB-Map's KITTI setting) |
 | RTAB-Map (visual odometry) | RGB-D, stereo | none: RTAB-Map's own visual odometry (frame-to-map, reset to the latest pose after a lost frame) | database, localization mode | as above, `rtabmap_reloc --vo` |
@@ -289,11 +296,11 @@ merges are still verified on three consecutive keyframes).
 
 ## 6. Run rules
 
-- **Seeds.** The quick protocol uses seed 0. Claims in papers use the full protocol, seeds 0, 1 and 2, reported as mean ± std.
+- **Seeds.** The tables use seed 0. Claims in papers repeat runs with seeds 0, 1 and 2, reported as mean ± std.
   The seed controls simulated odometry noise and RANSAC and sampling. With real odometry, runs still differ slightly through GPU
   non-determinism.
 - **Pairing.** Two configurations are compared only on the cells both have completed, on the same GPU model. Every result file records the
-  commit, GPU, command and wall-clock time.
+  commit, host, GPU and wall-clock time; the command line is in the run folder's `bench.log`.
 - **Frames.** Every frame at 10 Hz is given to every system in real-time order. There is no frame dropping and no lookahead. Systems
   that gate their own observations (e.g. the CROSS stereo preset) still see every frame. ORB-SLAM3, whose mapping, loop
   closing and map merging run in threads beside the tracking, is fed at the real rate (one frame every 100 ms, as in its
@@ -303,14 +310,17 @@ merges are still verified on three consecutive keyframes).
 ## 7. Output format and reproduction
 
 Each run writes one `result.json` (schema in [`eval/schema.md`](eval/schema.md)) under
-`<results_root>/<track>/<dataset>/<scene>/<system>/<setup>/<map>__<query>/`. The collector merges them into
-[`results/results.json`](results/results.json), from which [`RESULTS.md`](RESULTS.md) and the web page are generated:
+`<results_root>/<dataset>/<scene>/<system>[+vio][@variant]/<setup>/s<seed>/`, in `maps/<seq>`, `t1/<seq>`,
+`t2/<map>__<query>` or `t3/<map>__<query>`. The collector merges them into [`results/results.json`](results/results.json),
+from which [`RESULTS.md`](RESULTS.md) and the web page are generated:
 
 ```bash
-bash benchmark/datasets/download_openloris.sh  $DATA/openloris          # and download_kitti.sh, download_rover.sh
-python benchmark/datasets/prepare_openloris.py $DATA/openloris $DATA/bench/openloris
-python benchmark/run.py --track t1 t2 t3 --dataset openloris --system cross_rgbd --out $RESULTS
-python benchmark/collect.py $RESULTS && python benchmark/make_tables.py && python benchmark/build_site.py
+export BENCH_DATA=/path/to/benchmark_data BENCH_RESULTS=/path/to/runs
+bash benchmark/datasets/download_openloris.sh /path/to/openloris         # and download_kitti.sh, download_rover.sh
+python benchmark/datasets/prepare_openloris.py /path/to/openloris $BENCH_DATA/openloris
+python benchmark/jobs.py --dataset openloris --systems cross_rgbd > queue.txt
+while read -r job; do python benchmark/run.py $job; done < queue.txt
+python benchmark/collect.py $BENCH_RESULTS && python benchmark/make_tables.py && python benchmark/build_site.py
 ```
 
 Every run records the code version it ran (`commit`: the `COMMIT` file of a copied code snapshot, which should hold

@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cross"
-version = "0.1.0"
-description = "Pose-aware topological mapping for RGB-D and monocular inputs with probabilistic tracking, multi-hypothesis management, and loop-closure optimization."
+version = "0.2.0"
+description = "Long-term relocalization with a probabilistic topological map for RGB-D, stereo and monocular cameras: multi-hypothesis tracking, verified loop closure and pose-graph optimization."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "Jiaming" },
 ]
-keywords = ["robotics", "slam", "topological-mapping", "pose-estimation", "loop-closure"]
+keywords = ["robotics", "slam", "topological-mapping", "relocalization", "pose-estimation", "loop-closure"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -45,6 +45,7 @@ dependencies = [
     "matplotlib",
     "psutil",
     "pyyaml",
+    "pandas",
 ]
 
 [project.optional-dependencies]

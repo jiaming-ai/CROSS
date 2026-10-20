@@ -1,7 +1,8 @@
-# Using CROSS
+# Using CROSS: reference
 
-A quick guide: pick a mode, run a sequence, change the configuration, map and relocalize across sessions, and run
-the benchmark. Installation is in the [README](../README.md#installation).
+Modes, the configuration, the multi-session tools, the benchmark, remote sessions and the other tools, with their
+options. For a first read, start with the [getting-started guide](GUIDE.md); installation is in the
+[README](../README.md#installation).
 
 ## 1. Modes
 
@@ -13,16 +14,16 @@ section 3) and sets the sensors, the odometry and the back end in one word:
 | `stereo_wheel` (default of the stereo runners) | left + right image + wheel / external odometry | the dataset's odometry (wheel, OXTS, or simulated with `--snr`) | `install.sh --stereo` |
 | `stereo_basalt` | stereo + IMU | Basalt stereo-inertial VIO file (`odom_vio.txt`, see below) | `install.sh --stereo`, Basalt |
 | `stereo_imu` | stereo + IMU | VGGT-Omega + IMU local pose graph, scale from the stereo pair | `install.sh --stereo` |
-| `stereo_dpvo` | stereo | DPVO, scale from stereo depth | `install.sh --stereo --mono` |
+| `stereo_dpvo` | stereo | DPVO, scale from stereo depth | `install.sh --mono` |
 | `rgbd_wheel` (default of `run.py`) | colour + depth + external odometry | the dataset's odometry | `install.sh` |
 | `rgbd_basalt` | colour + depth, stereo + IMU for the VIO | Basalt VIO file | `install.sh`, Basalt |
 | `rgbd_dpvo` | colour + depth | DPVO, scale from the depth | `install.sh --mono` |
 | `rgbd_ff_wheel` | colour + depth + external odometry; VGGT-Omega relative poses scaled by the depth | the dataset's odometry | `install.sh --stereo` |
 | `rgbd_ff_basalt` | as `rgbd_ff_wheel`, stereo + IMU for the VIO | Basalt VIO file | `install.sh --stereo`, Basalt |
-| `mono_wheel` | one colour camera + external odometry | the dataset's odometry | `install.sh --mono --stereo` |
-| `mono_basalt` | one colour camera, stereo + IMU for the VIO | Basalt VIO file | `install.sh --mono --stereo`, Basalt |
-| `mono_imu` | one colour camera + IMU | VGGT-Omega + IMU local pose graph, scale from learned depth | `install.sh --mono --stereo` |
-| `mono_vio` | one colour camera + IMU | DPVO scaled by the IMU (a reference system) | `install.sh --mono --stereo` |
+| `mono_wheel` | one colour camera + external odometry | the dataset's odometry | `install.sh --stereo` |
+| `mono_basalt` | one colour camera, stereo + IMU for the VIO | Basalt VIO file | `install.sh --stereo`, Basalt |
+| `mono_imu` | one colour camera + IMU | VGGT-Omega + IMU local pose graph, scale from learned depth | `install.sh --mono` |
+| `mono_vio` | one colour camera + IMU | DPVO scaled by the IMU (a reference system) | `install.sh --mono` |
 | `mono_dpvo` | one colour camera | DPVO, scale from learned depth (Depth Anything 3 back end) | `install.sh --mono` |
 
 How a retrieved keyframe is registered: stereo and mono modes run VGGT-Omega (one forward pass over the current image
@@ -30,23 +31,24 @@ and the retrieved keyframes; metric scale from the stereo baseline, or in mono f
 modes match XFeat + LightGlue features and solve PnP-RANSAC on the keyframe depth, except `rgbd_ff_*`, which run the
 stereo mode's VGGT-Omega passes on the colour image and take each pass's metric scale from the measured depth (median
 ratio of measured to predicted depth over the current frame's confident pixels; `pose_est.ff.depth_scale`, dense or
-sparse depth such as a phone's LiDAR); `mono_dpvo` uses the older
-monocular back end of `cross/mono/` (metric two-view matching, Depth Anything 3 as fallback).
+sparse depth such as a phone's LiDAR); `mono_dpvo` uses the monocular back end of `cross/mono/` (metric two-view
+matching, Depth Anything 3 as fallback).
 
 **Sensor mode + options (other combinations).** `--mode rgbd | stereo | mono` with `--odometry external | basalt |
 visual | vio | vgio`, in the mono mode `--mono-estimator ff | da3` and in the rgbd mode `--rgbd-estimator pnp | ff`
-(default pnp; ff with external / basalt odometry only) select the same fourteen files and a few
-reference combinations without a file of their own (e.g. the DA3 mono back end with DPVO + IMU, `--mode mono --odometry
-vio`). `ff` (feed-forward) = VGGT-Omega, `da3` = the Depth Anything 3 back end (the default with a sensor mode, except
-that `--odometry vgio` implies `ff`). A mode name and a conflicting `--odometry` / `--mono-estimator` is an error.
-`vio` is for the mono mode, `vgio` for the mono and stereo modes. Visual odometry needs DPVO (`install.sh --mono`) and
-its weights in `models/dpvo.pth` (or `--dpvo-checkpoint`, env `CROSS_DPVO_CHECKPOINT`).
+(default pnp; ff with external / basalt odometry only) select the same fourteen files and a few reference
+combinations without a file of their own (e.g. the DA3 mono back end with DPVO + IMU, `--mode mono --odometry vio`).
+`ff` (feed-forward) = VGGT-Omega, `da3` = the Depth Anything 3 back end (the default with a sensor mode, except that
+`--odometry vgio` implies `ff`). A mode name and a conflicting `--odometry` / `--mono-estimator` is an error. `vio`
+is for the mono mode, `vgio` for the mono and stereo modes. Visual odometry needs DPVO (`install.sh --mono`) and its
+weights in `models/dpvo.pth` (or `--dpvo-checkpoint`, env `CROSS_DPVO_CHECKPOINT`).
 
 **External odometry from a stereo VIO.** A prepared folder can hold several odometry files; `--odom-file NAME`
-(`run.py`, `scripts/map_and_reloc*.py`) reads `NAME` instead of `odom_left.txt` when it exists (else `odom_left.txt`, else
-the simulated odometry). `--odometry basalt` is external odometry from `odom_vio.txt` (the same fallback) with the
-`*_basalt.yaml` mode file. `benchmark/datasets/prepare_vio.py` writes `odom_vio.txt`: Basalt stereo-inertial odometry run
-causally on the folder's stereo pair and IMU (build with `scripts/vio/install_basalt.sh`, then `export BASALT_VIO=...`):
+(`run.py`, `scripts/map_and_reloc*.py`) reads `NAME` instead of `odom_left.txt` when it exists (else `odom_left.txt`,
+else the simulated odometry). `--odometry basalt` is external odometry from `odom_vio.txt` (the same fallback) with
+the `*_basalt.yaml` mode file. `benchmark/datasets/prepare_vio.py` writes `odom_vio.txt`: Basalt stereo-inertial
+odometry run causally on the folder's stereo pair and IMU (build with `scripts/vio/install_basalt.sh`, then
+`export BASALT_VIO=...`):
 
 ```bash
 python benchmark/datasets/prepare_vio.py kitti $BENCH_DATA/kitti --raw /path/kitti_raw --extract /path/kitti_extract
@@ -57,88 +59,123 @@ python benchmark/datasets/eval_odometry.py $BENCH_DATA/kitti/*/stereo      # acc
 
 In the benchmark, `--odom-source vio` (`benchmark/run.py`, `benchmark/jobs.py`) runs any system that takes odometry
 (CROSS RGB-D / stereo / mono with external odometry, RTAB-Map) on `odom_vio.txt` instead of the dataset's odometry
-(wheel odometry where there is no `odom_vio.txt`); results go to `<system>+vio/` and appear as rows of their own:
+(wheel odometry where there is no `odom_vio.txt`); CROSS then runs the `*_basalt` mode file. Results go to
+`<system>+vio/` and appear as rows of their own:
 
 ```bash
 python benchmark/jobs.py --dataset kitti --systems cross_stereo cross_rgbd cross_mono_ff_odom rtabmap --odom-source vio > q.txt
 ```
 
-**Mono back ends.** `--mono-estimator da3` (default) is the monocular system of `cross/mono/` (learned metric depth,
-two-view matching, DA3 fallback). `--mono-estimator ff` uses the stereo mode's VGGT-Omega multi-view estimator on the
-single image; the metric scale of each forward pass comes from the previous observation and the (metric) odometry
-between the two, and from pairs of retrieved keyframes whose relative pose the map knows.
+**Mono back ends.** `--mono-estimator ff` uses the stereo mode's VGGT-Omega multi-view estimator on the single image;
+the metric scale of each forward pass comes from the previous observation and the (metric) odometry between the
+two, and from pairs of retrieved keyframes whose relative pose the map knows. `--mono-estimator da3` (the default of
+the sensor-mode form) is the monocular system of `cross/mono/` (learned metric depth, two-view matching, DA3
+fallback).
 
 **Visual-inertial odometry (`--odometry vio`).** The IMU must be rigidly attached to the camera. A sequence folder
 carries it as `imu.txt` (`t wx wy wz ax ay az`, IMU frame, rad/s and m/s², specific force including gravity) and
 `imu.json` (`T_cam_imu`: the IMU's pose in the camera frame; noise densities; optional `frame_times`: the file of the
-image timestamps on the IMU clock, default `times.txt`), see `cross/dataloader/imu.py`; `benchmark/datasets/prepare_imu.py`
-writes them for the benchmark datasets. DPVO tracks the images; a sliding-window estimate (`cross/imu/scale_filter.py`)
-finds the metric scale of DPVO's trajectory from the preintegrated IMU (velocity, gravity and accelerometer bias as
-unknowns, in a gyro-propagated frame so that DPVO's rotation drift does not tilt gravity), with learned depth (Depth
-Anything 3) as a prior; the gyro bias and the camera-IMU time offset are calibrated online against DPVO's rotations.
-The back end receives the metric DPVO motion as odometry, as with external odometry. Settings: `--mono-args "--imu-config
-key=value"` (fields of `ImuConfig`).
+image timestamps on the IMU clock, default `times.txt`), see `cross/dataloader/imu.py`;
+`benchmark/datasets/prepare_imu.py` writes them for the benchmark datasets. DPVO tracks the images; a sliding-window
+estimate (`cross/imu/scale_filter.py`) finds the metric scale of DPVO's trajectory from the preintegrated IMU, with
+learned depth (Depth Anything 3) as a prior; the gyro bias and the camera-IMU time offset are calibrated online
+against DPVO's rotations. The back end receives the metric DPVO motion as odometry. Settings: `--mono-args
+"--imu-config key=value"` (fields of `ImuConfig`).
 
 **VGGT-inertial odometry (`--odometry vgio`).** No DPVO: the IMU carries the pose between frames, and every third
 frame a VGGT-Omega forward pass (the back end's own pass when it observes then) measures the relative poses of the
-current frame, the last measured frame and a keyframe ~2 s older. A sliding-window pose graph (`cross/imu/vgi_graph.py`)
-optimizes these relative poses, the preintegrated IMU, gauge links between passes, tracked-corner rotations and the
-online calibration (gyro and accelerometer biases, gravity, the passes' rotation scale, the camera-IMU time offset).
-Each pass has a scale of its own: in the mono mode learned metric depth observes it, with a bias state: DA3, or the
-metric-scale head of a `vggt_ft` checkpoint (`--set pose_est.ff.checkpoint=<ckpt> --mono-args "--imu-config
-depth_prior_source=head"`; no second network). In the
-stereo mode (`--mode stereo --odometry vgio`) the stereo pair adds two constraints: classical stereo depth (SGBM) of the
-current pair against the pass's depth map observes the pass's scale (no learned depth, no bias state), and the tracked
-corners lifted to 3-D with that depth give the metric motion between measured frames (PnP, with its own covariance).
-Every visual translation is tested against the IMU's prediction (the IMU arbitrates when the visual cues disagree, e.g.
-when vehicles alongside fill the view). The stereo mode needs the IMU next to the stereo folder (`prepare_imu.py
-<dataset> ... --setup stereo` for OpenLORIS and ROVER, whose stereo pair is the T265 with its own IMU). Options:
-`--mono-args "--imu-config key=value"`, e.g. `vgio_stereo_pnp=false`, `vgio_stereo_source=baseline` (the right image as
-one more view of the pass instead of SGBM depth; biased on KITTI).
+current frame, the last measured frame and a keyframe ~2 s older. A sliding-window pose graph
+(`cross/imu/vgi_graph.py`) optimizes these relative poses, the preintegrated IMU, tracked-corner rotations and the
+online calibration (gyro and accelerometer biases, gravity, the camera-IMU time offset). Every visual translation is
+tested against the IMU's prediction, so the IMU arbitrates when the visual cues disagree.
+
+- Scale, mono mode: learned metric depth observes each pass's scale, with a bias state: DA3, or the metric-scale
+  head of a `vggt_ft` checkpoint (`--set pose_est.ff.checkpoint=<ckpt> --mono-args "--imu-config
+  depth_prior_source=head"`; no second network).
+- Scale, stereo mode (`stereo_imu`): classical stereo depth (SGBM) of the current pair against the pass's depth map
+  observes the pass's scale, and the tracked corners lifted to 3-D with that depth give the metric motion between
+  measured frames (PnP). The IMU must sit next to the stereo folder (`prepare_imu.py <dataset> ... --setup stereo`
+  for OpenLORIS and ROVER, whose stereo pair is the T265 with its own IMU).
+- Options: `--mono-args "--imu-config key=value"`, e.g. `vgio_stereo_pnp=false`.
 
 ## 2. Run one sequence
 
 ```bash
-python run.py data/r3d/lab2.r3d                                          # RGB-D, external odometry
-python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo --config configs/overlays/outdoor.yaml
-python run.py data/sim/lonemonk/map --mode stereo --baseline 0.3         # SimChange: which rendered baseline
-python run.py data/posed/home1-1 --loader posed --mode rgbd_dpvo           # RGB-D, no odometry input
-python run.py data/posed/home1-1 --loader posed --mode mono_dpvo           # RGB only
-python run.py $BENCH_DATA/openloris/home1-1/rgbd --loader posed --mode mono_vio
+python run.py data/posed/office1-1 --mode rgbd_wheel                             # RGB-D, external odometry
+python run.py data/posed/office1-1 --mode rgbd_wheel --save-map maps/office/map.pkl
+python run.py data/posed/office1-2 --mode rgbd_wheel --load-map maps/office/map.pkl --save-poses office1-2.txt
+python run.py data/kitti_raw/2011_09_30/2011_09_30_drive_0027_sync --mode stereo_wheel --config configs/overlays/outdoor.yaml
+python run.py data/sim/lonemonk/map --mode stereo_wheel --baseline 0.3          # SimChange: which rendered baseline
+python run.py data/posed/home1-1 --mode rgbd_dpvo                                # RGB-D, no odometry input
+python run.py data/posed/home1-1 --mode mono_dpvo                                # RGB only
+python run.py $BENCH_DATA/openloris/home1-1/rgbd --mode mono_vio                  # one camera + IMU
 python run.py $BENCH_DATA/kitti/07/stereo --mode stereo_imu --config configs/overlays/outdoor.yaml   # stereo + IMU
 ```
 
-Useful flags: `--no-viz` (no Rerun window; use it on a server), `--frames N`, `--start N`, `--loader` (default:
-auto-detect), `--snr` (simulated odometry noise). `python run.py -h` lists all.
+| flag | meaning |
+|---|---|
+| `--mode NAME` | one of the fourteen modes (section 1), or a sensor mode with `--odometry` / `--mono-estimator` / `--rgbd-estimator`; default `rgbd_wheel` |
+| `--save-map MAP` | save the map at the end: `MAP` (the graph) and the folder `MAP.store/` (keyframe images, descriptors) |
+| `--load-map MAP` | start in a saved map: the sequence relocalizes in it and extends it (save again to keep the extension) |
+| `--save-poses FILE` | the camera pose of every frame in the map frame, TUM format (`time x y z qx qy qz qw`), from the frame on which the session is placed in the map |
+| `--config A.yaml B.yaml` | configuration layers after the mode's file, merged left to right (repeatable) |
+| `--set section.key=value` | single settings, after `--config` (repeatable; an unknown key is an error) |
+| `--fast` | the mode's fast overlay (section 3) |
+| `--reproducible` | synchronous pose-graph optimisation (section 3) |
+| `--no-viz` | no Rerun viewer window (use it on a server; the mono modes never open one) |
+| `--frames N`, `--start N` | process at most N frames, starting at frame N |
+| `--loader {auto,r3d,rosbag,loris,posed,stereo}` | the dataset format; default: detected from the folder (the stereo modes always read a stereo sequence) |
+| `--snr S` | noise of the odometry simulated from the ground truth when the folder has no odometry file (default: noise-free) |
+| `--odom-file NAME` | read another odometry file of the folder |
+| `--baseline B` | stereo: which rendered right camera of a SimChange sequence |
+| `--accept-config-risk` | run a configuration with a documented caveat without asking (section 3) |
+| `--log-file FILE` | also write the debug log there |
 
-**Data formats.** R3D, ROS bag, OpenLORIS, TUM, *posed folders* (`rgb/`, `depth/`, `poses_left.txt`, optional
-`odom_left.txt`, `calib.json`), and stereo sequences (KITTI raw, TartanAir V2, Virtual KITTI 2, SimChange). Converters
-are in `scripts/datasets/` and `benchmark/datasets/`.
+`python run.py -h` lists every flag, including the visual odometry (`--dpvo-checkpoint`, `--mono-args`) and the
+simulated remote link (`--remote*`, section 6).
+
+**Data formats.** `run.py` detects the layout of a folder: a *posed RGB-D folder* (`calib.json` + `rgb/`, optional
+`depth/`, `poses_left.txt`, optional `odom_left.txt`), a *stereo folder* (`calib.json` with `T_right_in_left` +
+`left/` + `right/`), KITTI raw (`image_02/data` + `oxts/data`), TartanAir V2, Virtual KITTI 2, a Record3D `.r3d`
+file, and by name OpenLORIS in its original layout and ROS bag exports. The folder formats are described in
+[GUIDE.md](GUIDE.md#7-using-your-own-data). Converters are in `scripts/datasets/` (OpenLORIS, TUM RGB-D) and
+`benchmark/datasets/`. The RGB-D modes on a stereo folder use its `depth/` folder, else stereo-matched depth.
 
 ## 3. Configuration
 
 ```
 configs/
-  modes/<mode>.yaml             one file per mode (the 12 names of section 1)
+  modes/<mode>.yaml             one file per mode (the 14 names of section 1)
   base/                         shared pieces the mode files include:
+    common.yaml                   every mode: background pose-graph optimisation
     stereo.yaml, mono_ff.yaml     the stereo / mono VGGT-Omega back end
+    rgbd_ff.yaml                  VGGT-Omega scaled by the measured depth (rgbd_ff_*)
     mono_frontend.yaml            the monocular frontends' MonoConfig (DPVO, people masking, learned-depth cadence)
     vggt_finetuned.yaml           settings that apply only with the fine-tuned VGGT-Omega checkpoint
-    common.yaml                   every mode: background pose-graph optimisation
-    odometry_vio.yaml             odometry noise of low-drift VIO (included by the Basalt modes)
+    odometry_vio.yaml             odometry noise of low-drift VIO (the Basalt modes)
+    placement.yaml                placement rule for joining a map (stereo_wheel, stereo_basalt, mono_wheel, mono_imu, mono_vio)
+    vertical_gate.yaml            wrong-floor protection (the same five modes)
   overlays/
     fast/<mode>.yaml              --fast: constrained compute
     outdoor.yaml                  outdoor scale (the benchmark adds it on outdoor datasets)
-    stereo_lowband.yaml           opt-in: left image only, half the rate
     odometry_vio.yaml             opt-in: external odometry from a low-drift VIO (ARKit / ARCore, Basalt-class)
+    strict_merge.yaml             opt-in: stricter placement rule for large or repetitive buildings
+    stereo_lowband.yaml           opt-in: left image only, half the rate
+    geo_anchor.yaml               opt-in, with --gnss: anchor the map on the Earth without moving it
 ```
 
 Every run loads one shipped file, `configs/modes/<mode>.yaml`, chosen by `--mode <name>` (or the sensor mode with
 `--odometry` / `--mono-estimator`, section 1), with `--fast` the mode's fast overlay, then the user's `--config` files
-(merged left to right) and `--set` overrides. The same files serve a local run and a remote one (section 6): where the
+(merged left to right) and `--set` overrides. A key that no configuration class knows is reported with a warning and
+ignored (`--set` stops with an error). The same files serve a local run and a remote one (section 6): where the
 session runs is chosen by the runner's `--remote-server` / the `cross-edge` client, not by a configuration file.
 
-`--fast` adds `configs/overlays/fast/<mode>.yaml`: constrained compute (RTX 4000 Ada), only where relocalization stays within 5 % (T3 and T2 at 1 m indoors / 3 m outdoors): `stereo_basalt` (6 images per pass at 416 px: query 10.6 -> 20.7 FPS) and `stereo_dpvo` (416 px: 6.5 -> 8.9 FPS). The other modes' overlays are empty: 416 / 448 px cost more than 5 % there (each file says what was tested); their defaults on an RTX 4000 Ada: stereo + wheel 10.6, stereo + IMU 6.8, mono + wheel 18.5, mono + IMU 9.7, RGB-D 40, mono DPVO 15 query FPS. A map built with `--fast` must be relocalized in with `--fast` (its stored images are smaller; checked at load).
+`--fast` adds `configs/overlays/fast/<mode>.yaml`, settings for constrained compute (tested on an RTX 4000 Ada). Only
+two modes have one, where relocalization stayed within 5 % (T3 and T2 at 1 m indoors / 3 m outdoors): `stereo_basalt`
+(6 images per pass at 416 px: query 10.6 -> 20.7 FPS) and `stereo_dpvo` (416 px: 6.5 -> 8.9 FPS). The other modes'
+overlays are empty: smaller images or a lower observation rate cost more than 5 %, or were not studied (each file
+says which). A map built with `--fast` must be relocalized in with `--fast` (its stored images are smaller; checked
+at load).
 
 | mode file (`--mode`) | = sensor mode / `--odometry` (/ `--mono-estimator`) |
 |---|---|
@@ -147,16 +184,17 @@ session runs is chosen by the runner's `--remote-server` / the `cross-edge` clie
 | `rgbd_ff_wheel`, `rgbd_ff_basalt` | `rgbd` / `external`, `basalt` (`--rgbd-estimator ff`) |
 | `mono_wheel`, `mono_basalt`, `mono_imu` | `mono` / `external`, `basalt`, `vgio` (`--mono-estimator ff`; implied by `vgio`) |
 | `mono_dpvo` | `mono` / `visual` (the DA3 back end) |
-| `mono_vio` | `mono` / `vio` (`--mono-estimator ff`: VGGT-Omega + DPVO + IMU, a reference system; merges in mapping sessions and hypothesis 0 updated by every observation: ROVER T3 +360 trials; no adoption in mapping sessions (it broke the KITTI 10 map)) |
+| `mono_vio` | `mono` / `vio` (`--mono-estimator ff`: VGGT-Omega back end, DPVO + IMU odometry; merges in mapping sessions, hypothesis 0 updated by every observation, no adoption in mapping sessions) |
 
-Reference combinations without a file of their own use their back end's file: mono DA3 with any odometry `mono_dpvo`,
-mono `ff` with DPVO `mono_wheel`. A mode file includes shared pieces of `configs/base/` (key `include:`, paths
-relative to the file; `common.yaml` is in every mode); keys below the include override them. Besides the SystemConfig
-sections a mode file holds the monocular frontends' settings: `mono:` (fields of `MonoConfig`, `cross/mono/config.py`:
-DPVO, learned-depth cadence, people masking; for the DA3 back end also its retrieval, charts and `cross_overrides`, the
-SystemConfig lines it applies after its presets of `cross/mono/system.py`) and `imu:` (fields of `ImuConfig` of the
-inertial frontends). `--mono-args` overrides them from the command line: `"--imu-config key=value"` and, for the DA3
-back end, `"--cross-config section.key=value"`; any other `mono` setting goes in a `--config` file's `mono:` section.
+Reference combinations without a file of their own use their back end's file: mono DA3 with any odometry
+`mono_dpvo`, mono `ff` with DPVO `mono_wheel`. A mode file includes shared pieces of `configs/base/` (key `include:`,
+paths relative to the file; `common.yaml` is in every mode); keys below the include override them. Besides the
+SystemConfig sections a mode file holds the monocular frontends' settings: `mono:` (fields of `MonoConfig`,
+`cross/mono/config.py`: DPVO, learned-depth cadence, people masking; for the DA3 back end also its retrieval, charts
+and `cross_overrides`, the SystemConfig lines it applies after its presets of `cross/mono/system.py`) and `imu:`
+(fields of `ImuConfig` of the inertial frontends). `--mono-args` overrides them from the command line:
+`"--imu-config key=value"` and, for the DA3 back end, `"--cross-config section.key=value"`; any other `mono` setting
+goes in a `--config` file's `mono:` section.
 
 A configuration file of your own uses the same sections as a mode file; only the keys you set change:
 
@@ -172,50 +210,51 @@ imu:
 
 ```bash
 python run.py <seq> --mode stereo_wheel --fast --config configs/overlays/outdoor.yaml my_overrides.yaml
-python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.confidence=0.9995  pose_est.obs_max_interval_steps=2
+python scripts/map_and_reloc_rgbd.py ... --set mapping.loop_closure.confidence=0.9995 pose_est.obs_max_interval_steps=2
 ```
 
 | file | use |
 |---|---|
 | `configs/base/vggt_finetuned.yaml` | the fine-tuned VGGT-Omega's settings (included by the bases of every mode that runs VGGT-Omega; applies only with a fine-tuned checkpoint, see below): the learned covisibility head |
 | `configs/overlays/outdoor.yaml` | outdoor scale (clustering and hypothesis-alignment radius) and, with the fine-tuned VGGT-Omega, a looser covisibility gate (0.10); the benchmark adds it on outdoor datasets |
-| `configs/overlays/strict_merge.yaml` | strict merge mode for large or repetitive places (look-alike floors / corridors), where a wrong relocalization costs more than a late one. It tightens the placement rule that `configs/base/placement.yaml` turns on in stereo_wheel, stereo_basalt, mono_wheel, mono_imu and mono_vio: a relocalization session joins the map only when the placement it implies is supported from positions >= 1.5 m apart. Full benchmark, ROVER: wrong-pose trials below the default mode's (stereo 12 -> 10, mono + wheel 26 -> 12, mono + IMU 78 -> 75), 3-6 % fewer correct trials outdoors and 9-20 % indoors (not for small indoor places); no effect in the other modes |
-| `configs/base/vertical_gate.yaml` | wrong-floor protection for gravity-aligned metric odometry, included by stereo_wheel, stereo_basalt, mono_wheel, mono_imu and mono_vio (off in code for monocular DPVO, which reuses mono_wheel): a session anchor whose map edge fails the posterior test is withdrawn, the loop-closure prior test scales the predicted vertical sigma by 0.25, and proposals it cannot test pass a chi-square gate. iPhone stereo + ARKit in a building with look-alike floors: a walk with a lift ride 2.95 -> 0.27 m median height error; ROVER and OpenLORIS within a null rerun's noise (mono_vio: OpenLORIS T3 +19/-6, T2@1 0.41 -> 0.47). Not in stereo_imu (its VGGT + IMU world vertical is not the camera y: ROVER map 0.81 -> 1.82 m) |
-| `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate: a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away); not tested with `--fast` |
+| `configs/base/placement.yaml` | a relocalization session joins the map only when the placement its measurements imply is supported at several steps and, after 20 m of walk, from several separate places; included by stereo_wheel, stereo_basalt, mono_wheel, mono_imu and mono_vio (off in code for monocular DPVO, which has no metric scale) |
+| `configs/overlays/strict_merge.yaml` | strict merge mode for large or repetitive places (look-alike floors / corridors), where a wrong relocalization costs more than a late one: the placement must also be supported from positions >= 1.5 m apart. On the full benchmark it gave fewer wrong-pose trials than the default rule, and 3-6 % fewer correct trials outdoors and 9-20 % indoors (not for small indoor places); no effect in the modes without the placement rule |
+| `configs/base/vertical_gate.yaml` | wrong-floor protection for gravity-aligned metric odometry, included by the same five modes (off in code for monocular DPVO): a session anchor whose map edge fails the posterior test is withdrawn, the loop-closure prior test scales the predicted vertical sigma by 0.25, and proposals it cannot test pass a chi-square gate. Not in stereo_imu (its VGGT + IMU world vertical is not the camera y) |
+| `configs/overlays/stereo_lowband.yaml` | opt-in for the stereo mode with trusted external odometry, e.g. remote sessions over a thin link: the back end observes on the left image (`pose_est.ff.right_image: left`; scale from the odometry) at half the rate, a third of the uplink; blinds the odometry scale guard (not with a VIO that can run away); not tested with `--fast` |
 | `configs/base/odometry_vio.yaml` | how far the odometry may drift, for the loop-closure consistency test and the pose graph (`mapping.loop_closure.noise.odom_*`), set for low-drift visual-inertial odometry: included by the Basalt modes (`stereo_basalt`, `mono_basalt`, `rgbd_basalt`, `rgbd_ff_basalt`). Too loose for such a VIO, the generic values let look-alike loop closures through and the pose graph bends the map. The generic code defaults stay for wheel odometry (`*_wheel`) and for CROSS's own IMU fusion (`stereo_imu`, `mono_imu`, `mono_vio`), whose odometry drifts more: there the preset rejects genuine loop closures; the vision-only `*_dpvo` modes set their own, looser values |
 | `configs/overlays/odometry_vio.yaml` | opt-in: the same values for external odometry from a low-drift VIO (a phone's ARKit / ARCore, a Basalt-class VIO on the robot) in a `*_wheel` mode |
 | `configs/base/mono_frontend.yaml` | the monocular frontends' shared `mono:` settings (DPVO frontend, people masking, a learned-depth scale observation every 10 frames), included by the mono modes and `stereo_imu`. The DA3 back end's own lines are in `modes/mono_dpvo.yaml`; with external odometry or `vio` it drops their odometry-noise lines (`mapping.loop_closure.noise.odom_*`, `tracking.*`) |
+| `configs/overlays/geo_anchor.yaml` | opt-in with `--gnss`: section 4 |
 
-Override one value with `--set section.key=value` (`run.py` and the `scripts/` runners) or put it in a small
-YAML file and pass it with `--config`. Some options (charts, session recovery, historical retrieval slots, ...) are off by default and are
-enabled by the DA3 back end's mode file (`configs/modes/mono_dpvo.yaml`).
+Override one value with `--set section.key=value` (`run.py` and the `scripts/` runners) or put it in a small YAML file
+and pass it with `--config`. Some options (charts, session recovery, historical retrieval slots, ...) are off by
+default and are enabled by the DA3 back end's mode file (`configs/modes/mono_dpvo.yaml`).
 
 **Configuration caveats.** The left-image overlay (`pose_est.ff.right_image: left`) has two documented costs, checked
 on the fully resolved configuration when a session starts (`cross.pipeline.config_risks`; `run.py`, the
 `scripts/map_and_reloc*.py` runners, and the remote server, whose warning the `cross-edge` CLI shows): with odometry
 that can run away (`--odometry basalt`, `visual`, `vio`, or an odometry file named `*vio*`) the odometry scale guard
-cannot see a runaway (ROVER night with Basalt: map ATE 38.2 m vs 11.2 m with the pair), and with 4 references per
-pass relocalization drops (development split T3 28 -> 24 of 33; the stereo base has 6); `--fast` (416 px) with the left
-image is untested. The run prints a warning naming the caveat and
-the safer alternative and asks `[y/N]`; without a terminal it aborts unless `--accept-config-risk` is given (the
-benchmark harness passes nothing, so a risky experiment must opt in with `--args "--accept-config-risk"`). The left
-image with trusted external odometry, the overlay's purpose, and with `--odometry vgio` (the frontend keeps the pair for
-its stereo depth) runs without a question.
+cannot see a runaway, and with 4 references per pass relocalization drops (the stereo base has 6); `--fast` (416 px)
+with the left image is untested. The run prints a warning naming the caveat and the safer alternative and asks
+`[y/N]`; without a terminal it aborts unless `--accept-config-risk` is given (the benchmark harness passes nothing,
+so a risky experiment must opt in with `--args "--accept-config-risk"`). The left image with trusted external
+odometry, the overlay's purpose, and with `--odometry vgio` (the frontend keeps the pair for its stereo depth) runs
+without a question.
 
-**Reproducible runs.** The shipped files of every folder optimise long loop-closure pose graphs in a background worker
+**Reproducible runs.** The shipped files of every mode optimise long loop-closure pose graphs in a background worker
 (`mapping.loop_closure.async_pgo`, below), whose results land at machine-dependent times. For experiments pass
 `--reproducible` (synchronous optimisation whatever the configuration says); the benchmark harness (`benchmark/run.py`,
 `benchmark/dev.py`) always does.
 
 **VGGT-Omega checkpoint.** `pose_est.ff.checkpoint` is `auto` by default: the fine-tuned checkpoint
 (`models/VGGT-Omega-CROSS/vggt_omega_cross_1b_512.pt`, installed by `install.sh --stereo`) when it is there, else the
-released one (`models/VGGT-Omega/vggt_omega_1b_512.pt`, `install.sh --vggt=released`). `finetuned`, `released` or a path
-select one (`--set pose_est.ff.checkpoint=released`; `scripts/map_and_reloc.py --checkpoint released`). A config file's
-top-level `vggt_finetuned:` section holds settings for the fine-tuned model: it applies after the rest of its file when
-the checkpoint in use is fine-tuned, i.e. carries a `covis_head_map` (install.sh's default, or any `vggt_ft` checkpoint
-calibrated with `calibrate_covis.py --map_geo`). The released checkpoint runs with the settings outside these sections.
-`configs/base/vggt_finetuned.yaml` turns on the learned covisibility head (`covis_source: auto`; the IMU bases
-`base/stereo_imu.yaml` / `base/mono_imu.yaml` keep the geometric score for the VGGT-inertial odometry);
+released one (`models/VGGT-Omega/vggt_omega_1b_512.pt`, `install.sh --vggt=released`). `finetuned`, `released` or a
+path select one (`--set pose_est.ff.checkpoint=released`; `scripts/map_and_reloc.py --checkpoint released`). A config
+file's top-level `vggt_finetuned:` section holds settings for the fine-tuned model: it applies after the rest of its
+file when the checkpoint in use is fine-tuned, i.e. carries a `covis_head_map` (install.sh's default, or any `vggt_ft`
+checkpoint calibrated with `calibrate_covis.py --map_geo`). The released checkpoint runs with the settings outside
+these sections. `configs/base/vggt_finetuned.yaml` turns on the learned covisibility head (`covis_source: auto`; the
+VGGT-inertial modes `modes/stereo_imu.yaml` / `modes/mono_imu.yaml` keep the geometric score);
 `configs/overlays/outdoor.yaml` lowers the covisibility gate to 0.10.
 
 **Keyframe quality filter** (`mapping.keyframe_quality`, `cross/core/kf_quality.py`). Views that are mostly blocked or
@@ -224,34 +263,31 @@ length, darkness, glare, a covered lens. They waste storage, and views of the sa
 alike, so they get retrieved at the wrong place. Such a frame becomes a temporary node: the odometry chain is kept,
 with no image and no descriptor. The test is the share of the view that shows textured, well-exposed scene content
 at a normal distance. The near field comes from sensor depth, or from stereo matching in the stereo mode; people are
-found by a small detector. Thresholds are relative to the session's running medians.
-A view that is only textureless (a white wall) is kept unless it shows no structure above the sensor noise. On by
-default; `--set mapping.keyframe_quality.enabled=false` turns it off. The test set with injected junk views is
+found by a small detector. Thresholds are relative to the session's running medians. A view that is only textureless
+(a white wall) is kept unless it shows no structure above the sensor noise. On by default;
+`--set mapping.keyframe_quality.enabled=false` turns it off. The test set with injected junk views is
 `benchmark/datasets/inject_junk.py` (`benchmark/dev.py ... --tier occ`).
 
-**Background pose-graph optimisation** (`mapping.loop_closure.async_pgo`, `cross/core/async_pgo.py`; on in every shipped mode file, off in the dataclass defaults and with `--reproducible`).
-On a large map one loop-closure optimisation takes seconds, and the front end processes no frame meanwhile. With
-`--set mapping.loop_closure.async_pgo=true` the optimisation of a verified loop closure (and the GNSS-triggered one)
-runs in a forked worker process: it works on a copy-on-write snapshot of the system, and the front end keeps processing
-frames. The result is applied when it arrives, to the state of that moment: keyframes added meanwhile and the tracked
-pose move with the correction of the latest keyframe at the fork. A thread would not help: GTSAM holds the GIL for the
-whole optimisation. Linux only; the state must be on the CPU (the default `state_device`); coordinate-chart (mono
-DA3 back end) graphs stay synchronous. Details:
-- In free-running mode (`async_pgo_lag_steps=-1`, the default) the result is applied as soon as the worker is done, so
-  *when* it lands depends on the machine's speed and a run is not bit-reproducible. An optimisation expected to take less
-  than `async_pgo_min_s` (0.1 s; and twice the cost of a fork, ~60 ms in a CUDA process) runs in the front end as before, so
-  small maps are unchanged (the expectation is the number of keyframes it covers times the cost per keyframe measured so far).
-- `async_pgo_lag_steps=k` (k >= 0) applies the result at the start of step s+k (the front end waits when the worker is
-  not done), so the run is reproducible. `0` is the synchronous behaviour and `1` (the start of the next step, nothing
-  processed in between) gives the same map; both are bit-identical to `async_pgo=false` (only the pose reported for the
-  frame that closes the loop is one correction behind with `1`). Larger lags and the free-running mode process frames on
-  the uncorrected map meanwhile and change the results: equal within noise on the dev split and ROVER and (with the
-  tail smoothing and the provisional optimisation of the latest `async_pgo_provisional_kf` = 1000 keyframes before the fork)
-  on the 6.4 km NCLT drive (3.72 m vs 3.68 m synchronous; `outputs/2026-10-08_async_pgo/REPORT.md`), with no optimisation-related
-  stall over 1 s.
-  Use `1` to test; benchmarks run synchronously (`--reproducible`).
-- One job at a time; loop closures detected meanwhile are re-checked against the corrected poses when it has been applied.
-  A merge of hypotheses, the final optimisation of a save and every other whole-graph operation wait for the job first.
+**Background pose-graph optimisation** (`mapping.loop_closure.async_pgo`, `cross/core/async_pgo.py`; on in every
+shipped mode file, off in the dataclass defaults and with `--reproducible`). On a large map one loop-closure
+optimisation takes seconds, and the front end processes no frame meanwhile. When it is on, the optimisation of a
+verified loop closure (and the GNSS-triggered one) runs in a forked worker process: it works on a copy-on-write
+snapshot of the system, and the front end keeps processing frames. The result is applied when it arrives, to the
+state of that moment: keyframes added meanwhile and the tracked pose move with the correction of the latest keyframe
+at the fork. A thread would not help: GTSAM holds the GIL for the whole optimisation. Linux only; the state must be on
+the CPU (the default `state_device`); coordinate-chart (mono DA3 back end) graphs stay synchronous. Details:
+- In free-running mode (`async_pgo_lag_steps=-1`, the default) the result is applied as soon as the worker is done,
+  so *when* it lands depends on the machine's speed and a run is not bit-reproducible. An optimisation expected to
+  take less than `async_pgo_min_s` (0.1 s; and twice the cost of a fork, ~60 ms in a CUDA process) runs in the front
+  end as before, so small maps are unchanged.
+- `async_pgo_lag_steps=k` (k >= 0) applies the result at the start of step s+k (the front end waits when the worker
+  is not done), so the run is reproducible. `0` is the synchronous behaviour and `1` gives the same map; both are
+  bit-identical to `async_pgo=false`. Larger lags and the free-running mode process frames on the uncorrected map
+  meanwhile and change the results: equal within noise on the development split, ROVER and a 6.4 km NCLT drive
+  (3.72 m vs 3.68 m synchronous), with no optimisation-related stall over 1 s.
+- One job at a time; loop closures detected meanwhile are re-checked against the corrected poses when it has been
+  applied. A merge of hypotheses, the final optimisation of a save and every other whole-graph operation wait for
+  the job first.
 
 **Camera mounting and the vertical.** Relocalization proposals are clustered, and matched to hypotheses, in place
 coordinates: position on the horizontal plane plus heading (`mapping.projection`). The default assumes a
@@ -264,40 +300,56 @@ ignored. For other robots:
   the clustering coordinates, and `vertical_gate` (metres) keeps proposals apart when their heights differ by more than
   the gate.
 
+**Environment variables.**
+
+| variable | effect |
+|---|---|
+| `CROSS_HUB_OFFLINE=1` | load the torch-hub models (XFeat, BoQ retrieval) from the local cache, without contacting GitHub |
+| `CROSS_BOQ_LOCAL_DIR` | a local checkout of the BoQ retrieval model to use instead of torch hub |
+| `CROSS_DPVO_CHECKPOINT` | DPVO weights (default `models/dpvo.pth`) |
+| `CROSS_CACHE_DIR` | where stereo-matched depth maps are cached (default `~/.cache/cross`) |
+| `CROSS_LOG_FILE` | write the debug log to this file (the `scripts/` runners set it to `<out>/system.log`) |
+| `CROSS_TORCH_HUB` | torch-hub folder of the standalone monocular runner (`python -m cross.mono.run`) |
+| `BENCH_DATA`, `BENCH_RESULTS`, `BENCH_DEV_RESULTS` | benchmark data and result folders (section 5) |
+| `CROSS_EXTRA_PYTHONPATH` | extra import paths for the benchmark's jobs (which set their own `PYTHONPATH`) |
+| `BASALT_VIO`, `BASALT_LIVE` | the Basalt binaries of `prepare_vio.py` and `cross-edge` |
+| `VGGT_FT_ROOT` | data and run root of the fine-tuning recipe (section 11) |
+
 ## 4. Multi-session: map one session, relocalize in another
 
-Mapping and relocalization are two steps: build and save a map, then load it and localize a later session against it.
-The two harnesses do both and score the result (map ATE; relocalization success over independent 100-frame trials that
-start without a pose; a trial succeeds when the final estimate is within `--r-d` of the pose the map implies):
+`run.py --save-map` / `--load-map` (section 2) map and relocalize from the command line. Two harnesses do both
+sessions and score the result against the ground truth (map ATE; relocalization success over independent trials that
+start without a pose; a trial succeeds when its final estimate is within `--r-d` of the pose the map implies, 2 m by
+default):
 
 ```bash
-# RGB-D / mono on posed folders
+# RGB-D / mono on posed folders (trials of 100 frames every 50 frames by default)
 python scripts/map_and_reloc_rgbd.py --map data/posed/home1-1 --query data/posed/home1-2 --out outputs/home
 python scripts/map_and_reloc_rgbd.py --map ... --query ... --out outputs/home_mono --mode mono_dpvo
-# stereo sequences: stereo mode (VGGT-Omega) by default; --mode rgbd_wheel --pnp-depth gt|sgbm gives the PnP baseline on the same data,
-# --mode rgbd_ff_wheel --pnp-depth gt|sgbm VGGT-Omega scaled by that depth (posed RGB-D folders: --pnp-depth gt reads depth/)
+# stereo sequences: stereo mode (VGGT-Omega) by default; --mode rgbd_wheel --pnp-depth gt|sgbm gives the PnP baseline
+# on the same data, --mode rgbd_ff_wheel --pnp-depth gt|sgbm VGGT-Omega scaled by that depth (posed RGB-D folders:
+# --pnp-depth gt reads depth/). One trial over the whole query unless --trial-len is given
 python scripts/map_and_reloc.py --map data/sim/hssd_house/map --query data/sim/hssd_house/light_night \
     --out outputs/house --baseline 0.3 --snr 10 --trial-len 100 --trial-stride 50
 ```
 
-The map is written to `--out` (`map.pkl`, `map_meta.json`); `--skip-map` reuses it for another query and `--skip-reloc`
-only maps. Another query in the same scene is another call with the same `--out`/`--skip-map`. `--extend-map DIR` makes
-the map run a second session in the map of an earlier run (`DIR/map.pkl` + `map_meta.json`): it relocalizes, adds
-keyframes where the map has none, and saves the extended map with a `map_meta.json` covering every keyframe (session in
-`kf_session`), so queries in it are scored like in any map; `map_meta.json` "extension" scores the new keyframes in the
-loaded map's ground-truth alignment (ATE, how far the loaded keyframes moved, fraction of frames localized). With
-`--map-start/--map-end` the first session can map part of a route. In code, use
-`System.save_map(path)` / `System.load_map(path)`; `examples/multi_session.py` runs several sequences through one
-`System`, and `examples/planner.py` loads a map and plans paths on it.
+The map is written to `--out` (`map.pkl`, `map_meta.json` with the map's accuracy); the relocalization summary is
+`reloc_summary.json` (success rate, error statistics) and `reloc_rows.json` (every frame). `--skip-map` reuses the map
+for another query and `--skip-reloc` only maps. `--extend-map DIR` (`map_and_reloc.py`) makes the map run a second
+session in the map of an earlier run (`DIR/map.pkl` + `map_meta.json`): it relocalizes, adds keyframes where the map
+has none, and saves the extended map with a `map_meta.json` covering every keyframe (session in `kf_session`), so
+queries in it are scored like in any map; `map_meta.json` "extension" scores the new keyframes in the loaded map's
+ground-truth alignment. With `--map-start/--map-end` the first session can map part of a route. In code, use
+`System.save_map(path)` / `System.load_map(path)` (section 10); `examples/multi_session.py` runs several sequences
+through one `System`, and `examples/planner.py` loads a map and plans paths on it.
 
 **A mono session in a stereo map.** A map built in the stereo mode can be used later by a robot with one camera (the
-map's left camera): run the query in a VGGT-Omega mono mode (`--mode mono_wheel`, `mono_basalt` or `mono_imu`), with the normal mono configuration files; nothing else is needed. Pairs of
-map references with their relative pose in the map anchor the metric scale of each pass. Tested 2026-10-10 on
-OpenLORIS, ROVER and KITTI 07: relocalization equal to a stereo query in the same map or better, and with IMU the
-query inherits the better stereo map (scale within 0.8 % on ROVER vs 2 % in a mono map). Also using the right images
-stored with a stereo map's keyframes as extra anchors changed nothing measurable, so it is not done (tag
-`opt-mono-right-anchors`). With the benchmark harness: `benchmark/run.py --system cross_mono_ff_odom --setup stereo --task query --map-from
-cross_stereo ...` (the query relocalizes in `cross_stereo`'s map of the same run).
+map's left camera): run the query in a VGGT-Omega mono mode (`--mode mono_wheel`, `mono_basalt` or `mono_imu`), with
+the normal mono configuration files; nothing else is needed. Pairs of map references with their relative pose in the
+map anchor the metric scale of each pass. Relocalization is equal to a stereo query in the same map or better, and
+with an IMU the query inherits the better stereo map. With the benchmark harness: `benchmark/run.py --system
+cross_mono_ff_odom --setup stereo --task query --map-from cross_stereo ...` (the query relocalizes in `cross_stereo`'s
+map of the same run).
 
 **Another camera.** A map made with one camera can be relocalized in and extended with another (another robot,
 another lens, another stereo rig), in the feed-forward modes (stereo, mono with `--mono-estimator ff`). The map keeps
@@ -307,81 +359,80 @@ ones (the largest centred crop with their aspect ratio, resized; a wider camera 
 id (the same camera within 1 % of the intrinsics and the rig is the same id), and in every forward pass each
 reference gets the principal-point correction of its own camera and, as a scale anchor, its stored right image with
 its own camera's rig. The model predicts each view's field of view, so different focal lengths need nothing else.
-Not supported: PnP (the RGB-D mode) and the DA3 mono back end (they refuse another camera), and with `--odometry vgio`
-a camera whose images need another size than the map's. Maps saved before the table load as one camera. In simulated
-tests (four scenes; cameras with 90°, 75° and 60° field of view, 0.30 / 0.12 / 0.20 m baselines, a shifted principal
-point and another height) a stereo session with the other camera relocalized as often as one with the map's camera,
-and after an extension with the other camera, queries in the extended area localized almost as well as in the
-original one (recall at 1 m 0.93-0.99 against 0.95-0.99). Ignoring the camera ids placed the new keyframes worse (one
-scene: recall at 1 m in the extended area 0.81 instead of 0.95). Untested: the learned scale of the mono modes,
-whose scale head takes the session camera's focal length for the whole pass.
+Not supported: PnP (the RGB-D mode) and the DA3 mono back end (they refuse another camera), and with `--odometry
+vgio` a camera whose images need another size than the map's. Maps saved before the table load as one camera.
+Untested: the learned scale of the mono modes, whose scale head takes the session camera's focal length for the
+whole pass.
 
 **Map files.** A map is `map.pkl` (the graph: keyframe poses, edges, metadata) plus the directory `map.pkl.store/`
 next to it (keyframe images and retrieval descriptors); copy or move both together. Keyframe images of a loaded map
 are read from disk when they are used, so a large map does not have to fit in memory. The `storage` config section
-chooses the encoding: `storage.image_codec` `webp_lossless` (default; exact) or `png`, or the lossy `jpeg` / `webp` at
-`storage.image_quality`; `storage.depth_drop_bits` (lossy depth, RGB-D); `storage.descriptor_dtype` (`float16` by default, `float32`);
-keyframe images live in host RAM and are copied to the GPU only for the pass that uses them;
-`storage.max_ram_images` (2000 by default; 0 = all) keeps only the newest keyframes' images in memory during a long session. Maps written by
-older versions (one `map.pkl` with everything inside) still load; `storage.format pickle` writes that format, and
-`python scripts/convert_map.py old/map.pkl new/map.pkl [--image-codec jpeg --image-quality 95] --verify` converts a map.
+chooses the encoding: `storage.image_codec` `webp_lossless` (default; exact) or `png`, or the lossy `jpeg` / `webp`
+at `storage.image_quality`; `storage.depth_drop_bits` (lossy depth, RGB-D); `storage.descriptor_dtype` (`float16` by
+default, `float32`); keyframe images live in host RAM and are copied to the GPU only for the pass that uses them;
+`storage.max_ram_images` (2000 by default; 0 = all) keeps only the newest keyframes' images in memory during a long
+session. Maps written by older versions (one `map.pkl` with everything inside) still load; `storage.format pickle`
+writes that format, and `python scripts/convert_map.py old/map.pkl new/map.pkl [--image-codec jpeg --image-quality
+95] --verify` converts a map.
 
-**GNSS and compass: maps on Earth.** With a GNSS receiver (and optionally a magnetometer), `--gnss` (both
-runners; config `geo.enabled`) anchors the map to latitude / longitude: every keyframe of the saved map gets its
-position on Earth (`python scripts/geo/export_map_geo.py out/map.pkl --out out/map_geo` writes GeoJSON / KML). The
-fixes are quality-controlled before they are used, so weak GNSS (indoors, near buildings, right after reacquisition)
-gets no weight instead of pulling the map: each fix must agree with the robot's own track over the last 20 s (a
-receiver that holds a stale position while the robot moves fails this), a new epoch after a gap waits 10 s, and a fix
-must agree with the map's prediction at the verified loop closure's chi-square level. Used fixes become pose-graph
-factors with a robust kernel, spaced one correlation time of the receiver error apart (estimated online; consumer
-receivers repeat the same error for tens of seconds), and the graph is optimised when they say the map drifted. In a
-relocalization session on a geo-anchored map, the current fix drops references that contradict it (a calibrated compass
-also drops references with a contradicting heading), and the stored keyframes within ~3.7 sigma + 5 m of a trusted fix
-take the map retrieval budget except two global slots (`geo.retrieval_focus`, on; NCLT cross-season relocalization 60 vs
-56 of 75 trials within 5 m, degraded GPS no worse than none).
-Input: a prepared folder (or its parent) with `gnss.txt` (`t lat lon alt [mode num_sats [hdop [sigma_h]]]`, times on
-the clock of `times.txt`), optionally `mag.txt` / `ms25.txt` (magnetometer + accelerometer, forward-right-down) or
-`heading.txt` (see `cross/dataloader/geo.py`); in code, `obs["gnss"] = {"t", "lat", "lon", "alt", ...}` and
-`obs["compass"]` per step. `--gnss-degrade sigma=8,bias=15,drop=0.3,outage=60:120` degrades the query's fixes
-(testing). Main options (`geo.*`): `gate`, `decimate`, `robust` (the method; switch off for ablations),
-`sigma_v_factor` (4: consumer altitude is poor, but horizontal-only factors let the optimisation tilt the map),
-`retrieval_gate` (the fix as a location prior), `proposal_gate`, `compass_gate`. On by default (`--no-gnss` /
-`geo.enabled=false` turns it off): `--gnss` only feeds the folder's GNSS data; without GNSS input the system's results
-are unchanged, and a geo-anchored map keeps its anchor and keyframe latitude / longitude when it is saved again.
+**GNSS and compass: maps on Earth.** GNSS anchoring (`geo.enabled`) is on by default but acts only on GNSS input:
+`--gnss` (the `scripts/map_and_reloc*.py` runners; `obs["gnss"]` in code) feeds the folder's fixes, and the map is then
+anchored to latitude / longitude: every keyframe of the saved map gets its position on Earth
+(`python scripts/geo/export_map_geo.py out/map.pkl --out out/map_geo` writes GeoJSON / KML). Without GNSS input the
+results are unchanged, and a geo-anchored map keeps its anchor and keyframe latitude / longitude when it is saved
+again. The fixes are quality-controlled before they are used, so weak GNSS (indoors, near buildings, right after
+reacquisition) gets no weight instead of pulling the map: each fix must agree with the robot's own track over the
+last 20 s (a receiver that holds a stale position while the robot moves fails this), a new epoch after a gap waits
+10 s, and a fix must agree with the map's prediction at the verified loop closure's chi-square level. Used fixes
+become pose-graph factors with a robust kernel, spaced one correlation time of the receiver error apart (estimated
+online; consumer receivers repeat the same error for tens of seconds), and the graph is optimised when they say the
+map drifted. In a relocalization session on a geo-anchored map, the current fix drops references that contradict it
+(a calibrated compass also drops references with a contradicting heading), and the stored keyframes within ~3.7
+sigma + 5 m of a trusted fix take the map retrieval budget except two global slots (`geo.retrieval_focus`, on;
+degraded GPS is no worse than none). Input: a prepared folder (or its parent) with `gnss.txt` (`t lat lon alt [mode
+num_sats [hdop [sigma_h]]]`, times on the clock of `times.txt`), optionally `mag.txt` / `ms25.txt` (magnetometer +
+accelerometer, forward-right-down) or `heading.txt` (see `cross/dataloader/geo.py`); in code, `obs["gnss"] = {"t",
+"lat", "lon", "alt", ...}` and `obs["compass"]` per step. `--gnss-degrade sigma=8,bias=15,drop=0.3,outage=60:120`
+degrades the query's fixes (testing); `--no-gnss` turns the input off. Main options (`geo.*`): `gate`, `decimate`,
+`robust` (the method; switch off for ablations), `sigma_v_factor` (4: consumer altitude is poor, but
+horizontal-only factors let the optimisation tilt the map), `retrieval_gate` (the fix as a location prior),
+`proposal_gate`, `compass_gate`.
 
 **Anchor only, pooled over sessions (opt-in, under evaluation).** `--gnss --config configs/overlays/geo_anchor.yaml`
 keeps GNSS out of the pose graph (`geo.pose_graph false`: the map is what vision and odometry make it) and fits one
 rigid anchor (heading + translation) to every used fix of every session of the map (`geo.pool_sessions`: the fixes are
-stored with the map and later sessions keep refining the anchor); it also widens the GNSS consistency window to 60 s
-for phones at walking speed. With a compass whose offset to the camera heading is known
-(`--set geo.compass_anchor=true geo.compass_offset_deg=<deg>`, or a loaded map's calibration), each session adds one
-heading to the fit. iPhone captures (outputs/2026-10-16_geo_anchor): nine 3-6 min walks anchored after 4 walks (never
-with per-session fits; after 1 with a compass), a 1.6 km walk anchored to 2.5 deg / 7 m against OpenStreetMap, maps
-unchanged (median 3-39 mm against the run without GPS).
+stored with the map and later sessions keep refining the anchor); it widens the GNSS consistency window to 60 s for
+phones at walking speed, and separate groups of the map (`geo.component_anchors`: connected components the map does
+not link, e.g. a floor joined to nothing else) get their own anchor once they have enough fixes. With a compass whose
+offset to the camera heading is known (`--set geo.compass_anchor=true geo.compass_offset_deg=<deg>`, or a loaded map's
+calibration), each session adds one heading to the fit.
 
-Stereo-mode quick-run options: `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation gating;
-default: the mode's configuration file), `--max-refs`, `--n-ref-anchors`. Without a right camera pass
-`--set pose_est.ff.right_image=left` (scale from the odometry; see the README OpenLORIS example).
+**`scripts/map_and_reloc.py` options.** `--obs-min-translation/--obs-min-rotation/--obs-max-interval` (observation
+gating; default: the mode's configuration file), `--max-refs` (references per pass), `--n-ref-anchors` (reference
+right images per pass), `--checkpoint`, `--backend`. Without a right camera pass `--set pose_est.ff.right_image=left`
+(scale from the odometry), or use a mono mode.
 
 ## 5. Benchmark
 
 [`benchmark/`](../benchmark/README.md) runs the fixed protocol ([PROTOCOL.md](../benchmark/PROTOCOL.md)):
 **T1** mapping ATE, **T2** multi-session localization recall, **T3** relocalization success, on KITTI,
-OpenLORIS-Scene, ROVER and SimChange, in RGB-D, stereo and mono setups. Results so far:
-[RESULTS.md](../benchmark/RESULTS.md) and the interactive page `benchmark/site/index.html` (work in progress).
+OpenLORIS-Scene, ROVER and SimChange, in RGB-D, stereo and mono setups. Results:
+[RESULTS.md](../benchmark/RESULTS.md) and the interactive page `benchmark/site/index.html`.
 
 ### Choosing systems (including baselines)
 
-A **system** is an entry of `benchmark/configs/systems.yaml`: its runner, setups, and extra arguments. Pass the names to
-`jobs.py --systems`:
+A **system** is an entry of `benchmark/configs/systems.yaml`: its runner, setups, and extra arguments. Pass the names
+to `jobs.py --systems`:
 
 | system | what it is |
 |---|---|
 | `cross_rgbd`, `cross_rgbd_vo` | CROSS RGB-D mode, external / visual odometry |
 | `cross_stereo`, `cross_stereo_vo` | CROSS stereo mode, external / visual odometry |
-| `cross_mono_odom`, `cross_mono` | CROSS mono mode, external / visual odometry |
-| `cross_mono_vio` | CROSS mono mode, visual-inertial odometry (IMU) |
+| `cross_stereo_vgio` | CROSS stereo mode with the VGGT-inertial odometry (`stereo_imu`) |
+| `cross_mono_odom`, `cross_mono` | CROSS mono mode, DA3 back end, external / visual odometry |
+| `cross_mono_vio` | CROSS mono mode, DA3 back end, visual-inertial odometry (IMU) |
 | `cross_mono_ff_odom`, `cross_mono_ff`, `cross_mono_ff_vio` | CROSS mono mode with VGGT-Omega (`--mono-estimator ff`), external / visual / visual-inertial odometry |
+| `cross_mono_ff_vgio` | CROSS mono mode with the VGGT-inertial odometry (`mono_imu`) |
 | `orbslam3`, `rtabmap`, `rtabmap_vo` | baselines (drivers in `scripts/baselines/`, built separately); RTAB-Map with the dataset odometry / its own visual odometry |
 | `orbslam3_imu`, `rtabmap_vi` | the same baselines with the setup's IMU: ORB-SLAM3's inertial modes, RTAB-Map's visual odometry with the IMU orientation (stereo setups need `prepare_vio.py <dataset> ... --write-imu imu_vio` first) |
 | `mast3r_slam`, `vggt_slam` | baselines without map persistence (map + query run as one stream) |
@@ -396,19 +447,23 @@ export BENCH_DATA=/path/to/benchmark_data BENCH_RESULTS=/path/to/runs
 bash benchmark/datasets/download_openloris.sh /path/to/openloris                          # once per dataset
 python benchmark/datasets/prepare_openloris.py /path/to/openloris $BENCH_DATA/openloris
 python benchmark/jobs.py --dataset openloris --systems cross_rgbd cross_stereo orbslam3 > queue.txt
-#   restrict with --setups rgbd stereo mono, --scenes office home, --tracks ...
+#   restrict with --setups rgbd stereo mono, --scenes office home, --tracks t1 t2t3
 while read -r job; do python benchmark/run.py $job; done < queue.txt                      # or split the lines over workers / GPUs
 python benchmark/collect.py $BENCH_RESULTS && python benchmark/make_tables.py && python benchmark/build_site.py
 ```
 
-- Each line of `queue.txt` is one job (`--task map | t1 | query`). Maps come first; a query job builds a missing map itself,
-  with a lock so parallel workers share it. Exit code 3 means the job is not ready (inputs missing, or another worker is
-  building its map): retry it later. Finished jobs are skipped; `--force` redoes one.
-- Try a variant of one system without editing its entry: `run.py ... --variant myvariant --args "--max-refs 4"`; results go
-  to `<system>@myvariant`. `--args` are extra arguments of the CROSS command line.
-- Re-score stored runs with the current metrics without running the system: `run.py ... --reeval` (map / t1 tasks: the
-  T1 result; query tasks of the baselines: T2 / T3 from their pose files).
+- Each line of `queue.txt` is one job (`--task map | t1 | query`). Maps come first; a query job builds a missing map
+  itself, with a lock so parallel workers share it. Exit code 3 means the job is not ready (inputs missing, or
+  another worker is building its map): retry it later. Finished jobs are skipped; `--force` redoes one;
+  `benchmark/redo_failed.py <results_root>` prints the re-run lines of every failed result.
+- Try a variant of one system without editing its entry: `run.py ... --variant myvariant --args "--max-refs 4"`;
+  results go to `<system>@myvariant`. `--args` are extra arguments of the CROSS command line (a `--config` there adds
+  to the outdoor overlay).
+- Re-score stored runs with the current metrics without running the system: `run.py ... --reeval` (map / t1 tasks:
+  the T1 result; query tasks of the baselines: T2 / T3 from their pose files).
 - Outdoor datasets automatically add `configs/overlays/outdoor.yaml`. Do not tune per dataset: the protocol forbids it.
+- The jobs set their own `PYTHONPATH` (the repository); `CROSS_EXTRA_PYTHONPATH` adds packages outside the
+  environment.
 
 ### Quick check of a change: the development split
 
@@ -430,10 +485,10 @@ Compare runs from the same GPU only, and read single-query T2 swings and single 
 A session can be split (`cross/remote/`): the **server** runs the back end (retrieval, the VGGT-Omega passes,
 hypotheses, loop closure, the map) and the GPU side of the VGGT-inertial odometry (its own passes, learned / stereo
 depth scale, depth ratios); the **edge** (the robot's computer, no GPU) runs the IMU propagation, the tracked corners
-and the local pose graph, or forwards the external odometry.  Every frame the edge sends its motion, and images only
-on the frames the back end will observe or the odometry measures; the replies come back late.  A late measurement
+and the local pose graph, or forwards the external odometry. Every frame the edge sends its motion, and images only
+on the frames the back end will observe or the odometry measures; the replies come back late. A late measurement
 joins the local graph at its frame's time and the IMU carries the state to the current frame again; the published map
-pose is the back end's pose of the last replied frame carried by the odometry since.  Supported: external odometry
+pose is the back end's pose of the last replied frame carried by the odometry since. Supported: external odometry
 (rgbd / stereo / mono with `--mono-estimator ff`) and `--odometry vgio` (mono ff, stereo).
 
 Simulated network, on the dataset's clock (deterministic; any runner or benchmark variant):
@@ -448,13 +503,13 @@ python scripts/map_and_reloc.py ... --odometry vgio --remote --remote-rtt 0.1   
 #   --set pose_est.obs_confident_max_interval_steps=10   fewer observations while localized; the edge follows (no images)
 #   vgio measures on the back end's passes in the stereo mode (imu.vgio_align, on there; off for mono, where it costs
 #   scale accuracy): 20 % fewer uploads;  --mono-args '--imu-config vgio_align=false' turns it off
-#   --config configs/overlays/stereo_lowband.yaml   stereo + trusted external odometry: left image only, half the rate (a third
-#                                          of the uplink; the odometry scale guard is blind then)
+#   --config configs/overlays/stereo_lowband.yaml   stereo + trusted external odometry: left image only, half the rate
 #   --remote --remote-compute zero --remote-upload all   reproduces the local session exactly
 python benchmark/dev.py run --systems cross_stereo_vgio --variant rtt100 --args "--remote --remote-rtt 0.1 --online-poses"
 ```
 
-Real network (gRPC; `pip install grpcio` on both machines):
+Real network (gRPC; `pip install grpcio` on both machines). The link has no authentication or encryption, the server
+listens on all network interfaces, and it opens the map files the client names: run it only on a network you trust.
 
 ```bash
 python scripts/remote/serve.py --port 50051                                              # GPU machine
@@ -463,8 +518,9 @@ python scripts/map_and_reloc.py ... --remote-server gpu-host:50051 --remote-real
 ```
 
 Standalone edge (the robot's computer, CPU only, no CROSS / torch): the `cross-edge` package in `edge/` (its own
-`pyproject.toml`; `edge/README.md`) runs Basalt's stereo-inertial VIO live (`edge/native/install_basalt_live.sh` builds
-`basalt_live`), copies the back end's observation cadence and publishes the map-frame pose of every frame:
+`pyproject.toml`; [edge/README.md](../edge/README.md)) runs Basalt's stereo-inertial VIO live
+(`edge/native/install_basalt_live.sh` builds `basalt_live`), copies the back end's observation cadence and publishes
+the map-frame pose of every frame:
 
 ```bash
 pip install ./edge && edge/native/install_basalt_live.sh ~/basalt_build      # on the robot
@@ -473,15 +529,14 @@ cross-edge run --server gpu-host:50051 --data <stereo folder> --realtime --save-
 cross-edge run --server gpu-host:50051 --data <stereo folder> --realtime --load-map /maps/a.pkl --out run_query
 ```
 
-The server builds the session from its own shipped file for the mode (`configs/modes/stereo_basalt.yaml`;
-`stereo_wheel.yaml` for another pose file than `odom_vio.txt`), plus `--config-file` paths in its
-`configs/` folder (e.g. `overlays/outdoor.yaml`) and `--set` overrides, and sends the cadence settings back; apart from
-the background pose-graph optimisation the effective configuration equals the benchmark's `cross_stereo` (external
-odometry).  Uploads are lossless by default (`--jpeg 0`; JPEG 90 cost the stereo mode relocalization, office1-7 T2
-0.86 -> 0.56).  `cross.remote.edge.RemotePipeline`
-(the CROSS runners' edge, also with the VGGT-inertial frontend) extends the package's `EdgeSession`.
+The server builds the session from its own shipped file for the mode: `configs/modes/stereo_basalt.yaml` for
+`cross-edge` (Basalt odometry; `stereo_wheel.yaml` for another pose file than `odom_vio.txt`), plus `--config-file`
+paths in its `configs/` folder (e.g. `overlays/outdoor.yaml`) and `--set` overrides, and sends the cadence settings
+back. Uploads are lossless by default (`--jpeg 0`; JPEG 90 cost the stereo mode relocalization).
+`cross.remote.edge.RemotePipeline` (the CROSS runners' edge, also with the VGGT-inertial frontend) extends the
+package's `EdgeSession`.
 
-Map files are written on the server at the paths the edge names.  `--online-poses` (map runs) scores the pose the
+Map files are written on the server at the paths the edge names. `--online-poses` (map runs) scores the pose the
 session published at every frame (`map_meta.json` `online`), the number latency changes; `remote` in `map_meta.json` /
 `reloc_summary.json` holds the link's statistics (latency, uploads, server time per kind of message, timeline).
 
@@ -529,13 +584,13 @@ current pose, greedily the one whose horizontal field of view adds the most unco
 `nav_extra_range_m`; the current view and the references count as covered). The heads must match the pass's
 checkpoint: with CROSS's default (vfin2) use the heads of `cross_nav/configs/policy/bev_planner_vfin2.json` (fine-tuned
 on vfin2: occupancy `configs/train/vfin2_route_ft.yaml`, observability `vfin2_vis_ft.yaml` with
-`python -m cross_nav.train_visibility`; HSSD val240 on CROSS's pass 97.1-97.9 % vs 94.2-95.0 % with the vdl_s1 heads,
-`outputs/2026-10-16_vfin2_heads`); `bev_planner_best.json` holds the vdl_s1 heads.
+`python -m cross_nav.train_visibility`; HSSD val240 on CROSS's pass 97.1-97.9 % vs 94.2-95.0 % with the vdl_s1
+heads); `bev_planner_best.json` holds the vdl_s1 heads.
 Simulator service: `cross_nav/policy/sim/cross_nav_service.py --bev cross_nav/configs/policy/bev_planner_vfin2.json`.
 Labels for training come from the scene cache of `vggt_ft` (`python -m cross_nav.labels`: all frames of a place
 accumulated, free-space carving) and from simulated HSSD scenes with mesh labels (`cross_nav/sim/`).
 
-## Calibrating a two-iPhone stereo rig
+## 9. Calibrating a two-iPhone stereo rig
 
 Two phones mounted side by side, each recording images, ARKit poses and (optionally) LiDAR depth with the capture
 app, can be calibrated from their own recordings, without a calibration target:
@@ -548,44 +603,73 @@ python scripts/rig/calibrate_iphone_rig.py \
 ```
 
 A recording can also be read from inside the capture zip: `capture.zip::capture_1/<...>/data/recording_<...>_B`.
-Phone B is the left camera, A the right one.  Per recording (`cross/rig/selfcalib.py`):
+Phone B is the left camera, A the right one. Per recording (`cross/rig/selfcalib.py`):
 
-1. **Clock offset** between the phones: both turn at the same angular speed at every instant, so the offset is the
-   shift that best aligns the two ARKit tracks' angular speed (a few ms).
+1. **Clock offset** between the phones: both turn at the same angular speed at every instant, so the offset starts
+   from the shift that best aligns the two ARKit tracks' angular speed (a few ms), and is then refined from image
+   matches while the rig turns.
 2. **Extrinsic** (rotation and metric translation between the cameras) by hand-eye calibration of the two ARKit
    tracks over thousands of motion pairs; the walk has to turn.
 3. **Image refinement**: SIFT matches between a B image and the A image nearest in time; the relative pose of the two
    exposures includes the camera motion between them (from ARKit), so imperfect synchronisation does not bias it.
-   Rotation and translation direction minimise the epipolar (Sampson) error.  `--no-images` skips it.
-4. **Baseline length** from LiDAR: matches triangulated with the rig against phone B's LiDAR depth.
-   `--no-lidar` keeps the hand-eye length.
+   Rotation and translation direction minimise the epipolar (Sampson) error.
+4. **Baseline length** from LiDAR: matches triangulated with the rig against phone B's LiDAR depth. `--no-lidar` keeps
+   the hand-eye length.
 
-Prepare the stereo folders with `scripts/rig/prepare_iphone_stereo.py` (pairs by true time, rectifies each pair
-with its own relative pose; writes ARKit as the odometry). ARKit is a visual-inertial odometry: map with
-`--mode stereo_wheel --config configs/overlays/odometry_vio.yaml` (section 3).
+`--no-images` keeps the motion-only calibration (no image refinement, no LiDAR check). The recordings are combined
+into one calibration (rotations averaged, median baseline); the YAML keeps every recording's clock offset and its
+rotation difference from the combined one, which shows whether the rig moved between recordings. The output uses the
+layout of `stereo_extrinsics.yaml` (`R`, `T`: x_B = R x_A + T in OpenCV camera axes of the raw images; camera matrices
+from ARKit).
 
-The recordings are combined into one calibration (rotations averaged, median baseline); the YAML keeps every
-recording's clock offset and its rotation difference from the combined one, which shows whether the rig moved
-between recordings.  The output uses the layout of `stereo_extrinsics.yaml` (`R`, `T`: x_B = R x_A + T in OpenCV
-camera axes of the raw images; camera matrices from ARKit).
+Prepare each walk as a CROSS stereo folder (pairs by true time, each pair rectified with its own relative pose; ARKit
+written as the odometry):
 
-## 9. Programmatic use
-
-```python
-from cross.pipeline import build_session, mono_config_from_files
-session = build_session("mono", "visual", camera, SystemConfig(),
-                        mono_config=mono_config_from_files(["configs/modes/mono_dpvo.yaml"], "models/dpvo.pth"))
-for frame in dataset.replay_data():            # dict: rgb (uint8), timestamp[, depth, rgb_right, delta_pose]
-    session.process(frame)
-    T_c0, T_best, weights = session.belief(to_matrix)
+```bash
+python scripts/rig/prepare_iphone_stereo.py --a walk1/recording_1_A --b walk1/recording_1_B --calib rig.yaml --out data/walk1
+python scripts/rig/check_rectification.py data/walk1                     # vertical offset of the matches per pair
+python scripts/rig/check_stereo_scale.py --prepared data/walk1 --b walk1/recording_1_B   # stereo depth vs LiDAR
 ```
 
+The combined rig rotation is the default; `--rotation walk` uses the recording's own rotation. ARKit is a
+visual-inertial odometry: map with `--mode stereo_wheel --config configs/overlays/odometry_vio.yaml` (section 3).
+
+## 10. Programmatic use
+
+```python
+import numpy as np
+from cross.core.config import load_config
+from cross.core.types import Camera
+from cross.dataloader.auto import load_dataset
+from cross.pipeline import build_session, mode_config_files
+from cross.utils.lie_tensor import normalize_SE3
+
+dataset = load_dataset("data/posed/office1-2")
+camera = Camera(K=dataset.rgb_K, frame_width=dataset.rgb_width, frame_height=dataset.rgb_height)
+config = load_config(*mode_config_files("rgbd", "external"))          # = configs/modes/rgbd_wheel.yaml
+session = build_session("rgbd", "external", camera, config)          # stereo: T_right_in_left=dataset.T_right_in_left
+session.load_map("maps/office/map.pkl")                              # optional: relocalize in a saved map
+
+to_matrix = lambda pose: normalize_SE3(pose).matrix().detach().cpu().numpy()
+for i, frame in enumerate(dataset.replay_data()):  # dict: rgb (uint8), timestamp[, depth, rgb_right, delta_pose]
+    if i == 0:
+        frame["delta_pose"] = None
+    session.process(frame)
+    if session.localized():
+        T_c0, T_best, weights = session.belief(to_matrix)   # hypothesis 0, most likely hypothesis, weights
+session.save_map("maps/office/map.pkl")
+session.release()
+```
+
+The modes with a monocular frontend need its configuration: `cross.pipeline.session_factory(args, camera, config)`
+returns a function that builds sessions of any mode from the runners' parsed arguments (`add_session_args` /
+`finish_session_args`), as `run.py` does.
 For the back end alone (any mode, external odometry), use `System(camera=camera, config=cfg)` and call
 `system.step(obs={"rgb": ..., "depth": ..., "delta_pose": ..., "timestamp": t})`; stereo adds `rgb_right` and
-`T_right_in_left=` on the constructor. Other tools: `scripts/viz/record_trace.py` and `build_trace_page.py` (replay of
-how a map is built), `scripts/eval_relpose.py` (relative-pose accuracy of the estimators).
+`T_right_in_left=` on the constructor. `scripts/eval_relpose.py` measures the relative-pose accuracy of the
+estimators against ground truth.
 
-## 10. Fine-tuning VGGT-Omega (`vggt_ft/`)
+## 11. Fine-tuning VGGT-Omega (`vggt_ft/`)
 
 The fine-tuned checkpoint (`Jamie-nus/VGGT-Omega-CROSS`) adds a metric-scale head and a pairwise covisibility head to
 the released VGGT-Omega and is trained with multi-session windows. You do not need this section to run CROSS. It
@@ -596,7 +680,7 @@ describes how to reproduce or retrain the checkpoint. `vggt_ft/configs/` holds t
 | `v5a.yaml` | fine-tune of the released model (8 blocks frozen, scale-aligned losses, distillation to the released model, EMA) |
 | `v10c.yaml` | continues v5a@10000 EMA with close-range / people data (HOI4D, PointOdyssey, Dynamic Replica) |
 | `vfin2_s0.yaml` | the scale and covisibility heads only, on the 0.7 weight blend of v10c@3000 EMA with the released model |
-| `vdl2_s1.yaml` | a dense local scale head on vfin2's frozen model (`pose_est.ff.scale_source=head`; still evaluated against DA3) |
+| `vdl2_s1.yaml` | a dense local scale head on vfin2's frozen model (used with `pose_est.ff.scale_source=head`) |
 | `eval_suite.yaml`, `val_suite.yaml` | held-out test suite and validation suite (`python -m vggt_ft.evaluate`) |
 | `smoke.yaml` | a 40-step trainer check |
 
@@ -626,4 +710,4 @@ python scripts/vggt_ft/compare_evals.py released.json res.json --md
 
 Use the result with `--set pose_est.ff.checkpoint=vfin2_headmap.pt`. Some datasets and labelers in the recipe are
 non-commercial (Stereo4D, FoundationStereo depth, Oxford Spires, HOI4D, Dynamic Replica); check their licences before
-use. `scripts/vggt_ft/launch_h20.sh`, `evalwatch.sh` and `sync_h20.sh` are the authors' cluster helpers.
+use.

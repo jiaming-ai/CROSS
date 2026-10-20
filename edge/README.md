@@ -34,8 +34,13 @@ On the GPU machine:
 python scripts/remote/serve.py --port 50051
 ```
 
-On the robot, with sensors replayed from a prepared stereo folder: rectified `left/`, `right/`, `calib.json`, and
-the IMU stream `imu_vio.txt` / `imu.txt` with its `.json`.
+The edge runs the stereo mode with external odometry (Basalt live, or a recorded pose file), and its sensors are a
+prepared stereo folder replayed at the frames' timestamps (`--realtime`): rectified `left/`, `right/`, `calib.json`,
+and the IMU stream `imu_vio.txt` / `imu.txt` with its `.json`. A live camera driver is not part of the package
+(`cross_edge.sensors.StereoFolder` is the interface to replace).
+
+The link has no authentication or encryption, and the server opens the map files the edge names: run it only on a
+network you trust.
 
 ```bash
 # map a place (the map is stored on the server)
@@ -48,14 +53,20 @@ Options:
 
 | option | effect |
 |---|---|
-| `--odometry basalt` (default) | live VIO |
+| `--odometry basalt` (default) | live VIO (`--basalt` binary, default `$BASALT_LIVE`; `--basalt-config`, `--basalt-threads`, `--basalt-wait`) |
 | `--odometry file --odom-file odom_vio.txt` | replay a recorded odometry |
+| `--load-map`, `--save-map` | map files on the server: relocalize in one, store the session's map at the end |
+| `--realtime` | feed the frames at their timestamps |
+| `--start`, `--end`, `--baseline` | frame range; SimChange: the rendered baseline |
 | `--fast` | the server's fast overlay (`configs/overlays/fast/`; stereo + Basalt: 6 images at 416 px) |
-| `--jpeg 0` (default) | lossless PNG uploads; e.g. `90` for lossy JPEG (cost the stereo mode relocalization: office1-7 T2 0.86 -> 0.56) |
-| `--obs-cap 0.1` | rate cap: no observation the server could not start within 0.1 s |
+| `--config-file`, `--set` | configuration files of the server's `configs/` folder layered on the mode's (e.g. `overlays/outdoor.yaml`), and overrides |
+| `--accept-config-risk` | run a server configuration with a documented caveat without asking |
+| `--jpeg 0` (default) | lossless PNG uploads; e.g. `90` for lossy JPEG (cost the stereo mode relocalization) |
+| `--obs-cap 0.1` | rate cap, with `--realtime` only: no observation the server could not start within 0.1 s |
 | `--max-backlog 0.3` | the server's overload policy |
 | `--extra-delay` | emulates a longer round trip |
 | `--lockstep` | waits for each reply: the zero-latency session, for verification |
+| `--out`, `--quiet` | output folder; less logging |
 
 Outputs (`--out`):
 

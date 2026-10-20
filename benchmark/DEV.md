@@ -19,7 +19,12 @@ results page.
 A tier `corridor` (entry `corridor_openloris`) is the benchmark's OpenLORIS corridor scene: map corridor1-1, its four
 queries, T1 / T2 / T3. It checks the loop closures of a long, repetitive corridor, which the other tiers do not contain.
 
-A third tier, `val`, is a confirmation set: every OpenLORIS office, home and cafe query of the benchmark (11 queries,
+A tier `occ` (entry `occ_openloris`) tests the keyframe quality filter: the dev OpenLORIS scenes with junk views
+injected into the map and query sessions (`benchmark/datasets/inject_junk.py`: people and objects close to the camera,
+blank surfaces at arm's length, darkness, glare, motion blur; folders `<sequence>_occ` next to the originals, written
+once with `inject_junk.py`).
+
+A further tier, `val`, is a confirmation set: every OpenLORIS office, home and cafe query of the benchmark (11 queries,
 about 106 T3 trials), T2 and T3 only (entry `val_openloris`, `tier: val`). It takes about 25 minutes per stereo variant
 on an RTX 5090, and is meant for a change that passed the dev split, before the full benchmark.
 
@@ -49,7 +54,7 @@ python benchmark/dev.py compare cross_stereo cross_stereo@views7
 ```
 
 `run` builds the maps first, then runs the query jobs (T2 and T3), one job per GPU slot (`--gpus 0 1 2`). Jobs whose
-result exists are skipped. Results go to `$BENCH_DEV_RESULTS/<dataset>/<scene>/<system>[@<variant>]/`. A change of
+result exists are skipped. Results go to `$BENCH_DEV_RESULTS/<dataset>/<scene>/<system>[@<variant>]/<setup>/s<seed>/`. A change of
 code (not of arguments) is tested by running the reference before the change and a variant after it.
 
 `compare` prints every cell side by side: T1 ATE and FPS, T2 recall at both thresholds per query, T3 successes per
@@ -58,8 +63,8 @@ the GPU time of the jobs.
 
 ## Reading a comparison
 
-- **T2 recall** (hundreds of frames per query) and T1 ATE are the regression signals. The quick tier has 16 T3 trials
-  and the full tier 27, so a T3 rate alone cannot detect a change of less than about 20 %. The paired flips say which trials
+- **T2 recall** (hundreds of frames per query) and T1 ATE are the regression signals. The quick tier has about 21 T3
+  trials and the full tier about 33, so a T3 rate alone cannot detect a change of less than about 20 %. The paired flips say which trials
   changed.
 - **Noise.** On an otherwise idle GPU, two runs of the same code are identical (checked on the RTX 5090, 2026-10-01),
   so a code change that should not change results can be checked exactly. That does not make every difference
@@ -69,7 +74,7 @@ the GPU time of the jobs.
   (`--variant fp32w --args "--set pose_est.ff.half_precision_weights=false"` for the stereo mode). On a shared GPU, or
   with a different GPU model, results also vary, so compare only runs from the same GPU; `compare` warns when the GPUs
   differ.
-- The SimChange classroom queries are easy for every stereo variant tried (one T3 trial each, same T2); they guard
+- The SimChange classroom queries are easy for every stereo variant tried (two T3 trials each, same T2); they guard
   against breakage rather than separate variants. The same holds for the full tier's home and cafe queries in the
   stereo mode.
 - A change that passes the dev split is then run on the full benchmark (`benchmark/README.md`).

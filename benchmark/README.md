@@ -55,7 +55,13 @@ python benchmark/make_failure_assets.py --data $BENCH_DATA --runs $BENCH_RESULTS
 ```
 
 Query jobs build the scene's map themselves when it is missing (with a lock, so parallel workers share one map).
-A job whose input folders are not prepared yet exits with code 3 without writing a result.
+A job whose input folders are not prepared yet exits with code 3 without writing a result;
+`benchmark/redo_failed.py $BENCH_RESULTS` prints the re-run lines of failed results.
+
+Environment: set `CUDA_VISIBLE_DEVICES` for each worker (the result records that GPU's name; without it, `cpu`).
+The jobs run with `PYTHONPATH` set to this repository; `CROSS_EXTRA_PYTHONPATH` adds packages installed elsewhere.
+`download_openloris.sh` extracts the packages with a Python that has `py7zr` (`PY7Z=/path/to/python`).
+KITTI: `bash benchmark/datasets/download_kitti.sh /path/to/kitti_raw` before `prepare_kitti.py`.
 
 ### NCLT: large-scale and GPS tests (not part of the protocol)
 
@@ -80,10 +86,21 @@ World frame: NCLT's local NED frame (x north, y east, z down), linearised WGS84 
 reports no fix quality (no satellites / HDOP) and goes silent indoors; `gnss_rtk.txt` `err_m` is the distance to the
 ground truth (evaluation only). `prepare_nclt.py` documents every file.
 
-Baselines: ORB-SLAM3 and RTAB-Map run through the drivers in `scripts/baselines/` (`orbslam3_reloc.cc`,
-`rtabmap_reloc.cc`, built with `scripts/baselines/CMakeLists.txt` against ORB-SLAM3 and RTAB-Map). MASt3R-SLAM and
-VGGT-SLAM 2.0 run through `scripts/baselines/run_mast3r_slam.py` and `run_vggt_slam.py`; VGGT-SLAM installs with
-`scripts/baselines/install_vggt_slam.sh`.
+## Baselines
+
+The baselines are built separately; `benchmark/run.py` finds them at these places:
+
+| system | install | driver |
+|---|---|---|
+| ORB-SLAM3 | [UZ-SLAMLab/ORB_SLAM3](https://github.com/UZ-SLAMLab/ORB_SLAM3) in `third_party/ORB_SLAM3` with `scripts/baselines/orbslam3.patch` applied (bug fixes, PROTOCOL.md §5), Pangolin installed into `third_party/install` | `scripts/baselines/orbslam3_reloc.cc` |
+| RTAB-Map | [introlab/rtabmap](https://github.com/introlab/rtabmap) installed into `third_party/install` | `scripts/baselines/rtabmap_reloc.cc` |
+| MASt3R-SLAM | [rmurai0610/MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) in `third_party/MASt3R-SLAM` with `scripts/baselines/mast3r_slam.patch` applied (headless run, relocalization), its environment in `.venv-mast3r` | `scripts/baselines/run_mast3r_slam.py` |
+| VGGT-SLAM 2.0 | `bash scripts/baselines/install_vggt_slam.sh` (pinned commits, into `third_party/vggt_slam`) | `scripts/baselines/run_vggt_slam.py` |
+
+The two C++ drivers build with `cmake -S scripts/baselines -B scripts/baselines/build && cmake --build
+scripts/baselines/build` (`-DTHIRD_PARTY=<dir>` for another `third_party/`; `rtabmap_reloc` is skipped when RTAB-Map
+is not found). `scripts/baselines/run_baselines.py` runs ORB-SLAM3 and RTAB-Map on one map + query pair and scores
+them like `benchmark/run.py` does.
 
 ## Adding a system
 
