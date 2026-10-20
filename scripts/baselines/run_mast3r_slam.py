@@ -99,6 +99,12 @@ def main():
                 except ProcessLookupError:
                     pass
         dt = time.time() - t0
+        # main.py does not watch its back-end process: when the back end dies (e.g. CUDA out of memory on a shared GPU)
+        # main.py keeps tracking without global optimisation or relocalization and still exits 0.  Such a run is a
+        # crash to re-run (PROTOCOL.md), not a relocalization result: any traceback in the log marks it (a healthy run
+        # logs none)
+        if rc == 0 and "Traceback (most recent call last)" in (out / f"mast3r_t{ti}.log").read_text(errors="replace"):
+            rc = -2
         per_trial_time.append({"trial": ti, "rc": rc, "seconds": dt, "start": a, "end": b})
         traj_all = MS / "logs" / save_as / f"stream_t{ti}_all.txt"     # every tracked frame (patched main.py)
         traj = traj_all if traj_all.is_file() else MS / "logs" / save_as / f"stream_t{ti}.txt"
@@ -136,7 +142,7 @@ def main():
                     f.write(f"{i} {st} " + " ".join(f"{v:.9f}" for v in T.reshape(-1)) + "\n")
             (out / "map_time.json").write_text(json.dumps({"rc": rc, "seconds": dt, "n_frames": n_map}))
             shutil.rmtree(stream, ignore_errors=True)
-            return
+            sys.exit(0 if rc == 0 else 1)     # a crashed / timed-out mapping run is a failed T1 session (benchmark/run.py)
         rws, summ = evaluate(map_poses, query_poses, gt_map, gt_query, sim3=args.sim3, frame_range=(a, b))
         if rws is None:
             rws = [{"frame": i, "trial": ti, "tracked": False, "c0_rel_t_err": np.inf, "c0_rel_r_err": np.inf, "t_err": np.inf, "r_err": np.inf} for i in range(a, b)]
