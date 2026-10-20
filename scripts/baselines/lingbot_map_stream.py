@@ -169,7 +169,6 @@ def run_trials(model, dtype, paths, a, device):
         print(f"state snapshot {size / 1e9:.2f} GB", flush=True)
         for k in ks:
             model.clean_kv_cache()              # free the previous trial's state before the copy (peak memory)
-            torch.cuda.empty_cache()
             restore(model, snap, device)
             enc_t, _ = stream_poses(model, dtype, trials[k], kfi, a, device, start=len(paths), scale=scale)
             n += len(trials[k])
@@ -213,6 +212,8 @@ def main():
     ap.add_argument("--keyframe-interval", default="auto", help='"auto" (upstream default) or a fixed interval')
     ap.add_argument("--auto-keyframe-threshold", type=int, default=320)
     ap.add_argument("--use-sdpa", action="store_true", help="SDPA attention instead of FlashInfer")
+    ap.add_argument("--reserve-gb", type=float, default=0.0, help="GPU memory to take at the start (the run's peak, "
+                    "~16 GB at 518 px with SDPA), so that other jobs on a shared GPU cannot take it while the cache grows")
     ap.add_argument("--with-depth", action="store_true", help="build the depth head too (check: poses unchanged)")
     ap.add_argument("--reference", action="store_true", help="upstream inference_streaming on the whole stream (check)")
     ap.add_argument("--trial-images", nargs="*", default=[], help="trial streams (lists like --images) that follow the "
@@ -227,6 +228,14 @@ def main():
     t0 = time.time()
     model, dtype = build_model(a, device)
     print(f"model loaded in {time.time() - t0:.1f} s; {len(paths)} frames", flush=True)
+    if a.reserve_gb > 0:
+        # take the run's peak memory now, while the KV cache is still empty: on a shared GPU another job could take it
+        # before the cache has grown (PyTorch keeps the freed block in its cache for the rest of the run)
+        n = int(a.reserve_gb * 1e9) - torch.cuda.memory_reserved()
+        if n > 0:
+            block = torch.empty(n, dtype=torch.uint8, device=device)
+            del block
+        print(f"reserved {torch.cuda.memory_reserved() / 1e9:.1f} GB", flush=True)
     torch.cuda.reset_peak_memory_stats()
     t1 = time.time()
     if a.trial_images:

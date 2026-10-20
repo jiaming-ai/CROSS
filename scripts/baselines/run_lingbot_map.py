@@ -89,8 +89,10 @@ def sim3_to_gt(poses, gt_map, n_map):
 
 
 def drive(extra, log: Path, timeout, args):
-    """One lingbot_map_stream.py run; returns (rc, seconds, info).  info: peak GPU GB, FPS, keyframe interval."""
-    cmd = [str(PY), str(DRIVER), "--checkpoint", str(CKPT), "--keyframe-interval", str(args.keyframe_interval)] + extra
+    """One lingbot_map_stream.py run; returns (rc, seconds, info).  info: peak GPU GB, FPS, keyframe interval, attempts.
+    A run that ran out of GPU memory (another job on a shared GPU) is repeated, up to --oom-retries times."""
+    cmd = [str(PY), str(DRIVER), "--checkpoint", str(CKPT), "--keyframe-interval", str(args.keyframe_interval),
+           "--reserve-gb", str(args.reserve_gb)] + extra
     if args.use_sdpa:
         cmd += ["--use-sdpa"]
     # PYTHONPATH: not the CROSS tree of the harness; PATH: the venv's tools (FlashInfer compiles its kernels with ninja
@@ -98,25 +100,35 @@ def drive(extra, log: Path, timeout, args):
     env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONPATH=str(LB_DIR),
                PATH=str(PY.parent) + os.pathsep + os.environ.get("PATH", ""))
     t0 = time.time()
-    with open(log, "w") as f:
-        f.write(" ".join(cmd) + "\n")
-        f.flush()
-        # bound every run and kill the whole process group on timeout (no GPU memory left behind)
-        proc = subprocess.Popen(cmd, cwd=str(LB_DIR), stdout=f, stderr=subprocess.STDOUT, start_new_session=True, env=env)
-        try:
-            rc = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            rc = -9
-            f.write("\nTIMEOUT\n")
-        finally:
+    for attempt in range(1, args.oom_retries + 2):
+        with open(log, "a" if attempt > 1 else "w") as f:
+            f.write(" ".join(cmd) + "\n")
+            f.flush()
+            # bound every run and kill the whole process group on timeout (no GPU memory left behind)
+            proc = subprocess.Popen(cmd, cwd=str(LB_DIR), stdout=f, stderr=subprocess.STDOUT, start_new_session=True,
+                                    env=env)
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+                rc = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                rc = -9
+                f.write("\nTIMEOUT\n")
+            finally:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        text = log.read_text(errors="replace")
+        oom = rc != 0 and ("OutOfMemoryError" in text.split("LINGBOT_ATTEMPT")[-1] or
+                           "CUDA out of memory" in text.split("LINGBOT_ATTEMPT")[-1])
+        if not oom or attempt > args.oom_retries:
+            break
+        with open(log, "a") as f:
+            f.write(f"\nLINGBOT_ATTEMPT {attempt} ran out of GPU memory; again in {args.oom_wait:.0f} s\n")
+        time.sleep(args.oom_wait)
     dt = time.time() - t0
-    text = log.read_text(errors="replace")
     m = re.findall(r"LINGBOT_PEAK_GPU_GB ([\d.]+) ([\d.]+)", text)
-    info = {"peak_gpu_gb": {"allocated": float(m[-1][0]), "reserved": float(m[-1][1])} if m else None}
+    info = {"peak_gpu_gb": {"allocated": float(m[-1][0]), "reserved": float(m[-1][1])} if m else None,
+            "attempts": attempt}
     for key, pat in (("fps", r"LINGBOT_FPS ([\d.]+)"), ("keyframe_interval", r"LINGBOT_KEYFRAME_INTERVAL (\d+)")):
         m = re.findall(pat, text)
         info[key] = float(m[-1]) if m else None
@@ -172,6 +184,10 @@ def main():
                     help="SDPA attention instead of FlashInfer")
     ap.add_argument("--no-share", action="store_true", help="T3: one full map + trial run per trial instead of the "
                                                             "shared map part (same poses; check)")
+    ap.add_argument("--reserve-gb", type=float, default=float(os.environ.get("LINGBOT_MAP_RESERVE_GB", "17")),
+                    help="GPU memory each run takes at its start (its peak; 0: none)")
+    ap.add_argument("--oom-retries", type=int, default=3, help="repeat a run that ran out of GPU memory")
+    ap.add_argument("--oom-wait", type=float, default=120.0, help="seconds before such a repeat")
     ap.add_argument("--sim3", action="store_true", help="ignored: monocular, always evaluated with Sim(3)")
     args = ap.parse_args()
     m, q = Path(args.map).resolve(), Path(args.query).resolve()
@@ -202,7 +218,7 @@ def main():
             info["sim3_scale"] = s
         (out / "map_time.json").write_text(json.dumps(info))
         print(json.dumps(info, indent=1))
-        return
+        sys.exit(0 if rc == 0 else 1)       # a crashed / killed run is a failed run (benchmark/run.py), not a lost track
 
     lq = images(q)
     gt_query = np.loadtxt(q / "poses_left.txt").reshape(-1, 4, 4)
