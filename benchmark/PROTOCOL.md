@@ -161,7 +161,7 @@ travel).
 
 Baselines that accept external odometry (RTAB-Map) get the same odometry stream; RTAB-Map also runs with its own visual
 odometry (`rtabmap_vo`). Visual(-inertial) systems (ORB-SLAM3,
-MASt3R-SLAM, VGGT-SLAM 2.0, DROID-SLAM) run on images only. The tables mark every system that uses odometry or IMU, so the
+MASt3R-SLAM, VGGT-SLAM 2.0, AMB3R-SLAM, DROID-SLAM) run on images only. The tables mark every system that uses odometry or IMU, so the
 comparison stays interpretable.
 
 ## 4. Metrics
@@ -199,13 +199,13 @@ is penalized.
   must be the one the system reported at that time, not a trajectory it writes after the session: ORB-SLAM3 counts as
   localized only from the frame at which its session has been merged into the stored map (before 2026-10-06 its trajectory
   after shutdown was used, which localizes frames before a late merge in hindsight). The systems without map persistence
-  (MASt3R-SLAM, VGGT-SLAM 2.0) still log their keyframe poses only after their final optimization, which favours them. Thresholds: x = 1 m and 2 m indoors, 3 m and 5 m outdoors, the same as T3. This is the headline T2 number because it
+  (MASt3R-SLAM, VGGT-SLAM 2.0, AMB3R-SLAM) still log their (keyframe) poses only after their final optimization, which favours them. Thresholds: x = 1 m and 2 m indoors, 3 m and 5 m outdoors, the same as T3. This is the headline T2 number because it
   compares systems that report no pose until they relocalize with systems that always report one.
 - **A pose in the map**: a frame has an estimate only when the system reports a pose in the stored map. A system whose
   session has not joined the stored map yet has none, whatever it reports in a frame of its own: CROSS before its session
   merges with the map (it starts in a coordinate frame placed outside the map, `System.session_localized`), ORB-SLAM3 while
   it tracks in a new, unmerged map of its atlas (state 6), RTAB-Map before its first loop or proximity detection to the
-  map, MASt3R-SLAM and VGGT-SLAM 2.0 before a relocalization or loop closure links a query frame to a map frame (their
+  map, MASt3R-SLAM, VGGT-SLAM 2.0 and AMB3R-SLAM before a relocalization or loop closure links a query frame to a map frame (their
   poses before that only continue the map's trajectory across the jump between the two traversals of the stream). Until
   2026-10-07, CROSS's start-frame poses and the stream systems' continued poses were scored as poses.
 - **MS-ATE** (m): the RMSE over the frames that have an estimate, reported with their fraction.
@@ -250,7 +250,7 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
   persistence: the 5 evenly spaced trials they would have run), and in T2 every evaluated frame counts as not localized, so a
   system that crashes cannot score higher than one that runs and fails. T1 means leave failed sequences out and give their
   count with the same notation.
-- Systems without map persistence (MASt3R-SLAM, VGGT-SLAM 2.0, DROID-SLAM) run the map session followed by the trial in one
+- Systems without map persistence (MASt3R-SLAM, VGGT-SLAM 2.0, AMB3R-SLAM, DROID-SLAM) run the map session followed by the trial in one
   stream. Only the trial frames are scored. Every trial re-runs the whole map session, so these systems are scored on at most
   5 evenly spaced trials per query session. A run that crashes (out of memory) or times out is reported as failed and re-run;
   it is not scored as a relocalization failure. This is marked in the tables because the system keeps the map session's live
@@ -278,6 +278,7 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 | RTAB-Map (visual-inertial odometry) | RGB-D, stereo | IMU (§3): its visual odometry with the IMU orientation (RTAB-Map's complementary filter), gravity constraints in its odometry and map graph | database, localization mode | as above, `rtabmap_reloc --vo --imu` |
 | MASt3R-SLAM | mono | none | concatenated stream | [rmurai0610/MASt3R-SLAM](https://github.com/rmurai0610/MASt3R-SLAM) |
 | VGGT-SLAM 2.0 | mono | none | concatenated stream | [MIT-SPARK/VGGT-SLAM](https://github.com/MIT-SPARK/VGGT-SLAM) |
+| AMB3R-SLAM | mono, stereo, RGB-D | none | concatenated stream | [HengyiWang/amb3r-slam](https://github.com/HengyiWang/amb3r-slam) + `scripts/baselines/run_amb3r_slam.py`; DA3 models, DBoW2 loop retrieval, the dataset's intrinsics; stereo / RGB-D: metric submaps from the stereo pair's SGBM depth / the depth sensor |
 | DROID-SLAM | mono, stereo, RGB-D | none | concatenated stream | [princeton-vl/DROID-SLAM](https://github.com/princeton-vl/DROID-SLAM) (planned) |
 
 Baselines run with their published default parameters for the sensor type. The same parameters are used on every dataset, apart
