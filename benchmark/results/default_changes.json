@@ -4,7 +4,7 @@
     "title": "Wrong-floor gate for gravity-aligned odometry",
     "description": "Three loop-closure safeguards against look-alike floors, on together: a session anchor whose map match fails the check after the graph optimisation is withdrawn (the session falls back to its previous anchor); the consistency test trusts the odometry's height more than its horizontal position (predicted vertical sigma x 0.25); and map matches the test cannot check pass a chi-square gate on hypothesis 0. On by default in stereo + wheel, stereo + Basalt, mono + wheel, mono + IMU and VGGT + DPVO + IMU (configs/base/vertical_gate.yaml).",
     "evidence": "iPhone stereo + ARKit in a building with look-alike floors (eight walks): a walk that rode a lift went from 2.95 m to 0.27 m median height error against ARKit, and every other walk's height error dropped (e.g. 0.47 -> 0.28 m); relocalization unchanged. ROVER and OpenLORIS with each mode's own maps: T1, T2 and T3 within a null rerun's noise (e.g. ROVER stereo T3 1070 -> 1070, mono + IMU flips +10/-11 against null +31/-22). Off in stereo + IMU: its VGGT + IMU world vertical is not the camera's, and its ROVER map lost loop closures (T1 0.81 -> 1.82 m). Off in code for monocular DPVO (no gravity or scale). VGGT + DPVO + IMU gained on OpenLORIS (T3 +19/-6, T2@1 m 0.41 -> 0.47) and stayed within the noise on ROVER (T3 correct 992 -> 996, wrong pose 105 -> 95).",
-    "scope": "Maps and relocalization in the five modes; the tables still show the earlier runs.",
+    "scope": "Maps and relocalization in the five modes; the tables hold runs with it since 2026-10-21. The benchmark re-run found one cost the screen did not cover (it mapped only the scenes' map sessions): stereo + wheel's T1 of the OpenLORIS session market1-3 rises from 1.33 to 4.67 m (1.33 m again with the gate off), which moves its OpenLORIS T1 mean from 0.67 to 0.82 m; the other 21 sessions are unchanged.",
     "experiment_code": "26cafcd / 694ada3"
   },
   {
@@ -12,7 +12,7 @@
     "title": "Placement rule for relocalization merges",
     "description": "A relocalization session joins the stored map only when the placement its merge implies is supported at six or more steps and twice as well as any rival placement; after 20 m of walk it must also be confirmed from twice as many separate places. On by default in stereo + wheel, stereo + Basalt, mono + wheel, mono + IMU and VGGT + DPVO + IMU. configs/overlays/strict_merge.yaml is an opt-in stricter mode (support from positions 1.5 m apart).",
     "evidence": "Full benchmark (2987 jobs, OpenLORIS / ROVER / SimChange, against the rule off on shared maps): in these five modes 15-40 % fewer relocalization trials end with a wrong pose; correct trials stay within a null rerun's noise on ROVER (e.g. stereo 1074 -> 1070, mono + wheel 1105 -> 1106 of ~1150) and drop by 2-5 on OpenLORIS. An iPhone walk on a look-alike floor is no longer joined to the wrong floor. Off in the other modes: monocular DPVO odometry has no metric scale (VGGT + DPVO lost 225 of 387 ROVER trials), DA3 mono and RGB-D gained nothing.",
-    "scope": "Relocalization sessions only (T2 / T3); maps and T1 are unchanged. The tables below hold these runs for the five modes where the rule is on.",
+    "scope": "Relocalization sessions only (T2 / T3); maps and T1 are unchanged. The tables hold runs with it for the five modes where the rule is on.",
     "experiment_code": "540303f / 2fc0ea5"
   },
   {
@@ -28,7 +28,7 @@
     "title": "Odometry noise preset for low-drift VIO in the Basalt modes",
     "description": "The loop-closure consistency test and the pose graph allow less odometry drift (configs/base/odometry_vio.yaml) in the modes that read a Basalt VIO file: stereo + Basalt, mono + Basalt, RGB-D + Basalt and RGB-D FF + Basalt. The opt-in overlay configs/overlays/odometry_vio.yaml gives the same values to ARKit / ARCore-class external odometry in a wheel mode.",
     "evidence": "iPhone stereo + ARKit, nine-walk map: with the generic values, look-alike loop closures bent the map; with the preset each walk matches its own ARKit odometry to 0.0-0.6 m (was 2.6-11.3 m) and false cross-floor links fell from 27 to 5. Benchmark screen: neutral for stereo + Basalt (ROVER T3 1068 -> 1072, flips +16/-12 against a null rerun's +15/-13; KITTI T1 mean 3.02 -> 2.98 m). It rejected genuine loop closures in the modes with CROSS's own IMU fusion or DPVO + IMU (ROVER T3 -161 to -447 trials), which keep the generic values. A later screen of the other Basalt modes found mono + Basalt and RGB-D FF + Basalt worse on KITTI 00 (2.22 -> 2.36 m and 2.20 -> 2.35 m) with better KITTI means; returning those two modes to the generic values is under review.",
-    "scope": "Maps and relocalization in the Basalt modes; the tables still show the earlier runs.",
+    "scope": "Maps and relocalization in the Basalt modes; the tables hold runs with it since 2026-10-21.",
     "experiment_code": "9fafa98 / 4bd8fb0"
   },
   {
@@ -36,7 +36,7 @@
     "title": "VGGT + DPVO + IMU: no hypothesis adoption in mapping sessions",
     "description": "In a mapping session the mode still merges a competing hypothesis after its verification, but no longer adopts a dominant hypothesis without one. Relocalization sessions are unchanged.",
     "evidence": "KITTI 10 has no loop, so every hypothesis born there is false: adopting the rejected ones moved parts of the map by 4-40 m. Without adoption the map ATE is back to about 9 m (KITTI 10 8.1-9.7 m, KITTI 08 8.3-10.3 m over runs), and the ROVER gain of merging in mapping sessions is kept (T3 1012 of 1159; OpenLORIS T3 173).",
-    "scope": "Mapping sessions of mono + DPVO + IMU (mono_vio); its T1 cells in the tables come from runs before this change.",
+    "scope": "Mapping sessions of mono + DPVO + IMU (mono_vio); its T1 cells in the tables come from runs with this change since 2026-10-21.",
     "experiment_code": "2609e0e / f9b167f"
   }
 ]
