@@ -264,3 +264,15 @@ lingbot_map:
   uses_odometry: false
   map_reuse: concatenated stream
   sim3_setups: [mono]
+
+# AMB3R-SLAM (Wang & Agapito 2026): feed-forward DA3 submaps joined in a hierarchical (dense local, sparse
+# long-context, loop) Sim(3) pose graph; monocular, or metric with the stereo pair's (SGBM) / RGB-D sensor's depth; given
+# the dataset's intrinsics (upstream --calib); scripts/baselines/run_amb3r_slam.py
+amb3r_slam:
+  label: AMB3R-SLAM
+  runner: concat
+  setups: [mono, stereo, rgbd]
+  uses_odometry: false
+  map_reuse: concatenated stream
+  sim3_setups: [mono]
+  skip: [kitti/rgbd]
