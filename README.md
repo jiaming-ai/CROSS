@@ -64,7 +64,7 @@ source .venv/bin/activate
 | `--stereo` | VGGT-Omega (vendored in `third_party/`) and our fine-tuned checkpoint ([Jamie-nus/VGGT-Omega-CROSS](https://huggingface.co/Jamie-nus/VGGT-Omega-CROSS)): `stereo_wheel`, `stereo_basalt`, `stereo_imu`, `rgbd_ff_*`, `mono_wheel`, `mono_basalt` |
 | `--mono` | `--stereo` + DPVO (built from source; needs `nvcc` matching PyTorch's CUDA), Depth Anything 3 and LightGlue: every mode, including the DPVO modes and `mono_imu` |
 | `--vggt=released` / `--vggt=both` | the released VGGT-Omega checkpoint instead of / besides ours (gated: request access at [facebook/VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega), then `huggingface-cli login`) |
-| `--nav`, `--nav-sim` | navigation (`cross_nav`); `--nav-sim` adds the Habitat simulator |
+| `--nav`, `--nav-sim` | navigation (`cross_nav`) and its BEV heads for our checkpoint ([Jamie-nus/VGGT-Omega-CROSS](https://huggingface.co/Jamie-nus/VGGT-Omega-CROSS) `nav/`); `--nav-sim` adds the Habitat simulator |
 | `--cpu`, `CUDA_VERSION=cu121` | CPU-only PyTorch (tests only: the mapping modes need a GPU); another CUDA build |
 
 `bash install.sh --help` lists every option. Check the installation with `python -m pytest -q` (a few minutes).

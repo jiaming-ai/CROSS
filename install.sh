@@ -13,8 +13,8 @@ set -euo pipefail
 #   bash install.sh --stereo --da3   # + the optional Depth Anything 3 backend of the stereo mode
 #   bash install.sh --mono       # + every other mode: DPVO visual odometry (built from source with the CUDA toolkit of
 #                                #   PyTorch), Depth Anything 3, LightGlue; implies --stereo --da3
-#   bash install.sh --nav        # + navigation (cross_nav: BEV head, trajectory policy, planners, robot agent); implies
-#                                #   --stereo
+#   bash install.sh --nav        # + navigation (cross_nav: BEV head, trajectory policy, planners, robot agent) and the
+#                                #   BEV heads of the fine-tuned checkpoint (models/VGGT-Omega-CROSS/nav/); implies --stereo
 #   bash install.sh --nav-sim    # + the Habitat simulator for closed-loop navigation tests (its own Python 3.9
 #                                #   environment in third_party/install/habitat; needs micromamba, mamba or conda)
 #   bash install.sh --cpu        # CPU-only PyTorch (tests only: the mapping modes need a CUDA GPU)
@@ -177,6 +177,12 @@ fi
 if [ "$NAV" = true ]; then
     echo "==> Installing navigation (cross_nav)..."
     uv pip install -e ".[nav]"
+    # the BEV heads fine-tuned on the fine-tuned VGGT-Omega checkpoint (same Hugging Face repo, nav/)
+    if [ ! -f models/VGGT-Omega-CROSS/nav/cross_nav_occupancy.pt ] || [ ! -f models/VGGT-Omega-CROSS/nav/cross_nav_observability.pt ]; then
+        echo "    Downloading the navigation heads (https://huggingface.co/Jamie-nus/VGGT-Omega-CROSS nav/, 270 MB)..."
+        "$PYTHON_EXE" -c "from huggingface_hub import snapshot_download; snapshot_download('Jamie-nus/VGGT-Omega-CROSS', allow_patterns=['nav/*'], local_dir='models/VGGT-Omega-CROSS')" \
+            || echo "    !! download failed: place nav/cross_nav_{occupancy,observability}.pt under models/VGGT-Omega-CROSS/"
+    fi
 fi
 if [ "$NAV_SIM" = true ]; then
     # the simulator runs in its own environment (habitat-sim's conda build) and talks to the policy server of this
