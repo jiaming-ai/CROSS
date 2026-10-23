@@ -237,7 +237,7 @@ findings:
         than features can be tracked from frame to frame. Systems that use the robot's odometry (CROSS, RTAB-Map
         with external odometry) bridge these turns. On the KITTI 01 highway (27 m/s, few close features, guard rails
         that repeat) purely visual estimates lose the scale: ORB-SLAM3 mono ATE 106 m (tracking lost for a quarter
-        of the drive), VGGT-SLAM 319 m, RTAB-Map with visual odometry 35 m, CROSS with visual odometry 31 m; with
+        of the drive), VGGT-SLAM 2.0 319 m, RTAB-Map with visual odometry 35 m, CROSS with visual odometry 31 m; with
         the INS dead reckoning CROSS stereo has 1.7 m and RTAB-Map 1.7 m. The highway is one sequence, so the speed
         explanation is supported, not tested.
     cases: [home_sharp_turn, kitti01_highway]
@@ -309,7 +309,7 @@ notes:
         that faced the map's way. VGGT-SLAM 2.0 ends 1.3 m off (a success at 2 m); ORB-SLAM3 and RTAB-Map give no
         pose.
   sim_light_evening:
-    title: "Evening light in the restaurant: only ORB-SLAM3 and VGGT-SLAM fail"
+    title: "Evening light in the restaurant: only ORB-SLAM3 and VGGT-SLAM 2.0 fail"
     text:
       - >-
         Warm, low evening light; the furniture is unchanged and 144 SIFT features still match the map, so RTAB-Map

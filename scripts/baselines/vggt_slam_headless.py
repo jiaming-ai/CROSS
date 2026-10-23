@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run VGGT-SLAM's main.py headless (used by run_vggt_slam.py; runs inside the VGGT-SLAM venv).
+"""Run VGGT-SLAM 2.0's main.py headless (used by run_vggt_slam.py; runs inside the VGGT-SLAM 2.0 venv).
 
-    <venv>/bin/python vggt_slam_headless.py <VGGT-SLAM dir> [main.py arguments ...]
+    <venv>/bin/python vggt_slam_headless.py <VGGT-SLAM repo dir> [main.py arguments ...]
 
-VGGT-SLAM always starts a viser server on port 8080 and pushes the whole map to it at the end, which collides
+VGGT-SLAM 2.0 always starts a viser server on port 8080 and pushes the whole map to it at the end, which collides
 between parallel runs and can keep the process alive after main() returns.  The viewer is replaced by a no-op
 stub (visualization only: tracking, mapping, loop closure and the pose log are untouched), main.py runs
 unmodified, and the process exits hard once the pose log is written.  The peak GPU memory is printed as

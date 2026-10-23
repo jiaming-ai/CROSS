@@ -61,7 +61,7 @@ def rot_err_deg(Ra, Rb):
 
 def hold_latest(poses, valid_states, frame_range, max_age=10):
     """Causal pose per frame: a frame without its own valid pose takes the system's latest valid pose, if it is at most
-    `max_age` frames old (1 s at 10 Hz).  Systems that report poses only at keyframes (MASt3R-SLAM, VGGT-SLAM) or lose
+    `max_age` frames old (1 s at 10 Hz).  Systems that report poses only at keyframes (MASt3R-SLAM, VGGT-SLAM 2.0) or lose
     tracking briefly are then scored like a robot that asks for its current pose.  Held poses are marked `held`."""
     out, last = {}, None
     a, b = frame_range

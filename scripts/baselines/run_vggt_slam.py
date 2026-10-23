@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Run VGGT-SLAM 2.0 (monocular, uncalibrated) on a map+query stream and evaluate the query traversal.
 
-VGGT-SLAM has no map persistence, so the map traversal and the query traversal (or one trial of it) are
+VGGT-SLAM 2.0 has no map persistence, so the map traversal and the query traversal (or one trial of it) are
 concatenated into one image stream, exactly as for MASt3R-SLAM (run_mast3r_slam.py): the system first maps the
-scene, then has to attach the second traversal to it through its loop closures.  VGGT-SLAM only processes
+scene, then has to attach the second traversal to it through its loop closures.  VGGT-SLAM 2.0 only processes
 keyframes (frames with enough optical-flow disparity) and logs their final poses after pose-graph optimization,
 so frames that are not keyframes have no pose (counted as unlocalized).  The map part is aligned to ground
 truth with Sim(3) (monocular) and the same transform evaluates the query part; all poses are expressed in the
 ground-truth frame before evaluation so the map-relative errors are in metres (see sim3_to_gt).
-VGGT-SLAM runs through vggt_slam_headless.py (viser viewer stubbed out, upstream code unmodified).
+VGGT-SLAM 2.0 runs through vggt_slam_headless.py (viser viewer stubbed out, upstream code unmodified).
 
     python scripts/baselines/run_vggt_slam.py --map <seq> --query <seq> --out <dir> [--map-only] \
         [--trial-len N] [--trial-stride S] [--max-trials K] [--r-d R] [--timeout SEC] [--submap-size 32] [--max-loops 1]
@@ -50,7 +50,7 @@ def images(seq: Path):
 
 
 def read_traj(path: Path):
-    """VGGT-SLAM pose log (GraphMap.write_poses_to_file, TUM-style): `frame_id x y z qx qy qz qw` per keyframe,
+    """VGGT-SLAM 2.0 pose log (GraphMap.write_poses_to_file, TUM-style): `frame_id x y z qx qy qz qw` per keyframe,
     camera-to-world, submaps in order.  frame_id is the number in the image file name (= stream index here).
     The overlap frame shared by consecutive submaps is logged twice; the first occurrence is kept."""
     poses = {}
@@ -92,7 +92,7 @@ def sim3_to_gt(poses, gt_map, n_map):
 
 
 def run_stream(frames, stream: Path, log: Path, traj: Path, args):
-    """Run VGGT-SLAM on `frames` (symlinked as 000000.png ...); returns (rc, seconds, peak GPU GB, poses)."""
+    """Run VGGT-SLAM 2.0 on `frames` (symlinked as 000000.png ...); returns (rc, seconds, peak GPU GB, poses)."""
     shutil.rmtree(stream, ignore_errors=True)
     stream.mkdir(parents=True)
     for i, f in enumerate(frames):
@@ -126,7 +126,7 @@ def run_stream(frames, stream: Path, log: Path, traj: Path, args):
 
 
 def map_link(log: Path, n_map: int):
-    """First query stream index that VGGT-SLAM linked to the map: accepted loop closures (vggt_slam_headless.py prints
+    """First query stream index that VGGT-SLAM 2.0 linked to the map: accepted loop closures (vggt_slam_headless.py prints
     `VGGT_LOOP <query> <retrieved> <submap first>`) from a query frame to a map frame link the query frame's whole
     submap (its frames are estimated together), from the submap's first query frame on (reloc_metrics.first_map_link
     for the rule).  None without such a loop."""
@@ -146,8 +146,8 @@ def main():
     ap.add_argument("--max-trials", type=int, default=0, help="evaluate at most this many evenly spaced trials (0: all)")
     ap.add_argument("--r-d", type=float, default=2.0)
     ap.add_argument("--timeout", type=float, default=3600.0, help="seconds per run before it is killed")
-    ap.add_argument("--submap-size", type=int, default=32, help="VGGT-SLAM --submap_size (new keyframes per submap)")
-    ap.add_argument("--max-loops", type=int, default=1, help="VGGT-SLAM --max_loops (1 = default, 0 disables loop closure)")
+    ap.add_argument("--submap-size", type=int, default=32, help="VGGT-SLAM 2.0 --submap_size (new keyframes per submap)")
+    ap.add_argument("--max-loops", type=int, default=1, help="VGGT-SLAM 2.0 --max_loops (1 = default, 0 disables loop closure)")
     ap.add_argument("--sim3", action="store_true", help="ignored: monocular, always evaluated with Sim(3)")
     args = ap.parse_args()
     m, q = Path(args.map).resolve(), Path(args.query).resolve()

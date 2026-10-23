@@ -14,7 +14,7 @@ set -euo pipefail
 
 TARGET=$(realpath -m "${1:-$(dirname "$0")/../../third_party/vggt_slam}")
 UV=${UV:-$(command -v uv || echo "$HOME/.local/bin/uv")}
-VGGT_SLAM_COMMIT=35327ac28b7d193df9ccc39ba6346052bb6f1207   # VGGT-SLAM main, 2026-06-29
+VGGT_SLAM_COMMIT=35327ac28b7d193df9ccc39ba6346052bb6f1207   # MIT-SPARK/VGGT-SLAM main (VGGT-SLAM 2.0), 2026-06-29
 SALAD_COMMIT=33ca9c0ca1e10cbb21efc0d6a5fcb6d45688e42d        # Dominic101/salad
 VGGT_COMMIT=6e6e16107b88e8e76c751826af10d4295d87ecd2         # MIT-SPARK/VGGT_SPARK
 
@@ -51,5 +51,5 @@ mkdir -p "$TORCH_HOME/hub/checkpoints"
 
 "$UV" cache clean -q || true
 rm -rf "$UV_CACHE_DIR"
-"$PY" -c "import gtsam, salad.eval, vggt.models.vggt, vggt_slam.solver; print('VGGT-SLAM install OK')"
+"$PY" -c "import gtsam, salad.eval, vggt.models.vggt, vggt_slam.solver; print('VGGT-SLAM 2.0 install OK')"
 du -sh "$TARGET"
