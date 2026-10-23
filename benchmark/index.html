@@ -141,6 +141,21 @@ table.heat tr.grp td { font-size: 12px; text-transform: uppercase; letter-spacin
 .srow .now { font-variant-numeric: tabular-nums; text-align: right; }
 @media (max-width: 640px) { .srow { grid-template-columns: minmax(110px, 1fr) minmax(0, 1.4fr) 70px; } .srow .now { display: none; } }
 @media (max-width: 640px) { header h1 { font-size: 21px; } th, td { padding: 5px 7px; } }
+#filters[hidden] { display: none; }
+details.changes > summary { cursor: pointer; font-weight: 600; font-size: 16px; }
+.change { border-top: 1px solid var(--grid); margin-top: 12px; padding-top: 4px; }
+.change h3 { margin: 10px 0 4px; font-size: 16px; }
+.change p { margin: 6px 0; max-width: 940px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 0 0 10px; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; }
+.fsearch { font: inherit; font-size: 13.5px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--axis);
+  background: var(--page); color: var(--ink); flex: 1 1 220px; min-width: 200px; max-width: 340px; }
+.fgroup { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.flabel { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-right: 2px; }
+.filters .chip { padding: 3px 10px; }
+.filters .chip[aria-pressed="false"] { color: var(--muted); border-style: dashed; text-decoration: line-through; }
+.fend { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
+@media (max-width: 640px) { .fsearch { max-width: none; min-width: 0; flex-basis: 100%; } .fend { margin-left: 0; } }
 </style>
 </head>
 <body>
@@ -151,6 +166,7 @@ table.heat tr.grp td { font-size: 12px; text-transform: uppercase; letter-spacin
     Protocol: <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/PROTOCOL.md">PROTOCOL.md</a> · tables: <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/RESULTS.md">RESULTS.md</a></p>
 </header>
 <nav class="tabs" role="tablist" id="tabs"></nav>
+<div id="filters" role="search"></div>
 <section id="view"></section>
 </main>
 <div id="tip" role="tooltip"></div>
@@ -168,30 +184,102 @@ const DS = {all: "All datasets (overall)", kitti: "KITTI", openloris: "OpenLORIS
 const TRACK = {t1: "T1 · mapping accuracy", t2: "T2 · multi-session localization", t3: "T3 · relocalization success"};
 const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "all"}, sel: null, hl: true, hist: {track: "t1", ds: "kitti", sys: null}};
 const tip = document.getElementById("tip");
+// ---------------------------------------------------------------- data loaded later (benchmark/build_site.py): the runs of one
+// track · dataset · scene (runs/<chunk>.js) when a cell, plot or tab needs them, and the Failure cases / History tabs'
+// data (failures.js, history.js); <script> tags, so the page also works from file://
+const RUNS = {}, LOADING = {};
+const decodePath = a => { const out = []; let x = 0, y = 0;            // centimetre steps (build_site.path_cm) -> [[x, y], ...] m
+  for (let i = 0; i + 1 < a.length; i += 2) { x += a[i]; y += a[i + 1]; out.push([x / 100, y / 100]); } return out; };
+window.BENCH_RUNS = (name, runs) => { const c = (B.chunks || []).indexOf(name);
+  runs.forEach((r, i) => { if (r.g) r.gt2 = decodePath(r.g); if (r.e) r.est2 = decodePath(r.e); if (r.c) r.err = r.c.map(v => v < 0 ? -1 : v / 100);
+    delete r.g; delete r.e; delete r.c; RUNS[c * B.run_base + i] = r; }); };
+window.BENCH_PART = (name, part) => { B[name === "failures" ? "failure_page" : name] = part; };
+const load = file => LOADING[file] ??= new Promise((ok, fail) => document.head.append($("script",
+  {src: `${file}?v=${B.version || ""}`, onload: ok, onerror: () => fail(new Error(`Could not load ${file}.`))})));
+const chunkName = (track, d, scene) => `${track}_${d}_${scene}`.replace(/[^A-Za-z0-9_.-]/g, "_");
+const loadScenes = (track, d, scenes) => Promise.all(scenes.map(s => chunkName(track, d, s)).filter(n => (B.chunks || []).includes(n)).map(n => load(`runs/${n}.js`)));
+const ensureRuns = refs => Promise.all([...new Set(refs.map(x => B.chunks[Math.floor(x / B.run_base)]))].map(n => load(`runs/${n}.js`)))
+  .then(() => refs.map(x => RUNS[x]).filter(Boolean));
+// el shows "Loading…" until p resolves, then fill(el, value) builds its content (unless el left the page meanwhile)
+function later(el, p, fill) {
+  el.replaceChildren($("div", {class: "empty"}, "Loading…"));
+  p.then(x => { if (el.isConnected) { el.replaceChildren(); fill(el, x); } },
+         e => { if (el.isConnected) el.replaceChildren($("div", {class: "empty"}, String(e && e.message || e))); });
+  return el;
+}
 function showTip(ev, parts) { tip.replaceChildren(...parts.map(p => Array.isArray(p) ? $("div", {}, $("b", {}, p[0]), " ", p[1]) : $("div", {}, p)));
   tip.style.display = "block"; const x = Math.min(ev.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = (ev.clientY + 14) + "px"; }
 function hideTip() { tip.style.display = "none"; }
 const fmt = (x, n = 3) => x == null ? "–" : Number(x).toFixed(n);
 
 document.getElementById("meta").append($("br"), $("span", {class: "note"},
-  `Generated ${B.generated || "–"} from commit ${B.commit || "–"}, seed ${B.seed ?? 0}; ${Object.keys(B.runs).length} runs.`));
+  `Generated ${B.generated || "–"} from commit ${B.commit || "–"}, seed ${B.seed ?? 0}; ${B.n_runs ?? 0} runs.`));
 
 const TABS = [["summary", "Summary"], ["metrics", "Metrics"], ["data", "Datasets"], ["t1", "T1 Mapping"], ["t2", "T2 Multi-session"],
               ["t3", "T3 Relocalization"], ["viz", "Trajectories"], ["fail", "Failure cases"], ["hist", "History"], ["legacy", "Earlier results"]];
 const tabs = document.getElementById("tabs");
 for (const [k, lab] of TABS) tabs.append($("button", {role: "tab", "aria-selected": String(state.tab === k), onclick: () => { state.tab = k; state.sel = null; render(); }}, lab));
 
+// ---------------------------------------------------------------- method filter: sensor setup, local motion input, CROSS /
+// baselines and a search over the method names; applies to every table, plot and legend that lists methods
+const FILTER_TABS = ["summary", "t1", "t2", "t3", "viz", "hist"];
+const FILTER_GROUPS = [
+  ["setup", "Sensor", [["rgbd", "RGB-D"], ["stereo", "stereo"], ["mono", "mono"]]],
+  ["motion", "Local motion", [["odom", "wheel / INS odometry"], ["vio", "Basalt VIO odometry"], ["imu", "IMU"], ["none", "camera only"]]],
+  ["family", "Methods", [["cross", "CROSS"], ["base", "baselines"]]]];
+const FILTER_KEY = "cross-bench-filter";
+const filt = (() => { try { const s = JSON.parse(localStorage.getItem(FILTER_KEY) || "null");     // per-viewer convenience only
+  if (s && typeof s === "object") return {q: String(s.q || ""), off: s.off && typeof s.off === "object" ? s.off : {}}; } catch (e) { /* no storage */ }
+  return {q: "", off: {}}; })();
+const saveFilter = () => { try { localStorage.setItem(FILTER_KEY, JSON.stringify(filt)); } catch (e) { /* no storage */ } };
+function methodTags(system, setup) {
+  const s = B.systems[system] || {};
+  return {setup, motion: s.odom === "vio" ? "vio" : s.uses_imu ? "imu" : s.uses_odometry ? "odom" : "none", family: system.startsWith("cross") ? "cross" : "base"};
+}
+// is the method (system · setup) shown under the current filter? label: its row label (searched with the system name)
+function visible(system, setup, label) {
+  if (!system) return true;
+  const t = methodTags(system, setup);
+  if (FILTER_GROUPS.some(([g]) => filt.off[`${g}:${t[g]}`])) return false;
+  const hay = `${label || ""} ${(B.systems[system] || {}).label || ""} ${system} ${SETUP[setup] || setup}`.toLowerCase();
+  return filt.q.trim().toLowerCase().split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+}
+const filterActive = () => filt.q.trim() !== "" || Object.values(filt.off).some(Boolean);
+const filterEmpty = () => $("div", {class: "empty"}, "No method matches the filter. ", $("button", {class: "btn", onclick: () => { filt.q = ""; filt.off = {}; saveFilter(); buildFilters(); render(); }}, "Show all methods"));
+let searchTimer = null;
+function buildFilters() {
+  const box = document.getElementById("filters");
+  const input = $("input", {type: "search", class: "fsearch", placeholder: "Search methods: ORB-SLAM3, DPVO, VGGT…", "aria-label": "search methods"});
+  input.value = filt.q;
+  input.addEventListener("input", () => { filt.q = input.value; saveFilter(); clearTimeout(searchTimer); searchTimer = setTimeout(() => { render(); counter(); }, 150); });
+  const groups = FILTER_GROUPS.map(([g, title, opts]) => $("div", {class: "fgroup", role: "group", "aria-label": title}, $("span", {class: "flabel"}, title),
+    ...opts.map(([val, lab]) => { const k = `${g}:${val}`;
+      const b = $("button", {class: "chip", "aria-pressed": String(!filt.off[k]), title: `show / hide ${lab}`}, lab);
+      b.addEventListener("click", () => { filt.off[k] = !filt.off[k]; if (!filt.off[k]) delete filt.off[k]; b.setAttribute("aria-pressed", String(!filt.off[k])); saveFilter(); render(); counter(); });
+      return b; })));
+  const count = $("span", {class: "note fcount"});
+  const reset = $("button", {class: "btn", onclick: () => { filt.q = ""; filt.off = {}; saveFilter(); buildFilters(); render(); }}, "Reset");
+  const counter = () => { const all = B.order || [], n = all.filter(([s, su]) => visible(s, su)).length;
+    count.textContent = filterActive() ? `${n} of ${all.length} methods shown` : `${all.length} methods`; reset.style.visibility = filterActive() ? "" : "hidden"; };
+  box.replaceChildren($("div", {class: "filters"}, input, ...groups, $("span", {class: "fend"}, count, reset)));
+  counter();
+}
+
 let render = function () {
   for (const b of tabs.children) b.setAttribute("aria-selected", String(TABS[[...tabs.children].indexOf(b)][0] === state.tab));
+  document.getElementById("filters").hidden = !FILTER_TABS.includes(state.tab);
   const v = document.getElementById("view"); v.replaceChildren();
   if (state.tab === "summary") {
-    for (const change of window.CROSS_DEFAULT_CHANGES || []) {
-      v.append($("div", {class: "card"},
-        $("h2", {}, change.title + " · default since " + change.date),
-        $("p", {}, change.description), $("p", {}, change.evidence),
-        $("p", {class: "note"}, change.scope)));
+    renderSummary(v);
+    const changes = window.CROSS_DEFAULT_CHANGES || [];        // the results first, the adopted default changes below them
+    if (changes.length) {
+      const det = $("details", {class: "card changes"}, $("summary", {}, `Default changes (${changes.length}), newest first`));
+      for (const change of changes)
+        det.append($("div", {class: "change"}, $("h3", {}, change.title + " · default since " + change.date),
+          $("p", {}, change.description), $("p", {}, change.evidence), $("p", {class: "note"}, change.scope)));
+      v.append(det);
     }
-    return renderSummary(v);
+    return;
   }
   if (state.tab === "fail") return renderFailures(v);
   if (state.tab === "metrics") return renderMetrics(v);
@@ -203,17 +291,21 @@ let render = function () {
 };
 
 // ---------------------------------------------------------------- summary (markdown table from make_tables)
-function mdTable(md) {
+// keys: the [system, setup] of each row (summary tables: B.order), for the method filter; null = rows not filtered
+function mdTable(md, keys) {
   const lines = (md || "").split("\n").filter(l => l.startsWith("|"));
   if (lines.length < 2) return $("div", {class: "empty"}, "No results yet.");
   const cells = l => l.slice(1, -1).split("|").map(s => s.trim());
   const t = $("table"); const head = cells(lines[0]);
   t.append($("thead", {}, $("tr", {}, ...head.map(h => $("th", {}, h)))));
-  const tb = $("tbody"); for (const l of lines.slice(2)) { const c = cells(l);
+  const ks = keys && keys.length === lines.length - 2 ? keys : null;
+  const tb = $("tbody"); for (const [i, l] of lines.slice(2).entries()) { const c = cells(l);
+    if (ks && !visible(ks[i][0], ks[i][1], c[0])) continue;
     const tr = $("tr", {class: c[0].startsWith("CROSS") ? "cross" : ""}, $("td", {class: "lab"}, c[0]));
     if (c.slice(1).every(x => x === "in development" || x === "")) tr.append($("td", {class: "dim", colspan: c.length - 1}, "in development"));
     else tr.append(...c.slice(1).map(x => $("td", {class: x === "·" || x === "" ? "dim" : ""}, x || "n/a")));
-    tb.append(tr); } t.append(tb); return $("div", {class: "scroll"}, t);
+    tb.append(tr); } t.append(tb);
+  return tb.children.length ? $("div", {class: "scroll"}, t) : filterEmpty();
 }
 // ---------------------------------------------------------------- column ranking: shade the three best complete cells per column
 // A cell is ranked by its first number.  Cells with pending sessions are not ranked, nor ATE cells with failed sequences
@@ -240,7 +332,7 @@ function renderSummary(v) {
   v.append($("p", {class: "note"}, "⁽ᵒ⁾ uses the dataset's odometry, ⁽ⁱ⁾ the camera's IMU. · not run yet; k/N ✗: k of the dataset's N sequences (ATE: the mean covers the others) or query sessions (LR, RS: their frames / trials count as failures) failed. Click the T1–T3 tabs for per-scene tables and plots."));
   const tables = Array.isArray(B.summary) ? B.summary : [["all", "Headline numbers", "", B.summary]];
   for (const [key, title, note, md] of tables) {
-    const card = $("div", {class: "card"}, $("h3", {}, title), note ? $("p", {class: "note"}, note) : "", mdTable(md), rankNote());
+    const card = $("div", {class: "card"}, $("h3", {}, title), note ? $("p", {class: "note"}, note) : "", mdTable(md, B.order), rankNote());
     v.append(card);
     const t = card.querySelector("table"); if (!t) continue;
     const heads = [...t.querySelectorAll("th")].slice(1).map(h => h.textContent);
@@ -266,6 +358,7 @@ function renderTrack(v, track) {
   t.append($("thead", {}, $("tr", {}, $("th", {}, "system · setup"), ...m.cols.map(c => $("th", {}, c)))));
   const tb = $("tbody");
   m.rows.forEach((r, ri) => {
+    if (!visible(r.system, r.setup, r.label)) return;     // (row indices stay those of m.rows: state.sel)
     const tr = $("tr", {class: r.system.startsWith("cross") ? "cross" : ""}, $("td", {class: "lab"}, r.label));
     if (r.pending) { tr.append($("td", {class: "dim", colspan: m.cols.length}, "in development")); tb.append(tr); return; }
     r.cells.forEach((c, ci) => {
@@ -277,11 +370,11 @@ function renderTrack(v, track) {
     tb.append(tr); });
   t.append(tb);
   rankColumns(tb, () => track === "t1");
-  v.append($("div", {class: "card"}, $("div", {class: "scroll"}, t), rankNote()));
+  v.append($("div", {class: "card"}, tb.children.length ? $("div", {class: "scroll"}, t) : filterEmpty(), rankNote()));
   const d = $("div", {id: "detail"}); v.append(d);
   if (state.sel && !((m.rows[state.sel.r] || {}).cells || [])[state.sel.c]?.runs?.length) state.sel = null;
   if (state.sel) { const r = m.rows[state.sel.r], c = r.cells[state.sel.c];
-    d.append($("h3", {}, `${r.label} — ${m.cols[state.sel.c]}`)); d.append(detail(track, c.runs.map(id => B.runs[id]))); }
+    d.append($("h3", {}, `${r.label} — ${m.cols[state.sel.c]}`), later($("div"), ensureRuns(c.runs), (el, runs) => el.append(detail(track, runs)))); }
   else d.append($("p", {class: "note"}, "Select a cell to see its runs: trajectories (T1), localization error over the query session (T2), trial outcomes (T3)."));
 }
 
@@ -385,6 +478,7 @@ const SHORTSYS = {"cross_stereo|stereo": "CROSS stereo", "cross_stereo_vgio|ster
 const sysShort = k => SHORTSYS[k] || (([s, su]) => shortLabel(s, su))(k.split("|"));
 
 function renderFailures(v) {
+  if (!B.failure_page) { later(v, load("failures.js"), () => renderFailures(v)); return; }
   const P = FP(), A = P.analysis, T = P.text || {};
   if (!A) { v.append($("p", {class: "note"}, "No failure analysis yet (benchmark/failure_analysis.py).")); renderWorstRuns(v); return; }
   for (const p of [].concat(T.intro || [])) v.append($("p", {class: "note fc-intro"}, p));
@@ -677,13 +771,15 @@ function renderWorstRuns(v) {
   if (!keys.length) { v.append($("div", {class: "empty"}, "No results yet.")); return; }
   for (const k of keys) { const [system, setup] = k.split("|"); const f = B.failures[k];
     const lab = `${(B.systems[system] || {}).label || system} · ${setup}`;
-    const card = $("div", {class: "card"}, $("h3", {}, lab));
-    const sect = (name, ids, fn) => { if (!ids.length) return; card.append($("h4", {}, name)); const g = $("div", {class: "grid"}); for (const id of ids) g.append(fn(B.runs[id])); card.append(g); };
-    sect("T1 · weakest maps", f.t1, r => { const p = trajPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.sequence}`; return p; });
-    sect("T2 · lowest localization recall", f.t2, r => { const p = errPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`; return p; });
-    sect("T3 · most failed trials", f.t3, r => { const p = trialPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`; return p; });
-    if (card.children.length === 1) card.append($("div", {class: "empty"}, "No failures recorded."));
-    v.append(card); }
+    const card = $("div", {class: "card"}, $("h3", {}, lab)), body = $("div");
+    const sect = (name, runs, fn) => { if (!runs.length) return; body.append($("h4", {}, name)); const g = $("div", {class: "grid"}); for (const r of runs) g.append(fn(r)); body.append(g); };
+    later(body, ensureRuns([...f.t1, ...f.t2, ...f.t3]), () => {
+      const R = ids => ids.map(x => RUNS[x]).filter(Boolean);
+      sect("T1 · weakest maps", R(f.t1), r => { const p = trajPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.sequence}`; return p; });
+      sect("T2 · lowest localization recall", R(f.t2), r => { const p = errPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`; return p; });
+      sect("T3 · most failed trials", R(f.t3), r => { const p = trialPlot(r); p.querySelector("h4").textContent = `${DS[r.dataset] || r.dataset} · ${r.map} → ${r.query}`; return p; });
+      if (!body.children.length) body.append($("div", {class: "empty"}, "No failures recorded.")); });
+    card.append(body); v.append(card); }
 }
 
 // ---------------------------------------------------------------- metric definitions
@@ -717,10 +813,12 @@ function renderMetrics(v) {
          "RS@x = trials with final error below x / all counted trials, pooled over the scene's query sessions (x = 1 m and 2 m indoors, 3 m and 5 m outdoors); 95 % Wilson interval of the larger threshold in the last column.")),
     sec("How T2 and T3 differ",
       "T3 asks how often a system relocalizes within 10 s from a cold start, and judges only the end of each trial. T2 asks how much of a whole session the system spends correctly localized in the map, including the time before it first relocalizes and any later losses. A system that relocalizes slowly but then holds on can have T2 above T3; one that relocalizes quickly but loses the map again can have T3 above T2."),
-    sec("Which runs the tables show (2026-10-15)",
-      ul("CROSS rows with a mode file (stereo + wheel / Basalt / IMU / DPVO, mono + wheel / IMU / DPVO + IMU, VGGT + DPVO, DA3 mono + DPVO, RGB-D PnP): T1 from the config-confirmation benchmark of 2026-10-11/12 (the per-mode defaults of that date; KITTI of mono + DPVO + IMU from the 2026-10-13 rerun after the KITTI 10 fix), T2 / T3 from the placement full benchmark of 2026-10-14/15 (code 540303f, the mode's shipped default: placement rule on in stereo + wheel / Basalt, mono + wheel / IMU / DPVO + IMU, off in the others). Both used the fine-tuned VGGT-Omega checkpoint, synchronous pose-graph optimisation and the 2026-10-07 scoring rules.",
-         "Baselines (ORB-SLAM3, RTAB-Map, MASt3R-SLAM, VGGT-SLAM 2.0): the 2026-10-01 to 10-07 runs re-scored with the 2026-10-07 rules from their stored files (benchmark/run.py --reeval), without re-running a system. VGGT-SLAM 2.0 applies the map-link rule by reconstruction from its logs; MASt3R-SLAM keeps only the moving-robot rule, so its T2 / T3 are upper bounds. T1 cells whose run folders were not archived are the originals (T1 is unchanged by the rules).",
-         "Not rerun since the 2026-10-04 page run (released checkpoint, earlier rules, so T2 of these rows is not strictly comparable): RGB-D PnP + Basalt / DPVO, DA3 mono + external odometry / Basalt, VGGT mono + Basalt, SimChange of the stereo / mono + Basalt rows, and KITTI of the RGB-D rows. The History tab lists every code version.")),
+    sec("Which runs the tables show (2026-10-21)",
+      ul("CROSS rows re-run on the release code (2026-10-20/21, master 3ff2ff8, every cell of the row): stereo + wheel / Basalt, mono + wheel / IMU / DPVO + IMU / Basalt, RGB-D PnP + Basalt / DPVO, DA3 mono + external odometry / Basalt, the KITTI column of RGB-D PnP + wheel, and the new RGB-D + VGGT-Omega rows (modes rgbd_ff_wheel / rgbd_ff_basalt). The fine-tuned VGGT-Omega checkpoint, synchronous pose-graph optimisation, the 2026-10-07 scoring rules and the 4-level Basalt odometry files of every dataset; each row in its mode's shipped configuration, so every default change listed under Default changes is in these cells.",
+         "CROSS rows kept from earlier runs, whose configuration has not changed since: stereo DPVO, stereo + IMU, VGGT + DPVO, DA3 mono + DPVO and RGB-D PnP + wheel (T1 from the config-confirmation benchmark of 2026-10-11/12, T2 / T3 from the placement benchmark of 2026-10-14/15, code 540303f; on the development split the release code repeated stereo + IMU and RGB-D PnP + wheel bit for bit; the DPVO modes are not deterministic).",
+         "Basalt rows on OpenLORIS (no Basalt file there): the wheel row's cells, as before.",
+         "mono + IMU depends on the machine it runs on: the same code repeats exactly on one machine but not on another. Its ROVER map session scores 2.43, 2.77 and 3.18 m ATE on three H20s, and relocalization follows the map: with the 2.43 m map ROVER T3 RS@3 / 5 m is 0.87 / 0.91 and T2 LR@3 / 5 m 0.77 / 0.91, with the 3.18 m map these tables hold (the benchmark run) 0.69 / 0.79 and 0.56 / 0.89. KITTI 07: 1.31 vs 2.32 m. The other modes repeat across machines to the millimetre.",
+         "Baselines: ORB-SLAM3, RTAB-Map (external / visual / visual-inertial odometry) and VGGT-SLAM 2.0: the 2026-10-01 to 10-07 runs re-scored with the 2026-10-07 rules from their stored files (benchmark/run.py --reeval); VGGT-SLAM 2.0 applies the map-link rule from its logs. RTAB-Map + Basalt: re-run 2026-10-20 on the 4-level Basalt files. MASt3R-SLAM: re-run 2026-10-20/21 with the map-link rule (a query pose counts from its first loop closure or relocalization to the map), its published settings. It holds at most 512 keyframes and crashes on longer streams, so every ROVER cell, KITTI 05 / 06 and the T2 of most hssd_restaurant queries (map + query too long) are failed cells: a limit of the system, not of the run. LingBot-Map (added 2026-10-20): no relocalization step that could link a query frame to the map, so every query pose counts and its T2 / T3 are upper bounds. AMB3R-SLAM (added 2026-10-20): its published settings with the dataset's intrinsics and the same map-link rule; one declared deviation, stereo depth from 0.3 m on every dataset (upstream: from 3 m, set for KITTI). Its DBoW2 loop retrieval rarely links a query frame to the map, so its T2 / T3 stay low outside SimChange. The History tab lists every code version.")),
     sec("Small scenes", "In small rooms (OpenLORIS office spans about 4 m, SimChange classroom about 6 m) even the 1 m threshold is a large fraction of the room; read those cells with the scene size in mind (Datasets tab)."));
 }
 
@@ -833,17 +931,22 @@ const SYS_STYLE = {
   "cross_rgbd|rgbd": ["--c1", ""], "cross_rgbd_vo|rgbd": ["--c1", "6 4"],
   "cross_stereo|stereo": ["--c2", ""], "cross_stereo_vo|stereo": ["--c2", "6 4"],
   "cross_rgbd+vio|rgbd": ["--c1", "1.5 3"], "cross_stereo+vio|stereo": ["--c2", "1.5 3"],
-  "cross_mono_odom+vio|mono": ["--c3", "1.5 3"], "cross_mono_ff_odom+vio|mono": ["--c3", "3 2"],
-  "cross_mono_odom|mono": ["--c3", ""], "cross_mono|mono": ["--c3", "6 4"],
+  "cross_mono_odom+vio|mono": ["--c3", "1.5 3"], "cross_mono_ff_odom+vio|mono": ["--c3", "8 2"],
+  "cross_mono_odom|mono": ["--c3", ""], "cross_mono|mono": ["--c3", "6 4"], "cross_mono_ff|mono": ["--c3", "1.5 1.5"],
+  "cross_rgbd_ff|rgbd": ["--c1", "3 2"], "cross_rgbd_ff+vio|rgbd": ["--c1", "8 3 1.5 3"],
   "orbslam3|stereo": ["--c4", ""], "orbslam3|rgbd": ["--c4", "6 4"], "orbslam3|mono": ["--c4", "1.5 3"],
   "rtabmap|stereo": ["--c7", ""], "rtabmap|rgbd": ["--c7", "6 4"],
   "rtabmap_vo|stereo": ["--c7", "1.5 3"], "rtabmap_vo|rgbd": ["--c7", "8 3 1.5 3"],
   "rtabmap+vio|stereo": ["--c7", "3 2"], "rtabmap+vio|rgbd": ["--c7", "3 2 8 2"],
   "mast3r_slam|mono": ["--c6", ""], "vggt_slam|mono": ["--c5", ""],
   "cross_stereo_vgio|stereo": ["--c2", "3 2"], "cross_stereo_fast|stereo": ["--c2", "8 3 1.5 3"],
-  "cross_mono_ff_odom|mono": ["--c3", "3 2"], "cross_mono_ff_vgio|mono": ["--c3", "8 3 1.5 3"], "cross_mono_ff_vio|mono": ["--c3", "1.5 3"],
+  "cross_mono_ff_odom|mono": ["--c3", "3 2"], "cross_mono_ff_vgio|mono": ["--c3", "8 3 1.5 3"], "cross_mono_ff_vio|mono": ["--c3", "3 2 8 2"],
   "orbslam3_imu|stereo": ["--c4", "3 2"], "orbslam3_imu|rgbd": ["--c4", "8 3 1.5 3"], "orbslam3_imu|mono": ["--c4", "1.5 1.5"],
-  "rtabmap_vi|stereo": ["--c7", "1.5 1.5"], "rtabmap_vi|rgbd": ["--c7", "8 2"]};
+  "rtabmap_vi|stereo": ["--c7", "1.5 1.5"], "rtabmap_vi|rgbd": ["--c7", "8 2"],
+  // the palette has no free hue left (slot 8 is the failure red): the newer learned baselines share the hue of a related
+  // family with a line style of their own (identity also by the legend chips and the hover label)
+  "lingbot_map|mono": ["--c5", "6 4"],
+  "amb3r_slam|mono": ["--c6", "6 4"], "amb3r_slam|stereo": ["--c6", "3 2"], "amb3r_slam|rgbd": ["--c6", "8 3 1.5 3"]};
 const SETUP = {rgbd: "RGB-D", stereo: "stereo", mono: "mono"};
 const sysKey = r => `${r.system}|${r.setup}`;
 const sysLabel = (system, setup, d) => `${(B.systems[system] || {}).label || system} · ${d === "kitti" && setup === "rgbd" ? "RGB-D*" : SETUP[setup] || setup}`;
@@ -851,7 +954,9 @@ const ODO = {cross_rgbd: "ext. odometry", cross_stereo: "ext. odometry", cross_m
              cross_stereo_vgio: "VGGT-IMU odometry", cross_mono_ff_vgio: "VGGT-Ω, VGGT-IMU odometry", cross_stereo_fast: "fast, ext. odometry",
              cross_rgbd_vo: "visual odometry", cross_stereo_vo: "visual odometry", cross_mono: "visual odometry",
              "cross_rgbd+vio": "stereo VIO odometry", "cross_stereo+vio": "stereo VIO odometry",
-             "cross_mono_odom+vio": "stereo VIO odometry"};
+             "cross_mono_odom+vio": "stereo VIO odometry", cross_mono_ff: "VGGT-Ω, visual odometry",
+             cross_mono_ff_vio: "VGGT-Ω, visual-inertial odometry", "cross_mono_ff_odom+vio": "VGGT-Ω, stereo VIO odometry",
+             cross_rgbd_ff: "VGGT-Ω × depth, ext. odometry", "cross_rgbd_ff+vio": "VGGT-Ω × depth, stereo VIO odometry"};
 const shortLabel = (system, setup, d) => {         // compact row label of the plots
   const su = d === "kitti" && setup === "rgbd" ? "RGB-D*" : SETUP[setup] || setup;
   if (ODO[system]) return `CROSS ${su} · ${ODO[system]}`;
@@ -862,7 +967,7 @@ const lineKey = k => { const sv = s$("svg", {width: 22, height: 8, viewBox: "0 0
   sv.append(s$("line", {x1: 1, x2: 21, y1: 4, y2: 4, stroke: sysColor(k), "stroke-width": 2.5, "stroke-dasharray": sysDash(k), "stroke-linecap": "round"})); return sv; };
 const orderIndex = () => { const o = {}; (B.order || []).forEach(([a, b], i) => o[`${a}|${b}`] = i); return o; };
 const shortName = q => String(q).split("/").pop();
-const runsWhere = f => Object.values(B.runs).filter(f);
+const runsWhere = f => Object.values(RUNS).filter(r => visible(r.system, r.setup) && f(r));     // loaded runs of shown methods
 
 // ---------------------------------------------------------------- trajectories of every system, one plot per scene
 const vizState = {ds: "openloris", hidden: {}};
@@ -881,7 +986,7 @@ function renderViz(v) {
     const seqSel = $("select", {"aria-label": "session"}, ...seqs.map(q => $("option", {value: q}, q === sp.map ? `${shortName(q)} (map session)` : shortName(q))));
     if (vizState[key]) seqSel.value = vizState[key];
     const body = $("div");
-    const draw = () => { vizState[key] = seqSel.value; body.replaceChildren(trajOverlay(d, scene, seqSel.value, oi)); };
+    const draw = () => { vizState[key] = seqSel.value; later(body, loadScenes("t1", d, [scene]), el => el.append(trajOverlay(d, scene, seqSel.value, oi))); };
     seqSel.addEventListener("change", draw);
     card.append($("div", {class: "bar"}, $("h3", {style: "margin:0"}, d === "kitti" ? `sequence ${scene}` : scene), seqs.length > 1 ? seqSel : ""));
     card.append(body); draw(); v.append(card);
@@ -891,7 +996,7 @@ function renderViz(v) {
 function trajOverlay(d, scene, seq, oi) {
   const runs = runsWhere(r => r.track === "t1" && r.dataset === d && r.scene === scene && r.sequence === seq && r.gt2)
     .sort((a, b) => (oi[sysKey(a)] ?? 99) - (oi[sysKey(b)] ?? 99));
-  if (!runs.length) return $("div", {class: "empty"}, "No trajectories yet.");
+  if (!runs.length) return filterActive() ? filterEmpty() : $("div", {class: "empty"}, "No trajectories yet.");
   const gt = runs[0].gt2;
   // default: hide the dashed / dotted variants until the reader asks for them
   for (const r of runs) { const k = `${d}|${sysKey(r)}`; if (!(k in vizState.hidden)) vizState.hidden[k] = sysDash(sysKey(r)) !== ""; }
@@ -956,6 +1061,10 @@ const inkOn = hex => { const n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n
 
 function renderT3Plots(v, d) {
   const sp = (B.splits || {})[d]; if (!sp) return;
+  v.append(later($("div"), loadScenes("t3", d, sp.map(([scene]) => scene)), el => t3Plots(el, d, sp)));
+}
+
+function t3Plots(v, d, sp) {
   const oi = orderIndex();
   for (const [scene, s] of sp) {
     if (!s.queries.length) continue;
@@ -1023,6 +1132,7 @@ function rsHeatmap(d, s, runs, keys, thr) {
 
 // ---------------------------------------------------------------- history: the tables per code version (commit)
 function renderHistory(v) {
+  if (B.history === undefined) { later(v, load("history.js"), () => renderHistory(v)); return; }
   const H = B.history;
   if (!H || !H.tables || !Object.keys(H.tables).length) { v.append($("div", {class: "empty"}, "No history yet.")); return; }
   const hs = state.hist, tracks = Object.keys(H.tables);
@@ -1030,7 +1140,8 @@ function renderHistory(v) {
   const dss = Object.keys(H.tables[hs.track]);
   if (!dss.includes(hs.ds)) hs.ds = dss.includes("kitti") ? "kitti" : dss[0];
   const m = H.tables[hs.track][hs.ds];
-  const methods = [...new Map(m.rows.map(r => [r.system + "|" + r.setup, r.label])).entries()];
+  const methods = [...new Map(m.rows.filter(r => visible(r.system, r.setup, r.label)).map(r => [r.system + "|" + r.setup, r.label])).entries()];
+  if (!methods.length) { v.append(filterEmpty()); return; }
   if (hs.sys !== "*" && !methods.some(([k]) => k === hs.sys))
     hs.sys = (methods.find(([k]) => k.startsWith("cross_stereo|")) || methods.find(([k]) => k.startsWith("cross")) || methods[0] || ["*"])[0];
   const pick = (label, opts, cur, set) => $("select", {"aria-label": label, onchange: e => { set(e.target.value); render(); }},
@@ -1044,7 +1155,7 @@ function renderHistory(v) {
     "\u2605 marks the version shown in the T1\u2013T3 tabs. Shading ranks the rows per column. Versions are comparable on the same data only: " +
     "the KITTI odometry was rebuilt on 2026-10-02 (level-frame dead reckoning) and the ROVER ground truth made right-handed on 2026-10-02 (bf530bf); " +
     "the tooltip of a version gives its run dates."));
-  const rows = m.rows.filter(r => hs.sys === "*" || r.system + "|" + r.setup === hs.sys)
+  const rows = m.rows.filter(r => (hs.sys === "*" || r.system + "|" + r.setup === hs.sys) && visible(r.system, r.setup, r.label))
     .sort((a, b) => (a.label === b.label ? 0 : hs.sys === "*" ? a.label.localeCompare(b.label) : 0) ||
                     (H.commits[b.commit]?.date || "").localeCompare(H.commits[a.commit]?.date || ""));
   const t = $("table");
@@ -1079,7 +1190,9 @@ const _render = render;
 render = function () { _render(); const t = state.tab; const h = ["t1", "t2", "t3"].includes(t) ? [t, state.ds[t]].concat(state.sel ? [state.sel.r, state.sel.c] : []) : [t];
   history.replaceState(null, "", "#" + h.join(":")); };
 fromHash();
+buildFilters();
 render();
+addEventListener("hashchange", () => { fromHash(); render(); });     // edited links, back / forward
 </script>
 </body>
 </html>
