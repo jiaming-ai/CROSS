@@ -31,6 +31,7 @@ from pathlib import Path
 import make_tables as mt
 import numpy as np
 import yaml
+from results_io import load_results
 
 ROOT = Path(__file__).resolve().parents[1]
 SITE = ROOT / "benchmark/site"
@@ -274,7 +275,8 @@ def main():
     write_default_changes()
     if a.defaults_only:
         return
-    results = json.loads(Path(a.results).read_text())["results"] if Path(a.results).is_file() else []
+    # with the per-frame data of the cells (benchmark/results/frames/, downloaded from the Hub when missing)
+    results = load_results(Path(a.results), frames=True) if Path(a.results).is_file() else []
     ds_cfg, sy_cfg = mt.load()
     results, sy_cfg = mt.odom_rows(results, sy_cfg, ds_cfg)    # runs with VIO odometry etc. as rows of their own
     results = prepare(results, ds_cfg, sy_cfg, a.seed)

@@ -75,4 +75,8 @@ third_party/install
 assets/*.pdf
 .archive/
 *.safetensors
-
+# benchmark per-frame data (published on the Hugging Face Hub, pinned by benchmark/results/frames.json) and the
+# page's run files built from it (benchmark/publish_page.sh)
+/benchmark/results/frames/
+/benchmark/results/.cache/
+/benchmark/site/runs/

@@ -7,8 +7,8 @@ benchmark/results/history.json.
 
 Results of the same cell (track, dataset, scene, system, setup, seed, sequence / map+query, odometry source) found in several roots
 (e.g. a rerun) are resolved by the newest `time`; --prefer ROOT makes the cells of that root win (a rerun with new
-code that finished before another rerun of the old code).  Per-frame curves and trajectories stay in the merged file
-(downsampled by run.py), so the web page needs nothing else.
+code that finished before another rerun of the old code).  The per-frame curves and trajectories (downsampled by
+run.py) go to benchmark/results/frames/ (results_io.py: published on the Hugging Face Hub, pinned by frames.json).
 
 history.json holds every run ever collected (one entry per cell, commit and run time; without the trajectories and
 error curves), so the page can show the results of each code version (`commit` of the run) next to each other.
@@ -20,10 +20,12 @@ import json
 import subprocess
 from pathlib import Path
 
+from results_io import FRAMES as HEAVY  # per-frame data, only kept for the current cells (benchmark/results/frames/)
+from results_io import save_results
+
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = "benchmark/results/results.json"
 HISTORY = ROOT / "benchmark/results/history.json"
-HEAVY = ("traj_est", "traj_gt", "err_curve")       # per-frame data, only kept for the current cells
 
 
 def key(r):
@@ -108,7 +110,7 @@ def main():
                     preferred.add(k)
     res = sorted(cells.values(), key=lambda r: [str(x) for x in key(r)])
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"results": res}, separators=(",", ":")))
+    save_results(res, out, frames_dir=out.parent / "frames")
     print(f"{n} files -> {len(res)} cells in {out}")
     if a.history:
         update_history(found + res, a.history)

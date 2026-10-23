@@ -17,7 +17,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
-from metrics import moving_fraction, moving_rule, scale_error, umeyama  # noqa: E402
+from metrics import moving_fraction, moving_rule, scale_error  # noqa: E402
 
 SETUP_LABEL = {"rgbd": "RGB-D", "stereo": "stereo", "mono": "mono"}
 PENDING, NA, FAIL = "·", "", "✗"
@@ -347,20 +347,14 @@ class Tables:
         return vals, fails, missing
 
     def t1_scale_err(self, r):
-        """Scale error (metrics.scale_error) of a finished T1 run: from the Sim(3) scale it records (`scale_sim3`, or
-        `scale` of a Sim(3)-aligned run); for CROSS runs scored before `scale_sim3` existed, fitted to its stored
-        trajectory, whose points pair with the ground truth (the same keyframes, downsampled alike).  None when
+        """Scale error (metrics.scale_error) of a finished T1 run, from the Sim(3) scale it records (`scale_sim3`, which
+        collect.py adds to cells scored before metrics.ate wrote it, or `scale` of a Sim(3)-aligned run).  None when
         unknown."""
         if r is None or r.get("status") != "ok" or r.get("ate_rmse") is None or r.get("failed"):
             return None
         s = r.get("scale_sim3")
         if s is None and r.get("align") == "sim3":
             s = r.get("scale")
-        if s is None and self.sy[r["system"]]["runner"].startswith("cross"):
-            e, g = r.get("traj_est") or [], r.get("traj_gt") or []
-            if len(e) == len(g) >= 3:
-                import numpy as np
-                s = umeyama(np.asarray(e, float), np.asarray(g, float), with_scale=True)[0]
         return scale_error(s)
 
     def t1_scale(self, cells, seqs):

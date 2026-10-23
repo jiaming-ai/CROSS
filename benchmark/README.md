@@ -33,7 +33,9 @@ The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, s
 | `collect.py`, `make_tables.py`, `build_site.py` | merge results, write RESULTS.md, write the page data: `site/data.js` (tables, loaded with the page), `site/runs/<track>_<dataset>_<scene>.js` (the plotted runs, loaded when a cell or plot needs them), `site/failures.js` and `site/history.js` (their tabs) |
 | `failure_stats.py`, `failure_analysis.py` | Failure cases tab: features of every T3 trial from the data (motion, viewpoint, image statistics, SIFT matchability against the map; run where the data is, `results/failure_trials.json`), and the cause analysis (`results/failure_analysis.json`) |
 | `make_failure_assets.py`, `configs/failure_cases.yaml` | the tab's cases and text: per case a video (`site/assets/failures/`) and every system's per-frame pose from the stored runs (`results/failure_cases.json`; CROSS T3 needs `run.py --keep-rows`) |
-| `results/` | merged results (`results.json`: the newest run of every cell), every run of every code version (`history.json`), and earlier results obtained with other protocols (`legacy.*`) |
+| `results/` | merged results (`results.json`: the metrics of the newest run of every cell), every run of every code version (`history.json`), and earlier results obtained with other protocols (`legacy.*`) |
+| `results_io.py`, `results/frames.json` | the per-frame data the page plots (trajectories, error curves) is not in git: `results/frames/<track>/<dataset>/<scene>.json.gz`, published in the dataset [Jamie-nus/CROSS-benchmark-runs](https://huggingface.co/datasets/Jamie-nus/CROSS-benchmark-runs); `frames.json` pins its revision and file hashes, and `build_site.py` downloads it when missing. `results_io.py push` uploads a new version (needs a write token) |
+| `publish_page.sh` | builds the page and copies `site/` into the `gh-pages` branch (`--push` to publish; `site/runs/` is built, not committed) |
 
 ## Running
 
@@ -51,6 +53,8 @@ while read -r job; do python benchmark/run.py $job; done < queue.txt     # or di
 # 3. tables and page
 python benchmark/make_dataset_assets.py --data $BENCH_DATA     # images of the Datasets tab (optional)
 python benchmark/collect.py $BENCH_RESULTS && python benchmark/make_tables.py && python benchmark/build_site.py
+python benchmark/results_io.py push       # per-frame data to the Hub; commit results/ (frames.json pins it)
+bash benchmark/publish_page.sh --push     # after pushing master: the page links its PROTOCOL / RESULTS
 # 4. failure analysis and cases of the page (optional; where the data and the run folders are)
 python benchmark/failure_stats.py --data $BENCH_DATA --runs $BENCH_RESULTS && python benchmark/failure_analysis.py
 python benchmark/make_failure_assets.py --data $BENCH_DATA --runs $BENCH_RESULTS && python benchmark/build_site.py
