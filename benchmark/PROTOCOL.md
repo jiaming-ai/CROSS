@@ -171,6 +171,11 @@ comparison stays interpretable.
   optimization. For other systems it is their final (keyframe) trajectory. Estimates are associated with ground truth by frame index, then aligned with **SE(3)**
   Umeyama for metric setups (RGB-D, stereo, or any system with odometry/IMU), and with **Sim(3)** only for monocular systems
   without metric input (the recovered scale is reported).
+- **Scale error** (monocular setups): how far the trajectory's scale is from metric, max(s, 1/s) − 1 for the scale s of a
+  Sim(3) Umeyama fit to the ground truth (25 % = 1.25× too large or too small), reported for every monocular system,
+  including those scored with SE(3). The Sim(3)-aligned ATE hides this error, so the tables show it beside the ATE: the
+  median over a dataset's finished sequences (a diverged run's fit says little about scale), and in the overall table the
+  mean of the three datasets' medians. One scale per sequence: scale drift within a sequence shows in the ATE, not here.
 - **Completeness**: the fraction of the sequence's frames covered by the system's poses in one map. A frame counts when a pose
   of that map lies **within 1 s of it, or within 1 m (indoors) / 2 m (outdoors) of it along the travelled ground-truth path**.
   The time window catches lost tracking; the path distance accepts the sparse keyframes of a slow or standing robot. It is

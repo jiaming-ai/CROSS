@@ -63,7 +63,7 @@ def plane(traj_gt, traj_est):
 
 # the fields of a run the page reads (plus lr@<threshold>); everything else stays in results.json
 RUN_FIELDS = ("track", "dataset", "scene", "system", "setup", "sequence", "map", "query", "status", "rc", "ate_rmse",
-              "completeness", "n_poses", "align", "scale", "failed", "ms_ate", "est_frac", "rs1", "rs2", "n_trials",
+              "completeness", "n_poses", "align", "scale", "scale_sim3", "failed", "ms_ate", "est_frac", "rs1", "rs2", "n_trials",
               "concat", "thresholds", "odom_fallback")
 RUN_BASE = 100000          # a run reference = chunk index * RUN_BASE + index in the chunk
 
@@ -121,9 +121,12 @@ def table_models(T: mt.Tables, runs_by_key):
                 allids += ids
                 cells.append({"text": text, "runs": ids})
             cells.append({"text": T.t1_agg_str(allv, allf, allm, alln), "runs": allids})
+            seqs = [q for sc in scenes for q in T.scene_seqs(dataset, sc)]
+            cells.append({"text": T.scale_str(T.t1_scale(cells_all, seqs)) if setup == "mono" and cells_all else mt.NA,
+                          "runs": []})
             rows.append({"label": mt.row_label(sy, system, setup, dataset), "system": system, "setup": setup,
                          "pending": sy[system]["runner"] == "pending", "cells": cells})
-        out["t1"][dataset] = {"cols": scenes + ["mean"], "rows": rows}
+        out["t1"][dataset] = {"cols": scenes + ["mean", "scale err. (mono)"], "rows": rows}
     for track in ("t2", "t3"):
         for dataset in ("openloris", "rover", "simchange"):
             cfg = ds[dataset]

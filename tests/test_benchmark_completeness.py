@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmark" / "eval"))
-from metrics import ate, completeness  # noqa: E402
+from metrics import ate, completeness, scale_error  # noqa: E402
 
 
 def straight(n, speed, fps=10.0):
@@ -53,3 +53,15 @@ def test_ate_uses_cover_frames_for_completeness_only():
     assert r["failed"]
     r2 = ate(est, gt, path_m=1.0, cover_frames=range(500, 1000, 5))   # revisit poses held by the system
     assert not r2["failed"] and r2["ate_rmse"] == r["ate_rmse"] and r2["n_poses"] == r["n_poses"]
+
+
+def test_scale_error_of_a_shrunken_trajectory_also_under_se3():
+    gt = loop(200, laps=1)
+    est = {i: gt[i].copy() for i in range(200)}
+    for T in est.values():
+        T[:3, 3] *= 0.8                              # 1.25x too small
+    for sim3 in (True, False):
+        r = ate(est, gt, sim3=sim3)
+        assert abs(r["scale_sim3"] - 1.25) < 1e-9
+        assert abs(scale_error(r["scale_sim3"]) - 0.25) < 1e-9
+    assert abs(scale_error(0.8) - 0.25) < 1e-9 and scale_error(None) is None

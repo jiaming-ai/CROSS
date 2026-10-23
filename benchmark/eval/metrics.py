@@ -70,13 +70,24 @@ def ate(est: dict, gt: np.ndarray, sim3: bool = False, fps: float = 10.0, window
     src = np.array([est[i][:3, 3] for i in ids])
     dst = np.array([gt[i][:3, 3] for i in ids])
     s, R, t = umeyama(src, dst, with_scale=sim3)
+    # the scale a Sim(3) alignment would apply (ground truth / estimate), also for metric setups: their scale error
+    s_sim3 = s if sim3 else umeyama(src, dst, with_scale=True)[0]
     err = np.linalg.norm(s * (R @ src.T).T + t - dst, axis=1)
     T = np.eye(4)
     T[:3, :3] = s * R
     T[:3, 3] = t
     return {"ate_rmse": float(np.sqrt(np.mean(err ** 2))), "ate_median": float(np.median(err)), "ate_max": float(err.max()),
-            "completeness": comp, "n_poses": len(ids), "n_frames": n, "scale": s, "align": "sim3" if sim3 else "se3",
+            "completeness": comp, "n_poses": len(ids), "n_frames": n, "scale": s, "scale_sim3": s_sim3,
+            "align": "sim3" if sim3 else "se3",
             "failed": bool(comp < min_completeness), "completeness_rule": COMPLETENESS_RULE, "T_gt_from_est": T.tolist()}
+
+
+def scale_error(s: float | None) -> float | None:
+    """How far a trajectory's scale is from metric: max(s, 1/s) - 1 for the Sim(3) scale s (0.25 = 25 % too large
+    or too small)."""
+    if s is None or not np.isfinite(s) or s <= 0:
+        return None
+    return float(max(s, 1.0 / s) - 1.0)
 
 
 def first_stable(ok: np.ndarray, hold: int = 5):

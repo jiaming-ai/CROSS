@@ -17,7 +17,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "benchmark" / "eval"))
-from metrics import moving_fraction, moving_rule  # noqa: E402
+from metrics import moving_fraction, moving_rule, scale_error, umeyama  # noqa: E402
 
 SETUP_LABEL = {"rgbd": "RGB-D", "stereo": "stereo", "mono": "mono"}
 PENDING, NA, FAIL = "·", "", "✗"
@@ -346,6 +346,51 @@ class Tables:
                 vals.append(r["ate_rmse"])
         return vals, fails, missing
 
+    def t1_scale_err(self, r):
+        """Scale error (metrics.scale_error) of a finished T1 run: from the Sim(3) scale it records (`scale_sim3`, or
+        `scale` of a Sim(3)-aligned run); for CROSS runs scored before `scale_sim3` existed, fitted to its stored
+        trajectory, whose points pair with the ground truth (the same keyframes, downsampled alike).  None when
+        unknown."""
+        if r is None or r.get("status") != "ok" or r.get("ate_rmse") is None or r.get("failed"):
+            return None
+        s = r.get("scale_sim3")
+        if s is None and r.get("align") == "sim3":
+            s = r.get("scale")
+        if s is None and self.sy[r["system"]]["runner"].startswith("cross"):
+            e, g = r.get("traj_est") or [], r.get("traj_gt") or []
+            if len(e) == len(g) >= 3:
+                import numpy as np
+                s = umeyama(np.asarray(e, float), np.asarray(g, float), with_scale=True)[0]
+        return scale_error(s)
+
+    def t1_scale(self, cells, seqs):
+        """Median scale error over the finished sequences (a median: a diverged run's fit says little about scale)."""
+        v = sorted(x for x in (self.t1_scale_err(cells.get(q)) for q in seqs) if x is not None)
+        if not v:
+            return None
+        return v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2
+
+    @staticmethod
+    def scale_str(x):
+        if x is None:
+            return FAIL
+        x *= 100
+        return f"{x:.1f} %" if x < 10 else f"{x:.0f} %"
+
+    def t1_scale_overall_str(self, system, setup):
+        """Mono rows: the median scale error of each T1 dataset, averaged over the datasets (as the overall ATE)."""
+        if setup != "mono":
+            return NA
+        o = []
+        for d in T1_DATASETS:
+            if not self.has(d, system, setup):
+                return NA
+            cells = self.t1_cells(d, system, setup)
+            if not cells:
+                return PENDING
+            o.append(self.t1_scale(cells, [q for sc in self.ds[d]["scenes"] for q in self.scene_seqs(d, sc)]))
+        return FAIL if any(x is None for x in o) else self.scale_str(mean(o))
+
     def path_m(self, dataset, sequence, setup):
         """Ground-truth path length (m) of a sequence, from benchmark/results/datasets.json."""
         for sc in self.dstats.get(dataset, {}).values():
@@ -370,7 +415,7 @@ class Tables:
         scenes = list(self.ds[dataset]["scenes"])
         per_seq = dataset == "kitti"
         cols = scenes if per_seq else scenes
-        head = ["system · setup"] + ([f"{c}" for c in cols]) + ["mean"]
+        head = ["system · setup"] + ([f"{c}" for c in cols]) + ["mean", "scale err. (mono)"]
         lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
         for system, setup in rows_for(self.ds, self.sy, dataset):
             cells = self.t1_cells(dataset, system, setup)
@@ -385,6 +430,8 @@ class Tables:
                 all_n += len(seqs)
                 row.append(self.t1_seq_str(cells.get(seqs[0])) if len(seqs) == 1 else self.t1_agg_str(v, f, m, len(seqs)))
             row.append(self.t1_agg_str(all_vals, all_f, all_m, all_n))
+            seqs = [q for sc in scenes for q in self.scene_seqs(dataset, sc)]
+            row.append(self.scale_str(self.t1_scale(cells, seqs)) if setup == "mono" and cells else NA)
             if self.sy[system]["runner"] == "pending":
                 row = [row[0]] + ["in development"] + [NA] * (len(row) - 2)
             lines.append("| " + " | ".join(row) + " |")
@@ -593,9 +640,13 @@ class Tables:
     SUMMARY = (
         ("ate", "Mapping accuracy (T1): ATE RMSE (m), lower is better",
          [("KITTI (m)", "t1", "kitti"), ("OpenLORIS (m)", "t1", "openloris"), ("ROVER (m)", "t1", "rover"),
-          ("overall (% of path)", "t1", "*")],
+          ("overall (% of path)", "t1", "*"), ("scale error (mono)", "t1s", "*")],
          "Cells: mean ATE over the dataset's sequences. Overall: ATE / ground-truth path length, averaged over each "
-         "dataset's sequences, then over the three datasets (a method missing a dataset has no overall value)."),
+         "dataset's sequences, then over the three datasets (a method missing a dataset has no overall value). "
+         "Scale error (monocular rows): how far the trajectory's scale is from metric, max(s, 1/s) - 1 for the scale s "
+         "of a Sim(3) fit to the ground truth; the median over each dataset's finished sequences, averaged over the "
+         "three datasets. Monocular systems without metric input are scored after Sim(3) alignment, so their ATE does "
+         "not include this error; the others are scored with SE(3)."),
         ("lr", "Multi-session localization (T2): localization recall, higher is better",
          [("OpenLORIS LR@1/2 m", "t2", "openloris"), ("ROVER LR@3/5 m", "t2", "rover"),
           ("SimChange LR@1/2 m", "t2", "simchange"), ("overall", "t2", "*")],
@@ -614,7 +665,8 @@ class Tables:
         systems = [(system, setup) for system, sc in self.sy.items() if not sc.get("hidden") for setup in sc["setups"]]
         head = ["system · setup"] + [c[0] for c in cols]
         lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
-        overall = {"t1": self.t1_overall_str, "t2": self.t2_overall_str, "t3": self.t3_overall_str}
+        overall = {"t1": self.t1_overall_str, "t1s": self.t1_scale_overall_str, "t2": self.t2_overall_str,
+                   "t3": self.t3_overall_str}
         for system, setup in systems:
             row = [row_label(self.sy, system, setup)]
             for _, track, dataset in cols:
@@ -704,7 +756,10 @@ def main():
         "",
         "Final trajectory after all loop closures, SE(3) alignment (Sim(3) for monocular systems without metric input). "
         "OpenLORIS and ROVER cells: mean over the scene's sequences. Completeness: a frame counts when a pose of the "
-        "evaluated map lies within 1 s of it or within 1 m (indoors) / 2 m (outdoors) of travelled path (PROTOCOL.md)."
+        "evaluated map lies within 1 s of it or within 1 m (indoors) / 2 m (outdoors) of travelled path (PROTOCOL.md). "
+        "Scale err. (monocular rows): median over the dataset's finished sequences of max(s, 1/s) - 1, s the scale of a "
+        "Sim(3) fit to the ground truth; it shows how far the trajectory is from metric scale, which the Sim(3)-aligned "
+        "ATE of monocular systems without metric input does not include."
         + old_rule_note(res),
     ]
     for d, title in (("kitti", "KITTI odometry (outdoor)"), ("openloris", "OpenLORIS-Scene (indoor)"), ("rover", "ROVER campus_large (outdoor)")):
