@@ -13,6 +13,7 @@ trap 'git worktree remove --force "$WT"' EXIT
 git fetch -q origin gh-pages
 git worktree add -q -B gh-pages "$WT" origin/gh-pages
 rsync -a --delete benchmark/site/ "$WT/benchmark/"
+git checkout -- benchmark/site     # the build stamps time + commit into data.js: master keeps its committed copy
 git -C "$WT" add -A benchmark
 if git -C "$WT" diff --cached --quiet; then
   echo "gh-pages already up to date"
