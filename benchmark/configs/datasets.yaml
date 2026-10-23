@@ -89,6 +89,31 @@ simchange:
       map: "lonemonk/map"
       queries: ["lonemonk/light_morning", "lonemonk/light_evening", "lonemonk/light_night", "lonemonk/light_overcast", "lonemonk/move_50", "lonemonk/background", "lonemonk/offset_1.0", "lonemonk/offset_2.0", "lonemonk/yaw_45", "lonemonk/reverse", "lonemonk/half", "lonemonk/reverse+offset_1.0", "lonemonk/light_night+reverse", "lonemonk/light_evening+move_50+reverse+offset_1.0"]
 
+simchange_v3:
+  environment: indoor
+  r_d: 2.0
+  thresholds: [1.0, 2.0]
+  trial_len: 100
+  trial_stride: 50
+  odometry: simulated
+  snr: 10
+  baseline: 0.3            # rendered stereo baseline used by every stereo system
+  # $BENCH_DATA/simchange_v3 = the SimChange v3 renders (SimChange branch realism 266d6bc; camera model --sensor real
+  # on every traversal, the map included): physical lighting (sun / overcast / dusk / night with lamps per room),
+  # object change by the measured share of each map view's features (objfeat_<p>), rearr3, path deviation (wander),
+  # reverse.  Scenes: the two HSSD scenes and a lab corridor lined with tables and chairs.
+  setups: {rgbd: ".", stereo: ".", mono: "."}
+  scenes:
+    hssd_house:
+      map: "hssd_house/map"
+      queries: ["hssd_house/sun_45_0", "hssd_house/overcast_0", "hssd_house/sun_10_180", "hssd_house/dusk_50", "hssd_house/night_100", "hssd_house/night_50", "hssd_house/night_25", "hssd_house/objfeat_40", "hssd_house/objfeat_90", "hssd_house/rearr3_100", "hssd_house/objfeat_50+wander_0.3", "hssd_house/objfeat_50+night_100", "hssd_house/sun_45_0+wander_0.3", "hssd_house/reverse"]
+    hssd_restaurant:
+      map: "hssd_restaurant/map"
+      queries: ["hssd_restaurant/sun_45_0", "hssd_restaurant/overcast_0", "hssd_restaurant/sun_10_180", "hssd_restaurant/dusk_50", "hssd_restaurant/night_100", "hssd_restaurant/night_50", "hssd_restaurant/night_25", "hssd_restaurant/objfeat_40", "hssd_restaurant/objfeat_90", "hssd_restaurant/rearr3_100", "hssd_restaurant/objfeat_50+wander_0.3", "hssd_restaurant/objfeat_50+night_100", "hssd_restaurant/sun_45_0+wander_0.3", "hssd_restaurant/reverse"]
+    corridor:                 # procedural lab corridor lined with tables and chairs (SimChange build_corridor.py)
+      map: "corridor/map"
+      queries: ["corridor/sun_45_0", "corridor/overcast_0", "corridor/sun_10_180", "corridor/dusk_50", "corridor/night_100", "corridor/night_50", "corridor/night_25", "corridor/objfeat_25", "corridor/objfeat_50", "corridor/objfeat_75", "corridor/rearr3_100", "corridor/objfeat_50+wander_0.3", "corridor/objfeat_50+night_100", "corridor/sun_45_0+wander_0.3", "corridor/reverse"]
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Development split (benchmark/DEV.md): the same protocol on a few sequences, to test a change in minutes.  dev: true
 # keeps these entries out of the tables and the results page.  data: the dataset folder the sequences are read from.
