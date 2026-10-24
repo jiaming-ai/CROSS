@@ -181,6 +181,9 @@ def numbers(L):
         bl, val = best_rows(T, lambda r: r["family"] != "cross")
         N[f"{tid}.best_baseline.overall"] = pct(val(bl[0]))
         N[f"{tid}.best_baseline.name"] = FAMILIES[bl[0]["family"]]
+        # the best baseline's score is an upper bound when it has no relocalization step (LingBot-Map)
+        N[f"{tid}.best_baseline.ub"] = (" (an upper bound: it has no relocalization step)"
+                                        if L["systems"][bl[0]["system"]]["upper_bound"] else "")
         cl, val = best_rows(T, lambda r: r["family"] in ("orbslam3", "rtabmap"))
         N[f"{tid}.best_classical.overall"] = pct(val(cl[0]))
         N[f"{tid}.best_classical.name"] = FAMILIES[cl[0]["family"]]
