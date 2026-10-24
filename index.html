@@ -93,7 +93,7 @@
         <span class="wm-word" style="--x:.205;--y:.31">Change-</span>
         <span class="wm-word" style="--x:.745;--y:.205">Robust</span>
         <span class="wm-word" style="--x:1.335;--y:.335">Online</span>
-        <span class="wm-word" style="--x:1.925;--y:.235">Spatial memory</span>
+        <span class="wm-word" style="--x:1.92;--y:.45">Spatial<br>memory</span>
         <span class="wm-word" style="--x:2.47;--y:.535">System</span>
       </span>
     </div>
@@ -101,19 +101,32 @@
       <h1 id="mast-title"><span class="sr-only">CROSS: </span>Visual <span class="nowrap">multi-session</span> SLAM<br>that survives change</h1>
       <p class="mast-sub">Map a place once. Come back at night, in another season, after the furniture moved, or with another
         camera: CROSS finds where it is, keeps tracking and extends the same map, for long-term navigation.</p>
-      <p class="mast-meta"><span><span class="nowrap">RGB-D</span>, stereo or monocular</span><span>MIT-licensed code</span><span>Linux, NVIDIA GPU</span></p>
       <p class="mast-links">
         <a class="sx-link" href="docs/#install">Get started</a>
         <a class="sx-link" href="leaderboard/">Benchmark</a>
-        <a class="sx-link" href="v1/">CROSS 1, NeurIPS 2026</a>
+        <a class="sx-link" href="v1/">NeurIPS 2026 paper</a>
         <a class="sx-link" href="https://github.com/jiaming-ai/CROSS" rel="noopener">Code ↗</a>
       </p>
       <p class="mast-install"><code>bash install.sh --stereo</code><button class="copy" type="button" data-copy="git clone https://github.com/jiaming-ai/CROSS.git &amp;&amp; cd CROSS &amp;&amp; bash install.sh --stereo" aria-label="Copy the install commands"></button></p>
     </div>
+    <ul class="mast-points" aria-label="Highlights">
+      <li>Fast relocalization</li>
+      <li>Accurate tracking</li>
+      <li>14 sensor modes</li>
+      <li>Large scale, with or without GPS</li>
+      <li>Edge device + cloud GPU</li>
+      <li>Cross-camera relocalization</li>
+      <li>Multi-agent mapping <span class="mast-note">soon</span></li>
+      <li>Ready for VLMs and agents <span class="mast-note mast-note-line">every map node is an RGB image</span></li>
+    </ul>
   </header>
 
   <!-- ============================================================ highlights: a playlist of real runs -->
   <section class="hl" id="highlights" aria-labelledby="hl-title">
+    <div class="hl-head">
+      <h2 class="sx-h" id="hl-title">Highlights</h2>
+      <p class="sx-mid">Every clip is a real run</p>
+    </div>
     <div class="hl-player">
       <div class="sx-frame hl-frame">
         <video id="hl-video" muted playsinline preload="auto" width="960" height="540" poster="assets/video/clip-reloc-night.jpg"
@@ -122,53 +135,52 @@
         </video>
       </div>
       <div class="hl-bar">
-        <div class="sx-track" id="hl-track" role="slider" tabindex="0" aria-label="Playlist position" aria-valuemin="1" aria-valuemax="12" aria-valuenow="1" aria-valuetext="Clip 1 of 12"></div>
+        <div class="sx-track" id="hl-track" role="slider" tabindex="0" aria-label="Playlist position" aria-valuemin="1" aria-valuemax="13" aria-valuenow="1" aria-valuetext="Clip 1 of 13"></div>
         <div class="sx-ctl">
           <button type="button" id="hl-play" aria-label="Pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="i-pause" d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg></button>
           <button type="button" id="hl-full" aria-label="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h7v2H5v5H3zM14 3h7v7h-2V5h-5zM3 14h2v5h5v2H3zM19 14h2v7h-7v-2h5z"/></svg></button>
         </div>
       </div>
-      <p class="hl-cap"><span id="hl-cap">Night session in a map made by day · ROVER campus</span><span id="hl-kind" class="sx-label">Relocalization</span></p>
     </div>
-    <div class="hl-side">
-      <div class="hl-head">
-        <h2 class="sx-h" id="hl-title">Highlights</h2>
-        <p class="sx-mid">Every clip is a real run</p>
-      </div>
-      <div class="sx-list hl-list" id="hl-list">
+    <div class="hl-now">
+      <p class="hl-now-k"><span><span id="hl-now-n">01</span> <span id="hl-now-g">Relocalization</span></span><span id="hl-now-w">ROVER campus</span></p>
+      <h3 class="hl-now-t" id="hl-now-t">Night, in a map made by day</h3>
+      <p class="hl-now-d" id="hl-now-d">Mapped by day, back at night. CROSS finds its place in the old map; the five other systems give no pose or the wrong place.</p>
+    </div>
+    <div class="sx-list hl-list" id="hl-list">
         <div class="hl-group">
           <p class="sx-list-head"><span>Relocalization</span><span>in a map from another session</span></p>
           <div class="sx-runin">
-            <button class="sx-chip" type="button" data-src="clip-reloc-night" data-cap="Night session in a map made by day · ROVER campus" data-kind="Relocalization" data-d="6"><span class="sx-chip-n">01</span> Night</button>
-            <button class="sx-chip" type="button" data-src="clip-reloc-dark" data-cap="Lights off, map made with the lights on · OpenLORIS corridor" data-kind="Relocalization" data-d="6"><span class="sx-chip-n">02</span> Lights off</button>
-            <button class="sx-chip" type="button" data-src="clip-reloc-snow" data-cap="Snow in a summer map · NCLT north campus" data-kind="Relocalization" data-d="7"><span class="sx-chip-n">03</span> Snow</button>
-            <button class="sx-chip" type="button" data-src="clip-reloc-cafe" data-cap="A busy café, seen from the other side · OpenLORIS cafe" data-kind="Relocalization" data-d="6"><span class="sx-chip-n">04</span> Busy café</button>
-            <button class="sx-chip" type="button" data-src="clip-reloc-people" data-cap="People and moved objects · OpenLORIS home" data-kind="Relocalization" data-d="6"><span class="sx-chip-n">05</span> People</button>
+            <button class="sx-chip" type="button" data-src="clip-reloc-night" data-group="Relocalization" data-title="Night, in a map made by day" data-desc="Mapped by day, back at night. CROSS finds its place in the old map; the five other systems give no pose or the wrong place." data-where="ROVER campus" data-d="6"><span class="sx-chip-n">01</span> Night</button>
+            <button class="sx-chip" type="button" data-src="clip-reloc-dark" data-group="Relocalization" data-title="Lights off, in a map made with them on" data-desc="The same corridor with the lights off. CROSS localizes; the other systems give no pose or the wrong place." data-where="OpenLORIS corridor" data-d="6"><span class="sx-chip-n">02</span> Lights off</button>
+            <button class="sx-chip" type="button" data-src="clip-reloc-snow" data-group="Relocalization" data-title="Snow, in a summer map" data-desc="One camera and wheel odometry in a summer map. CROSS localizes; the other systems give no pose or land 100 m away." data-where="NCLT north campus" data-d="7"><span class="sx-chip-n">03</span> Snow</button>
+            <button class="sx-chip" type="button" data-src="clip-reloc-cafe" data-group="Relocalization" data-title="A busy café, seen from the other side" data-desc="People walk through a café the map saw from the other side. CROSS localizes; the others give no pose or the wrong place." data-where="OpenLORIS café" data-d="6"><span class="sx-chip-n">04</span> Café</button>
+            <button class="sx-chip" type="button" data-src="clip-reloc-people" data-group="Relocalization" data-title="People walking, objects moved" data-desc="CROSS localizes, as do AMB3R-SLAM and LingBot-Map; the other three systems give no pose or the wrong place." data-where="OpenLORIS home" data-d="6"><span class="sx-chip-n">05</span> People</button>
           </div>
         </div>
         <div class="hl-group">
-          <p class="sx-list-head"><span>Mapping</span><span>one session</span></p>
+          <p class="sx-list-head"><span>Tracking</span><span>any sensor setup</span></p>
           <div class="sx-runin">
-            <button class="sx-chip" type="button" data-src="clip-setups-kitti" data-cap="One drive mapped in eleven sensor setups · KITTI" data-kind="Mapping" data-d="7"><span class="sx-chip-n">06</span> Eleven setups</button>
-            <button class="sx-chip" type="button" data-src="clip-track-glare" data-cap="At night, into the glare of lamps · ROVER campus" data-kind="Mapping" data-d="8"><span class="sx-chip-n">07</span> Glare</button>
-            <button class="sx-chip" type="button" data-src="clip-scale-nclt" data-cap="6.5 km in one session, indoors and outdoors · NCLT" data-kind="Mapping" data-d="12"><span class="sx-chip-n">08</span> 6.5 km</button>
+            <button class="sx-chip" type="button" data-src="clip-setups-kitti" data-group="Tracking" data-title="One drive, eleven sensor setups" data-desc="Stereo, RGB-D or one camera, with car odometry, VIO, IMU or visual odometry: every setup maps the 303 m drive within 0.08 to 0.67% of the distance." data-where="KITTI 07" data-d="7"><span class="sx-chip-n">06</span> Eleven setups</button>
+            <button class="sx-chip" type="button" data-src="clip-track-glare" data-group="Tracking" data-title="At night, into the glare of lamps" data-desc="Night, street lamps, sharp turns. CROSS from stereo images alone: 0.25 m map error; ORB-SLAM3 1.3 m; the others 4 to 12 m or lost." data-where="ROVER campus" data-d="8"><span class="sx-chip-n">07</span> Glare</button>
           </div>
         </div>
         <div class="hl-group">
-          <p class="sx-list-head"><span>Deployment</span><span>real recordings</span></p>
+          <p class="sx-list-head"><span>Large scale</span><span>with or without GPS</span></p>
           <div class="sx-runin">
-            <button class="sx-chip" type="button" data-src="clip-cam-indoor" data-cap="A colour camera relocalizes in a stereo camera's map · OpenLORIS office" data-kind="Deployment" data-d="9"><span class="sx-chip-n">09</span> Another camera</button>
-            <button class="sx-chip" type="button" data-src="clip-cloud" data-cap="The robot sends a few images; a GPU server runs the map · OpenLORIS office" data-kind="Deployment" data-d="8"><span class="sx-chip-n">10</span> GPU server</button>
-            <button class="sx-chip" type="button" data-src="clip-robots-home" data-cap="Three recordings join one shared map (in development) · OpenLORIS home" data-kind="In development" data-d="10"><span class="sx-chip-n">11</span> Three robots</button>
+            <button class="sx-chip" type="button" data-src="clip-scale-nclt" data-group="Large scale" data-title="6.5 km in one session" data-desc="A Segway crosses a campus, indoors and out. Verified loop closures correct the wheel odometry's drift: 34 by the 4.8 km mark." data-where="NCLT" data-d="12"><span class="sx-chip-n">08</span> 6.5 km</button>
+            <button class="sx-chip" type="button" data-src="clip-scale-gps" data-group="Large scale" data-title="On the Earth with consumer GPS" data-desc="The same session with consumer GPS as an extra input: the map sits on its true place, 3.1 m RMSE without alignment." data-where="NCLT" data-d="5"><span class="sx-chip-n">09</span> GPS</button>
+            <button class="sx-chip" type="button" data-src="clip-robots-home" data-group="Large scale" data-title="Three robots, one map" data-desc="Three recordings of one home, replayed as three robots; each joins the shared map once it recognizes a place. In development." data-where="OpenLORIS home" data-d="10"><span class="sx-chip-n">10</span> Three robots</button>
+            <button class="sx-chip" type="button" data-src="clip-world-fly" data-group="Large scale" data-title="The map as a 3D world" data-desc="A flight through the Gaussian-splatting world built from a saved map: rendered views, not camera frames." data-where="KITTI" data-d="9"><span class="sx-chip-n">11</span> 3D world</button>
           </div>
         </div>
         <div class="hl-group">
-          <p class="sx-list-head"><span>3D world</span><span>rendered from a map</span></p>
+          <p class="sx-list-head"><span>Deployment</span><span>edge and cloud, any camera</span></p>
           <div class="sx-runin">
-            <button class="sx-chip" type="button" data-src="clip-world-fly" data-cap="A flight through the 3D world built from a saved map · KITTI" data-kind="3D world" data-d="9"><span class="sx-chip-n">12</span> Fly-through</button>
+            <button class="sx-chip" type="button" data-src="clip-cloud" data-group="Deployment" data-title="Light robot, GPU in the cloud" data-desc="The robot runs its odometry and the CROSS edge client on under half a CPU core; a GPU server does the rest, with 100 ms of added delay." data-where="OpenLORIS office" data-d="8"><span class="sx-chip-n">12</span> GPU server</button>
+            <button class="sx-chip" type="button" data-src="clip-cam-indoor" data-group="Deployment" data-title="A map from another camera" data-desc="The map holds only camera A's images; camera B, a colour camera on the same robot, finds its place in it." data-where="OpenLORIS office" data-d="6.5"><span class="sx-chip-n">13</span> Another camera</button>
           </div>
         </div>
-      </div>
     </div>
   </section>
 
@@ -200,10 +212,10 @@
 
     <div class="sx-band sx-band--yellow ov">
       <div class="ov-text sx-grid">
-        <h3 class="ov-name">Relocalization</h3>
+        <h3 class="ov-name">Best multi-session relocalization</h3>
         <p class="ov-sentence">Start anywhere in <strong>a map from another session</strong>, at night, in snow, in a crowd or with
-          the lights off, and CROSS finds where it is: <strong><span data-num="t3.cross_camera.rover">88%</span> of cold starts
-          outdoors with cameras only</strong>, where the best other system manages <span data-num="t3.best_baseline.rover">39%</span>.</p>
+          the lights off, and CROSS finds where it is. <strong>The best visual multi-session relocalization</strong> in
+          <a class="ov-link" href="leaderboard/">our benchmark&nbsp;→</a></p>
       </div>
       <div class="sx-clips ov-clips">
         <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-reloc-night.jpg" aria-label="A night session relocalized in a map made by day"><source src="assets/video/clip-reloc-night.mp4" type="video/mp4"></video></div><figcaption>Night in a day map, ROVER</figcaption></figure>
@@ -215,9 +227,9 @@
 
     <div class="sx-band sx-band--pink ov">
       <div class="ov-text sx-grid">
-        <h3 class="ov-name">Any sensor setup</h3>
-        <p class="ov-sentence"><strong><span class="nowrap">RGB-D</span>, stereo or one camera</strong>, with wheel odometry, a VIO,
-          an IMU <strong>or nothing at all</strong>: fourteen ready-made modes, picked with one flag.</p>
+        <h3 class="ov-name">Accurate tracking, any sensor setup</h3>
+        <p class="ov-sentence"><strong>Accurate tracking</strong> with <span class="nowrap">RGB-D</span>, stereo or one camera, with
+          wheel odometry, a VIO, an IMU <strong>or nothing at all</strong>: fourteen ready-made modes, picked with one flag.</p>
       </div>
       <div class="sx-clips ov-clips" data-n="3">
         <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-setups-home.jpg" aria-label="One indoor session mapped in several sensor setups"><source src="assets/video/clip-setups-home.mp4" type="video/mp4"></video></div><figcaption>Indoors, every setup, OpenLORIS home</figcaption></figure>
@@ -228,29 +240,31 @@
 
     <div class="sx-band sx-band--blue ov">
       <div class="ov-text sx-grid">
-        <h3 class="ov-name">Large scale</h3>
-        <p class="ov-sentence">Sessions of <strong>kilometres, indoors and out</strong>, kept accurate by verified loop closures,
-          stored compactly on disk and, with GNSS, <strong>placed on the Earth</strong>.</p>
+        <h3 class="ov-name">Large scale, with or without GPS</h3>
+        <p class="ov-sentence">Sessions of <strong>kilometres, indoors and out</strong>, kept accurate by verified loop closures
+          <strong>with or without GPS</strong>; with it, the map is placed on the Earth. Soon, <strong>several robots</strong>
+          will build one map together.</p>
       </div>
       <div class="sx-clips ov-clips">
         <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-scale-nclt.jpg" aria-label="A 6.5 km session mapped indoors and outdoors"><source src="assets/video/clip-scale-nclt.mp4" type="video/mp4"></video></div><figcaption>6.5 km in one session, NCLT</figcaption></figure>
         <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-scale-gps.jpg" aria-label="The map aligned to consumer GPS"><source src="assets/video/clip-scale-gps.mp4" type="video/mp4"></video></div><figcaption>Placed on the Earth with consumer GPS</figcaption></figure>
         <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-scale-kitti.jpg" aria-label="A KITTI drive mapped with loop closures"><source src="assets/video/clip-scale-kitti.mp4" type="video/mp4"></video></div><figcaption>Driving, KITTI 00</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-world-grow.jpg" aria-label="The saved map becomes a 3D Gaussian-splatting world"><source src="assets/video/clip-world-grow.mp4" type="video/mp4"></video></div><figcaption>The map as a 3D world, KITTI 07</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-robots-home.jpg" aria-label="Three robots join one shared map"><source src="assets/video/clip-robots-home.mp4" type="video/mp4"></video></div><figcaption>Three robots, one map (in development)</figcaption></figure>
       </div>
     </div>
 
     <div class="sx-band sx-band--mint ov">
       <div class="ov-text sx-grid">
-        <h3 class="ov-name">Deployment</h3>
-        <p class="ov-sentence">One map, used the way your robot needs it: <strong>with another camera</strong>, with the heavy work
-          <strong>on a GPU server</strong>, and soon <strong>shared by several robots</strong>.</p>
+        <h3 class="ov-name">Light on the robot, heavy in the cloud</h3>
+        <p class="ov-sentence">The robot needs <strong>under half a CPU core</strong>: it runs its odometry and sends a few frames to
+          <strong>a GPU server</strong>, which does the heavy work and keeps it localized over a slow link. A map made with one
+          camera also <strong>serves another camera</strong>.</p>
       </div>
       <div class="sx-clips ov-clips">
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cloud.jpg" aria-label="The robot streams a few images to a GPU server"><source src="assets/video/clip-cloud.mp4" type="video/mp4"></video></div><figcaption>Half a CPU core on the robot, GPU in the cloud</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cam-indoor.jpg" aria-label="A colour camera relocalizes in another camera's map indoors"><source src="assets/video/clip-cam-indoor.mp4" type="video/mp4"></video></div><figcaption>Another camera, indoors</figcaption></figure>
         <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cam-winter.jpg" aria-label="Another camera relocalizes outdoors in winter"><source src="assets/video/clip-cam-winter.mp4" type="video/mp4"></video></div><figcaption>Another camera, outdoors in winter</figcaption></figure>
         <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cam-night.jpg" aria-label="Another camera relocalizes at night under lamps"><source src="assets/video/clip-cam-night.mp4" type="video/mp4"></video></div><figcaption>Another camera, at night</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cloud.jpg" aria-label="The robot streams images to a GPU server"><source src="assets/video/clip-cloud.mp4" type="video/mp4"></video></div><figcaption>Light robot, GPU server</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-robots-rover.jpg" aria-label="Three outdoor sessions join one shared map"><source src="assets/video/clip-robots-rover.mp4" type="video/mp4"></video></div><figcaption>Three robots, one map (in development)</figcaption></figure>
       </div>
     </div>
   </section>

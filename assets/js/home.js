@@ -4,21 +4,23 @@
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // ---------------------------------------------------------------- highlights: a playlist of short clips
-  // The clip list (buttons with data-src, data-cap, data-kind, data-d) drives one muted video; the track under it has
-  // one segment per clip, as wide as the clip is long: played clips are filled, the one playing fills in the accent.
+  // The clip list (buttons with data-src, data-group, data-title, data-desc, data-where, data-d) drives one muted video
+  // and the "what is playing" block; the track under the video has one segment per clip, as wide as the clip is long:
+  // played clips are filled, the one playing fills in the accent.
   var video = document.getElementById('hl-video');
   var chips = Array.prototype.slice.call(document.querySelectorAll('#hl-list .sx-chip'));
   if (video && chips.length) {
     var track = document.getElementById('hl-track');
     var playBtn = document.getElementById('hl-play');
     var fullBtn = document.getElementById('hl-full');
-    var cap = document.getElementById('hl-cap');
-    var kind = document.getElementById('hl-kind');
+    var nowEl = {};
+    ['n', 'g', 't', 'd', 'w'].forEach(function (k) { nowEl[k] = document.getElementById('hl-now-' + k); });
     var PAUSE = '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>';
     var PLAY = '<path d="M7 4.5v15l12.5-7.5z"/>';
     var clips = chips.map(function (c) {
-      return { src: 'assets/video/' + c.getAttribute('data-src'), cap: c.getAttribute('data-cap'),
-        kind: c.getAttribute('data-kind'), d: parseFloat(c.getAttribute('data-d')) || 6 };
+      return { src: 'assets/video/' + c.getAttribute('data-src'), group: c.getAttribute('data-group'),
+        title: c.getAttribute('data-title'), desc: c.getAttribute('data-desc'), where: c.getAttribute('data-where'),
+        d: parseFloat(c.getAttribute('data-d')) || 6 };
     });
     track.style.gridTemplateColumns = clips.map(function (c) { return c.d + 'fr'; }).join(' ');
     var segs = clips.map(function () {
@@ -50,11 +52,11 @@
       var c = clips[now];
       video.poster = c.src + '.jpg';
       video.src = c.src + '.mp4';
-      cap.textContent = c.cap;
-      kind.textContent = c.kind;
+      var text = { n: (now < 9 ? '0' : '') + (now + 1), g: c.group, t: c.title, d: c.desc, w: c.where };
+      Object.keys(text).forEach(function (k) { if (nowEl[k]) nowEl[k].textContent = text[k]; });
       chips.forEach(function (ch, j) { if (j === now) ch.setAttribute('aria-current', 'true'); else ch.removeAttribute('aria-current'); });
       track.setAttribute('aria-valuenow', String(now + 1));
-      track.setAttribute('aria-valuetext', 'Clip ' + (now + 1) + ' of ' + clips.length + ': ' + c.cap);
+      track.setAttribute('aria-valuetext', 'Clip ' + (now + 1) + ' of ' + clips.length + ': ' + c.title);
       paint();
       tryPlay();
     };

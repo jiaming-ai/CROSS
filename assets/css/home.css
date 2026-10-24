@@ -1,14 +1,15 @@
 /* CROSS site: the hub page (index.html), Swiss style. Tokens, top bar and footer in chrome.css; components in site.css. */
 
 /* ------------------------------------------------------------------ masthead: the wordmark and the title */
+/* desktop: the wordmark with the highlights under it on the left, the title column on the right */
 .mast {
-  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--g); row-gap: 18px;
+  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-template-rows: auto 1fr; column-gap: var(--g); row-gap: 18px;
   padding: 10px var(--m) clamp(22px, 2.6vw, 34px);
 }
-.mast-mark { grid-column: 1 / 8; container-type: inline-size; min-width: 0; }
-.mast-info { grid-column: 8 / 13; display: flex; flex-direction: column; gap: 14px; padding-top: 4px; min-width: 0; }
+.mast-mark { grid-column: 1 / 8; grid-row: 1; container-type: inline-size; min-width: 0; }
+.mast-info { grid-column: 8 / 13; grid-row: 1 / 3; display: flex; flex-direction: column; gap: 14px; padding-top: 4px; min-width: 0; }
 @media (max-width: 1000px) {
-  .mast-mark, .mast-info { grid-column: 1 / -1; }
+  .mast-mark, .mast-info, .mast .mast-points { grid-column: 1 / -1; grid-row: auto; }
 }
 /* the wordmark fills its column: CROSS is 2.845 em wide in Inter Tight at -0.065 em tracking */
 .wm { --wm: calc(100cqw / 2.86); position: relative; display: block; width: 2.845em; height: .73em; font-size: var(--wm); }
@@ -23,29 +24,56 @@
 }
 .mast h1 { font-size: clamp(30px, 3.05vw, 46px); line-height: 1.02; letter-spacing: -0.04em; font-weight: 400; }
 .mast-sub { font-size: clamp(16px, 1.25vw, 19px); font-weight: 300; line-height: 1.3; letter-spacing: -0.015em; max-width: 34em; }
-.mast-meta { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; color: var(--ink-3); }
+.mast-points {
+  grid-column: 1 / 8; grid-row: 2; align-self: end;
+  list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: var(--g);
+  border-top: 1px solid var(--rule); font-size: clamp(14px, 1.05vw, 16px); line-height: 1.25; letter-spacing: -0.012em;
+}
+@media (max-width: 1000px) { .mast-points { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.mast-points li { padding: 6px 0 5px; border-bottom: 1px solid var(--hair); }
+.mast-note { font-size: 12.5px; letter-spacing: 0; color: var(--ink-3); }
+.mast-note-line { display: block; }
 .mast-links { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 16px; }
 .mast-install { display: flex; align-items: center; gap: 0; }
 .mast-install code { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; font-size: 13px; background: var(--surface-2); }
 
 /* ------------------------------------------------------------------ highlights: playlist player + grouped list */
+/* 1200 px and up: the player on the left; the title, what is playing and the list on the right, the list at the
+   bottom. The right column's type is sized in container units (cqw, the section's width), so it grows with the
+   player and fills its height at every width. Narrower: title, player, then what is playing beside the list. */
 .hl {
-  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--g); row-gap: 28px;
+  container-type: inline-size;
+  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-template-rows: auto auto 1fr; column-gap: var(--g); row-gap: 1.6cqw;
   padding: 20px var(--m) clamp(44px, 5vw, 76px); border-top: 1px solid var(--rule);
 }
-.hl-player { grid-column: 1 / 9; min-width: 0; }
-.hl-side { grid-column: 9 / 13; display: flex; flex-direction: column; justify-content: space-between; gap: 28px; min-width: 0; }
-@media (max-width: 1000px) {
-  .hl-player, .hl-side { grid-column: 1 / -1; }
+.hl-player { grid-column: 1 / 9; grid-row: 1 / 4; min-width: 0; }
+.hl-head { grid-column: 9 / 13; grid-row: 1; min-width: 0; }
+.hl-now { grid-column: 9 / 13; grid-row: 2; min-width: 0; }
+.hl-list { grid-column: 9 / 13; grid-row: 3; align-self: end; min-width: 0; }
+@media (max-width: 1199px) {
+  .hl { grid-template-rows: none; row-gap: 18px; }
+  .hl-head, .hl-player { grid-column: 1 / -1; grid-row: auto; }
+  .hl-now { grid-column: 1 / 7; grid-row: auto; }
+  .hl-list { grid-column: 7 / 13; grid-row: auto; align-self: start; }
 }
+@media (max-width: 760px) { .hl-now, .hl-list { grid-column: 1 / -1; } }
 .hl-frame { background: #000; }
 .hl-frame video { object-fit: cover; }
 .hl-bar { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 .hl-bar .sx-track { flex: 1; min-width: 0; }
-.hl-cap { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; line-height: 1.3; }
-.hl-head .sx-h { font-size: clamp(48px, 7.2vw, 104px); line-height: .9; }
-.hl-head .sx-mid { margin-top: 14px; }
-.hl-list { gap: 1rem; }
+/* what is playing: the clip's number and group, its title, what to look at, the place */
+.hl-now { display: flex; flex-direction: column; gap: .5em; padding-top: .45em; border-top: 1px solid var(--rule); font-size: clamp(13px, 1.1cqw, 17px); }
+.hl-now-k { display: flex; justify-content: space-between; gap: 1em; }
+.hl-now-k > :first-child { display: inline-flex; align-items: center; gap: .3em; }
+.hl-now-k > :first-child::before { content: ""; width: .6em; height: .6em; margin-right: .25em; background: var(--accent); }
+.hl-now-k > :last-child { color: var(--ink-3); text-align: right; }
+.hl-now-t { font-size: clamp(24px, 2.05cqw, 36px); font-weight: 400; letter-spacing: -0.035em; line-height: 1.05; }
+.hl-now-d { font-size: clamp(15px, 1.25cqw, 21px); font-weight: 300; line-height: 1.36; letter-spacing: -0.01em; max-width: 32em; }
+@media (max-width: 1199px) { .hl-now-d { min-height: calc(1.36em * 3); } }
+.hl-head .sx-h { font-size: clamp(48px, 5.4cqw, 96px); line-height: .9; }
+.hl-head .sx-mid { margin-top: .5em; font-size: clamp(18px, 1.5cqw, 26px); }
+.hl-list { gap: .85em; font-size: clamp(15px, 1.2cqw, 20px); }
+.ov-link { white-space: nowrap; }
 .hl-group .sx-runin { padding-top: .35em; }
 
 /* ------------------------------------------------------------------ summary */
