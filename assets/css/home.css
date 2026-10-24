@@ -60,6 +60,7 @@
 .hl-frame { background: #000; }
 .hl-frame video { object-fit: cover; }
 .hl-bar { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+html:not(.js) .hl-bar { display: none; }  /* without JS the video keeps its native controls */
 .hl-bar .sx-track { flex: 1; min-width: 0; }
 /* what is playing: the clip's number and group, its title, what to look at, the place */
 .hl-now { display: flex; flex-direction: column; gap: .5em; padding-top: .45em; border-top: 1px solid var(--rule); font-size: clamp(13px, 1.1cqw, 17px); }

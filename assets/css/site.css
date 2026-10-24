@@ -256,6 +256,7 @@ hr { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
   background: #111110; color: #fff; font-family: var(--font); font-size: 12.5px; font-weight: 400;
   transition: background .15s;
 }
+html:not(.js) .copy { display: none; }  /* filled in by site.js: blank without it */
 .copy:hover, .copy:focus-visible { background: var(--accent); color: #fff; }
 .copy.is-done { background: var(--good); }
 .copy svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; }

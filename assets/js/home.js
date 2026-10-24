@@ -22,6 +22,7 @@
         title: c.getAttribute('data-title'), desc: c.getAttribute('data-desc'), where: c.getAttribute('data-where'),
         d: parseFloat(c.getAttribute('data-d')) || 6 };
     });
+    video.removeAttribute('controls');  // native controls are the no-JS fallback; the track and buttons replace them
     track.style.gridTemplateColumns = clips.map(function (c) { return c.d + 'fr'; }).join(' ');
     var segs = clips.map(function () {
       var s = document.createElement('span'); s.className = 'sx-seg';
