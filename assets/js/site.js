@@ -40,7 +40,12 @@
     };
     menuBtn.addEventListener('click', function () { setOpen(menuBtn.getAttribute('aria-expanded') !== 'true'); });
     drawer.addEventListener('click', function (e) { if (e.target.closest('a')) setOpen(false); });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') setOpen(false); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape' || menuBtn.getAttribute('aria-expanded') !== 'true') return;
+      var inside = drawer.contains(document.activeElement);
+      setOpen(false);
+      if (inside) menuBtn.focus();  // keep the reader's place
+    });
     window.addEventListener('resize', function () { if (window.innerWidth > 900) setOpen(false); });
   }
 
@@ -111,6 +116,20 @@
     if (v.preload === 'none') v.preload = 'auto';
     var p = v.play(); if (p && p.catch) p.catch(function () {});
   };
+  // posters of videos far down the page load only when the reader gets near them: <video data-poster="...">
+  var lazy = document.querySelectorAll('video[data-poster]');
+  if (lazy.length && 'IntersectionObserver' in window) {
+    var pio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        en.target.poster = en.target.getAttribute('data-poster');
+        pio.unobserve(en.target);
+      });
+    }, { rootMargin: '800px 0px' });
+    lazy.forEach(function (v) { pio.observe(v); });
+  } else {
+    lazy.forEach(function (v) { v.poster = v.getAttribute('data-poster'); });
+  }
   var loops = document.querySelectorAll('video[data-inview]');
   loops.forEach(function (v) {
     v.muted = true;

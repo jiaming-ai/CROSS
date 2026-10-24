@@ -182,6 +182,12 @@
 .rec-tag { margin-left: 6px; font-size: 12px; color: var(--accent-ink); }
 .rec-tag::before { content: ""; display: inline-block; width: .5em; height: .5em; margin-right: .35em; background: var(--accent); }
 .modes-more { margin-top: 14px; font-size: 16px; }
+.modes-hint { display: none; margin-top: 8px; }
+@media (max-width: 900px) {
+  .modes-hint { display: block; }
+  .modes-table tbody th { position: sticky; left: 0; z-index: 1; background: var(--bg); }
+  .modes-table thead th:first-child { left: 0; z-index: 2; }
+}
 
 /* ------------------------------------------------------------------ papers: a bordered mosaic */
 .mosaic { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 2px solid var(--rule); border-left: 2px solid var(--rule); }

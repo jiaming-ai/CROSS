@@ -176,8 +176,11 @@ def numbers(L):
         ref = row("cross_stereo", "stereo")
         for col in ("openloris", "rover", "simchange", "overall"):
             N[f"{tid}.cross.{col}"] = pct(ref["cells"][col]["v"][1])
-        cam = row("cross_stereo_vo", "stereo")
-        N[f"{tid}.cross_camera.overall"] = pct(cam["cells"]["overall"]["v"][1])
+        cam = row("cross_stereo_vo", "stereo")  # cameras only: no odometry input
+        for col in ("openloris", "rover", "simchange", "overall"):
+            N[f"{tid}.cross_camera.{col}" if col != "overall" else f"{tid}.cross_camera.overall"] = pct(cam["cells"][col]["v"][1])
+        best, val = best_rows(T, lambda r: r["family"] == "cross")  # CROSS's best configuration (the rankings' row)
+        N[f"{tid}.cross.best.overall"] = pct(val(best[0]))
         bl, val = best_rows(T, lambda r: r["family"] != "cross")
         N[f"{tid}.best_baseline.overall"] = pct(val(bl[0]))
         N[f"{tid}.best_baseline.name"] = FAMILIES[bl[0]["family"]]
@@ -505,7 +508,8 @@ def gen_home_rank(tid, L):
     T = L["tasks"][tid]
     rows, view = T["rows"], lb_default_view(tid, T["rows"])
     num = lambda v: v[1] if isinstance(v, list) else v
-    top = 1.0 if T["higher"] else max(num(rows[i]["cells"]["overall"]["v"]) for i, rank in view if rank)
+    top = 1.0 if T["higher"] else max(num(rows[i]["cells"]["overall"]["v"]) for i, _ in view
+                                       if rows[i]["cells"]["overall"]["v"] is not None)  # every drawn bar on one scale
     items = []
     for i, rank in view:
         r = rows[i]
