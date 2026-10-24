@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Render the social preview cards (assets/img/og/<page>.jpg, 1200x630) from tools/og/card.html with headless Chrome.
 # Needs google-chrome and ImageMagick; serves the repo on a local port while it runs.
-#   bash tools/og/make_og.sh [port=8931]
+#   bash tools/og/make_og.sh [port=8941]
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-PORT=${1:-8931}
+PORT=${1:-8941}
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$ROOT" >/dev/null 2>&1 &
 SERVER=$!
 PROFILE=$(mktemp -d)
