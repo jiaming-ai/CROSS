@@ -4,3 +4,7 @@ cross_nips.mp4
 fast_n_lc.mp4
 noisy_odom.mp4
 occlusion.mp4
+# Private agent documents and run outputs (never published)
+memo/
+outputs/
+__pycache__/

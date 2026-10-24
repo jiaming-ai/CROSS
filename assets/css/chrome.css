@@ -1,0 +1,246 @@
+/* CROSS site chrome: design tokens, the shared header and footer. Loaded by every page, including the
+   CROSS 1 paper page (v1/), which loads it before its own stylesheet; class names are prefixed (sh-, sf-). */
+
+/* ------------------------------------------------------------------ tokens */
+:root {
+  color-scheme: light;
+  --bg: #fbfaf7;
+  --bg-tint: #f4f2ed;
+  --surface: #ffffff;
+  --surface-2: #f6f5f1;
+  --surface-3: #eeece6;
+  --ink: #141417;
+  --ink-2: #4a4a52;
+  --ink-3: #75757d;
+  --line: #e6e3dc;
+  --line-2: #d4d1c8;
+  --accent: #e8622c;
+  --accent-hover: #d3541f;
+  --accent-ink: #b8461a;
+  --accent-soft: #fdebe2;
+  --accent-line: #f5c4ab;
+  --good: #0f8a4f;
+  --good-soft: #e1f4e8;
+  --bad: #c93c3c;
+  --bad-soft: #fbe6e6;
+  --bar-muted: #cfcbc1;
+  --grid: #ebe8e1;
+  --shadow-sm: 0 1px 2px rgba(20, 20, 23, .05);
+  --shadow: 0 1px 2px rgba(20, 20, 23, .04), 0 10px 30px rgba(20, 20, 23, .06);
+  --shadow-lg: 0 2px 6px rgba(20, 20, 23, .05), 0 24px 60px rgba(20, 20, 23, .12);
+  /* system colours (fixed per system on every page; validated categorical slots) */
+  --c-cross: #e8622c;
+  --c-orbslam3: #2a78d6;
+  --c-rtabmap: #1baf7a;
+  --c-lingbot_map: #eda100;
+  --c-vggt_slam: #e87ba4;
+  --c-amb3r_slam: #008300;
+  --c-mast3r_slam: #6250d6;
+  --c-gt: #8d8b84;
+  /* the fixed dark band (hero, video sections): the same in both themes */
+  --night: #07090e;
+  --night-2: #0c1018;
+  --night-3: #131a26;
+  --night-line: rgba(255, 255, 255, .1);
+  --night-ink: #eef1f6;
+  --night-ink-2: rgba(238, 241, 246, .74);
+  --night-ink-3: rgba(238, 241, 246, .52);
+  --code-bg: #0e1016;
+  --code-bar: #151821;
+  --code-line: #252936;
+  --code-ink: #e5e7ee;
+  --code-dim: #8b91a3;
+  --radius: 18px;
+  --radius-sm: 12px;
+  --header-h: 64px;
+  --maxw: 1200px;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #0e0e10;
+    --bg-tint: #131316;
+    --surface: #18181b;
+    --surface-2: #1f1f23;
+    --surface-3: #27272c;
+    --ink: #f2f2f3;
+    --ink-2: #b9b9c1;
+    --ink-3: #8f8f97;
+    --line: #2a2a2f;
+    --line-2: #3a3a40;
+    --accent: #f07a45;
+    --accent-hover: #f48c5d;
+    --accent-ink: #f59a70;
+    --accent-soft: #3a2218;
+    --accent-line: #6b3a24;
+    --good: #3cc47a;
+    --good-soft: #15301f;
+    --bad: #e66767;
+    --bad-soft: #3a1d1d;
+    --bar-muted: #4a4a52;
+    --grid: #26262b;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px rgba(0, 0, 0, .35);
+    --shadow-lg: 0 2px 6px rgba(0, 0, 0, .35), 0 24px 60px rgba(0, 0, 0, .5);
+    --c-cross: #f07a45;
+    --c-orbslam3: #3987e5;
+    --c-rtabmap: #199e70;
+    --c-lingbot_map: #c98500;
+    --c-vggt_slam: #d55181;
+    --c-amb3r_slam: #008300;
+    --c-mast3r_slam: #9085e9;
+    --c-gt: #8a8a92;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e0e10;
+  --bg-tint: #131316;
+  --surface: #18181b;
+  --surface-2: #1f1f23;
+  --surface-3: #27272c;
+  --ink: #f2f2f3;
+  --ink-2: #b9b9c1;
+  --ink-3: #8f8f97;
+  --line: #2a2a2f;
+  --line-2: #3a3a40;
+  --accent: #f07a45;
+  --accent-hover: #f48c5d;
+  --accent-ink: #f59a70;
+  --accent-soft: #3a2218;
+  --accent-line: #6b3a24;
+  --good: #3cc47a;
+  --good-soft: #15301f;
+  --bad: #e66767;
+  --bad-soft: #3a1d1d;
+  --bar-muted: #4a4a52;
+  --grid: #26262b;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px rgba(0, 0, 0, .35);
+  --shadow-lg: 0 2px 6px rgba(0, 0, 0, .35), 0 24px 60px rgba(0, 0, 0, .5);
+  --c-cross: #f07a45;
+  --c-orbslam3: #3987e5;
+  --c-rtabmap: #199e70;
+  --c-lingbot_map: #c98500;
+  --c-vggt_slam: #d55181;
+  --c-amb3r_slam: #008300;
+  --c-mast3r_slam: #9085e9;
+  --c-gt: #8a8a92;
+}
+
+/* ------------------------------------------------------------------ header */
+.sh {
+  position: sticky; top: 0; z-index: 60;
+  height: var(--header-h);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  backdrop-filter: saturate(1.5) blur(14px);
+  -webkit-backdrop-filter: saturate(1.5) blur(14px);
+  border-bottom: 1px solid var(--line);
+  transition: background .25s, border-color .25s, color .25s;
+}
+.sh-inner {
+  max-width: var(--maxw); height: 100%; margin: 0 auto; padding: 0 24px;
+  display: flex; align-items: center; gap: 28px;
+}
+@media (max-width: 600px) { .sh-inner { padding: 0 16px; gap: 12px; } }
+.sh-brand {
+  display: inline-flex; align-items: center; gap: 10px; flex: none;
+  color: var(--ink); text-decoration: none;
+  font-weight: 800; font-size: 18px; letter-spacing: -0.03em;
+}
+.sh-mark { width: 26px; height: 26px; flex: none; }
+.sh-mark rect { fill: var(--accent); }
+.sh-mark path { fill: none; stroke: #fff; stroke-width: 3.2; stroke-linecap: round; }
+.sh-nav { display: flex; align-items: center; gap: 2px; }
+.sh-nav a, .sh-drawer a {
+  padding: 7px 12px; border-radius: 9px;
+  font-size: 14.5px; font-weight: 520; color: var(--ink-2); text-decoration: none; white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.sh-nav a:hover { background: var(--surface-2); color: var(--ink); }
+.sh-nav a[aria-current="page"] { color: var(--ink); background: var(--surface-2); }
+.sh-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.sh-gh {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+  border-radius: 10px; border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink); text-decoration: none; font-size: 14px; font-weight: 600;
+  transition: border-color .15s, background .15s;
+}
+.sh-gh:hover { border-color: var(--line-2); background: var(--surface-2); }
+.sh-gh svg { width: 17px; height: 17px; fill: currentColor; }
+.theme-toggle, .sh-menu {
+  width: 36px; height: 36px; flex: none; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface);
+  display: grid; place-items: center; color: var(--ink-2);
+  transition: border-color .15s, background .15s;
+}
+.theme-toggle:hover, .sh-menu:hover { border-color: var(--line-2); background: var(--surface-2); }
+.theme-toggle svg, .sh-menu svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.theme-toggle .i-moon { display: none; }
+:root[data-theme="dark"] .theme-toggle .i-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .i-moon { display: block; }
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .theme-toggle .i-sun { display: none; }
+  :root:where(:not([data-theme="light"])) .theme-toggle .i-moon { display: block; }
+}
+.sh-menu { display: none; }
+.sh-menu .i-close { display: none; }
+.sh-menu[aria-expanded="true"] .i-open { display: none; }
+.sh-menu[aria-expanded="true"] .i-close { display: block; }
+.sh-drawer {
+  position: absolute; left: 0; right: 0; top: var(--header-h);
+  display: grid; padding: 10px 16px 18px; gap: 2px;
+  background: var(--bg); border-bottom: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.sh-drawer[hidden] { display: none; }
+.sh-drawer a { font-size: 16px; padding: 12px 12px; }
+.sh-drawer a[aria-current="page"] { background: var(--surface-2); color: var(--ink); }
+@media (max-width: 900px) {
+  .sh-nav { display: none; }
+  .sh-menu { display: grid; }
+}
+@media (max-width: 420px) { .sh-gh span { display: none; } .sh-gh { padding: 0 9px; } }
+
+/* header over a dark hero: transparent with light text until the page scrolls */
+body.night-top .sh { margin-bottom: calc(-1 * var(--header-h)); }
+body.night-top .sh:not(.is-solid) {
+  background: transparent; border-bottom-color: transparent;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  --ink: var(--night-ink); --ink-2: var(--night-ink-2); --line: rgba(255, 255, 255, .16); --line-2: rgba(255, 255, 255, .3);
+  --surface: rgba(255, 255, 255, .06); --surface-2: rgba(255, 255, 255, .1);
+}
+body.night-top .sh:not(.is-solid) .sh-drawer { --ink: var(--night-ink); background: var(--night-2); }
+
+/* ------------------------------------------------------------------ footer */
+.sf { background: var(--bg-tint); border-top: 1px solid var(--line); padding: 56px 0 28px; font-size: 14.5px; }
+.sf-grid { display: grid; grid-template-columns: 1.4fr repeat(3, 1fr); gap: 32px; }
+@media (max-width: 860px) { .sf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sf-about { grid-column: 1 / -1; } }
+.sf-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-weight: 800; font-size: 18px; letter-spacing: -0.03em; }
+.sf-about p { margin-top: 12px; max-width: 34ch; color: var(--ink-2); }
+.sf-about .sf-org { margin-top: 6px; color: var(--ink-3); font-size: 13.5px; }
+.sf-col { display: flex; flex-direction: column; gap: 9px; }
+.sf-col h2 { font-size: 12px; font-family: var(--mono); font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 4px; }
+.sf-col a { color: var(--ink-2); text-decoration: none; }
+.sf-col a:hover { color: var(--ink); text-decoration: underline; }
+.sf-soon { color: var(--ink-3); }
+.sf-tag { font-size: 11.5px; color: var(--ink-3); margin-left: 4px; }
+.sf-bottom {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px;
+  margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 13px;
+}
+.sf-bottom a { color: var(--ink-2); }
+.sf-top { text-decoration: none; }
+
+/* ------------------------------------------------------------------ helpers the chrome needs */
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.skip-link {
+  position: absolute; left: 12px; top: -48px; z-index: 100;
+  padding: 10px 14px; border-radius: 10px; background: var(--ink); color: var(--bg);
+  font-weight: 600; text-decoration: none; transition: top .15s;
+}
+.skip-link:focus { top: 12px; }
