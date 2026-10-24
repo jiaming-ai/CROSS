@@ -241,7 +241,7 @@ body.night-top .sh { margin-bottom: 0; }
 }
 .skip-link {
   position: absolute; left: 12px; top: -48px; z-index: 100;
-  padding: 10px 14px; background: var(--accent); color: #fff;
+  padding: 10px 14px; background: var(--ink); color: var(--bg);
   font-weight: 500; text-decoration: none; transition: top .15s;
 }
 .skip-link:focus { top: 8px; }

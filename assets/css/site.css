@@ -157,7 +157,7 @@ hr { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
 .sx-runin { display: flex; flex-wrap: wrap; gap: .15em 1.1em; padding-top: .4em; }
 .sx-chip {
   display: inline-flex; align-items: baseline; gap: .4em; padding: .15em 0; border: 0; background: none;
-  color: color-mix(in srgb, var(--ink) 50%, transparent); text-align: left;
+  color: color-mix(in srgb, var(--ink) 62%, transparent); text-align: left;
 }
 .sx-chip:hover, .sx-chip[aria-current] { color: var(--ink); }
 .sx-chip[aria-current]::before { content: ""; align-self: center; width: .5em; height: .5em; background: var(--accent); }
@@ -170,7 +170,7 @@ hr { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
 .sx-tabs { display: flex; flex-wrap: wrap; gap: .1em .55em; border-top: 1px solid var(--rule); padding-top: .3em; }
 .sx-tabs [role="tab"], .sx-tabs button {
   padding: 0; border: 0; background: none; font-size: clamp(20px, 2.2vw, 30px); letter-spacing: -0.035em; line-height: 1.2;
-  color: color-mix(in srgb, var(--ink) 34%, transparent); transition: color .15s;
+  color: color-mix(in srgb, var(--ink) 60%, transparent); transition: color .15s;
 }
 .sx-tabs [aria-selected="true"], .sx-tabs [aria-pressed="true"], .sx-tabs button:hover { color: var(--ink); }
 
@@ -281,7 +281,7 @@ hr { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
 .seg { display: inline-flex; flex-wrap: wrap; gap: 2px 14px; padding: 0; border: 0; border-radius: 0; background: none; }
 .seg button {
   height: auto; padding: 2px 0; border: 0; border-radius: 0; background: none; box-shadow: none;
-  font-size: 15px; font-weight: 400; letter-spacing: -0.01em; color: color-mix(in srgb, var(--ink) 45%, transparent);
+  font-size: 15px; font-weight: 400; letter-spacing: -0.01em; color: color-mix(in srgb, var(--ink) 62%, transparent);
   display: inline-flex; align-items: baseline; gap: .4em; transition: color .15s;
 }
 .seg button:hover { color: var(--ink); }

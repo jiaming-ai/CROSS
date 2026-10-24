@@ -20,7 +20,7 @@
 /* the words of the acronym sit inside the letters, in the accent */
 .wm-word {
   position: absolute; left: calc(var(--x) * var(--wm)); top: calc(var(--y) * var(--wm));
-  font-size: max(8.5px, min(13px, calc(var(--wm) * .046))); line-height: 1; letter-spacing: -0.02em; white-space: nowrap; color: var(--accent);
+  font-size: max(8.5px, min(13px, calc(var(--wm) * .046))); line-height: 1; letter-spacing: -0.02em; white-space: nowrap; color: var(--accent-ink);
 }
 .mast h1 { font-size: clamp(30px, 3.05vw, 46px); line-height: 1.02; letter-spacing: -0.04em; font-weight: 400; }
 .mast-sub { font-size: clamp(16px, 1.25vw, 19px); font-weight: 300; line-height: 1.3; letter-spacing: -0.015em; max-width: 34em; }
@@ -157,7 +157,7 @@
   width: 100%; display: grid; grid-template-columns: 2.2em minmax(0, 1fr) auto; column-gap: .6em; align-items: baseline;
   padding: .42em 0; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left;
   font-size: clamp(15px, 1.1vw, 18px); letter-spacing: -0.015em; line-height: 1.2;
-  color: color-mix(in srgb, var(--ink) 55%, transparent); transition: color .15s;
+  color: color-mix(in srgb, var(--ink) 62%, transparent); transition: color .15s;
 }
 .chapters button:hover, .chapters button.is-on { color: var(--ink); }
 .ch-i { font-variant-numeric: tabular-nums; }
