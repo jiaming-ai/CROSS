@@ -11,7 +11,7 @@
   --surface-3: #eeece6;
   --ink: #141417;
   --ink-2: #4a4a52;
-  --ink-3: #75757d;
+  --ink-3: #6b6b73;
   --line: #e6e3dc;
   --line-2: #d4d1c8;
   --accent: #e8622c;
@@ -19,9 +19,9 @@
   --accent-ink: #b8461a;
   --accent-soft: #fdebe2;
   --accent-line: #f5c4ab;
-  --good: #0f8a4f;
+  --good: #0b7040;
   --good-soft: #e1f4e8;
-  --bad: #c93c3c;
+  --bad: #b83434;
   --bad-soft: #fbe6e6;
   --bar-muted: #cfcbc1;
   --grid: #ebe8e1;
@@ -160,7 +160,7 @@
   transition: background .15s, color .15s;
 }
 .sh-nav a:hover { background: var(--surface-2); color: var(--ink); }
-.sh-nav a[aria-current="page"] { color: var(--ink); background: var(--surface-2); }
+.sh-nav a[aria-current] { color: var(--ink); background: var(--surface-2); }
 .sh-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .sh-gh {
   display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
@@ -196,7 +196,7 @@
 }
 .sh-drawer[hidden] { display: none; }
 .sh-drawer a { font-size: 16px; padding: 12px 12px; }
-.sh-drawer a[aria-current="page"] { background: var(--surface-2); color: var(--ink); }
+.sh-drawer a[aria-current] { background: var(--surface-2); color: var(--ink); }
 @media (max-width: 900px) {
   .sh-nav { display: none; }
   .sh-menu { display: grid; }
@@ -215,6 +215,8 @@ body.night-top .sh:not(.is-solid) .sh-drawer { --ink: var(--night-ink); backgrou
 
 /* ------------------------------------------------------------------ footer */
 .sf { background: var(--bg-tint); border-top: 1px solid var(--line); padding: 56px 0 28px; font-size: 14.5px; }
+.sf-wrap { width: 100%; max-width: var(--maxw); margin-inline: auto; padding-inline: 24px; }
+@media (max-width: 600px) { .sf-wrap { padding-inline: 16px; } }
 .sf-grid { display: grid; grid-template-columns: 1.4fr repeat(3, 1fr); gap: 32px; }
 @media (max-width: 860px) { .sf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sf-about { grid-column: 1 / -1; } }
 .sf-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-weight: 800; font-size: 18px; letter-spacing: -0.03em; }
@@ -225,7 +227,7 @@ body.night-top .sh:not(.is-solid) .sh-drawer { --ink: var(--night-ink); backgrou
 .sf-col a { color: var(--ink-2); text-decoration: none; }
 .sf-col a:hover { color: var(--ink); text-decoration: underline; }
 .sf-soon { color: var(--ink-3); }
-.sf-tag { font-size: 11.5px; color: var(--ink-3); margin-left: 4px; }
+.sf-tag { font-size: 11.5px; color: var(--ink-3); margin-left: 4px; white-space: nowrap; }
 .sf-bottom {
   display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px;
   margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 13px;

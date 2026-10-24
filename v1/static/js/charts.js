@@ -30,10 +30,10 @@
     return `M${x},${yBase}v${-(h - r)}q0,${-r} ${r},${-r}h${w - 2 * r}q${r},0 ${r},${r}v${h - r}z`;
   }
 
-  // ------------------------------------------------------------ tooltip
+  // ------------------------------------------------------------ tooltip (on hover; every number is also in the chart's table view)
   const tip = {
     node: null,
-    show(evt, lines, anchorRect) {
+    show(evt, lines) {
       if (!this.node) this.node = document.getElementById('tooltip');
       const n = this.node;
       n.replaceChildren();
@@ -44,11 +44,9 @@
         n.appendChild(d);
       });
       n.hidden = false;
-      let x, y;
-      if (evt && evt.clientX !== undefined && evt.type !== 'focus') { x = evt.clientX + 14; y = evt.clientY + 14; }
-      else if (anchorRect) { x = anchorRect.right + 8; y = anchorRect.top; }
+      let x = evt.clientX + 14, y = evt.clientY + 14;
       const r = n.getBoundingClientRect();
-      if (x + r.width > window.innerWidth - 8) x = (evt && evt.clientX ? evt.clientX : x) - r.width - 14;
+      if (x + r.width > window.innerWidth - 8) x = evt.clientX - r.width - 14;
       if (y + r.height > window.innerHeight - 8) y = window.innerHeight - r.height - 8;
       n.style.left = Math.max(8, x) + 'px';
       n.style.top = Math.max(8, y) + 'px';
@@ -139,7 +137,7 @@
     layout.forEach((it) => {
       if (it.kind === 'group') { text(svg, 0, it.y, it.label, 'c-group'); return; }
       const r = it.row;
-      const rg = el('g', { class: 'c-row', tabindex: 0, role: 'listitem' }, svg);
+      const rg = el('g', { class: 'c-row' }, svg);
       const cy = it.y + rowH / 2;
       text(rg, x0 - 12, cy, r.label, 'c-label' + (r.hl ? ' c-label-hl' : ''), 'end');
       const bar = el('path', { class: r.hl ? 'c-bar-hl' : (r.alt ? 'c-bar-2' : 'c-bar') }, rg);
@@ -156,12 +154,10 @@
         const lines = [['tt-v', s.fmt(d.v)], ['tt-n', r.label]];
         if (d.ci) lines.push(['tt-s', `95% CI ${s.fmt(d.ci[0] / (s.ciScale || 1))} – ${s.fmt(d.ci[1] / (s.ciScale || 1))}`]);
         if (d.n) lines.push(['tt-s', `n = ${d.n.toLocaleString()} trials`]);
-        tip.show(e, lines, bar.getBoundingClientRect());
+        tip.show(e, lines);
       };
       rg.addEventListener('pointermove', show);
-      rg.addEventListener('focus', show);
       rg.addEventListener('pointerleave', () => tip.hide());
-      rg.addEventListener('blur', () => tip.hide());
       this.rows[r.key] = { y: it.y, cy, bar, ci, ciLine, ciA, ciB, val };
     });
     this.cur = null;
@@ -229,7 +225,7 @@
       s.series.forEach((se, si) => {
         const d = s.data[se.key][gi];
         const x = gx - (n * bw + (n - 1) * 2) / 2 + si * (bw + 2);
-        const g = el('g', { class: 'c-row', tabindex: 0 }, svg);
+        const g = el('g', { class: 'c-row' }, svg);
         el('rect', { x: x - 1, y: top, width: bw + 2, height: ph, class: 'c-hit' }, g);
         const p = el('path', { class: se.cls, d: vBarPath(x, y(0), bw, 0, 4) }, g);
         const cx = x + bw / 2;
@@ -249,12 +245,10 @@
           const lines = [['tt-v', s.fmt(d.v)], ['tt-n', `${se.label} · ${gLabel}`]];
           if (d.ci) lines.push(['tt-s', `95% CI ${s.fmt(d.ci[0])} – ${s.fmt(d.ci[1])}`]);
           if (d.n) lines.push(['tt-s', `n = ${d.n} trials`]);
-          tip.show(e, lines, p.getBoundingClientRect());
+          tip.show(e, lines);
         };
         g.addEventListener('pointermove', show);
-        g.addEventListener('focus', show);
         g.addEventListener('pointerleave', () => tip.hide());
-        g.addEventListener('blur', () => tip.hide());
         bars.push({ p, x, bw, v: d.v, ciG, lab });
       });
     });
@@ -367,7 +361,7 @@
   function table(container, headers, rows, hlIndex) {
     const t = document.createElement('table');
     const thead = t.createTHead().insertRow();
-    headers.forEach((h) => { const th = document.createElement('th'); th.textContent = h; thead.appendChild(th); });
+    headers.forEach((h) => { const th = document.createElement('th'); th.scope = 'col'; th.textContent = h; thead.appendChild(th); });
     const tb = t.createTBody();
     rows.forEach((r, i) => {
       const tr = tb.insertRow();

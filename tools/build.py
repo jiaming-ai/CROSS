@@ -11,9 +11,12 @@
 2. Numbers: the text of every element with a data-num="key" attribute in the pages is replaced by the value of
    `key` (python3 tools/build.py --list-nums prints them all).
 3. Partials: the shared header and footer (tools/partials/*.html) between <!-- partial:NAME --> markers.
-4. sitemap.xml.
+4. Generated blocks: static HTML made from the data between <!-- gen:NAME --> markers (the leaderboard's default
+   view, so that search engines and readers without JavaScript see the ranking; see GEN_BLOCKS).
+5. sitemap.xml.
 """
 import argparse
+import html
 import json
 import re
 import sys
@@ -124,6 +127,16 @@ def build_leaderboard(B):
             rows.append({"system": system, "setup": setup, "label": label, "family": family_of(system),
                          "inputs": systems[system]["inputs"], "cells": vals})
         tasks[tid] = {"title": title, "note": note, "cols": cols, "higher": higher, "rows": rows}
+    # relocalization trials scored per row: systems without map persistence re-run the map session for every trial,
+    # so they are scored on a subset of the trials
+    scored = {}
+    for chunk in B["chunks"]:
+        if chunk.startswith("t3_"):
+            for r in load_runs(chunk):
+                key = (r["system"], r["setup"])
+                scored[key] = scored.get(key, 0) + (r.get("n_trials") or 0)
+    for r in tasks["t3"]["rows"]:
+        r["trials"] = scored.get((r["system"], r["setup"]), 0)
     datasets = {}
     for name, cfg in B["datasets"].items():
         stats = B["datastats"].get(name, {})
@@ -151,6 +164,11 @@ def numbers(L):
     N["datasets"] = str(len(L["datasets"]))
     N["t3_trials"] = f"{sum(d['t3_trials'] for d in L['datasets'].values()):,}"
     N["sessions"] = str(sum(d["sessions"] for d in L["datasets"].values()))
+    N["configurations"] = str(len(L["tasks"]["t3"]["rows"]))  # rows of the tables (system x setup)
+    for name, d in L["datasets"].items():
+        N[f"{name}.scenes"] = str(len(d["scenes"]))
+        N[f"{name}.sessions"] = str(d["sessions"])
+        N[f"{name}.t3_trials"] = f"{d['t3_trials']:,}"
     for tid in ("t3", "t2"):
         T = L["tasks"][tid]
         row = lambda s, st: next(r for r in T["rows"] if r["system"] == s and r["setup"] == st)
@@ -177,6 +195,8 @@ def numbers(L):
     N["t1.cross.best.overall"] = f"{val(cr[0]):.2f}%"
     ref = next(r for r in T["rows"] if r["system"] == "cross_stereo" and r["setup"] == "stereo")
     N["t1.cross.overall"] = f"{ref['cells']['overall']['v']:.2f}%"
+    cam = next(r for r in T["rows"] if r["system"] == "cross_stereo_vo" and r["setup"] == "stereo")
+    N["t1.cross_camera.overall"] = f"{cam['cells']['overall']['v']:.2f}%"
     rt = next(r for r in T["rows"] if r["system"] == "rtabmap" and r["setup"] == "stereo")
     N["t1.rtabmap_same_inputs.overall"] = f"{rt['cells']['overall']['v']:.2f}%"
     return N
@@ -185,14 +205,13 @@ def numbers(L):
 # ------------------------------------------------------------------------------------------------ replays
 # Mapping replays (T1): one file per sequence. Localization replays (T2): one file per scene, all its queries.
 T1_SEQUENCES = [
+    ("rover", "campus_large", "campus_large_winter_2024-01-27", "ROVER campus in winter", "outdoor robot, 295 m, low winter sun"),
     ("rover", "campus_large", "campus_large_night_2024-09-24_3", "ROVER campus at night", "outdoor robot, 280 m, night"),
-    ("rover", "campus_large", "campus_large_winter_2024-01-27", "ROVER campus in winter", "outdoor robot, 295 m, snow"),
     ("kitti", "00", "00", "KITTI 00", "car, 3.7 km, loops"),
     ("kitti", "05", "05", "KITTI 05", "car, 2.2 km, loops"),
     ("openloris", "corridor", "corridor1-1", "OpenLORIS corridor", "indoor robot, 222 m"),
     ("openloris", "market", "market1-1", "OpenLORIS market", "indoor robot, 150 m"),
     ("openloris", "home", "home1-1", "OpenLORIS home", "indoor robot, 40 m"),
-    ("simchange", "hssd_restaurant", "hssd_restaurant/map", "SimChange restaurant", "simulated, 146 m"),
 ]
 T2_SCENES = [("rover", "campus_large", "ROVER campus"), ("openloris", "corridor", "OpenLORIS corridor"),
              ("openloris", "market", "OpenLORIS market"), ("openloris", "home", "OpenLORIS home"),
@@ -227,7 +246,8 @@ def build_replays(B, L):
                 continue  # hidden systems (not in the tables)
             items.append({"system": r["system"], "setup": r["setup"], "ate": slim(r.get("ate_rmse")),
                           "completeness": slim(r.get("completeness"), 3), "failed": bool(r.get("failed")),
-                          "align": r.get("align"), "e": r.get("e")})
+                          "align": r.get("align"), "e": r.get("e"),
+                          **({"odom_fallback": r["odom_fallback"]} if r.get("odom_fallback") else {})})
         sid = f"t1-{dataset}-{seq.replace('/', '-')}"
         out[sid] = {"id": sid, "track": "t1", "dataset": dataset, "scene": scene, "sequence": seq, "title": title,
                     "subtitle": sub, "thresholds": B["datasets"][dataset]["thresholds"], "gt": g, "runs": items}
@@ -245,7 +265,8 @@ def build_replays(B, L):
                 thr = r.get("thresholds") or sp["thresholds"]
                 items.append({"system": r["system"], "setup": r["setup"], "status": r.get("status"),
                               "lr": [slim(r.get(f"lr@{t:g}")) for t in thr], "est_frac": slim(r.get("est_frac")),
-                              "c": r.get("c")})
+                              "c": r.get("c"),
+                              **({"odom_fallback": r["odom_fallback"]} if r.get("odom_fallback") else {})})
             queries.append({"query": q, "gt": gt_path(dataset, scene, q), "runs": items})
         sid = f"t2-{dataset}-{scene}"
         out[sid] = {"id": sid, "track": "t2", "dataset": dataset, "scene": scene, "title": title, "map": sp["map"],
@@ -259,13 +280,268 @@ def build_replays(B, L):
     return out
 
 
+# ------------------------------------------------------------------------------------------------ leaderboard page
+# Generated blocks of leaderboard/index.html. lb-table-<task>: the task's table with every row of the benchmark; the
+# default view (the best configuration of each system, ranked) is visible, the other rows are hidden, and
+# assets/js/leaderboard.js filters, orders and ranks the rows again with the same rules (lb_key). lb-cmp-<task>: the
+# comparison bars of a headline tile (also on docs/index.html). lb-scored: the relocalization trials scored per system.
+LB_INPUTS = {"camera": "Camera only", "imu": "+ IMU", "odometry": "+ odometry", "vio": "+ odometry"}
+LB_FILTER = {"vio": "odometry"}  # filter group of an input kind: a Basalt VIO stream is an odometry input
+LB_DATASETS = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange": "SimChange"}
+LB_CONFIG_WORDS = {"external odometry": "dataset odometry", "stereo VIO odometry": "Basalt stereo VIO",
+                   "DA3": "Depth Anything 3", "PnP": "PnP on depth"}
+LB_TASK = {  # task -> (overall column, what a failure counts, what happens to it, why a row has no rank)
+    "t3": ("Overall success", "query sessions", "their trials count as failed trials", "no overall value"),
+    "t2": ("Overall recall", "query sessions", "their frames count as not localized", "no overall value"),
+    "t1": ("Overall ATE", "sequences", "the mean leaves them out",
+           "the mean leaves failed sequences out, or a dataset was not run"),
+}
+LB_UNRANKED = '<span aria-hidden="true">–</span><span class="sr-only">not ranked</span>'  # leaderboard.js: UNRANKED
+
+
+def esc(s):
+    return html.escape(str(s), quote=True)
+
+
+def lb_config(label):
+    """The configuration named in a benchmark label, in plain words: 'CROSS (VGGT-Omega, external odometry)' ->
+    'VGGT-Omega · dataset odometry' (the row shows the family, sensor and inputs on their own)."""
+    m = re.search(r"\(([^)]*)\)", label)
+    return " · ".join(LB_CONFIG_WORDS.get(p.strip(), p.strip()) for p in m.group(1).split(",")) if m else ""
+
+
+def lb_key(tid, row, i):
+    """Leaderboard order: rows with an overall value, best first (T1: lower is better), then T1 rows with failed
+    sequences (their mean leaves those out, so it is not comparable), then rows without an overall value; ties in
+    table order. assets/js/leaderboard.js sorts with the same key."""
+    v = row["cells"]["overall"]["v"]
+    if v is None:
+        return (2, 0.0, 0.0, i)
+    hi, lo = (v[1], v[0]) if isinstance(v, list) else (v, 0.0)
+    sign = 1 if tid == "t1" else -1
+    return (1 if tid == "t1" and row["cells"]["overall"]["fail"] else 0, sign * hi, sign * lo, i)
+
+
+def lb_default_view(tid, rows):
+    """[(row index, rank or None)] of the default view: the best configuration of each system, best first."""
+    order, seen = [], set()
+    for i in sorted(range(len(rows)), key=lambda i: lb_key(tid, rows[i], i)):
+        if rows[i]["family"] not in seen:
+            seen.add(rows[i]["family"])
+            order.append(i)
+    out, rank, prev = [], 0, None
+    for n, i in enumerate(order):
+        k = lb_key(tid, rows[i], i)
+        if k[0] == 0 and k[1] != prev:  # equal values share a rank
+            rank, prev = n + 1, k[1]
+        out.append((i, rank if k[0] == 0 else None))
+    return out
+
+
+def lb_fmt(tid, col, v):
+    """Display text of a value: a fraction as a percentage (T2, T3); ATE in % of the path or in metres (T1)."""
+    if tid != "t1":
+        return f"{round(v * 100)}%"
+    if col == "overall":
+        return f"{v:.2f}%"
+    if col == "scale":
+        return f"{v:g}%" if v < 10 else f"{v:,.0f}%"
+    return f"{v:.2f} m" if v < 10 else f"{v:.1f} m"
+
+
+def lb_fail(tid, fail):
+    """Badge of a cell's failed query sessions or sequences ("k/N")."""
+    _, unit, effect, _ = LB_TASK[tid]
+    if not fail or "/" not in fail:
+        return ""
+    k, n = fail.split("/")
+    return f'<span class="lb-fail" title="{k} of {n} {unit} failed; {effect}">{fail} failed</span>'
+
+
+def lb_value(tid, col, cell, lo_label=None):
+    """A value with the smaller threshold's value below it (lo_label) and its failures."""
+    v = cell["v"]
+    if v is None:
+        return '<b class="lb-na">–</b>' + lb_fail(tid, cell["fail"])
+    if isinstance(v, list):
+        main = f"<b>{lb_fmt(tid, col, v[1])}</b><small>{lo_label} {lb_fmt(tid, col, v[0])}</small>"
+    else:
+        main = f"<b>{lb_fmt(tid, col, v)}</b>"
+    return main + lb_fail(tid, cell["fail"])
+
+
+def lb_row(tid, L, i, rank, shown, wmax):
+    T = L["tasks"][tid]
+    r = T["rows"][i]
+    fam, cells, sysd = r["family"], r["cells"], L["systems"][r["system"]]
+    ds = [c for c in T["cols"] if c in LB_DATASETS]
+    v = cells["overall"]["v"]
+    hi, lo = (v[1], v[0]) if isinstance(v, list) else (v, None)
+    ub = sysd["upper_bound"] and T["higher"]  # no relocalization step: every query pose counts
+    attrs = (f'class="lb-row{" is-cross" if fam == "cross" else ""}{" is-ub" if ub else ""}" data-family="{fam}" '
+             f'data-sensor="{r["setup"]}" data-inputs="{LB_FILTER.get(r["inputs"], r["inputs"])}" '
+             f'data-v="{"" if hi is None else repr(hi)}" data-v2="{"" if lo is None else repr(lo)}" '
+             f'data-fail="{cells["overall"]["fail"] or ""}" data-i="{i}"' + ("" if shown else " hidden"))
+    cfg = lb_config(sysd["label"])
+    tags = "".join(f'<span class="badge">{esc(t)}</span>' for t in (SETUPS[r["setup"]], LB_INPUTS[r["inputs"]]))
+    if ub:
+        tags += '<span class="badge lb-ub">upper bound</span>'
+
+    # the per-dataset values in one line, shown instead of their columns on narrow screens (one span per value; it
+    # can break only before its failures)
+    def mini(label, col):
+        c = cells[col]
+        v = c["v"][1] if isinstance(c["v"], list) else c["v"]
+        text = "\u2013" if v is None else lb_fmt(tid, col, v)
+        fail = c["fail"] and (f" ({c['fail']}\u00a0failed)" if "/" in c["fail"] else " (failed)")
+        return f'<span>{label}\u00a0<b>{text}</b>{fail or ""}</span>'
+    minis = [mini(LB_DATASETS[d], d) for d in ds]
+    if "scale" in T["cols"] and r["setup"] == "mono" and cells["scale"]["v"] is not None:
+        minis.append(mini("scale error", "scale"))
+    name = (f'<span class="lb-name">{esc(FAMILIES[fam])}</span>'
+            + (f'<span class="lb-cfg">{esc(cfg)}</span>' if cfg else "")
+            + f'<span class="lb-tags">{tags}</span><span class="lb-mini">{"".join(minis)}</span>')
+    if hi is None:
+        missing = [LB_DATASETS[d] for d in ds if cells[d]["v"] is None and not cells[d]["fail"]]
+        overall = ('<div class="lb-ov is-na"><b class="lb-na">–</b>' + lb_fail(tid, cells["overall"]["fail"])
+                   + (f'<small>no {" or ".join(missing)} run</small>' if missing else "") + "</div>")
+    else:  # the bar, the value (the strict radius below it), the failures under the bar
+        bar = f'<span class="lb-bar" aria-hidden="true"><i style="--w:{hi / wmax * 100:.1f}%"></i></span>'
+        val = lb_value(tid, "overall", dict(cells["overall"], fail=None), "strict")
+        fail = lb_fail(tid, cells["overall"]["fail"])
+        overall = f'<div class="lb-ov">{bar}<span class="lb-val">{val}</span>{fail}</div>'
+    tds = [f'<td class="lb-rank">{rank or LB_UNRANKED}</td>', f'<th class="lb-sys" scope="row">{name}</th>',
+           f'<td class="lb-overall">{overall}</td>']
+    for d in ds:
+        lo_label = "{:g} m:".format(L["datasets"][d]["thresholds"][0])
+        tds.append(f'<td class="lb-ds n">{lb_value(tid, d, cells[d], lo_label)}</td>')
+    if "scale" in T["cols"]:
+        scale = lb_value(tid, "scale", cells["scale"]) if r["setup"] == "mono" else ""
+        tds.append(f'<td class="lb-ds n">{scale}</td>')
+    return f'<tr {attrs}>{"".join(tds)}</tr>'
+
+
+def lb_sep(tid, ncols, shown):
+    """The row above the first unranked row of a view (leaderboard.js moves it, and hides it when every row ranks)."""
+    return (f'<tr class="lb-sep"{"" if shown else " hidden"}><td colspan="{ncols}">Not ranked: '
+            f'{LB_TASK[tid][3]}</td></tr>')
+
+
+def gen_lb_table(tid, L):
+    T = L["tasks"][tid]
+    rows, ds = T["rows"], [c for c in T["cols"] if c in LB_DATASETS]
+    view = lb_default_view(tid, rows)
+    shown = {i for i, _ in view}
+    values = [rows[i]["cells"]["overall"]["v"] for i, _ in view if rows[i]["cells"]["overall"]["v"] is not None]
+    wmax = 1.0 if T["higher"] else max(values)  # T1: the longest bar shown fills the track
+    if T["higher"]:
+        env = {L["datasets"][d]["environment"]: L["datasets"][d]["thresholds"][1] for d in ds}
+        sub = f"within {env['indoor']:g} m indoors, {env['outdoor']:g} m outdoors"
+    else:
+        sub = "% of path length, lower is better"
+    head = ['<th class="lb-rank" scope="col"><span aria-hidden="true">#</span><span class="sr-only">Rank</span></th>',
+            '<th class="lb-sys" scope="col">System</th>',
+            f'<th class="lb-overall" scope="col">{LB_TASK[tid][0]}<small>{sub}</small></th>']
+    for d in ds:
+        unit = f"within {L['datasets'][d]['thresholds'][1]:g} m" if T["higher"] else "ATE, m"
+        head.append(f'<th class="lb-ds n" scope="col">{LB_DATASETS[d]}<small>{unit}</small></th>')
+    if "scale" in T["cols"]:
+        head.append('<th class="lb-ds n" scope="col">Scale error<small>mono</small></th>')
+    body = [lb_row(tid, L, i, rank, True, wmax) for i, rank in view]
+    first = next((n for n, (_, rank) in enumerate(view) if rank is None), len(view))
+    body.insert(first, lb_sep(tid, len(head), first < len(view)))
+    body += [lb_row(tid, L, i, None, False, wmax) for i in range(len(rows)) if i not in shown]
+    return "\n".join([f'<table class="table lb-table" data-task="{tid}">',
+                      f'  <caption class="sr-only">{esc(T["title"])}</caption>',
+                      "  <thead>", f'    <tr>{"".join(head)}</tr>', "  </thead>", "  <tbody>"]
+                     + [f"    {b}" for b in body] + ["  </tbody>", "</table>"])
+
+
+def gen_lb_cmp(tid, L):
+    """Comparison bars of a headline tile: CROSS with stereo + odometry (the recommended mode), the best other
+    system (when it is not RTAB-Map with the same inputs) and RTAB-Map with the same inputs: the rows of the data-num
+    headline numbers."""
+    T = L["tasks"][tid]
+    row = lambda s: next(r for r in T["rows"] if r["system"] == s and r["setup"] == "stereo")
+    val = lambda r: r["cells"]["overall"]["v"][1] if T["higher"] else r["cells"]["overall"]["v"]
+    ub = lambda r: L["systems"][r["system"]]["upper_bound"] and T["higher"]  # no relocalization step (lb_row)
+    same, best = row("rtabmap"), best_rows(T, lambda r: r["family"] != "cross")[0][0]
+    items = [("CROSS", "", row("cross_stereo"))]
+    if best is not same:
+        items.append((FAMILIES[best["family"]], "upper bound" if ub(best) else "best other", best))
+    items.append(("RTAB-Map", "same inputs", same))
+    top = 1.0 if T["higher"] else max(val(r) for _, _, r in items)
+    cls = lambda r: ' class="is-cross"' if r["family"] == "cross" else ' class="is-ub"' if ub(r) else ""
+    lis = [f'<li{cls(r)}><span class="lb-cmp-name">{esc(name)}' + (f" <small>{note}</small>" if note else "")
+           + "</span>"
+           + f'<span class="lb-cmp-bar" aria-hidden="true"><i style="--w:{val(r) / top * 100:.1f}%"></i></span>'
+           + f'<span class="lb-cmp-val">{lb_fmt(tid, "overall", val(r))}</span></li>' for name, note, r in items]
+    return "\n".join(['<ul class="lb-cmp">'] + [f"  {li}" for li in lis] + ["</ul>"])
+
+
+def gen_lb_scored(L):
+    """A note of the relocalization table: the trials each system is scored on, most first. Systems without map
+    persistence re-run the map session for every trial, so they are scored on a subset."""
+    counts = {}
+    for r in L["tasks"]["t3"]["rows"]:
+        counts.setdefault(r["family"], []).append(r["trials"])
+    groups = {}  # trials (text) -> system names; a family's configurations can differ (by sensor)
+    for fam in sorted(counts, key=lambda f: -max(counts[f])):
+        lo, hi = min(counts[fam]), max(counts[fam])
+        groups.setdefault(f"{lo:,}" if lo == hi else f"{lo:,}–{hi:,}", []).append(FAMILIES[fam])
+    names = lambda ns: ns[0] if len(ns) == 1 else ", ".join(ns[:-1]) + " and " + ns[-1]
+    parts = "; ".join(f"{n} for {names(ns)}" for n, ns in groups.items())
+    return (f"<li><b>Trials scored:</b> {parts}. Systems that cannot store a map re-run the whole map session for "
+            "every trial, so they are scored on a subset.</li>")
+
+
+def gen_home_rank(tid, L):
+    """The hub's benchmark chart: the leaderboard's default view (each system's best configuration, best first) as a
+    list of bars. Unranked rows (T1 means that leave failed sequences out) keep their value, muted, after the ranked
+    ones."""
+    T = L["tasks"][tid]
+    rows, view = T["rows"], lb_default_view(tid, T["rows"])
+    num = lambda v: v[1] if isinstance(v, list) else v
+    top = 1.0 if T["higher"] else max(num(rows[i]["cells"]["overall"]["v"]) for i, rank in view if rank)
+    items = []
+    for i, rank in view:
+        r = rows[i]
+        cell, fam = r["cells"]["overall"], r["family"]
+        ub = L["systems"][r["system"]]["upper_bound"] and T["higher"]
+        cls = " ".join(["hr-row"] + (["is-cross"] if fam == "cross" else []) + (["is-ub"] if ub else [])
+                       + ([] if rank else ["is-unranked"]))
+        inputs = {"camera": "camera only", "imu": "+ IMU"}.get(r["inputs"], "+ odometry")
+        cfg = f"{SETUPS[r['setup']]} {inputs}" + (" · upper bound" if ub else "")
+        if cell["v"] is None:
+            val, width = '<b class="lb-na">–</b>', 0.0
+        else:
+            val, width = f"<b>{lb_fmt(tid, 'overall', num(cell['v']))}</b>", min(num(cell["v"]) / top, 1.0) * 100
+        unit = LB_TASK[tid][1]
+        fail = (f' · <span class="hr-fail">{cell["fail"]} {unit} failed</span>'
+                if cell["fail"] and "/" in cell["fail"] else "")
+        items.append(f'<li class="{cls}"><span class="hr-name">{esc(FAMILIES[fam])}<small>{esc(cfg)}{fail}</small></span>'
+                     f'<span class="hr-bar" aria-hidden="true"><i style="--w:{width:.1f}%"></i></span>'
+                     f'<span class="hr-val">{val}</span></li>')
+    return "\n".join([f'<ol class="hr-list" data-task="{tid}">'] + [f"  {li}" for li in items] + ["</ol>"])
+
+
+GEN_BLOCKS = {f"lb-{kind}-{tid}": (lambda L, f=f, tid=tid: f(tid, L))
+              for kind, f in (("table", gen_lb_table), ("cmp", gen_lb_cmp)) for tid in ("t1", "t2", "t3")}
+GEN_BLOCKS["lb-scored"] = gen_lb_scored
+GEN_BLOCKS.update({f"home-rank-{tid}": (lambda L, tid=tid: gen_home_rank(tid, L)) for tid in ("t1", "t2", "t3")})
+
+
 # ------------------------------------------------------------------------------------------------ pages
 def render_partial(name, page_key, root):
     tpl = (ROOT / "tools/partials" / f"{name}.html").read_text().strip("\n")
     tpl = tpl.replace("{root}", root)
-    # mark the current page: <a ... data-key="docs"> -> aria-current="page"
-    return re.sub(r'data-key="([a-z0-9-]+)"',
-                  lambda m: m.group(0) + (' aria-current="page"' if m.group(1) == page_key else ""), tpl)
+    # mark the current page: <a ... data-key="docs"> -> aria-current="page"; "papers" links to a section of the hub,
+    # so on a paper page it is the current item of the nav, not the current page
+    def mark(m):
+        if m.group(1) != page_key:
+            return m.group(0)
+        return m.group(0) + (' aria-current="true"' if page_key == "papers" else ' aria-current="page"')
+    return re.sub(r'data-key="([a-z0-9-]+)"', mark, tpl)
 
 
 def apply_partials(html, page_key, root):
@@ -273,6 +549,17 @@ def apply_partials(html, page_key, root):
         name = m.group(1)
         return f"<!-- partial:{name} -->\n{render_partial(name, page_key, root)}\n<!-- /partial:{name} -->"
     return re.sub(r"<!-- partial:([a-z-]+) -->.*?<!-- /partial:\1 -->", rep, html, flags=re.S)
+
+
+def apply_gen(text, L, page):
+    """Fill every <!-- gen:NAME --> ... <!-- /gen:NAME --> block with GEN_BLOCKS[NAME], at the marker's indent."""
+    def rep(m):
+        ind, name = m.group(1), m.group(2)
+        if name not in GEN_BLOCKS:
+            raise SystemExit(f"{page}: unknown generated block {name!r} (tools/build.py GEN_BLOCKS)")
+        body = "\n".join(ind + line if line else line for line in GEN_BLOCKS[name](L).split("\n"))
+        return f"{ind}<!-- gen:{name} -->\n{body}\n{ind}<!-- /gen:{name} -->"
+    return re.sub(r"^([ \t]*)<!-- gen:([a-z0-9-]+) -->.*?<!-- /gen:\2 -->", rep, text, flags=re.S | re.M)
 
 
 def apply_numbers(html, N, page):
@@ -313,7 +600,7 @@ def main():
         if a.page and page not in a.page:
             continue
         if p.is_file():
-            files[p] = apply_numbers(apply_partials(p.read_text(), key, root), N, page)
+            files[p] = apply_numbers(apply_gen(apply_partials(p.read_text(), key, root), L, page), N, page)
     files[ROOT / "sitemap.xml"] = sitemap()
     stale = []
     for path, text in files.items():

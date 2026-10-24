@@ -3,31 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trajectory Replays: CROSS vs SLAM Baselines | CROSS</title>
-  <meta name="description" content="Replay top-down trajectories of CROSS and six SLAM baselines from the CROSS benchmark: single-session mapping on KITTI, ROVER and OpenLORIS, and localization of later sessions in an earlier map across seasons and at night.">
+  <!-- apply the saved theme (or ?theme=dark|light) before first paint -->
+  <script>document.documentElement.classList.add('js');try{var t=new URLSearchParams(location.search).get('theme')||localStorage.getItem('cross-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+  <title>CROSS Trajectory Replays: Multi-Session SLAM and Relocalization</title>
+  <meta name="description" content="Replay CROSS and six visual SLAM baselines: mapping a session, then multi-session localization in a stored map across seasons and at night.">
   <link rel="canonical" href="https://jiaming.im/CROSS/replays/">
   <meta name="robots" content="index, follow, max-image-preview:large">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="CROSS">
-  <meta property="og:title" content="Trajectory replays: watch CROSS and SLAM baselines map and relocalize">
-  <meta property="og:description" content="Replay top-down trajectories of CROSS and six SLAM baselines from the CROSS benchmark: single-session mapping on KITTI, ROVER and OpenLORIS, and localization of later sessions in an earlier map across seasons and at night.">
+  <meta property="og:title" content="Watch CROSS and six visual SLAM systems map and localize across sessions">
+  <meta property="og:description" content="Mapping one session, then localizing another session in a stored map across seasons and at night: the trajectories behind the CROSS benchmark.">
   <meta property="og:url" content="https://jiaming.im/CROSS/replays/">
   <meta property="og:image" content="https://jiaming.im/CROSS/assets/img/og/replays.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#07090e">
   <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="../assets/img/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"></noscript>
   <link rel="stylesheet" href="../assets/css/chrome.css">
   <link rel="stylesheet" href="../assets/css/site.css">
   <link rel="stylesheet" href="../assets/css/replays.css">
-  <script>document.documentElement.classList.add('js');try{var t=new URLSearchParams(location.search).get('theme')||localStorage.getItem('cross-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
-  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "name": "CROSS trajectory replays", "url": "https://jiaming.im/CROSS/replays/", "description": "Animated trajectories of CROSS and SLAM baselines from the CROSS benchmark runs.", "isPartOf": {"@type": "WebSite", "name": "CROSS", "url": "https://jiaming.im/CROSS/"}, "breadcrumb": {"@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "CROSS", "item": "https://jiaming.im/CROSS/"}, {"@type": "ListItem", "position": 2, "name": "Trajectory replays", "item": "https://jiaming.im/CROSS/replays/"}]}}</script>
+  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "name": "CROSS trajectory replays", "url": "https://jiaming.im/CROSS/replays/", "description": "Animated trajectories of CROSS and visual SLAM baselines from the CROSS benchmark runs: single-session mapping and multi-session localization (relocalization in a stored map of another session).", "keywords": "visual SLAM, multi-session mapping, multi-session localization, relocalization, trajectory, benchmark, long-term navigation", "isPartOf": {"@type": "WebSite", "name": "CROSS", "url": "https://jiaming.im/CROSS/"}, "breadcrumb": {"@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "CROSS", "item": "https://jiaming.im/CROSS/"}, {"@type": "ListItem", "position": 2, "name": "Trajectory replays", "item": "https://jiaming.im/CROSS/replays/"}]}}</script>
 </head>
 <body class="night-top" id="top">
 <!-- partial:header -->
@@ -72,12 +73,183 @@
 <!-- /partial:header -->
 
 <main id="main">
-  <!-- PAGE CONTENT -->
+  <header class="page-hero section-night rp-hero">
+    <div class="container">
+      <span class="eyebrow">Benchmark replays</span>
+      <h1>Trajectory replays</h1>
+      <p class="lead">Watch CROSS and <span data-num="baselines">6</span> SLAM baselines map a session, then try to localize sessions from other seasons and at night in a stored map.</p>
+    </div>
+  </header>
+
+  <section class="rp-section" id="rp-app" aria-labelledby="rp-title">
+    <div class="container">
+      <h2 class="sr-only" id="rp-title">Replay viewer</h2>
+      <div class="rp-tabs" role="tablist" aria-label="Replay type">
+        <button type="button" class="rp-tab" role="tab" id="rp-tab-t1" data-mode="t1" aria-selected="true" aria-controls="rp-panel">Mapping</button>
+        <button type="button" class="rp-tab" role="tab" id="rp-tab-t2" data-mode="t2" aria-selected="false" aria-controls="rp-panel" tabindex="-1">Localization<span class="rp-more"> in a stored map</span></button>
+      </div>
+
+      <div class="rp-panel" id="rp-panel">
+        <p class="rp-intro" id="rp-intro">Each system maps the session on its own. Its final trajectory is drawn against the ground truth as the session plays.</p>
+        <noscript>
+          <p class="note rp-noscript">The replays run in your browser and need JavaScript. The sequences and scenes below are replayed from the benchmark runs; select a cell of the <a href="../benchmark/">full results</a> to see the same runs, and the <a href="../leaderboard/">benchmark summary</a> ranks the systems.</p>
+        </noscript>
+
+        <div class="rp-picker">
+          <div class="rp-pick is-active" data-mode="t1">
+            <h3 class="rp-pick-label" id="rp-pl-t1">Mapping: one session (T1)</h3>
+            <ul class="rp-list" id="rp-list-t1" aria-labelledby="rp-pl-t1">
+              <li data-id="t1-rover-campus_large_winter_2024-01-27"><span class="rp-item-t">ROVER campus in winter</span> <span class="rp-item-s">outdoor robot, 295 m, low winter sun</span></li>
+              <li data-id="t1-rover-campus_large_night_2024-09-24_3"><span class="rp-item-t">ROVER campus at night</span> <span class="rp-item-s">outdoor robot, 280 m, night</span></li>
+              <li data-id="t1-kitti-00"><span class="rp-item-t">KITTI 00</span> <span class="rp-item-s">car, 3.7 km, loops</span></li>
+              <li data-id="t1-kitti-05"><span class="rp-item-t">KITTI 05</span> <span class="rp-item-s">car, 2.2 km, loops</span></li>
+              <li data-id="t1-openloris-corridor1-1"><span class="rp-item-t">OpenLORIS corridor</span> <span class="rp-item-s">indoor robot, 222 m</span></li>
+              <li data-id="t1-openloris-market1-1"><span class="rp-item-t">OpenLORIS market</span> <span class="rp-item-s">indoor robot, 150 m</span></li>
+              <li data-id="t1-openloris-home1-1"><span class="rp-item-t">OpenLORIS home</span> <span class="rp-item-s">indoor robot, 40 m</span></li>
+            </ul>
+          </div>
+          <div class="rp-pick" data-mode="t2">
+            <h3 class="rp-pick-label" id="rp-pl-t2">Localization in a stored map (T2)</h3>
+            <ul class="rp-list" id="rp-list-t2" aria-labelledby="rp-pl-t2">
+              <li data-id="t2-rover-campus_large"><span class="rp-item-t">ROVER campus</span> <span class="rp-item-s">map: day, 2024-09-25 · query sessions: summer, autumn, winter, spring, dusk, night, night with lights</span></li>
+              <li data-id="t2-openloris-corridor"><span class="rp-item-t">OpenLORIS corridor</span> <span class="rp-item-s">map: session 1 · query sessions 2 to 5</span></li>
+              <li data-id="t2-openloris-market"><span class="rp-item-t">OpenLORIS market</span> <span class="rp-item-s">map: session 1 · query sessions 2 and 3</span></li>
+              <li data-id="t2-openloris-home"><span class="rp-item-t">OpenLORIS home</span> <span class="rp-item-s">map: session 1 · query sessions 2 to 5</span></li>
+              <li data-id="t2-openloris-cafe"><span class="rp-item-t">OpenLORIS cafe</span> <span class="rp-item-s">map: session 1 · query session 2</span></li>
+              <li data-id="t2-openloris-office"><span class="rp-item-t">OpenLORIS office</span> <span class="rp-item-s">map: session 1 · query sessions 2 to 7</span></li>
+            </ul>
+            <div class="rp-route" id="rp-route">
+              <p class="rp-route-map"><span class="rp-route-k">Map session</span> <strong id="rp-map-name">Day (2024-09-25)</strong></p>
+              <svg class="rp-route-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+              <div class="rp-route-q">
+                <span class="rp-route-k" id="rp-q-label">Query session</span>
+                <div class="rp-chips" id="rp-chips" aria-labelledby="rp-q-label"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="rp-app-ui">
+          <div class="filters rp-filters">
+            <div class="rp-filter">
+              <span class="filter-label" id="rp-f-setup">Sensor</span>
+              <div class="seg" id="rp-setup" aria-labelledby="rp-f-setup">
+                <button type="button" role="radio" data-setup="rgbd" aria-checked="false" tabindex="-1">RGB-D</button>
+                <button type="button" role="radio" data-setup="stereo" aria-checked="true" class="on">Stereo</button>
+                <button type="button" role="radio" data-setup="mono" aria-checked="false" tabindex="-1">Mono</button>
+              </div>
+            </div>
+            <div class="rp-filter">
+              <span class="filter-label" id="rp-f-in">Inputs</span>
+              <div class="seg" id="rp-inputs" aria-labelledby="rp-f-in">
+                <button type="button" role="radio" data-inputs="camera" aria-checked="true" class="on">Camera only</button>
+                <button type="button" role="radio" data-inputs="odometry" aria-checked="false" tabindex="-1">+ odometry</button>
+                <button type="button" role="radio" data-inputs="imu" aria-checked="false" tabindex="-1">+ IMU</button>
+              </div>
+            </div>
+            <div class="rp-filter" data-only="t2" hidden>
+              <span class="filter-label" id="rp-f-r">Success radius</span>
+              <div class="seg" id="rp-radius" aria-labelledby="rp-f-r"></div>
+            </div>
+          </div>
+          <p class="rp-context" id="rp-context"></p>
+
+          <div class="rp-viewer card" id="rp-viewer">
+            <div class="rp-main">
+              <div class="rp-titlebar">
+                <div class="rp-titles">
+                  <h3 class="rp-scn-title" id="rp-scn-title">ROVER campus in winter</h3>
+                  <p class="rp-scn-sub" id="rp-scn-sub">outdoor robot, 295 m, low winter sun</p>
+                </div>
+                <p class="rp-best" id="rp-best" hidden></p>
+              </div>
+              <div class="rp-stage" id="rp-stage" tabindex="0" role="group" aria-roledescription="replay" aria-label="Replay view. Space plays or pauses, the arrow keys step through the session." aria-describedby="rp-summary">
+                <canvas id="rp-canvas" aria-hidden="true"></canvas>
+                <p class="rp-stage-msg" id="rp-msg" hidden></p>
+                <p class="sr-only" id="rp-summary" aria-live="polite"></p>
+              </div>
+              <ul class="rp-key" id="rp-key" aria-label="Key to the view"></ul>
+              <div class="rp-controls">
+                <button type="button" class="rp-play" id="rp-play" aria-label="Play">
+                  <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>
+                  <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5h3v14H8zM13 5h3v14h-3z"/></svg>
+                </button>
+                <input class="rp-scrub" id="rp-scrub" type="range" min="0" max="1000" step="1" value="0" aria-label="Position in the session" aria-valuetext="0% of the session">
+                <output class="rp-pos" id="rp-pos" for="rp-scrub">0%</output>
+                <div class="seg rp-speed" id="rp-speed" aria-label="Replay speed">
+                  <button type="button" role="radio" data-speed="1" aria-checked="true" class="on">1×</button>
+                  <button type="button" role="radio" data-speed="2" aria-checked="false" tabindex="-1">2×</button>
+                  <button type="button" role="radio" data-speed="4" aria-checked="false" tabindex="-1">4×</button>
+                </div>
+                <button type="button" class="rp-restart" id="rp-restart" aria-label="Restart">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4.5h4.5"/></svg>
+                </button>
+              </div>
+              <div class="rp-tl" id="rp-tl">
+                <div class="rp-tl-key" id="rp-tl-key"></div>
+                <div class="rp-tl-rows" id="rp-tl-rows" role="img" aria-label="Timeline of each system over the session"></div>
+              </div>
+            </div>
+            <aside class="rp-side" aria-labelledby="rp-side-title">
+              <div class="rp-side-head">
+                <h3 class="rp-side-title" id="rp-side-title">Systems</h3>
+                <span class="rp-side-metric" id="rp-side-metric">ATE · lower is better</span>
+              </div>
+              <ul class="rp-sys-list" id="rp-sys"></ul>
+              <div class="rp-side-foot">
+                <p class="rp-side-hint">Select a system to show or hide it.</p>
+                <div class="rp-notes" id="rp-notes"></div>
+                <p class="rp-notrun" id="rp-notrun"></p>
+              </div>
+            </aside>
+          </div>
+
+          <details class="rp-table" id="rp-table">
+            <summary>All runs on this <span id="rp-table-what">sequence</span>, as a table</summary>
+            <p class="rp-table-note">Grouped by sensor. A coloured edge marks the runs in the viewer.</p>
+            <div class="table-wrap"><table class="table" id="rp-table-el"></table></div>
+          </details>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section-sm section-tint rp-how" aria-labelledby="rp-how-title">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">How to read the replays</span>
+        <h2 id="rp-how-title">What you are watching</h2>
+      </div>
+      <div class="grid grid-2 rp-how-grid">
+        <article class="card card-pad">
+          <h3>Mapping one session (T1)</h3>
+          <p>Each system maps the session on its own. The replay draws its final trajectory, after all loop closures, along the session's timeline, aligned to the ground truth (dashed) as the benchmark scores it: rigidly (SE(3)), or with scale (Sim(3)) for the monocular baselines, which get no metric input. CROSS's monocular runs estimate metric scale and are aligned rigidly, which is stricter. ATE is the root-mean-square position error of that trajectory.</p>
+          <ul>
+            <li>A run that tracked only part of the session shows only that part and stops where its estimate ends (×). Below 80% of the session it counts as failed.</li>
+            <li>The published paths carry no timestamps, so the replay times each estimate by matching it, in order, to the ground truth.</li>
+          </ul>
+        </article>
+        <article class="card card-pad">
+          <h3>Localization in a stored map (T2)</h3>
+          <p>Each system that can save a map builds one from the map session and saves it. The query session, another recording of the same place, then runs once from its first frame with no initial pose. The route is coloured by one system's state: localized within the radius, wrong (beyond it), or no pose in the map yet.</p>
+          <ul>
+            <li>As in the benchmark, only frames the map covers and where the robot moves are scored. Final recall is the share of them localized within the radius.</li>
+            <li>Systems that cannot save a map run the map session and the query session as one stream. MASt3R-SLAM, VGGT-SLAM 2.0 and AMB3R-SLAM log their poses after their final optimization, which favours them. LingBot-Map has no relocalization step, so every query pose counts: its numbers are upper bounds.</li>
+          </ul>
+        </article>
+      </div>
+      <p class="rp-source">Data: the published benchmark results of <span data-num="generated">2026-10-23</span> (commit <span data-num="commit">b2507d0</span>), <span data-num="runs">9,198</span> runs in all. Every run replayed here is in the <a href="../benchmark/">full results</a> (select a table cell to see its runs), and the <a href="../leaderboard/">benchmark summary</a> ranks the systems; the rules are in the <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/PROTOCOL.md" rel="noopener">protocol</a>.</p>
+      <div class="btn-row rp-cta">
+        <a class="btn btn-primary" href="../docs/#install">Install CROSS</a>
+        <a class="btn" href="../leaderboard/">See the benchmark</a>
+      </div>
+    </div>
+  </section>
 </main>
 
 <!-- partial:footer -->
 <footer class="sf">
-  <div class="container sf-grid">
+  <div class="sf-wrap sf-grid">
     <div class="sf-about">
       <a class="sf-brand" href="../">
         <svg class="sh-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M10.5 21.5 21.5 10.5M10.5 10.5l11 11"/></svg>
@@ -109,8 +281,8 @@
       <span class="sf-soon">CROSS Cloud <span class="sf-tag">coming soon</span></span>
     </nav>
   </div>
-  <div class="container sf-bottom">
-    <p>© 2026 The CROSS authors. Benchmark numbers from the published benchmark run (<a href="../benchmark/">full results</a>).</p>
+  <div class="sf-wrap sf-bottom">
+    <p>© 2026 The CROSS authors. Leaderboard and replay numbers come from the published benchmark run (<a href="../benchmark/">full results</a>); paper pages report their paper's results.</p>
     <a href="#top" class="sf-top">Back to top ↑</a>
   </div>
 </footer>

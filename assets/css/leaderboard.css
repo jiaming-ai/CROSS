@@ -1,1 +1,298 @@
 /* CROSS site: leaderboard page. Shared tokens in chrome.css, components in site.css. */
+
+/* the denser heading scale of the other data pages (docs, replays) */
+.lb-page h2 { font-size: clamp(26px, 2.8vw, 34px); }
+
+/* ------------------------------------------------------------------ hero: headline tiles */
+.lb-hero h1 { max-width: none; }
+.lb-hero .lead { max-width: 860px; text-wrap: pretty; }
+.lb-tiles {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px;
+  margin-top: clamp(32px, 4vw, 48px);
+}
+.lb-tile {
+  display: flex; flex-direction: column; padding: 20px 20px 18px; border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .065), rgba(255, 255, 255, .02));
+  border: 1px solid var(--night-line);
+}
+.lb-tile-k { font-size: 14.5px; font-weight: 600; color: var(--night-ink); }
+.lb-tile-v {
+  display: flex; align-items: baseline; gap: 10px; margin-top: 14px;
+  font-size: clamp(40px, 4.2vw, 54px); font-weight: 800; letter-spacing: -0.045em; line-height: .95; color: var(--night-ink);
+}
+.lb-tile-v small { font-size: 15px; font-weight: 500; letter-spacing: 0; color: var(--night-ink-2); }
+.lb-tile-who { margin-top: 8px; font-size: 13.5px; color: var(--night-ink-2); }
+.lb-tile-link {
+  align-self: flex-start; margin-top: auto; padding-top: 16px;
+  font-size: 13.5px; font-weight: 600; color: var(--accent-ink); text-decoration: none;
+}
+.lb-tile-link::after { content: " →"; content: " →" / ""; }
+.lb-tile-link:hover { text-decoration: underline; }
+.lb-tiles-note { max-width: 860px; margin-top: 18px; font-size: 13.5px; line-height: 1.6; color: var(--night-ink-2); }
+
+/* narrower screens: the tiles keep their width and scroll sideways (the next one peeks in), so the leaderboard comes
+   sooner; where three fit, they fill the row */
+@media (max-width: 959px) {
+  .lb-tiles {
+    grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(min(82%, 280px), 1fr); gap: 12px;
+    margin-inline: -24px; padding: 0 24px 6px; scroll-padding-inline: 24px;
+    overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory;
+    scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .18) transparent;
+  }
+  .lb-tile { scroll-snap-align: start; padding: 18px 18px 16px; }
+}
+@media (max-width: 600px) { .lb-tiles { margin-inline: -16px; padding-inline: 16px; scroll-padding-inline: 16px; } }
+
+/* comparison bars in a tile: CROSS in its colour, the others muted (emphasis, not identity) */
+.lb-cmp { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 11px; }
+.lb-cmp li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 5px 12px;
+  font-size: 13px; color: var(--night-ink-2);
+}
+.lb-cmp-name { grid-column: 1; grid-row: 1; }
+.lb-cmp-name small { margin-left: 3px; font-size: 11.5px; color: var(--night-ink-3); }
+.lb-cmp-val { grid-column: 2; grid-row: 1; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--night-ink); }
+.lb-cmp-bar { grid-column: 1 / -1; grid-row: 2; height: 6px; border-radius: 0 3px 3px 0; background: rgba(255, 255, 255, .07); }
+.lb-cmp-bar i { display: block; width: var(--w); height: 100%; border-radius: 0 3px 3px 0; background: rgba(238, 241, 246, .34); }
+.lb-cmp .is-cross { font-weight: 600; color: var(--night-ink); }
+.lb-cmp .is-cross .lb-cmp-bar i { background: var(--c-cross); }
+.lb-cmp .is-ub .lb-cmp-bar i {
+  background: repeating-linear-gradient(135deg, rgba(238, 241, 246, .34) 0 2px, transparent 2px 4px);
+  box-shadow: inset 0 0 0 1px rgba(238, 241, 246, .34);
+}
+
+/* ------------------------------------------------------------------ leaderboard: task tabs and filters (with JS only) */
+.lb-board .section-head { margin-bottom: clamp(24px, 3vw, 36px); }
+.lb-controls, .lb-js { display: none; }
+.js .lb-js { display: inline; }
+.js .lb-controls { display: flex; flex-direction: column; gap: 16px; margin-bottom: 18px; }
+/* the tab buttons have side padding so that the focus ring clears the text; the strip's hairline stays under the text */
+.lb-tabs {
+  display: flex; gap: 16px; margin-inline: -6px; overflow-x: auto; scrollbar-width: none;
+  background: linear-gradient(var(--line), var(--line)) 6px 100% / calc(100% - 12px) 1px no-repeat;
+}
+.lb-tabs::-webkit-scrollbar { display: none; }
+.lb-tabs button {
+  position: relative; flex: none; padding: 8px 6px 13px; border: 0; background: none;
+  font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink-3); transition: color .15s;
+}
+.lb-tabs button:hover, .lb-tabs button[aria-selected="true"] { color: var(--ink); }
+.lb-tabs button[aria-selected="true"]::after {
+  content: ""; position: absolute; left: 6px; right: 6px; bottom: 0; height: 2px; border-radius: 2px; background: var(--accent);
+}
+.lb-tabs button:focus-visible { outline-offset: -2px; }
+.lb-filters { gap: 12px 26px; }
+.lb-filter { display: flex; align-items: center; gap: 10px; }
+.lb-status { min-height: 1.5em; font-size: 13px; color: var(--ink-3); }
+@media (max-width: 640px) {
+  .lb-more { display: none; }
+  .lb-tabs { gap: 12px; }
+  .lb-tabs button { font-size: 15px; }
+  .lb-filter { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .lb-filters .seg button { padding: 0 10px; }
+}
+@media (max-width: 400px) {
+  .lb-tabs { gap: 6px; }
+  .lb-tabs button { font-size: 14.5px; }
+}
+
+/* ------------------------------------------------------------------ leaderboard: tables */
+.js .lb-panel:not(.is-active) { display: none; }
+.lb-panel + .lb-panel { margin-top: 56px; }   /* without JS the three tables follow each other */
+.js .lb-panel + .lb-panel { margin-top: 0; }
+.lb-title { margin-bottom: 12px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+
+/* the tables never scroll sideways (the dataset columns fold into the system cell on narrow screens), so the frame
+   clips instead of scrolling and the header row sticks under the site header */
+.lb-panel .table-wrap { overflow: clip; }
+.lb-table thead th { top: var(--header-h); vertical-align: bottom; white-space: normal; line-height: 1.3; }
+.lb-table th small, .lb-table td small { display: block; font-size: 11.5px; font-weight: 500; letter-spacing: 0; color: var(--ink-3); }
+.lb-table thead th small { margin-top: 2px; font-weight: 400; }
+/* cells start at the top, so the values of a row line up whatever hangs below them (failure badges); a row is divided
+   from the visible row before it, so the hidden rows after the visible ones leave no extra line at the bottom */
+.lb-table td, .lb-table tbody th { padding: 13px 14px; vertical-align: top; border-bottom: 0; }
+.lb-table tbody tr:not([hidden]) ~ tr:not([hidden]) > * { border-top: 1px solid var(--line); }
+.lb-table .lb-rank {
+  width: 48px; padding-right: 0; text-align: center;
+  font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink-3);
+}
+.lb-table .is-cross .lb-rank { color: var(--accent-ink); }
+.lb-table tbody th { min-width: 230px; font-weight: 400; }
+.lb-table .is-cross th { background: color-mix(in srgb, var(--accent-soft) 55%, transparent); }
+.lb-table tbody tr:hover th { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+.lb-name { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+.lb-cfg { display: block; margin-top: 1px; font-size: 13px; line-height: 1.4; color: var(--ink-2); }
+.lb-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.lb-tags .badge { height: 20px; padding: 0 7px; font-size: 11px; }
+.lb-tags .lb-ub { background: transparent; border-style: dashed; border-color: var(--line-2); }
+.lb-mini { display: none; }
+
+/* the overall column: a bar from zero (T2, T3: 0 to 100 %; T1: up to the largest error shown) and the value */
+.lb-table .lb-overall { width: 34%; }
+.lb-ov { display: grid; grid-template-columns: minmax(40px, 1fr) 64px; align-items: center; gap: 14px; }
+.lb-ov.is-na { display: block; }
+.lb-bar { height: 10px; border-radius: 0 4px 4px 0; background: var(--surface-2); }
+.lb-bar i {
+  display: block; width: var(--w); min-width: 2px; height: 100%; border-radius: 0 4px 4px 0;
+  background: var(--bar-muted); transition: width .5s cubic-bezier(.2, .7, .2, 1), filter .15s;
+}
+.is-cross .lb-bar i { background: var(--c-cross); }
+/* an upper bound (LingBot-Map: no relocalization step) is drawn hatched, not as a measured value */
+.lb-row.is-ub .lb-bar i {
+  background: repeating-linear-gradient(135deg, var(--bar-muted) 0 3px, transparent 3px 6px);
+  box-shadow: inset 0 0 0 1px var(--bar-muted);
+}
+.lb-row:hover .lb-bar i { filter: brightness(1.1) saturate(1.1); }
+.lb-val { text-align: right; font-variant-numeric: tabular-nums; }
+.lb-val b, .lb-ds b { display: block; font-weight: 650; color: var(--ink); }
+.lb-na { font-weight: 500; color: var(--ink-3); }
+.lb-table .lb-ds { width: 10%; white-space: nowrap; }
+.lb-table[data-task="t1"] .lb-overall { width: 28%; }
+.lb-fail {
+  display: inline-block; margin-top: 4px; padding: 0 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; line-height: 18px; white-space: nowrap;
+  color: var(--bad); background: var(--bad-soft);
+}
+.lb-ov > .lb-fail { grid-column: 1; grid-row: 2; justify-self: start; margin-top: -4px; }
+.lb-ov.is-na .lb-fail { margin: 0 0 0 8px; }
+.lb-empty td { padding: 28px 16px; text-align: center; color: var(--ink-3); }
+@media (prefers-reduced-motion: reduce) { .lb-bar i { transition: none; } }
+
+/* rows without a rank (T1: the mean leaves failed sequences out) come after a labelled divider; their overall value
+   and bar recede, since they do not compare with the ranked rows */
+.lb-table tbody tr.lb-sep td {
+  padding: 16px 14px 7px; background: var(--surface-2);
+  font-size: 12.5px; font-weight: 600; line-height: 1.4; color: var(--ink-2);
+}
+.lb-sep:not([hidden]) ~ .lb-row .lb-val b { font-weight: 500; color: var(--ink-3); }
+.lb-sep:not([hidden]) ~ .lb-row .lb-bar i { opacity: .5; }
+
+.lb-notes {
+  list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 5px; max-width: 82ch;
+  font-size: 13px; line-height: 1.55; color: var(--ink-3);
+}
+.lb-notes b { font-weight: 600; color: var(--ink-2); }
+.lb-stamp { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-3); }
+
+/* narrow screens: the per-dataset columns fold into one line under the system's name (T1 has one column more) */
+.lb-table .lb-mini { flex-wrap: wrap; gap: 1px 12px; margin-top: 7px; font-size: 12px; line-height: 1.45; color: var(--ink-3); }
+.lb-mini b { font-weight: 600; color: var(--ink-2); }
+@media (max-width: 900px) {
+  .lb-table[data-task="t1"] .lb-ds { display: none; }
+  .lb-table[data-task="t1"] .lb-mini { display: flex; }
+}
+@media (max-width: 760px) {
+  .lb-table .lb-ds { display: none; }
+  .lb-table .lb-mini { display: flex; }
+  .lb-table td, .lb-table tbody th, .lb-table thead th { padding: 11px 10px; }
+  .lb-table tbody th { min-width: 0; }
+  .lb-table .lb-rank { width: 30px; padding: 11px 0 11px 8px; }
+  .lb-table .lb-overall { width: 44%; }
+  .lb-ov { grid-template-columns: minmax(0, 1fr); gap: 6px; }  /* value, then the bar under it */
+  .lb-ov .lb-val { grid-row: 1; }
+  .lb-ov .lb-bar { grid-row: 2; height: 8px; }
+  .lb-ov > .lb-fail { grid-row: 3; margin-top: 0; }
+  .lb-table tbody tr.lb-sep td { padding: 14px 10px 6px; }
+}
+@media (max-width: 400px) {  /* phones: more room for the system's badges */
+  .lb-table .lb-overall { width: 38%; }
+  .lb-tags .badge { padding: 0 6px; }
+}
+
+/* the tooltip of a row (site.css .chart-tooltip) */
+.lb-tip-v { font-size: 18px; font-weight: 750; letter-spacing: -0.02em; }
+.lb-tip-v small { margin-left: 6px; font-size: 12px; font-weight: 500; color: var(--ink-3); }
+.lb-tip-n { margin-top: 2px; font-weight: 600; }
+.lb-tip-n small { display: block; font-weight: 400; color: var(--ink-2); }
+.lb-tip-ds {
+  margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line);
+  color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ what we measure */
+.lb-measure { display: flex; flex-direction: column; }
+.lb-measure-k { font-family: var(--mono); font-size: 11.5px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--accent-ink); }
+.lb-measure h3 { margin-top: 12px; font-size: 19px; }
+.lb-measure > p:not(.lb-measure-k) { margin-top: 10px; font-size: 15px; color: var(--ink-2); }
+.lb-radii { display: flex; flex-wrap: wrap; gap: 10px; margin: auto 0 0; padding-top: 20px; }
+.lb-radii div {
+  flex: 1 1 auto; min-width: 110px; padding: 9px 12px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--line);
+}
+.lb-radii dt { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.lb-radii dd { margin: 2px 0 0; font-size: 14.5px; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.lb-radii dd b { font-weight: 650; color: var(--ink); }
+.lb-measure-foot { max-width: 96ch; margin-top: 16px; font-size: 13px; line-height: 1.55; color: var(--ink-3); }
+.lb-fair { margin-top: 28px; padding: 20px 22px; }
+.lb-fair h3 { margin-bottom: 12px; font-size: 16px; }
+.lb-fair ul { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 32px; margin: 0; padding: 0; list-style: none; }
+.lb-fair li { line-height: 1.6; }
+.lb-fair li b { display: block; margin-bottom: 3px; font-weight: 650; color: var(--ink); }
+@media (max-width: 900px) { .lb-fair ul { grid-template-columns: minmax(0, 1fr); max-width: 72ch; } }
+
+/* ------------------------------------------------------------------ datasets */
+.lb-datasets { gap: 22px; }
+.lb-dataset { display: flex; flex-direction: column; overflow: hidden; }
+.lb-strip {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.lb-strip figure { position: relative; margin: 0; background: var(--surface-3); }
+.lb-strip img { width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: cover; }
+.lb-strip figcaption {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 8px 6px;
+  font-size: 11.5px; font-weight: 600; line-height: 1.25; color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .62)); text-shadow: 0 1px 2px rgba(0, 0, 0, .45);
+}
+.lb-map {
+  display: inline-block; margin-right: 3px; padding: 0 4px; border-radius: 4px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; text-shadow: none;
+  color: #141417; background: rgba(255, 255, 255, .92);
+}
+.lb-dataset-body { display: flex; flex: 1; flex-direction: column; padding: 20px 22px 18px; }
+.lb-dataset h3 { display: flex; align-items: center; gap: 10px; font-size: 19px; }
+.lb-dataset-body > p:not(.lb-dataset-foot) { margin-top: 8px; font-size: 15px; color: var(--ink-2); }
+.lb-facts { display: grid; gap: 5px; margin: 14px 0 0; padding: 0; list-style: none; font-size: 14px; color: var(--ink-2); }
+.lb-facts li { position: relative; padding-left: 15px; }
+.lb-facts li::before {
+  content: ""; position: absolute; left: 1px; top: .6em; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--line-2);
+}
+.lb-dataset-foot { margin-top: auto; padding-top: 16px; }
+.lb-dataset-foot a { font-size: 13.5px; font-weight: 600; text-decoration: none; color: var(--accent-ink); }
+.lb-dataset-foot a::after { content: " ↗"; content: " ↗" / ""; }
+.lb-dataset-foot a:hover { text-decoration: underline; }
+@media (max-width: 420px) { .lb-strip figcaption { padding: 14px 5px 4px; font-size: 10.5px; } }
+
+/* ------------------------------------------------------------------ systems */
+.lb-systems { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; }
+@media (max-width: 1020px) { .lb-systems { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .lb-systems { grid-template-columns: minmax(0, 1fr); } }
+.lb-system { display: flex; flex-direction: column; }
+.lb-system.is-cross {
+  grid-column: span 2; border-color: var(--accent-line);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent-soft) 70%, var(--surface)), var(--surface) 70%);
+}
+@media (max-width: 560px) { .lb-system.is-cross { grid-column: auto; } }
+.lb-system-k { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.lb-system.is-cross .lb-system-k { color: var(--accent-ink); }
+.lb-system h3 { display: flex; align-items: center; gap: 9px; margin-top: 8px; font-size: 18px; }
+.lb-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--dot); }
+.lb-system > p:not(.lb-system-k) { margin-top: 8px; font-size: 14px; line-height: 1.55; color: var(--ink-2); }
+.lb-system dl { display: grid; gap: 8px; margin: 16px 0 0; font-size: 13.5px; line-height: 1.45; }
+.lb-system dt { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.lb-system dd { margin: 1px 0 0; color: var(--ink-2); }
+.lb-system.is-cross dl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 20px; }
+@media (max-width: 560px) { .lb-system.is-cross dl { grid-template-columns: minmax(0, 1fr); } }
+.lb-repo {
+  align-self: flex-start; margin-top: auto; padding-top: 16px;
+  font-family: var(--mono); font-size: 12px; color: var(--ink-2); text-decoration: none; overflow-wrap: anywhere;
+}
+.lb-repo::after { content: " ↗"; content: " ↗" / ""; }
+.lb-repo:hover { color: var(--ink); text-decoration: underline; }
+
+/* ------------------------------------------------------------------ closing band */
+.lb-cta-card { display: flex; flex-direction: column; }
+.lb-cta-card h3 { font-size: 18px; }
+.lb-cta-card p { margin-top: 8px; font-size: 14.5px; color: var(--ink-2); }
+.lb-cta-card .link-arrow { margin-top: auto; padding-top: 18px; }

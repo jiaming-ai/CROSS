@@ -333,21 +333,23 @@
     ], 34, 9, W - 40);
     const left = 34, right = 10, top = lh + 16, bottom = 22, H = top + 102 + bottom;
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-    const N = sim.N, maxE = 6.5;
+    const N = sim.N;
+    // the axis fits the largest error of the run: a wrong jump can land at the far end of the other corridor
+    const peak = Math.max(...sim.greedy.map((g) => g.err || 0), ...sim.frames.map((f) => f.err || 0));
+    const tickStep = peak > 8 ? 5 : 2;
+    const maxE = Math.max(6, Math.ceil(peak / tickStep) * tickStep);
     const x = (k) => left + (W - left - right) * k / (N - 1);
-    const y = (e) => top + (H - top - bottom) * (1 - Math.min(e, maxE) / maxE);
+    const y = (e) => top + (H - top - bottom) * (1 - e / maxE);
     errGeom = { x, y, W, H, left, right, top, bottom };
-    [0, 2, 4, 6].forEach((v) => {
+    for (let v = 0; v <= maxE; v += tickStep) {
       el('line', { x1: left, x2: W - right, y1: y(v), y2: y(v), class: v === 0 ? 'c-axis' : 'c-grid' }, svg);
       text(svg, left - 6, y(v), v + ' m', 'c-tick', 'end');
-    });
-    // pre-commit band
+    }
+    // pre-commit band (its labels are drawn after the lines, so they stay on top)
     const first = sim.retr.findIndex((r) => r && r.length);
     const ct = sim.summary.commitT;
     if (ct) {
       el('rect', { x: x(first), y: top, width: x(ct) - x(first), height: H - top - bottom, fill: 'var(--blue)', opacity: 0.07 }, svg);
-      if (x(ct) - x(first) > 280) text(svg, (x(first) + x(ct)) / 2, y(3.2), 'CROSS holds its branches, commits nothing', 'c-tick c-halo', 'middle');
-      text(svg, x(ct) + 4, y(6.1), 'commit', 'c-tick');
       el('line', { x1: x(ct), x2: x(ct), y1: top, y2: H - bottom, class: 'c-axis' }, svg);
     }
     // turn marker
@@ -360,6 +362,10 @@
     let dc = '';
     sim.frames.forEach((f, k) => { if (f.err == null) return; dc += (dc ? 'L' : 'M') + x(k).toFixed(1) + ',' + y(f.err).toFixed(1); });
     if (dc) el('path', { d: dc, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2.5, 'stroke-linejoin': 'round' }, svg);
+    if (ct) {
+      if (x(ct) - x(first) > 280) text(svg, (x(first) + x(ct)) / 2, y(maxE / 2), 'CROSS holds its branches, commits nothing', 'c-tick c-halo', 'middle');
+      text(svg, x(ct) + 4, y(maxE * 0.93), 'commit', 'c-tick c-halo');
+    }
     playhead = el('line', { y1: top - 4, y2: H - bottom, stroke: 'var(--ink)', 'stroke-width': 1.25 }, svg);
     // hover readout
     const hit = el('rect', { x: left, y: top, width: W - left - right, height: H - top - bottom, fill: 'transparent' }, svg);
@@ -378,6 +384,33 @@
     errSvg = svg;
   }
 
+  // ------------------------------------------------------------ screen readers hear the milestones of a playing run, not every frame
+  const status = $('demoStatus');
+  let heardT = 0;  // last step whose milestones were announced
+  const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  function milestone(k) {
+    const { W, R_NEED } = sim.params;
+    if (k === sim.retr.findIndex((r) => r && r.length)) {
+      const kinds = (sim.frames[k].modes || []).map((m) => m.kind);
+      const both = kinds.includes('true') && kinds.includes('alias') ? 'Retrieval matches both look-alike corridors. ' : '';
+      return `${both}Commit on retrieval follows the top match; CROSS keeps ${count(sim.frames[k].hyps.length, 'pose branch', 'pose branches')} and commits nothing yet.`;
+    }
+    const evs = sim.events.filter((e) => e.t === k);
+    const commit = evs.find((e) => e.type === 'commit');
+    if (commit) return `CROSS relocalized: branch #${commit.id} held the belief for ${R_NEED} of ${W} updates and was promoted.`;
+    const alias = evs.find((e) => e.type === 'prune' && e.kind === 'alias');
+    if (alias) return `Branch #${alias.id} pruned: odometry turned where its corridor has no turn.`;
+    if (k === sim.N - 1) {
+      const wrong = sim.events.filter((e) => e.type === 'commit' && e.kind !== 'true').length;
+      return `Run finished: commit on retrieval wrote ${count(sim.greedy[k].wrongCommits, 'false loop closure', 'false loop closures')} into the map; CROSS wrote ${wrong || 'none'}.`;
+    }
+    return '';
+  }
+  function announce() {
+    for (let k = heardT + 1; k <= t; k++) { const m = milestone(k); if (m) status.textContent = m; }
+    heardT = t;
+  }
+
   // ------------------------------------------------------------ loop
   function render() {
     drawGreedy();
@@ -393,12 +426,12 @@
     acc += dt * STEPS_PER_SEC * speed;
     let changed = false;
     while (acc >= 1) { acc -= 1; if (t < sim.N - 1) { t++; changed = true; } }
-    if (changed) render();
+    if (changed) { render(); announce(); }
     if (t >= sim.N - 1) { setPlaying(false); return; }
     requestAnimationFrame(frame);
   }
   function setPlaying(p) {
-    if (p && t >= sim.N - 1) t = 0;
+    if (p && t >= sim.N - 1) t = heardT = 0;
     playing = p;
     playBtn.classList.toggle('playing', p);
     playBtn.setAttribute('aria-label', p ? 'Pause' : 'Play');
@@ -407,7 +440,7 @@
   function load(seed) {
     sim = window.CrossSim.simulate(seed);
     scrub.max = sim.N - 1;
-    t = 0;
+    t = heardT = 0;
     buildErr();
     render();
   }
@@ -418,9 +451,9 @@
   }
 
   playBtn.addEventListener('click', () => setPlaying(!playing));
-  $('demoRestart').addEventListener('click', () => { t = 0; render(); setPlaying(true); });
+  $('demoRestart').addEventListener('click', () => { t = heardT = 0; render(); setPlaying(true); });
   $('demoReseed').addEventListener('click', () => { load(1 + Math.floor(Math.random() * 300)); setPlaying(true); });
-  scrub.addEventListener('input', () => { setPlaying(false); t = +scrub.value; render(); });
+  scrub.addEventListener('input', () => { setPlaying(false); t = heardT = +scrub.value; render(); });
   root.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => {
     speed = +b.dataset.speed;
     root.querySelectorAll('[data-speed]').forEach((o) => { o.classList.toggle('on', o === b); o.setAttribute('aria-checked', o === b); });

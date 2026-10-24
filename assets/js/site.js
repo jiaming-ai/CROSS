@@ -45,6 +45,9 @@
   }
 
   // ---------------------------------------------------------------- copy buttons: <button class="copy" data-copy="#id | text">
+  var live = document.createElement('p');
+  live.className = 'sr-only'; live.setAttribute('aria-live', 'polite');
+  document.body.appendChild(live);
   var COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>';
   document.querySelectorAll('.copy').forEach(function (btn) {
     if (!btn.innerHTML.trim()) btn.innerHTML = COPY_ICON + '<span>Copy</span>';
@@ -69,6 +72,8 @@
         btn.classList.add('is-done');
         var label = btn.querySelector('span');
         if (label) label.textContent = 'Copied';
+        live.textContent = '';
+        setTimeout(function () { live.textContent = 'Copied to clipboard'; }, 50);
         setTimeout(function () { btn.classList.remove('is-done'); if (label) label.textContent = 'Copy'; }, 1600);
       };
       if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -97,21 +102,43 @@
   }
 
   // ---------------------------------------------------------------- muted loops: play only while visible
-  // <video data-inview muted loop playsinline preload="none" poster="..."> ; with reduced motion they stay paused
+  // <video data-inview muted loop playsinline preload="none" poster="...">: plays while on screen (never with reduced
+  // motion) and gets a pause / play button in its parent (which must be position: relative); a loop the reader paused
+  // stays paused. data-no-toggle skips the button.
+  var PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>';
+  var PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>';
+  var play = function (v) {
+    if (v.preload === 'none') v.preload = 'auto';
+    var p = v.play(); if (p && p.catch) p.catch(function () {});
+  };
   var loops = document.querySelectorAll('video[data-inview]');
+  loops.forEach(function (v) {
+    v.muted = true;
+    if (v.hasAttribute('data-no-toggle')) return;
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'media-toggle';
+    var sync = function () {
+      btn.innerHTML = v.paused ? PLAY : PAUSE;
+      btn.setAttribute('aria-label', v.paused ? 'Play video' : 'Pause video');
+    };
+    btn.addEventListener('click', function () {
+      if (v.paused) { delete v.dataset.userPaused; play(v); }
+      else { v.dataset.userPaused = '1'; v.pause(); }
+    });
+    v.addEventListener('play', sync);
+    v.addEventListener('pause', sync);
+    v.parentNode.appendChild(btn);
+    sync();
+  });
   if (loops.length && 'IntersectionObserver' in window) {
     var vio = new IntersectionObserver(function (entries) {
       entries.forEach(function (en) {
         var v = en.target;
-        if (en.isIntersecting && !reduceMotion) {
-          if (v.preload === 'none') v.preload = 'auto';
-          var p = v.play(); if (p && p.catch) p.catch(function () {});
-        } else if (!v.paused) {
-          v.pause();
-        }
+        if (en.isIntersecting && !reduceMotion && !v.dataset.userPaused) play(v);
+        else if (!v.paused) v.pause();
       });
     }, { threshold: 0.35 });
-    loops.forEach(function (v) { v.muted = true; vio.observe(v); });
+    loops.forEach(function (v) { vio.observe(v); });
   }
 
   // ---------------------------------------------------------------- headings in long pages get a copyable anchor

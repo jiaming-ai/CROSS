@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- links to the sections of the CROSS 1 paper page (jiaming.im/CROSS/#method, from the paper and the video) moved to v1/ -->
+  <script>(function(){var h=location.hash.slice(1);if(['overview','video','abstract','idea','demo','teaser','method','steps','results','relocCard','robustness','rob','limits','citation'].indexOf(h)>=0)location.replace('v1/'+location.hash);})();</script>
+  <!-- apply the saved theme (or ?theme=dark|light) before first paint -->
+  <script>document.documentElement.classList.add('js');try{var t=new URLSearchParams(location.search).get('theme')||localStorage.getItem('cross-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+  <title>CROSS: Visual Multi-Session SLAM and Relocalization for Robots</title>
+  <meta name="description" content="Open-source visual multi-session SLAM: map once, then relocalize and keep tracking across lighting, season and scene change. RGB-D, stereo or monocular.">
+  <link rel="canonical" href="https://jiaming.im/CROSS/">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CROSS">
+  <meta property="og:title" content="CROSS: visual multi-session SLAM that survives change">
+  <meta property="og:description" content="Map a place once, then relocalize and keep tracking at night, across seasons and after the scene changed. Open source, for RGB-D, stereo and monocular cameras.">
+  <meta property="og:url" content="https://jiaming.im/CROSS/">
+  <meta property="og:image" content="https://jiaming.im/CROSS/assets/img/og/home.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="CROSS relocalizes a snowy winter session in a summer map while other SLAM systems find no pose">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#07090e">
+  <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"></noscript>
+  <link rel="preload" as="image" href="assets/video/hero-poster.jpg">
+  <link rel="stylesheet" href="assets/css/chrome.css">
+  <link rel="stylesheet" href="assets/css/site.css">
+  <link rel="stylesheet" href="assets/css/home.css">
+  <script type="application/ld+json">{"@context": "https://schema.org", "@graph": [
+    {"@type": "WebSite", "@id": "https://jiaming.im/CROSS/#website", "name": "CROSS", "url": "https://jiaming.im/CROSS/",
+     "description": "Visual multi-session mapping, tracking and relocalization for robots."},
+    {"@type": "SoftwareSourceCode", "@id": "https://jiaming.im/CROSS/#software", "name": "CROSS",
+     "description": "Open-source visual multi-session SLAM: build a map once, then relocalize and keep tracking in later sessions across lighting, season and scene change, with RGB-D, stereo or monocular cameras and optional odometry or IMU.",
+     "url": "https://jiaming.im/CROSS/", "codeRepository": "https://github.com/jiaming-ai/CROSS", "programmingLanguage": "Python",
+     "runtimePlatform": "Linux, NVIDIA GPU (CUDA)", "license": "https://opensource.org/licenses/MIT",
+     "keywords": ["visual SLAM", "multi-session mapping", "relocalization", "multi-session localization", "long-term navigation", "place recognition", "loop closure", "RGB-D", "stereo", "monocular", "robotics"],
+     "author": [{"@type": "Person", "name": "Jiaming Wang", "url": "https://jiaming.im/"}, {"@type": "Person", "name": "Harold Soh"}],
+     "sourceOrganization": {"@type": "Organization", "name": "National University of Singapore"},
+     "citation": {"@type": "ScholarlyArticle", "headline": "CROSS: Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation", "url": "https://jiaming.im/CROSS/v1/", "sameAs": "https://arxiv.org/abs/2605.02227"},
+     "isPartOf": {"@id": "https://jiaming.im/CROSS/#website"}}
+  ]}</script>
+</head>
+<body class="night-top home" id="top">
+<!-- partial:header -->
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="sh" id="site-header">
+  <div class="sh-inner">
+    <a class="sh-brand" href="" data-key="home" aria-current="page" aria-label="CROSS home">
+      <svg class="sh-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M10.5 21.5 21.5 10.5M10.5 10.5l11 11"/></svg>
+      <span>CROSS</span>
+    </a>
+    <nav class="sh-nav" aria-label="Main">
+      <a href="leaderboard/" data-key="leaderboard">Benchmark</a>
+      <a href="benchmark/" data-key="full-results">Full results</a>
+      <a href="replays/" data-key="replays">Replays</a>
+      <a href="docs/" data-key="docs">Docs</a>
+      <a href="#research" data-key="papers">Papers</a>
+    </nav>
+    <div class="sh-actions">
+      <a class="sh-gh" href="https://github.com/jiaming-ai/CROSS" rel="noopener">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+        <span>GitHub</span>
+      </a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch between light and dark theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+      </button>
+      <button class="sh-menu" type="button" aria-expanded="false" aria-controls="sh-drawer" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="i-open" d="M4 7h16M4 12h16M4 17h16"/><path class="i-close" d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+  </div>
+  <nav class="sh-drawer" id="sh-drawer" aria-label="Main (mobile)" hidden>
+    <a href="" data-key="home" aria-current="page">Home</a>
+    <a href="leaderboard/" data-key="leaderboard">Benchmark</a>
+    <a href="benchmark/" data-key="full-results">Full results</a>
+    <a href="replays/" data-key="replays">Trajectory replays</a>
+    <a href="docs/" data-key="docs">Documentation</a>
+    <a href="#research" data-key="papers">Papers</a>
+    <a href="https://github.com/jiaming-ai/CROSS" rel="noopener">GitHub</a>
+  </nav>
+</header>
+<!-- /partial:header -->
+
+<main id="main">
+
+  <!-- ============================================================ hero -->
+  <section class="hero section-night" aria-labelledby="hero-title">
+    <div class="container">
+      <div class="hero-top">
+        <a class="hero-kicker" href="v1/">
+          <span class="badge badge-accent">NeurIPS 2026</span>
+          <span>Read the CROSS 1 paper</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        </a>
+        <h1 id="hero-title">Visual <span class="nowrap">multi-session</span> SLAM <br class="br-wide">that <span class="hero-hl">survives change</span></h1>
+      </div>
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <p class="hero-lead">Map a place once. Come back at night, in another season, after the furniture moved, or with
+            another camera: CROSS finds where it is, keeps tracking and extends the same map. <span class="nowrap">RGB-D</span>, stereo or monocular,
+            with or without odometry.</p>
+          <div class="btn-row hero-actions">
+            <a class="btn btn-primary" href="docs/#install">Get started
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+            <a class="btn" href="leaderboard/">See the benchmark</a>
+          </div>
+          <div class="hero-install">
+            <code><span class="p" aria-hidden="true">$</span>bash install.sh --stereo</code>
+            <button class="copy" type="button" data-copy="git clone https://github.com/jiaming-ai/CROSS.git &amp;&amp; cd CROSS &amp;&amp; bash install.sh --stereo" aria-label="Copy the install commands"></button>
+          </div>
+          <p class="hero-install-note">Open source · MIT-licensed code · Linux + NVIDIA GPU</p>
+        </div>
+        <figure class="hero-media">
+          <div class="frame">
+            <div class="frame-bar" aria-hidden="true"><i></i><i></i><i></i><span>cross · real runs</span><span class="rec">REC</span></div>
+            <div class="frame-video">
+              <video data-inview muted loop playsinline preload="auto" width="1280" height="720" poster="assets/video/hero-poster.jpg"
+                aria-label="CROSS relocalizes a snowy session in a summer map, maps a 6.5 km session, merges three robots into one map, and renders the map as a 3D world">
+                <source src="assets/video/hero.mp4" type="video/mp4">
+              </video>
+              <a class="frame-cta" href="#tour" data-play-tour>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>Watch the full video <span>5:09</span></a>
+            </div>
+          </div>
+          <figcaption>Real runs: a snowy session placed in a summer map (CROSS within 0.1 m of the truth; the other systems
+            that ran found no pose or the wrong place), a 6.5 km session, three robots in one map, the map as a 3D world.</figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <div class="container">
+      <ul class="proof" aria-label="Benchmark highlights">
+        <li>
+          <span class="proof-v" data-num="t3.cross.overall">93%</span>
+          <span class="proof-k">relocalization success from a cold start, over all datasets</span>
+          <span class="proof-c">best other system: <span data-num="t3.best_baseline.overall">59%</span></span>
+        </li>
+        <li>
+          <span class="proof-v" data-num="t3.cross.rover">97%</span>
+          <span class="proof-k">relocalization success outdoors, over 14 months of seasons, dusk and night</span>
+          <span class="proof-c">best other system: <span data-num="t3.best_baseline.rover">39%</span></span>
+        </li>
+        <li>
+          <span class="proof-v" data-num="t1.cross.overall">0.35%</span>
+          <span class="proof-k">mapping error, as a share of the distance travelled</span>
+          <span class="proof-c">RTAB-Map with the same inputs: <span data-num="t1.rtabmap_same_inputs.overall">0.76%</span></span>
+        </li>
+        <li>
+          <span class="proof-v">14</span>
+          <span class="proof-k">sensor modes: RGB-D, stereo or one camera, with wheel odometry, a VIO, an IMU or none</span>
+          <span class="proof-c">one flag: <code>--mode stereo_wheel</code></span>
+        </li>
+      </ul>
+      <p class="proof-note">CROSS with a stereo camera and odometry, its recommended mode, in the CROSS benchmark:
+        <span data-num="runs">9,198</span> runs against <span data-num="baselines">6</span> open-source SLAM systems on the
+        same sessions. <a href="leaderboard/">See the benchmark</a></p>
+    </div>
+  </section>
+
+  <!-- ============================================================ features -->
+  <section class="section" id="features" aria-labelledby="features-title">
+    <div class="container">
+      <div class="section-head">
+        <p class="eyebrow">What it does</p>
+        <h2 id="features-title">One system for the whole multi-session loop</h2>
+        <p class="lead">Build a map, save it, come back days or seasons later, find where you are, keep tracking and extend the
+          map. Every clip below is a real run.</p>
+      </div>
+
+      <div class="bento">
+        <article class="feat feat-xl" data-reveal>
+          <div class="feat-media">
+            <video data-inview muted loop playsinline preload="none" width="960" height="540" poster="assets/video/loop-reloc.jpg"
+              aria-label="A snowy session relocalized in a summer map of the same campus">
+              <source src="assets/video/loop-reloc.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="feat-body">
+            <p class="feat-k">Multi-session localization</p>
+            <h3>Relocalize in a map from another session</h3>
+            <p>Start anywhere in a stored map, at night, in snow, in a crowd or with the lights off, and CROSS finds where it
+              is. Each visual match becomes a pose hypothesis that odometry must confirm before it touches the map, so
+              look-alike places cannot corrupt it.</p>
+            <button class="feat-watch" type="button" data-seek="10.7">Watch in the video <span>0:10</span></button>
+          </div>
+        </article>
+
+        <article class="feat" data-reveal>
+          <div class="feat-media">
+            <video data-inview muted loop playsinline preload="none" width="960" height="540" poster="assets/video/loop-setups.jpg"
+              aria-label="One KITTI drive mapped in eleven sensor setups at once">
+              <source src="assets/video/loop-setups.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="feat-body">
+            <h3>Any sensor setup</h3>
+            <p>RGB-D, stereo or one camera; wheel odometry, a VIO, an IMU or nothing at all. Fourteen ready-made modes, picked
+              with one flag.</p>
+            <button class="feat-watch" type="button" data-seek="64">Watch <span>1:04</span></button>
+          </div>
+        </article>
+
+        <article class="feat" data-reveal>
+          <div class="feat-media">
+            <video data-inview muted loop playsinline preload="none" width="960" height="540" poster="assets/video/loop-tracking.jpg"
+              aria-label="Trajectories of CROSS and other SLAM systems at night with glare from a lamp">
+              <source src="assets/video/loop-tracking.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="feat-body">
+            <h3>Accurate when others drift</h3>
+            <p>Loop closures pass consistency tests before they bend the map, so trajectories hold in the dark, in glare and
+              through sharp turns.</p>
+            <button class="feat-watch" type="button" data-seek="106.7">Watch <span>1:46</span></button>
+          </div>
+        </article>
+
+        <article class="feat" data-reveal>
+          <div class="feat-media">
+            <video data-inview muted loop playsinline preload="none" width="960" height="540" poster="assets/video/loop-largescale.jpg"
+              aria-label="A 6.5 km indoor and outdoor session mapped with loop closures">
+              <source src="assets/video/loop-largescale.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="feat-body">
+            <h3>Kilometre-scale maps</h3>
+            <p>Sessions of several kilometres, indoors and out. Compact maps on disk, pose-graph optimization in the
+              background, optional GNSS anchoring.</p>
+            <button class="feat-watch" type="button" data-seek="149.3">Watch <span>2:29</span></button>
+          </div>
+        </article>
+
+        <article class="feat" data-reveal>
+          <div class="feat-media">
+            <video data-inview muted loop playsinline preload="none" width="960" height="540" poster="assets/video/loop-crosscam.jpg"
+              aria-label="A colour camera relocalizes in a map built with another camera">
+              <source src="assets/video/loop-crosscam.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="feat-body">
+            <h3>One map, another camera</h3>
+            <p>Build the map with one camera and relocalize with another, such as a colour camera in a stereo camera's map.</p>
+            <button class="feat-watch" type="button" data-seek="181.3">Watch <span>3:01</span></button>
+          </div>
+        </article>
+
+        <article class="feat" data-reveal>
+          <div class="feat-media">
+            <video data-inview muted loop playsinline preload="none" width="960" height="540" poster="assets/video/loop-cloud.jpg"
+              aria-label="A robot streams images to a GPU server and receives its pose in the map">
+              <source src="assets/video/loop-cloud.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="feat-body">
+            <h3>Light robot, GPU server</h3>
+            <p>The robot runs its odometry and sends a few images; a GPU server runs the model and the map. No PyTorch on the
+              robot.</p>
+            <button class="feat-watch" type="button" data-seek="208">Watch <span>3:28</span></button>
+          </div>
+        </article>
+
+        <article class="feat feat-wide" data-reveal>
+          <div class="feat-media">
+            <video data-inview muted loop playsinline preload="none" width="960" height="540" poster="assets/video/loop-flythrough.jpg"
+              aria-label="A camera flies through a 3D Gaussian-splatting world built from a saved KITTI map">
+              <source src="assets/video/loop-flythrough.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="feat-body">
+            <h3>The map becomes a 3D world</h3>
+            <p>Turn a saved map into a 3D Gaussian-splatting world you can fly through, built from the map's own keyframes.</p>
+            <button class="feat-watch" type="button" data-seek="266.7">Watch <span>4:26</span></button>
+          </div>
+        </article>
+
+        <article class="feat feat-wide" data-reveal>
+          <div class="feat-media">
+            <video data-inview muted loop playsinline preload="none" width="960" height="540" poster="assets/video/loop-multiagent.jpg"
+              aria-label="Three robots map an apartment and join one shared map">
+              <source src="assets/video/loop-multiagent.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="feat-body">
+            <h3>Many robots, one map <span class="badge badge-soon">In development</span></h3>
+            <p>Several robots map at the same time and join one shared map. Recorded sessions replayed together; not in the
+              released code yet.</p>
+            <button class="feat-watch" type="button" data-seek="234.7">Watch <span>3:54</span></button>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ benchmark -->
+  <section class="section section-tint" id="benchmark" aria-labelledby="bench-title">
+    <div class="container bench-grid">
+      <div class="bench-copy">
+        <p class="eyebrow">Benchmark</p>
+        <h2 id="bench-title">Ahead on every task of the benchmark</h2>
+        <p class="lead">CROSS and <span data-num="baselines">6</span> open-source SLAM systems ran through one protocol on the
+          same sessions: map a session, localize another session in that stored map, and relocalize from cold starts.</p>
+        <ul class="bench-facts">
+          <li><b><span data-num="runs">9,198</span> runs</b> on four datasets: indoor robots, a campus over 14 months,
+            driving, and simulated change.</li>
+          <li><b>Same inputs:</b> every system gets the same images, and the same odometry when it takes odometry.</li>
+          <li><b>Open:</b> the protocol, the runners for every system and all per-run results are public.</li>
+        </ul>
+        <div class="btn-row">
+          <a class="btn btn-primary" href="leaderboard/">Leaderboard</a>
+          <a class="btn" href="replays/">Trajectory replays</a>
+          <a class="btn btn-ghost" href="benchmark/">Full results</a>
+        </div>
+      </div>
+
+      <div class="bench-card card" data-reveal>
+        <div class="bench-tabs" role="tablist" aria-label="Benchmark task">
+          <button type="button" role="tab" id="hr-tab-t3" aria-controls="hr-t3" aria-selected="true">Relocalization</button>
+          <button type="button" role="tab" id="hr-tab-t2" aria-controls="hr-t2" aria-selected="false" tabindex="-1">Localization<span class="hr-more"> in a stored map</span></button>
+          <button type="button" role="tab" id="hr-tab-t1" aria-controls="hr-t1" aria-selected="false" tabindex="-1">Mapping<span class="hr-more"> accuracy</span></button>
+        </div>
+        <div class="hr-panel" id="hr-t3" role="tabpanel" aria-labelledby="hr-tab-t3">
+          <h3 class="hr-title">Relocalization success <small>from 10 s cold starts, within 2 m indoors and 5 m outdoors · higher is better</small></h3>
+          <!-- gen:home-rank-t3 -->
+          <ol class="hr-list" data-task="t3">
+            <li class="hr-row is-cross"><span class="hr-name">CROSS<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:94.0%"></i></span><span class="hr-val"><b>94%</b></span></li>
+            <li class="hr-row is-ub"><span class="hr-name">LingBot-Map<small>Mono camera only · upper bound</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:59.0%"></i></span><span class="hr-val"><b>59%</b></span></li>
+            <li class="hr-row"><span class="hr-name">RTAB-Map<small>RGB-D + odometry · <span class="hr-fail">1/100 query sessions failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:45.0%"></i></span><span class="hr-val"><b>45%</b></span></li>
+            <li class="hr-row"><span class="hr-name">ORB-SLAM3<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:45.0%"></i></span><span class="hr-val"><b>45%</b></span></li>
+            <li class="hr-row"><span class="hr-name">AMB3R-SLAM<small>RGB-D camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:22.0%"></i></span><span class="hr-val"><b>22%</b></span></li>
+            <li class="hr-row"><span class="hr-name">VGGT-SLAM 2.0<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:19.0%"></i></span><span class="hr-val"><b>19%</b></span></li>
+            <li class="hr-row"><span class="hr-name">MASt3R-SLAM<small>Mono camera only · <span class="hr-fail">12/100 query sessions failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:17.0%"></i></span><span class="hr-val"><b>17%</b></span></li>
+          </ol>
+          <!-- /gen:home-rank-t3 -->
+        </div>
+        <div class="hr-panel" id="hr-t2" role="tabpanel" aria-labelledby="hr-tab-t2">
+          <h3 class="hr-title">Localization recall <small>share of a whole session localized in a stored map, same radii · higher is better</small></h3>
+          <!-- gen:home-rank-t2 -->
+          <ol class="hr-list" data-task="t2">
+            <li class="hr-row is-cross"><span class="hr-name">CROSS<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:95.0%"></i></span><span class="hr-val"><b>95%</b></span></li>
+            <li class="hr-row is-ub"><span class="hr-name">LingBot-Map<small>Mono camera only · upper bound</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:59.0%"></i></span><span class="hr-val"><b>59%</b></span></li>
+            <li class="hr-row"><span class="hr-name">RTAB-Map<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:57.0%"></i></span><span class="hr-val"><b>57%</b></span></li>
+            <li class="hr-row"><span class="hr-name">ORB-SLAM3<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:54.0%"></i></span><span class="hr-val"><b>54%</b></span></li>
+            <li class="hr-row"><span class="hr-name">AMB3R-SLAM<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:42.0%"></i></span><span class="hr-val"><b>42%</b></span></li>
+            <li class="hr-row"><span class="hr-name">VGGT-SLAM 2.0<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:15.0%"></i></span><span class="hr-val"><b>15%</b></span></li>
+            <li class="hr-row"><span class="hr-name">MASt3R-SLAM<small>Mono camera only · <span class="hr-fail">25/100 query sessions failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:7.0%"></i></span><span class="hr-val"><b>7%</b></span></li>
+          </ol>
+          <!-- /gen:home-rank-t2 -->
+        </div>
+        <div class="hr-panel" id="hr-t1" role="tabpanel" aria-labelledby="hr-tab-t1">
+          <h3 class="hr-title">Mapping error <small>trajectory error as a share of the distance travelled · lower is better</small></h3>
+          <!-- gen:home-rank-t1 -->
+          <ol class="hr-list" data-task="t1">
+            <li class="hr-row is-cross"><span class="hr-name">CROSS<small>RGB-D + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:17.5%"></i></span><span class="hr-val"><b>0.33%</b></span></li>
+            <li class="hr-row"><span class="hr-name">RTAB-Map<small>Stereo + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:40.2%"></i></span><span class="hr-val"><b>0.76%</b></span></li>
+            <li class="hr-row"><span class="hr-name">AMB3R-SLAM<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:69.8%"></i></span><span class="hr-val"><b>1.32%</b></span></li>
+            <li class="hr-row"><span class="hr-name">LingBot-Map<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:100.0%"></i></span><span class="hr-val"><b>1.89%</b></span></li>
+            <li class="hr-row is-unranked"><span class="hr-name">ORB-SLAM3<small>Stereo camera only · <span class="hr-fail">8/40 sequences failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:25.9%"></i></span><span class="hr-val"><b>0.49%</b></span></li>
+            <li class="hr-row is-unranked"><span class="hr-name">VGGT-SLAM 2.0<small>Mono camera only · <span class="hr-fail">6/40 sequences failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:100.0%"></i></span><span class="hr-val"><b>3.66%</b></span></li>
+            <li class="hr-row is-unranked"><span class="hr-name">MASt3R-SLAM<small>Mono camera only · <span class="hr-fail">25/40 sequences failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:0.0%"></i></span><span class="hr-val"><b class="lb-na">–</b></span></li>
+          </ol>
+          <!-- /gen:home-rank-t1 -->
+        </div>
+        <p class="bench-foot">Each system's best configuration. Hatched: LingBot-Map has no relocalization step, so its scores
+          are upper bounds. Muted rows have failed sequences that their mean leaves out.
+          <a href="leaderboard/">Compare by sensor and inputs</a></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ video tour -->
+  <section class="section section-night tour" id="tour" aria-labelledby="tour-title">
+    <div class="container">
+      <div class="section-head center">
+        <p class="eyebrow">Video</p>
+        <h2 id="tour-title">Five minutes of real runs</h2>
+        <p class="lead">Relocalization at night and in snow, every sensor setup, kilometre-scale maps, another camera, a GPU
+          server, several robots, and the map as a 3D world.</p>
+      </div>
+      <div class="player">
+        <div class="player-frame">
+          <video id="tour-video" controls preload="metadata" playsinline width="1280" height="720" poster="assets/video/showcase-poster.jpg">
+            <source src="assets/video/showcase.mp4" type="video/mp4">
+          </video>
+        </div>
+        <ol class="chapters" aria-label="Video chapters">
+          <li><button type="button" data-t="0"><span class="ch-t">0:00</span><span class="ch-n">Intro</span></button></li>
+          <li><button type="button" data-t="10.7"><span class="ch-t">0:10</span><span class="ch-n">Multi-session visual localization</span></button></li>
+          <li><button type="button" data-t="64"><span class="ch-t">1:04</span><span class="ch-n">Any sensor setup</span></button></li>
+          <li><button type="button" data-t="106.7"><span class="ch-t">1:46</span><span class="ch-n">Accurate in extreme conditions</span></button></li>
+          <li><button type="button" data-t="149.3"><span class="ch-t">2:29</span><span class="ch-n">Large-scale mapping</span></button></li>
+          <li><button type="button" data-t="181.3"><span class="ch-t">3:01</span><span class="ch-n">One map, another camera</span></button></li>
+          <li><button type="button" data-t="208"><span class="ch-t">3:28</span><span class="ch-n">Edge + cloud</span></button></li>
+          <li><button type="button" data-t="234.7"><span class="ch-t">3:54</span><span class="ch-n">Multi-agent mapping <small>in development</small></span></button></li>
+          <li><button type="button" data-t="266.7"><span class="ch-t">4:26</span><span class="ch-n">CROSS World</span></button></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ how it works -->
+  <section class="section" id="how" aria-labelledby="how-title">
+    <div class="container">
+      <div class="section-head">
+        <p class="eyebrow">How it works</p>
+        <h2 id="how-title">A match is only a hypothesis until odometry agrees</h2>
+        <p class="lead">Place recognition alone confuses look-alike places, and one false loop closure can ruin a map. CROSS keeps
+          competing answers alive and lets the robot's own motion decide between them.</p>
+      </div>
+      <ol class="how">
+        <li class="how-step" data-reveal>
+          <svg class="how-art" viewBox="0 0 120 72" aria-hidden="true">
+            <path class="ln" d="M14 52 L38 30 L64 40 L90 18 L108 34"/><path class="ln dash" d="M38 30 Q64 6 90 18"/>
+            <circle class="nd" cx="14" cy="52" r="5"/><circle class="nd" cx="38" cy="30" r="5"/><circle class="nd" cx="64" cy="40" r="5"/>
+            <circle class="nd" cx="90" cy="18" r="5"/><circle class="nd" cx="108" cy="34" r="5"/>
+          </svg>
+          <h3><span>1</span>Remember places</h3>
+          <p>The map is a graph of keyframes (images and their poses) linked by odometry and by verified loop closures. It is
+            saved to disk and loaded in every later session.</p>
+        </li>
+        <li class="how-step" data-reveal>
+          <svg class="how-art" viewBox="0 0 120 72" aria-hidden="true">
+            <ellipse class="hyp" cx="34" cy="36" rx="16" ry="10"/><ellipse class="hyp hi" cx="64" cy="26" rx="13" ry="8"/>
+            <ellipse class="hyp" cx="92" cy="44" rx="17" ry="11"/>
+            <circle class="dot" cx="34" cy="36" r="3"/><circle class="dot hi" cx="64" cy="26" r="3.5"/><circle class="dot" cx="92" cy="44" r="3"/>
+          </svg>
+          <h3><span>2</span>Hypothesize poses</h3>
+          <p>Place recognition retrieves keyframes that look alike. One pass of a multi-view model, or PnP on depth, turns each
+            into a metric pose. Competing poses live side by side in a Gaussian mixture on SE(3).</p>
+        </li>
+        <li class="how-step" data-reveal>
+          <svg class="how-art" viewBox="0 0 120 72" aria-hidden="true">
+            <path class="ln hi" d="M10 48 C34 44 52 30 70 28 S100 22 112 16"/><path class="ln fade" d="M10 48 C30 52 46 60 62 62"/>
+            <path class="ln fade2" d="M10 48 C28 40 40 50 54 54"/><circle class="dot hi" cx="112" cy="16" r="4"/>
+          </svg>
+          <h3><span>3</span>Let odometry decide</h3>
+          <p>As the robot moves, hypotheses that disagree with its odometry lose weight and die out. A new session joins the map
+            only when its placement holds over several steps and places.</p>
+        </li>
+        <li class="how-step" data-reveal>
+          <svg class="how-art" viewBox="0 0 120 72" aria-hidden="true">
+            <path class="ln" d="M16 56 L40 56 L64 50 L86 34 L96 16"/><path class="ln hi" d="M96 16 Q50 8 16 56"/>
+            <circle class="nd" cx="16" cy="56" r="5"/><circle class="nd" cx="40" cy="56" r="5"/><circle class="nd" cx="64" cy="50" r="5"/>
+            <circle class="nd" cx="86" cy="34" r="5"/><circle class="nd hi" cx="96" cy="16" r="5"/>
+          </svg>
+          <h3><span>4</span>Commit what holds</h3>
+          <p>A loop closure enters the map only after statistical consistency tests, then pose-graph optimization removes the
+            drift. Look-alike places never reach the map.</p>
+        </li>
+      </ol>
+      <p class="how-more"><a class="link-arrow" href="v1/">The method in detail: the CROSS 1 paper</a></p>
+    </div>
+  </section>
+
+  <!-- ============================================================ get started -->
+  <section class="section section-tint" id="start" aria-labelledby="start-title">
+    <div class="container">
+      <div class="start-grid">
+        <div class="start-copy">
+          <p class="eyebrow">Get started</p>
+          <h2 id="start-title">Up and running in minutes</h2>
+          <p class="lead">One script installs everything into a local environment and downloads the models. Then map a session,
+            save it, and relocalize the next session in it.</p>
+          <ul class="checks">
+            <li>Linux and an NVIDIA GPU with CUDA, about 10 GB of disk</li>
+            <li>Reads RGB-D and stereo folders, KITTI, TUM RGB-D, OpenLORIS, TartanAir and iPhone (Record3D) recordings</li>
+            <li>Python API: feed frames, read poses in the map's coordinates</li>
+            <li>MIT-licensed code; the RGB-D modes with PnP use no non-commercial model</li>
+          </ul>
+          <div class="btn-row">
+            <a class="btn btn-primary" href="docs/">Read the docs</a>
+            <a class="btn" href="https://github.com/jiaming-ai/CROSS" rel="noopener">
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="gh"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+              View on GitHub</a>
+          </div>
+        </div>
+        <div class="code start-code">
+          <div class="code-head"><span>Terminal</span><button class="copy" type="button" data-strip-prompt></button></div>
+<pre><code><span class="c"># install: a local .venv with PyTorch, CROSS and the models</span>
+<span class="p">$ </span>git clone https://github.com/jiaming-ai/CROSS.git &amp;&amp; cd CROSS
+<span class="p">$ </span>bash install.sh --stereo
+<span class="p">$ </span>source .venv/bin/activate
+
+<span class="c"># session 1: build a map and save it</span>
+<span class="p">$ </span>python run.py data/posed/office1-1 --mode rgbd_wheel \
+    --save-map maps/office/map.pkl
+
+<span class="c"># session 2: relocalize in it, write poses in the map frame</span>
+<span class="p">$ </span>python run.py data/posed/office1-2 --mode rgbd_wheel \
+    --load-map maps/office/map.pkl --save-poses office1-2.txt</code></pre>
+        </div>
+      </div>
+
+      <div class="modes" data-reveal>
+        <div class="modes-head">
+          <h3>Pick the mode that matches your robot</h3>
+          <a class="link-arrow" href="docs/#modes">All modes and what they need</a>
+        </div>
+        <div class="table-wrap">
+          <table class="table modes-table">
+            <caption class="sr-only">CROSS sensor modes by camera and odometry source</caption>
+            <thead>
+              <tr><th scope="col">Camera</th><th scope="col">Wheel or other odometry</th><th scope="col">Basalt VIO</th><th scope="col">IMU, fused by CROSS</th><th scope="col">Camera only</th></tr>
+            </thead>
+            <tbody>
+              <tr><th scope="row">Stereo</th><td><code>stereo_wheel</code><span class="rec-tag">recommended</span></td><td><code>stereo_basalt</code></td><td><code>stereo_imu</code></td><td><code>stereo_dpvo</code></td></tr>
+              <tr><th scope="row">RGB-D</th><td><code>rgbd_wheel</code></td><td><code>rgbd_basalt</code></td><td class="na">–</td><td><code>rgbd_dpvo</code></td></tr>
+              <tr><th scope="row">RGB-D, learned poses <small>scaled by depth</small></th><td><code>rgbd_ff_wheel</code></td><td><code>rgbd_ff_basalt</code></td><td class="na">–</td><td class="na">–</td></tr>
+              <tr><th scope="row">One camera</th><td><code>mono_wheel</code></td><td><code>mono_basalt</code></td><td><code>mono_imu</code> <code>mono_vio</code></td><td><code>mono_dpvo</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ papers -->
+  <section class="section" id="research" aria-labelledby="research-title">
+    <div class="container">
+      <div class="section-head">
+        <p class="eyebrow">Papers</p>
+        <h2 id="research-title">The research behind CROSS</h2>
+        <p class="lead">CROSS grows paper by paper, and the software follows. Each paper gets its own page with the method, the
+          results and the limitations.</p>
+      </div>
+      <div class="papers">
+        <article class="paper card is-out" data-reveal>
+          <div class="paper-text">
+            <p class="paper-k"><span>CROSS 1</span><span class="badge badge-accent">NeurIPS 2026</span></p>
+            <h3><a href="v1/">Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation</a></h3>
+            <p>Lifts every visual match into a pose hypothesis and commits it to the map only after odometry confirms it; a
+              quadruped navigates to language goals in maps from another session.</p>
+            <p class="paper-authors">Jiaming Wang, Jizhuo Chen, Diwen Liu, Atharva Ghotavadekar, Jiaxuan Da, Linh Kästner, Harold Soh</p>
+            <p class="paper-links"><a href="v1/">Project page</a><a href="https://arxiv.org/abs/2605.02227" rel="noopener">arXiv</a><a href="https://arxiv.org/pdf/2605.02227" rel="noopener">PDF</a></p>
+          </div>
+          <a class="paper-fig" href="v1/" tabindex="-1" aria-hidden="true">
+            <img src="v1/static/img/teaser.webp" width="1920" height="768" loading="lazy" alt="">
+          </a>
+        </article>
+        <article class="paper card" data-reveal>
+          <p class="paper-k"><span>CROSS 2</span><span class="badge badge-soon">Paper coming soon</span></p>
+          <h3>Learned multi-view geometry</h3>
+          <p>A feed-forward multi-view model replaces feature matching for relative poses, made metric and verified before it
+            reaches the map.</p>
+        </article>
+        <article class="paper card" data-reveal>
+          <p class="paper-k"><span>CROSS 3</span><span class="badge badge-soon">Paper coming soon</span></p>
+          <h3>Large-scale, long-term mapping</h3>
+          <p>Kilometre-scale maps reused over many sessions, outdoors and with more than one camera.</p>
+        </article>
+        <article class="paper card" data-reveal>
+          <p class="paper-k"><span>CROSS Cloud</span><span class="badge badge-soon">Paper coming soon</span></p>
+          <h3>Relocalization with a remote GPU</h3>
+          <p>The robot keeps its odometry and a live pose; a GPU server runs the model and the map over the network.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ cite -->
+  <section class="section section-sm section-tint" id="cite" aria-labelledby="cite-title">
+    <div class="container cite-grid">
+      <div>
+        <p class="eyebrow">Cite</p>
+        <h2 id="cite-title">Using CROSS in your research?</h2>
+        <p class="lead">Please cite the CROSS 1 paper.</p>
+      </div>
+      <div class="code">
+        <div class="code-head"><span>BibTeX</span><button class="copy" type="button"></button></div>
+<pre><code>@inproceedings{wang2026cross,
+  title     = {Change-Robust Online Topological Memory for Long-Term
+               Relocalization and Semantic Navigation},
+  author    = {Wang, Jiaming and Chen, Jizhuo and Liu, Diwen and
+               Ghotavadekar, Atharva and Da, Jiaxuan and K{\"a}stner, Linh
+               and Soh, Harold},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2026},
+  eprint    = {2605.02227},
+  archivePrefix = {arXiv}
+}</code></pre>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- partial:footer -->
+<footer class="sf">
+  <div class="sf-wrap sf-grid">
+    <div class="sf-about">
+      <a class="sf-brand" href="">
+        <svg class="sh-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M10.5 21.5 21.5 10.5M10.5 10.5l11 11"/></svg>
+        <span>CROSS</span>
+      </a>
+      <p>Visual multi-session mapping, tracking and relocalization for robots. Open source, MIT-licensed code.</p>
+      <p class="sf-org">National University of Singapore</p>
+    </div>
+    <nav class="sf-col" aria-label="Use CROSS">
+      <h2>Use CROSS</h2>
+      <a href="docs/#install">Install</a>
+      <a href="docs/#quick-start">Quick start</a>
+      <a href="docs/#modes">Sensor modes</a>
+      <a href="docs/#python">Python API</a>
+      <a href="https://github.com/jiaming-ai/CROSS" rel="noopener">GitHub</a>
+    </nav>
+    <nav class="sf-col" aria-label="Benchmark">
+      <h2>Benchmark</h2>
+      <a href="leaderboard/">Leaderboard</a>
+      <a href="benchmark/">Full results</a>
+      <a href="replays/">Trajectory replays</a>
+      <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/PROTOCOL.md" rel="noopener">Protocol</a>
+    </nav>
+    <nav class="sf-col" aria-label="Papers">
+      <h2>Papers</h2>
+      <a href="v1/">CROSS 1 <span class="sf-tag">NeurIPS 2026</span></a>
+      <span class="sf-soon">CROSS 2 <span class="sf-tag">coming soon</span></span>
+      <span class="sf-soon">CROSS 3 <span class="sf-tag">coming soon</span></span>
+      <span class="sf-soon">CROSS Cloud <span class="sf-tag">coming soon</span></span>
+    </nav>
+  </div>
+  <div class="sf-wrap sf-bottom">
+    <p>© 2026 The CROSS authors. Leaderboard and replay numbers come from the published benchmark run (<a href="benchmark/">full results</a>); paper pages report their paper's results.</p>
+    <a href="#top" class="sf-top">Back to top ↑</a>
+  </div>
+</footer>
+<!-- /partial:footer -->
+<script defer src="assets/js/site.js"></script>
+<script defer src="assets/js/home.js"></script>
+</body>
+</html>

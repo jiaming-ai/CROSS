@@ -3,6 +3,7 @@
   const $ = (s, r) => (r || document).querySelector(s);
   const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const smooth = reduceMotion ? 'auto' : 'smooth';
 
   // ------------------------------------------------------------ math
   if (window.renderMathInElement) {
@@ -11,61 +12,101 @@
       throwOnError: false,
     });
   }
+  // The theme is switched by the site header's toggle (site.js), which fires 'themechange' for the demo canvas.
 
-  // ------------------------------------------------------------ theme
-  const themeBtn = $('#themeToggle');
-  const isDark = () => {
-    const t = document.documentElement.getAttribute('data-theme');
-    if (t) return t === 'dark';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
-  };
-  themeBtn.addEventListener('click', () => {
-    const next = isDark() ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    try { localStorage.setItem('cross-theme', next); } catch (e) { /* storage unavailable */ }
-    document.dispatchEvent(new Event('themechange'));
+  // ------------------------------------------------------------ tab lists and radio groups: one tab stop, arrow keys move
+  // Each widget's own click handler does the selecting; this moves focus and keeps the tab stop on the selected item.
+  $$('[role="tablist"], [role="radiogroup"]').forEach((group) => {
+    const tabs = group.getAttribute('role') === 'tablist';
+    const items = $$(tabs ? '[role="tab"]' : '[role="radio"]', group);
+    const state = tabs ? 'aria-selected' : 'aria-checked';
+    const sync = () => items.forEach((b) => { b.tabIndex = b.getAttribute(state) === 'true' ? 0 : -1; });
+    sync();
+    new MutationObserver(sync).observe(group, { subtree: true, attributeFilter: [state] });
+    const moves = tabs ? { ArrowRight: 1, ArrowLeft: -1 } : { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    group.addEventListener('keydown', (e) => {
+      const i = items.indexOf(document.activeElement);
+      if (i < 0) return;
+      let n;
+      if (moves[e.key]) n = (i + moves[e.key] + items.length) % items.length;
+      else if (e.key === 'Home') n = 0;
+      else if (e.key === 'End') n = items.length - 1;
+      else return;
+      e.preventDefault();
+      items[n].focus();
+      items[n].click();
+    });
   });
 
-  // ------------------------------------------------------------ hero video
-  const heroVid = $('.hero-video');
+  // ------------------------------------------------------------ hero video: plays while in view; the corner button pauses it
+  const heroVid = $('.hero-video'), heroBtn = $('#heroPause');
   if (heroVid) {
+    let paused = reduceMotion;
+    const setBtn = () => {
+      heroBtn.classList.toggle('paused', paused);
+      heroBtn.setAttribute('aria-label', paused ? 'Play background video' : 'Pause background video');
+    };
     if (reduceMotion) { heroVid.removeAttribute('autoplay'); heroVid.pause(); }
-    else if ('IntersectionObserver' in window) {
-      new IntersectionObserver(([e]) => { e.isIntersecting ? heroVid.play().catch(() => {}) : heroVid.pause(); }).observe(heroVid);
+    setBtn();
+    heroBtn.addEventListener('click', () => {
+      paused = !paused;
+      if (paused) heroVid.pause(); else heroVid.play().catch(() => {});
+      setBtn();
+    });
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(([e]) => {
+        if (e.isIntersecting && !paused) heroVid.play().catch(() => {}); else heroVid.pause();
+      }).observe(heroVid);
     }
   }
 
-  // ------------------------------------------------------------ nav highlight
-  const navLinks = $$('.topnav-links a');
-  const sections = navLinks.map((a) => $(a.getAttribute('href'))).filter(Boolean);
-  if ('IntersectionObserver' in window) {
-    const vis = new Map();
-    const io = new IntersectionObserver((ents) => {
-      ents.forEach((e) => vis.set(e.target.id, e.intersectionRatio));
-      let best = null, br = 0;
-      sections.forEach((s) => { const r = vis.get(s.id) || 0; if (r > br) { br = r; best = s.id; } });
-      navLinks.forEach((a) => a.classList.toggle('active', best && a.getAttribute('href') === '#' + best));
-    }, { threshold: [0, 0.15, 0.3, 0.5, 0.7], rootMargin: '-58px 0px 0px 0px' });
-    sections.forEach((s) => io.observe(s));
+  // ------------------------------------------------------------ section nav: mark the section being read, keep its link in view
+  const header = $('#site-header'), topnav = $('#topnav'), strip = $('.topnav-links', topnav);
+  const navLinks = $$('a', strip);
+  const sections = navLinks.map((a) => $(a.getAttribute('href')));
+  let activeLink = null, spyQueued = false;
+  function spy() {
+    spyQueued = false;
+    const line = header.offsetHeight + topnav.offsetHeight + window.innerHeight * 0.25;
+    let cur = null;
+    sections.forEach((s, i) => { if (s.getBoundingClientRect().top <= line) cur = navLinks[i]; });
+    if (cur === activeLink) return;
+    if (activeLink) { activeLink.classList.remove('active'); activeLink.removeAttribute('aria-current'); }
+    activeLink = cur;
+    if (!cur) return;
+    cur.classList.add('active');
+    cur.setAttribute('aria-current', 'true');
+    // on phones the links scroll sideways: bring the active one into the strip (the page itself does not move)
+    const sr = strip.getBoundingClientRect(), ar = cur.getBoundingClientRect();
+    if (ar.left < sr.left || ar.right > sr.right) strip.scrollTo({ left: strip.scrollLeft + ar.left - sr.left - 16, behavior: smooth });
   }
+  window.addEventListener('scroll', () => { if (!spyQueued) { spyQueued = true; requestAnimationFrame(spy); } }, { passive: true });
+  window.addEventListener('resize', spy);
+  spy();
 
   // ------------------------------------------------------------ main video + chapters
   const video = $('#mainVideo');
   const chapterBtns = $$('#chapters button');
   const chapterTimes = chapterBtns.map((b) => +b.dataset.t);
-  function seek(tSec) {
-    $('#video').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+  const playAt = (tSec) => {
     const go = () => { video.currentTime = tSec; video.play().catch(() => {}); };
     if (video.readyState >= 1) go(); else { video.addEventListener('loadedmetadata', go, { once: true }); video.load(); }
+  };
+  function seek(tSec) {
+    $('#video').scrollIntoView({ behavior: smooth, block: 'start' });
+    playAt(tSec);
   }
-  chapterBtns.forEach((b) => b.addEventListener('click', () => {
-    const go = () => { video.currentTime = +b.dataset.t; video.play().catch(() => {}); };
-    if (video.readyState >= 1) go(); else { video.addEventListener('loadedmetadata', go, { once: true }); video.load(); }
-  }));
+  chapterBtns.forEach((b) => b.addEventListener('click', () => playAt(+b.dataset.t)));
+  let chapter = -1;
   video.addEventListener('timeupdate', () => {
     let idx = 0;
     chapterTimes.forEach((ct, i) => { if (video.currentTime >= ct - 0.25) idx = i; });
-    chapterBtns.forEach((b, i) => b.classList.toggle('on', i === idx));
+    if (idx === chapter) return;
+    chapter = idx;
+    chapterBtns.forEach((b, i) => {
+      b.classList.toggle('on', i === idx);
+      if (i === idx) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+    });
   });
   $$('[data-seek]').forEach((b) => b.addEventListener('click', () => seek(+b.dataset.seek)));
 
@@ -80,7 +121,7 @@
     spot.style.width = (rect[2] * ir.width + 2 * pad) + 'px';
     spot.style.height = (rect[3] * ir.height + 2 * pad) + 'px';
   }
-  // teaser
+  // teaser: hover or focus a key to show its region, click to pin it
   const teaser = $('#teaser');
   if (teaser) {
     const stage = $('.spot-stage', teaser), spot = $('.spot', teaser);
@@ -103,12 +144,16 @@
       li.addEventListener('pointerleave', hide);
       b.addEventListener('focus', () => showKey(li));
       b.addEventListener('blur', hide);
-      b.addEventListener('click', () => { pinned = pinned === li ? null : li; pinned ? showKey(li) : hide(); });
+      b.addEventListener('click', () => {
+        pinned = pinned === li ? null : li;
+        keys.forEach((k) => $('button', k).setAttribute('aria-pressed', k === pinned));
+        if (pinned) showKey(li); else hide();
+      });
     });
     window.addEventListener('resize', () => { const on = keys.find((k) => $('button', k).classList.contains('on')); if (on) showKey(on); });
   }
 
-  // method steps
+  // method steps (tabs; arrow keys come from the tab-list handler above)
   const METHOD_SPOTS = [
     [0.103, 0.125, 0.135, 0.16],   // place recognition
     [0.248, 0.125, 0.313, 0.16],   // relative pose + multi-frame marginalization
@@ -128,30 +173,23 @@
       placeSpot(stage, spot, METHOD_SPOTS[i]);
       spot.classList.add('on');
     };
-    steps.forEach((s, i) => {
-      s.addEventListener('click', () => setStep(i));
-      s.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-          const n = (i + (e.key === 'ArrowRight' ? 1 : steps.length - 1)) % steps.length;
-          steps[n].focus(); setStep(n);
-        }
-      });
-    });
+    steps.forEach((s, i) => s.addEventListener('click', () => setStep(i)));
     const img = $('img', stage);
     const init = () => setStep(cur);
     if (img.complete) init(); else img.addEventListener('load', init);
     window.addEventListener('resize', () => placeSpot(stage, spot, METHOD_SPOTS[cur]));
   }
 
-  // ------------------------------------------------------------ appearance viewers
+  // ------------------------------------------------------------ appearance viewers: one pass through the captures while in view
+  // The pass waits while the pointer or focus is on the viewer, and a click on a capture stops it.
   $$('[data-viewer]').forEach((v) => {
     const stage = $('.viewer-stage', v);
     const btns = $$('.timeline button', v);
-    let idx = 0, timer = null, userTook = false;
+    let idx = 0, timer = null, userTook = false, advanced = 0, held = false;
     btns.forEach((b) => { const im = new Image(); im.src = b.dataset.src; }); // preload
     const show = (i) => {
       idx = i;
-      btns.forEach((b, k) => { b.classList.toggle('on', k === i); b.setAttribute('aria-selected', k === i); });
+      btns.forEach((b, k) => { b.classList.toggle('on', k === i); b.setAttribute('aria-checked', k === i); });
       const base = $('img:not(.fade-top)', stage);
       const top = document.createElement('img');
       top.className = 'fade-top';
@@ -161,43 +199,58 @@
       requestAnimationFrame(() => requestAnimationFrame(() => { top.style.opacity = 1; }));
       setTimeout(() => { base.src = top.src; base.alt = top.alt; top.remove(); }, reduceMotion ? 0 : 480);
     };
+    const stop = () => { clearInterval(timer); timer = null; };
     btns.forEach((b, i) => {
-      b.addEventListener('click', () => { userTook = true; clearInterval(timer); show(i); });
+      b.addEventListener('click', () => { userTook = true; stop(); show(i); });
       b.addEventListener('pointerenter', () => { if (userTook) show(i); });
     });
+    v.addEventListener('pointerenter', () => { held = true; });
+    v.addEventListener('pointerleave', () => { held = false; });
+    v.addEventListener('focusin', () => { held = true; });
+    v.addEventListener('focusout', (e) => { if (!v.contains(e.relatedTarget)) held = false; });
     if (!reduceMotion && 'IntersectionObserver' in window) {
       new IntersectionObserver(([e]) => {
-        clearInterval(timer);
-        if (e.isIntersecting && !userTook) timer = setInterval(() => show((idx + 1) % btns.length), 2200);
+        stop();
+        if (!e.isIntersecting || userTook || advanced >= btns.length) return;
+        timer = setInterval(() => {
+          if (held) return;
+          show((idx + 1) % btns.length);
+          if (++advanced >= btns.length) stop();  // back on the first capture: the pass is over
+        }, 2200);
       }, { threshold: 0.5 }).observe(v);
     }
   });
 
-  // ------------------------------------------------------------ per-location figure tabs + lightbox
+  // ------------------------------------------------------------ per-location figure: three versions, each with its own alt text and method list
   const perImg = $('#perLocImg');
   if (perImg) {
-    const tabs = $$('.zoomable-wrap .tabs button');
-    tabs.forEach((b) => b.addEventListener('click', () => {
-      tabs.forEach((o) => o.classList.toggle('on', o === b));
+    const opts = $$('.zoomable-wrap .tabs button'), methods = $('#perLocMethods');
+    opts.forEach((b) => b.addEventListener('click', () => {
+      opts.forEach((o) => { o.classList.toggle('on', o === b); o.setAttribute('aria-checked', o === b); });
+      methods.textContent = b.dataset.caption;
       perImg.style.opacity = 0.3;
       const im = new Image();
-      im.onload = () => { perImg.src = b.dataset.src; perImg.width = +b.dataset.w; perImg.height = +b.dataset.h; perImg.style.opacity = 1; };
+      im.onload = () => {
+        perImg.src = b.dataset.src; perImg.width = +b.dataset.w; perImg.height = +b.dataset.h; perImg.alt = b.dataset.alt;
+        perImg.style.opacity = 1;
+      };
       im.src = b.dataset.src;
     }));
   }
-  const lb = $('#lightbox');
-  const lbImg = $('img', lb);
+
+  // ------------------------------------------------------------ lightbox: a modal <dialog>; a click anywhere closes it
+  const lb = $('#lightbox'), lbImg = $('img', lb);
+  let lbFrom = null;
   $$('.zoomable').forEach((z) => z.addEventListener('click', () => {
     const im = $('img', z);
     lbImg.src = im.src; lbImg.alt = im.alt;
-    lb.hidden = false;
-    $('.lightbox-close', lb).focus();
+    lbFrom = z;
+    lb.showModal();
   }));
-  const closeLb = () => { lb.hidden = true; };
-  lb.addEventListener('click', closeLb);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !lb.hidden) closeLb(); });
+  lb.addEventListener('click', () => lb.close());
+  lb.addEventListener('close', () => { if (lbFrom) lbFrom.focus(); });
 
-  // ------------------------------------------------------------ robustness videos
+  // ------------------------------------------------------------ robustness videos (the HTML holds the first scenario)
   const ROB = {
     occlusion: {
       seek: 255,
@@ -221,15 +274,15 @@
       legend: 'Yellow: CROSS estimate. Green: reference trajectory from SLAM. Blue: the corrupted odometry CROSS is given. Noise is injected as T·exp(ξ) with its size set by a signal-to-noise ratio.',
     },
   };
-  const robVideo = $('#robVideo'), robCap = $('#robCaption'), robLab = $('#robStepLabel');
+  const robVideo = $('#robVideo'), robPanel = $('#rob'), robCap = $('#robCaption'), robLab = $('#robStepLabel');
   const robLegend = $('#robLegend'), robSeek = $('#robSeek');
   let robKey = 'occlusion';
-  function robBuild(autoplay) {
+  function robBuild() {
     const sc = ROB[robKey];
     robVideo.poster = `static/video/${sc.src}-poster.jpg`;
     robVideo.src = `static/video/${sc.src}.mp4`;
     robVideo.load();
-    if (autoplay) robVideo.play().catch(() => {});
+    robVideo.play().catch(() => {});
     robLab.textContent = sc.label;
     robCap.textContent = sc.t;
     robLegend.textContent = sc.legend;
@@ -238,11 +291,13 @@
   robSeek.addEventListener('click', () => seek(ROB[robKey].seek));
   $$('#robTabs button').forEach((b) => b.addEventListener('click', () => {
     $$('#robTabs button').forEach((o) => { o.classList.toggle('on', o === b); o.setAttribute('aria-selected', o === b); });
-    robKey = b.dataset.rob; robBuild(true);
+    robPanel.setAttribute('aria-labelledby', b.id);
+    if (robKey === b.dataset.rob) return;
+    robKey = b.dataset.rob;
+    robBuild();
   }));
-  robBuild();
 
-  // ------------------------------------------------------------ charts
+  // ------------------------------------------------------------ charts (the HTML holds every table and the default texts)
   const CC = window.CrossCharts;
   const pct = (v) => (Math.round(v * 10) / 10).toFixed(1) + '%';
 
@@ -269,9 +324,10 @@
     });
     return o;
   };
+  // one axis for every view (the highest interval end is 60.4%), so switching views compares like with like
   const reloc = new CC.HBar($('#relocChart'), {
     rows: RELOC.map((m) => ({ key: m.key, label: m.label, group: m.group, hl: m.hl })),
-    values: relocValues(), max: 60, ticks: [0, 10, 20, 30, 40, 50, 60],
+    values: relocValues(), max: 70, ticks: [0, 10, 20, 30, 40, 50, 60, 70],
     fmt: pct, tickFmt: (v) => v + '%', aria: 'Relocalization success rate by method',
   });
   function relocRefresh(dur) {
@@ -299,9 +355,7 @@
     relocState[grp.dataset.filter] = b.dataset.v;
     relocRefresh();
   }));
-  reloc.update(relocValues(), 0);
-  relocRefresh(0);
-  reloc.update(Object.fromEntries(Object.keys(relocValues()).map((k) => [k, { v: 0 }])), 0);
+  reloc.update(Object.fromEntries(RELOC.map((m) => [m.key, { v: 0 }])), 0);
   CC.whenVisible($('#relocChart'), () => relocRefresh(700));
 
   // Real robot (Table 2 + Wilson intervals)
@@ -323,8 +377,6 @@
     max: 100, ticks: [0, 25, 50, 75, 100], tickFmt: (v) => v + '%',
     fmt: (v) => (v % 1 ? v.toFixed(1) : v.toFixed(0)) + '%', aria: 'Object-goal navigation success by setting',
   });
-  CC.table($('#robotTable'), ['Method', 'LC', 'OR', 'LC+OR', 'All'],
-    ROBOT.series.map((s) => [s.label, ...ROBOT.data[s.key].map((d) => `${d.v}% [${d.ci[0]}, ${d.ci[1]}]`)]), 2);
 
   // Topo-Bench (Appendix table)
   const TOPO = [
@@ -352,7 +404,6 @@
     values: topoVals('bla'), max: 1, ticks: [0, 0.25, 0.5, 0.75, 1], fmt: f3, tickFmt: (v) => v.toString(),
     aria: 'Topo-Bench accuracy by method',
   });
-  $('#topoDesc').textContent = TOPO_DESC.bla;
   topo.update(Object.fromEntries(TOPO.map((r) => [r[0], { v: 0 }])), 0);
   CC.whenVisible($('#topoChart'), () => topo.update(topoVals('bla'), 700));
   $$('[data-filter="topo"] button').forEach((b) => b.addEventListener('click', () => {
@@ -360,7 +411,6 @@
     topo.update(topoVals(b.dataset.v));
     $('#topoDesc').textContent = TOPO_DESC[b.dataset.v];
   }));
-  CC.table($('#topoTable'), ['Method', 'A+P', 'P.O.', 'A.O.', 'BLA'], TOPO.map((r) => [r[1], ...r.slice(2).map((v) => String(v))]), TOPO.length - 1);
 
   // Continuous vs discrete (PBU vs CROSS, cross-session)
   new CC.Dumbbell($('#ablationChart'), {

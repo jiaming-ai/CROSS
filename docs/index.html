@@ -3,33 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CROSS Documentation: Install, Sensor Modes and Multi-Session Mapping</title>
-  <meta name="description" content="Install CROSS, choose a sensor mode (RGB-D, stereo or monocular, with wheel odometry, VIO, an IMU or none), build a map, relocalize later sessions in it, and use the Python API.">
+  <!-- apply the saved theme (or ?theme=dark|light) before first paint -->
+  <script>document.documentElement.classList.add('js');try{var t=new URLSearchParams(location.search).get('theme')||localStorage.getItem('cross-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+  <title>CROSS Docs: Multi-Session Mapping and Relocalization</title>
+  <meta name="description" content="Install CROSS with one script and run open-source visual SLAM for multi-session mapping, tracking and relocalization with an RGB-D, stereo or monocular camera.">
   <link rel="canonical" href="https://jiaming.im/CROSS/docs/">
   <meta name="robots" content="index, follow, max-image-preview:large">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="CROSS">
-  <meta property="og:title" content="CROSS documentation: from install to multi-session mapping">
-  <meta property="og:description" content="Install CROSS, choose a sensor mode (RGB-D, stereo or monocular, with wheel odometry, VIO, an IMU or none), build a map, relocalize later sessions in it, and use the Python API.">
+  <meta property="og:title" content="Get started with CROSS: install in one script, map once, relocalize later">
+  <meta property="og:description" content="Install CROSS, choose a mode for your RGB-D, stereo or monocular camera, build a map once and relocalize every later session in it.">
   <meta property="og:url" content="https://jiaming.im/CROSS/docs/">
   <meta property="og:image" content="https://jiaming.im/CROSS/assets/img/og/docs.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="CROSS documentation: install, pick a sensor mode, map once and relocalize later">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#07090e">
   <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="../assets/img/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"></noscript>
   <link rel="stylesheet" href="../assets/css/chrome.css">
   <link rel="stylesheet" href="../assets/css/site.css">
   <link rel="stylesheet" href="../assets/css/docs.css">
-  <script>document.documentElement.classList.add('js');try{var t=new URLSearchParams(location.search).get('theme')||localStorage.getItem('cross-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
-  <script type="application/ld+json">{"@context": "https://schema.org", "@type": "TechArticle", "headline": "CROSS documentation", "url": "https://jiaming.im/CROSS/docs/", "description": "Install CROSS, choose a sensor mode, map once and relocalize later sessions, Python API.", "proficiencyLevel": "Beginner", "about": {"@type": "SoftwareSourceCode", "name": "CROSS", "codeRepository": "https://github.com/jiaming-ai/CROSS"}, "isPartOf": {"@type": "WebSite", "name": "CROSS", "url": "https://jiaming.im/CROSS/"}, "breadcrumb": {"@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "CROSS", "item": "https://jiaming.im/CROSS/"}, {"@type": "ListItem", "position": 2, "name": "Documentation", "item": "https://jiaming.im/CROSS/docs/"}]}}</script>
+  <script type="application/ld+json">{"@context": "https://schema.org", "@graph": [{"@type": "WebPage", "@id": "https://jiaming.im/CROSS/docs/#page", "url": "https://jiaming.im/CROSS/docs/", "name": "CROSS Docs: Multi-Session Mapping and Relocalization", "inLanguage": "en", "isPartOf": {"@type": "WebSite", "name": "CROSS", "url": "https://jiaming.im/CROSS/"}, "breadcrumb": {"@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "CROSS", "item": "https://jiaming.im/CROSS/"}, {"@type": "ListItem", "position": 2, "name": "Documentation", "item": "https://jiaming.im/CROSS/docs/"}]}, "mainEntity": {"@id": "https://jiaming.im/CROSS/docs/#article"}}, {"@type": "TechArticle", "@id": "https://jiaming.im/CROSS/docs/#article", "mainEntityOfPage": {"@id": "https://jiaming.im/CROSS/docs/#page"}, "headline": "Get started with CROSS: multi-session mapping and relocalization", "description": "Install CROSS, open-source visual SLAM for multi-session mapping, tracking and relocalization; choose a sensor mode for an RGB-D, stereo or monocular camera, map once and relocalize later sessions, use your own data and the Python API.", "image": "https://jiaming.im/CROSS/assets/img/og/docs.jpg", "author": {"@type": "Organization", "name": "The CROSS authors"}, "inLanguage": "en", "datePublished": "2026-10-24", "dateModified": "2026-10-24", "proficiencyLevel": "Beginner", "dependencies": "Linux, an NVIDIA GPU with CUDA, about 10 GB of disk", "keywords": "visual SLAM, multi-session mapping, relocalization, tracking, long-term localization, robot navigation, RGB-D, stereo, monocular", "about": {"@type": "SoftwareSourceCode", "name": "CROSS", "codeRepository": "https://github.com/jiaming-ai/CROSS", "programmingLanguage": "Python", "runtimePlatform": "Linux", "license": "https://github.com/jiaming-ai/CROSS/blob/master/LICENSE"}}]}</script>
 </head>
-<body id="top">
+<body class="night-top" id="top">
 <!-- partial:header -->
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="sh" id="site-header">
@@ -72,12 +74,710 @@
 <!-- /partial:header -->
 
 <main id="main">
-  <!-- PAGE CONTENT -->
+
+  <!-- ============================================================ hero -->
+  <header class="page-hero section-night docs-hero">
+    <div class="container">
+      <div class="docs-hero-grid">
+        <div>
+          <span class="eyebrow">Documentation</span>
+          <h1>Get started with CROSS</h1>
+          <p class="lead">Open-source visual SLAM for <strong>multi-session mapping, tracking and relocalization</strong> on
+            robots. Install it with one script, pick the mode for your <strong>RGB-D, stereo or monocular</strong> camera,
+            map a place once and relocalize every later session in it, across changes in lighting, weather, season and
+            furniture.</p>
+          <ul class="docs-facts" aria-label="At a glance">
+            <li class="badge">Linux</li>
+            <li class="badge">NVIDIA GPU + CUDA</li>
+            <li class="badge">~10 GB disk</li>
+            <li><a class="badge" href="#licenses">MIT code · model licenses</a></li>
+          </ul>
+        </div>
+
+        <div class="code code-term">
+          <div class="code-head"><span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>Install and run<span class="term-more">: three commands</span></span><button class="copy" type="button" data-strip-prompt aria-label="Copy the three commands"></button></div>
+          <pre><code class="term-lines"><span class="ln c"># 1  clone</span><span class="ln"><span class="p">$ </span>git clone https://github.com/jiaming-ai/CROSS.git &amp;&amp; cd CROSS</span><span class="ln c"># 2  install: .venv, PyTorch, CROSS, GTSAM and the models</span><span class="ln"><span class="p">$ </span>bash install.sh --stereo &amp;&amp; source .venv/bin/activate</span><span class="ln c"># 3  map a sequence (sample data: see the quick start)</span><span class="ln"><span class="p">$ </span>python run.py path/to/sequence --mode stereo_wheel</span></code></pre>
+        </div>
+      </div>
+
+      <nav class="docs-links" aria-label="Start here">
+        <a class="card card-link docs-link" href="#modes">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8a2 2 0 0 1 2-2h2.5l1.5-2h6l1.5 2H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
+          <span><strong>Pick a sensor mode</strong><small>14 modes for RGB-D, stereo and one camera</small></span>
+        </a>
+        <a class="card card-link docs-link" href="#quick-start">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6.5v13L9 17l6 3 6-2.5v-13L15 7z"/><path d="M9 4v13M15 7v13"/></svg>
+          <span><strong>Map once, relocalize later</strong><small>Two sessions of a public dataset, end to end</small></span>
+        </a>
+        <a class="card card-link docs-link" href="#your-data">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span><strong>Use your own data</strong><small>Plain folders: images, calibration, odometry</small></span>
+        </a>
+        <a class="card card-link docs-link" href="#python">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M13.5 5l-3 14"/></svg>
+          <span><strong>Python API</strong><small>Feed frames, read poses in the map</small></span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ============================================================ docs -->
+  <div class="container docs">
+    <aside class="docs-toc">
+      <nav aria-label="On this page">
+        <p class="docs-toc-title">On this page</p>
+        <div class="docs-toc-scroll">
+          <p class="docs-toc-label">Get started</p>
+          <ol>
+            <li><a href="#overview">Overview</a></li>
+            <li><a href="#install">Install</a></li>
+            <li><a href="#quick-start">Quick start</a></li>
+            <li><a href="#modes">Sensor modes</a></li>
+          </ol>
+          <p class="docs-toc-label">Guides</p>
+          <ol>
+            <li><a href="#your-data">Your own data</a></li>
+            <li><a href="#configuration">Configuration</a></li>
+            <li><a href="#python">Python API</a></li>
+            <li><a href="#extensions">More capabilities</a></li>
+          </ol>
+          <p class="docs-toc-label">Reference</p>
+          <ol>
+            <li><a href="#benchmark">Benchmark</a></li>
+            <li><a href="#troubleshooting">Troubleshooting</a></li>
+            <li><a href="#licenses">Licenses</a></li>
+            <li><a href="#citation">Citation</a></li>
+          </ol>
+        </div>
+        <p class="docs-toc-gh">Full docs on GitHub:
+          <a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/GUIDE.md" rel="noopener">guide</a> ·
+          <a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/USAGE.md" rel="noopener">reference</a></p>
+      </nav>
+    </aside>
+
+    <article class="docs-content" data-anchors>
+
+      <!-- ---------------------------------------------------------- overview -->
+      <section class="docs-section" aria-labelledby="overview">
+        <h2 id="overview">What CROSS does</h2>
+        <p>A robot that comes back to a place it has seen before should know where it is. CROSS is a visual SLAM system that
+          builds a map from a camera stream, saves it, and <strong>relocalizes later sessions in it</strong>: a new session
+          starts without knowing where it is, CROSS finds its place in the map, and from then on tracks the camera in the
+          map's coordinates while it adds the places that are new.</p>
+
+        <ol class="flow" aria-label="The multi-session workflow">
+          <li class="flow-node">
+            <span class="flow-kicker">Session 1</span>
+            <strong>Map</strong>
+            <span>The robot drives once. CROSS stores keyframes, their poses and how they connect.</span>
+          </li>
+          <li class="flow-node flow-node-map">
+            <span class="flow-kicker">On disk</span>
+            <strong>Saved map</strong>
+            <span><code>map.pkl</code> and <code>map.pkl.store/</code>: the graph and its keyframe images.</span>
+          </li>
+          <li class="flow-node">
+            <span class="flow-kicker">Every later session</span>
+            <strong>Relocalize and extend</strong>
+            <span>Starts with no pose, joins the map, reports map-frame poses, adds new places.</span>
+          </li>
+        </ol>
+
+        <p>The world changes between sessions: day turns to night, furniture moves, leaves fall, people walk by. CROSS is
+          built for that:</p>
+        <ul class="checks">
+          <li><strong>Multi-hypothesis tracking.</strong> The pose is a mixture of Gaussians over SE(3), so competing
+            explanations stay alive until the evidence separates them. A session joins the map only when its placement is
+            supported consistently, so one look-alike view cannot teleport the robot.</li>
+          <li><strong>Every match is checked.</strong> Loop closures pass chi-square consistency tests before pose-graph
+            optimization (GTSAM) uses them.</li>
+          <li><strong>Any camera.</strong> RGB-D, stereo or a single camera, with or without wheel odometry, a VIO or an
+            IMU.</li>
+        </ul>
+        <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/GUIDE.md#2-the-ideas-in-five-minutes" rel="noopener">Guide: the ideas in five minutes</a></p>
+      </section>
+
+      <!-- ---------------------------------------------------------- install -->
+      <section class="docs-section" aria-labelledby="install">
+        <h2 id="install">Install CROSS</h2>
+        <p>CROSS needs Linux, an NVIDIA GPU with CUDA and about 10 GB of disk. One script does the rest: it creates a
+          virtual environment in <code>.venv</code> (Python 3.11, via <a href="https://docs.astral.sh/uv/" rel="noopener">uv</a>,
+          which it fetches if missing), installs PyTorch, CROSS and GTSAM, and downloads the model weights.</p>
+        <div class="code">
+          <div class="code-head"><span>Terminal</span><button class="copy" type="button" data-strip-prompt aria-label="Copy the install commands"></button></div>
+          <pre><code><span class="p">$ </span>git clone https://github.com/jiaming-ai/CROSS.git
+<span class="p">$ </span>cd CROSS
+<span class="p">$ </span>bash install.sh --stereo          <span class="c"># RGB-D modes + the VGGT-Omega modes (the usual choice)</span>
+<span class="p">$ </span>source .venv/bin/activate</code></pre>
+        </div>
+
+        <h3 id="install-options">Install options</h3>
+        <div class="table-wrap">
+          <table class="table table-stack">
+            <thead><tr><th scope="col">option</th><th scope="col">adds</th></tr></thead>
+            <tbody>
+              <tr><td><em>(none)</em></td><td>the RGB-D modes with PnP (<code>rgbd_wheel</code>, <code>rgbd_basalt</code>)</td></tr>
+              <tr><td><code>--stereo</code></td><td>VGGT-Omega and our fine-tuned checkpoint (<a href="https://huggingface.co/Jamie-nus/VGGT-Omega-CROSS" rel="noopener">Jamie-nus/VGGT-Omega-CROSS</a>): <code>stereo_wheel</code>, <code>stereo_basalt</code>, <code>stereo_imu</code>, <code>rgbd_ff_*</code>, <code>mono_wheel</code>, <code>mono_basalt</code></td></tr>
+              <tr><td><code>--mono</code></td><td><code>--stereo</code> + DPVO (built from source; needs <code>nvcc</code> matching PyTorch's CUDA), Depth Anything 3 and LightGlue: every mode, including the DPVO modes and <code>mono_imu</code></td></tr>
+              <tr><td><code>--stereo --vggt=released</code><br><code>--stereo --vggt=both</code></td><td>the released VGGT-Omega checkpoint instead of / besides ours (gated: request access at <a href="https://huggingface.co/facebook/VGGT-Omega" rel="noopener">facebook/VGGT-Omega</a>, then <code>huggingface-cli login</code>); <code>--vggt</code> needs <code>--stereo</code>, or <code>--mono</code> / <code>--nav</code>, which include it</td></tr>
+              <tr><td><code>--nav</code>, <code>--nav-sim</code></td><td>navigation (<code>cross_nav</code>) and its BEV heads; <code>--nav-sim</code> adds the Habitat simulator</td></tr>
+              <tr><td><code>--cpu</code><br><code>CUDA_VERSION=cu121</code></td><td>CPU-only PyTorch (tests only: the mapping modes need a GPU); another CUDA build</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><code>bash install.sh --help</code> lists every option. Check the installation with <code>python -m pytest -q</code>
+          (a few minutes).</p>
+        <div class="note"><strong>Tip.</strong> Run every command from the repository folder: the model paths
+          (<code>models/...</code>) are relative to it. Some models (the XFeat / LightGlue matcher and the image-retrieval
+          network) download on first use, so the first run needs internet; after that,
+          <code>export CROSS_HUB_OFFLINE=1</code> uses the cached copies.</div>
+        <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/GUIDE.md#4-install" rel="noopener">Guide: install</a></p>
+      </section>
+
+      <!-- ---------------------------------------------------------- quick start -->
+      <section class="docs-section" aria-labelledby="quick-start">
+        <h2 id="quick-start">Quick start: map once, relocalize later</h2>
+        <p>The whole workflow on two recordings of the same office from
+          <a href="https://lifelong-robotic-vision.github.io/dataset/scene.html" rel="noopener">OpenLORIS-Scene</a>, a public
+          dataset recorded by a wheeled robot with an RGB-D camera and wheel odometry. It uses <code>rgbd_wheel</code>, which
+          every install includes.</p>
+
+        <ol class="steps">
+          <li>
+            <h3 id="qs-data">Get two sessions</h3>
+            <p>The benchmark's script downloads the office package of OpenLORIS-Scene (seven sessions, "package" format) from
+              <a href="https://huggingface.co/datasets/shixuesong/openloris-scene" rel="noopener">Hugging Face</a> and unpacks
+              it; then convert two sessions to CROSS's folder layout:</p>
+            <div class="code">
+              <div class="code-head"><span>Terminal</span><button class="copy" type="button" data-strip-prompt aria-label="Copy the download and conversion commands"></button></div>
+              <pre><code><span class="p">$ </span>uv pip install py7zr        <span class="c"># the script unpacks .7z archives with it</span>
+<span class="p">$ </span>bash benchmark/datasets/download_openloris.sh data/openloris office1-1_7
+<span class="p">$ </span>python scripts/datasets/convert_openloris.py data/openloris/office1-1 data/posed/office1-1
+<span class="p">$ </span>python scripts/datasets/convert_openloris.py data/openloris/office1-2 data/posed/office1-2</code></pre>
+            </div>
+          </li>
+          <li>
+            <h3 id="qs-map">Session 1: build the map and save it</h3>
+            <div class="code">
+              <div class="code-head"><span>Terminal</span><button class="copy" type="button" data-strip-prompt aria-label="Copy the mapping command"></button></div>
+              <pre><code><span class="p">$ </span>python run.py data/posed/office1-1 --mode rgbd_wheel --save-map maps/office/map.pkl</code></pre>
+            </div>
+            <p>A <a href="https://rerun.io" rel="noopener">Rerun</a> window shows the keyframes, the odometry and the current
+              hypotheses as the map grows (on a server, add <code>--no-viz</code>). The map is two things side by side:
+              <code>map.pkl</code> (keyframe poses and edges) and the folder <code>map.pkl.store/</code> (keyframe images and
+              descriptors). Copy or move them together.</p>
+          </li>
+          <li>
+            <h3 id="qs-reloc">Session 2: relocalize in the saved map</h3>
+            <div class="code">
+              <div class="code-head"><span>Terminal</span><button class="copy" type="button" data-strip-prompt aria-label="Copy the relocalization command"></button></div>
+              <pre><code><span class="p">$ </span>python run.py data/posed/office1-2 --mode rgbd_wheel --load-map maps/office/map.pkl \
+    --save-poses office1-2_poses.txt --save-map maps/office/map.pkl</code></pre>
+            </div>
+            <p>The session starts without knowing where it is. Once CROSS has placed it in the map,
+              <code>office1-2_poses.txt</code> gets one line per frame in the map's coordinates, in the
+              <a href="https://cvg.cit.tum.de/data/datasets/rgbd-dataset/file_formats" rel="noopener">TUM format</a>
+              (<code>time x y z qx qy qz qw</code>); frames before the session joined the map are left out. Saving again
+              stores the extended map, now covering both sessions.</p>
+          </li>
+          <li>
+            <h3 id="qs-score">Score it (optional)</h3>
+            <div class="code">
+              <div class="code-head"><span>Terminal</span><button class="copy" type="button" data-strip-prompt aria-label="Copy the scoring command"></button></div>
+              <pre><code><span class="p">$ </span>python scripts/map_and_reloc_rgbd.py --map data/posed/office1-1 \
+    --query data/posed/office1-2 --out outputs/office --mode rgbd_wheel</code></pre>
+            </div>
+            <p>With ground truth for both sessions, this runs both and splits the second into independent 100-frame trials
+              that each start without a pose; a trial succeeds when its final pose is within 2 m of the truth.
+              <code>outputs/office/</code> then holds the map, <code>map_meta.json</code> (the map's ATE) and
+              <code>reloc_summary.json</code> (success rate and errors).</p>
+          </li>
+        </ol>
+
+        <h3 id="run-options">Common options</h3>
+        <div class="table-wrap">
+          <table class="table table-stack">
+            <thead><tr><th scope="col">option</th><th scope="col">what it does</th></tr></thead>
+            <tbody>
+              <tr><td><code>--frames N</code>, <code>--start N</code></td><td>process N frames, starting at frame N</td></tr>
+              <tr><td><code>--no-viz</code></td><td>no viewer window</td></tr>
+              <tr><td><code>--save-map maps/office.pkl</code></td><td>save the map at the end</td></tr>
+              <tr><td><code>--load-map maps/office.pkl</code></td><td>start in a saved map: relocalize in it, then extend it</td></tr>
+              <tr><td><code>--save-poses poses.txt</code></td><td>write the camera pose of every frame</td></tr>
+              <tr><td><code>--config my.yaml</code>, <code>--set key=value</code></td><td>change the configuration (<a href="#configuration">Configuration</a>)</td></tr>
+              <tr><td><code>--fast</code></td><td>smaller images on a weaker GPU (only <code>stereo_basalt</code> and <code>stereo_dpvo</code> have a fast setting)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Outdoors, add the outdoor settings: <code class="wrap">--config configs/overlays/outdoor.yaml</code>.</p>
+
+        <h3 id="reuse-maps">Reusing a map</h3>
+        <ul>
+          <li>Relocalize with the mode family the map was built with. A stereo map also accepts <code>mono_wheel</code>,
+            <code>mono_basalt</code> and <code>mono_imu</code>, with the map's left camera.</li>
+          <li>Another robot, lens or stereo rig can relocalize in a map and extend it, in the stereo and the single-camera
+            VGGT-Omega modes; <code>stereo_imu</code> and <code>mono_imu</code> only with images of the map's size. PnP and
+            the Depth Anything 3 back end refuse another camera, and the single-camera modes' learned scale with another
+            camera is untested.</li>
+          <li>A map built with <code>--fast</code> needs <code>--fast</code>.</li>
+        </ul>
+        <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/GUIDE.md#6-map-once-relocalize-later" rel="noopener">Guide: map once, relocalize later</a>
+          <a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/USAGE.md#4-multi-session-map-one-session-relocalize-in-another" rel="noopener">Reference: multi-session tools</a></p>
+      </section>
+
+      <!-- ---------------------------------------------------------- modes -->
+      <section class="docs-section" aria-labelledby="modes">
+        <h2 id="modes">Sensor modes: RGB-D, stereo or one camera</h2>
+        <p>A mode names your sensors and your source of odometry in one word. Each is one configuration file,
+          <code>configs/modes/&lt;name&gt;.yaml</code>, selected with <code>--mode &lt;name&gt;</code>.</p>
+
+        <div class="picker" id="mode-picker">
+          <p class="picker-title">Find your mode</p>
+          <div class="picker-q">
+            <div class="picker-row">
+              <span class="picker-label" id="pk-cam-label">Camera</span>
+              <div class="seg seg-radio" role="radiogroup" aria-labelledby="pk-cam-label">
+                <label><input type="radio" name="pk-cam" value="stereo" checked><span>Stereo</span></label>
+                <label><input type="radio" name="pk-cam" value="rgbd"><span>RGB-D</span></label>
+                <label><input type="radio" name="pk-cam" value="mono"><span>One camera</span></label>
+              </div>
+            </div>
+            <div class="picker-row">
+              <span class="picker-label" id="pk-odom-label">Motion input</span>
+              <div class="seg seg-radio" role="radiogroup" aria-labelledby="pk-odom-label">
+                <label><input type="radio" name="pk-odom" value="odom" checked><span>Wheel / INS</span></label>
+                <label><input type="radio" name="pk-odom" value="vio"><span>VIO poses</span></label>
+                <label><input type="radio" name="pk-odom" value="imu"><span>IMU</span></label>
+                <label><input type="radio" name="pk-odom" value="none"><span>None</span></label>
+              </div>
+            </div>
+            <div class="picker-row">
+              <span class="picker-label" id="pk-env-label">Scene</span>
+              <div class="seg seg-radio" role="radiogroup" aria-labelledby="pk-env-label">
+                <label><input type="radio" name="pk-env" value="indoor" checked><span>Indoors</span></label>
+                <label><input type="radio" name="pk-env" value="outdoor"><span>Outdoors</span></label>
+              </div>
+            </div>
+          </div>
+          <p class="sr-only" id="pk-status" aria-live="polite"></p>
+          <div class="picker-out">
+            <p class="picker-kicker">Recommended</p>
+            <p class="picker-mode"><code id="pk-mode">stereo_wheel</code><span class="badge" id="pk-install">bash install.sh --stereo</span></p>
+            <p class="picker-desc" id="pk-desc">Stereo pair + external odometry. VGGT-Omega measures the pose against the retrieved keyframes and the stereo baseline gives the metric scale.</p>
+            <p class="picker-bench" id="pk-bench" hidden></p>
+            <div class="code">
+              <div class="code-head"><span>Run</span><button class="copy" type="button" data-strip-prompt aria-label="Copy the run command"></button></div>
+              <pre><code class="term-lines" id="pk-cmd"><span class="ln"><span class="p">$ </span>python run.py my_sequence --mode stereo_wheel</span></code></pre>
+            </div>
+            <ul class="picker-notes" id="pk-notes">
+              <li>Also possible: <code>stereo_dpvo</code>, which needs no odometry.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3 id="all-modes">All 14 modes</h3>
+        <div class="modes-scroll">
+          <div class="table-wrap modes-wrap">
+            <table class="table modes-table">
+              <caption class="sr-only">The fourteen modes: sensors by source of odometry, with the install option each needs</caption>
+              <thead>
+                <tr>
+                  <th scope="col">sensors</th>
+                  <th scope="col">external odometry<span>wheel, INS, VIO poses</span></th>
+                  <th scope="col">Basalt VIO file<span>odom_vio.txt</span></th>
+                  <th scope="col">CROSS's IMU fusion<span>imu.txt</span></th>
+                  <th scope="col">no odometry input<span>camera only</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Stereo</th>
+                  <td><span class="mode-chip" data-mode="stereo_wheel"><code>stereo_wheel</code><small>--stereo</small></span></td>
+                  <td><span class="mode-chip" data-mode="stereo_basalt"><code>stereo_basalt</code><small>--stereo</small></span></td>
+                  <td><span class="mode-chip" data-mode="stereo_imu"><code>stereo_imu</code><small>--stereo</small></span></td>
+                  <td><span class="mode-chip" data-mode="stereo_dpvo"><code>stereo_dpvo</code><small>--mono</small></span></td>
+                </tr>
+                <tr>
+                  <th scope="row">RGB-D<span>PnP on the depth</span></th>
+                  <td><span class="mode-chip" data-mode="rgbd_wheel"><code>rgbd_wheel</code><small>base</small></span></td>
+                  <td><span class="mode-chip" data-mode="rgbd_basalt"><code>rgbd_basalt</code><small>base</small></span></td>
+                  <td class="na"><span aria-hidden="true">–</span><span class="sr-only">no mode</span></td>
+                  <td><span class="mode-chip" data-mode="rgbd_dpvo"><code>rgbd_dpvo</code><small>--mono</small></span></td>
+                </tr>
+                <tr>
+                  <th scope="row">RGB-D<span>VGGT-Omega, scaled by the depth</span></th>
+                  <td><span class="mode-chip" data-mode="rgbd_ff_wheel"><code>rgbd_ff_wheel</code><small>--stereo</small></span></td>
+                  <td><span class="mode-chip" data-mode="rgbd_ff_basalt"><code>rgbd_ff_basalt</code><small>--stereo</small></span></td>
+                  <td class="na"><span aria-hidden="true">–</span><span class="sr-only">no mode</span></td>
+                  <td class="na"><span aria-hidden="true">–</span><span class="sr-only">no mode</span></td>
+                </tr>
+                <tr>
+                  <th scope="row">One camera</th>
+                  <td><span class="mode-chip" data-mode="mono_wheel"><code>mono_wheel</code><small>--stereo</small></span></td>
+                  <td><span class="mode-chip" data-mode="mono_basalt"><code>mono_basalt</code><small>--stereo</small></span></td>
+                  <td><span class="mode-chip" data-mode="mono_imu"><code>mono_imu</code><small>--mono</small></span><span class="mode-chip" data-mode="mono_vio"><code>mono_vio</code><small>--mono</small></span></td>
+                  <td><span class="mode-chip" data-mode="mono_dpvo"><code>mono_dpvo</code><small>--mono</small></span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p class="table-note">Under each mode: the install option it needs (<em>base</em>: <code>bash install.sh</code>
+          alone). The Basalt modes read <code>odom_vio.txt</code>, the poses of Basalt's stereo-inertial VIO, which needs a
+          stereo pair and an IMU; <code class="wrap">benchmark/datasets/prepare_vio.py</code> writes it for the benchmark
+          datasets.</p>
+
+        <h3 id="mode-names">How to read the names</h3>
+        <dl class="spec">
+          <dt><code>stereo_</code> <code>rgbd_</code> <code>mono_</code></dt>
+          <dd>The cameras. Stereo and single-camera modes measure poses with one forward pass of
+            <a href="https://huggingface.co/facebook/VGGT-Omega" rel="noopener">VGGT-Omega</a> over the current image and the
+            retrieved keyframes (fine-tuned for CROSS), except <code>mono_dpvo</code>, which uses the Depth Anything 3 back
+            end. <code>rgbd_</code> modes match XFeat + LightGlue features and solve PnP on the depth; <code>rgbd_ff_</code>
+            runs VGGT-Omega on the color image, scaled by the depth.</dd>
+          <dt><code>_wheel</code></dt>
+          <dd>Odometry from the dataset (<code>odom_left.txt</code>): wheel encoders, an INS or a phone's ARKit, despite the
+            name.</dd>
+          <dt><code>_basalt</code></dt>
+          <dd>Odometry from a file written by Basalt's stereo-inertial VIO (<code>odom_vio.txt</code>).</dd>
+          <dt><code>_imu</code></dt>
+          <dd>CROSS fuses the IMU with its own model passes; no separate odometry needed.</dd>
+          <dt><code>_vio</code> <code>_dpvo</code></dt>
+          <dd>CROSS runs DPVO visual odometry itself (<code>_vio</code>: scaled by the IMU).</dd>
+        </dl>
+        <div class="note"><strong>Which to try first.</strong> A stereo camera with any odometry: <code>stereo_wheel</code>,
+          with <span data-num="t3.cross.overall">93%</span> relocalization success in the benchmark. An RGB-D camera with
+          wheel odometry: <code>rgbd_wheel</code> needs no large model and no non-commercial weights; the VGGT-Omega modes
+          cope better with large changes in lighting and viewpoint. On an RTX 4000 Ada, relocalization runs at about 39
+          frames per second in <code>rgbd_wheel</code>, 10.6 in <code>stereo_basalt</code> (20.7 with
+          <code>--fast</code>).</div>
+
+        <figure class="docs-figure">
+          <div class="docs-media">
+            <video data-inview muted loop playsinline preload="none" width="960" height="540" poster="../assets/video/loop-setups.jpg">
+              <source src="../assets/video/loop-setups.mp4" type="video/mp4">
+            </video>
+          </div>
+          <figcaption>One KITTI drive mapped in eleven of the modes: stereo, RGB-D and one camera, each with car odometry, a
+            Basalt VIO, an IMU or visual odometry.</figcaption>
+        </figure>
+        <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/GUIDE.md#3-choose-a-mode" rel="noopener">Guide: choose a mode</a>
+          <a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/USAGE.md#1-modes" rel="noopener">Reference: modes</a></p>
+      </section>
+
+      <!-- ---------------------------------------------------------- your data -->
+      <section class="docs-section" aria-labelledby="your-data">
+        <h2 id="your-data">Use your own data</h2>
+        <p><code>run.py</code> reads posed RGB-D folders, stereo folders, KITTI raw, TartanAir V2, Virtual KITTI 2,
+          OpenLORIS and Record3D (<code>.r3d</code>) files, and detects the format from the folder. For your own
+          recordings, write one of two plain folder layouts:</p>
+
+        <div class="tabs" data-tabs>
+          <div class="seg" role="tablist" aria-label="Folder layout">
+            <button type="button" role="tab" id="tab-rgb" aria-controls="panel-rgb" aria-selected="true">RGB-D or one camera</button>
+            <button type="button" role="tab" id="tab-stereo" aria-controls="panel-stereo" aria-selected="false" tabindex="-1">Stereo</button>
+          </div>
+          <div class="code tree" role="tabpanel" id="panel-rgb" aria-labelledby="tab-rgb">
+            <div class="code-head"><span>RGB-D or one camera</span></div>
+            <pre><code>my_sequence/
+├── calib.json       <span class="c">intrinsics K, image size, fps</span>
+├── rgb/             <span class="c">000000.png, 000001.png, … (or .jpg; read in name order)</span>
+├── depth/           <span class="c">optional: one depth image per frame</span>
+├── poses_left.txt   <span class="c">one camera pose per image</span>
+└── odom_left.txt    <span class="c">optional: the robot's odometry, same format</span></code></pre>
+          </div>
+          <div class="code tree" role="tabpanel" id="panel-stereo" aria-labelledby="tab-stereo">
+            <div class="code-head"><span>Stereo</span></div>
+            <pre><code>my_sequence/
+├── calib.json       <span class="c">as above, plus T_right_in_left</span>
+├── left/  right/    <span class="c">one image pair per frame, same names</span>
+├── depth/           <span class="c">optional</span>
+├── poses_left.txt   <span class="c">poses of the left camera</span>
+└── odom_left.txt    <span class="c">optional</span></code></pre>
+          </div>
+        </div>
+
+        <h3 id="file-formats">File formats</h3>
+        <dl class="spec">
+          <dt><code>calib.json</code></dt>
+          <dd><code class="wrap">{"K": [[fx, 0, cx], [0, fy, cy], [0, 0, 1]], "width": 640, "height": 480, "fps": 10}</code>;
+            stereo adds <code>"T_right_in_left"</code>, the 4×4 pose of the right camera in the left camera's frame.</dd>
+          <dt>images</dt>
+          <dd>Undistorted (pinhole). Both stereo cameras share <code>K</code>; <code>stereo_dpvo</code> and
+            <code>stereo_imu</code> need rectified pairs.</dd>
+          <dt><code>depth/</code></dt>
+          <dd>16-bit PNG in millimeters or <code>.npy</code> in meters.</dd>
+          <dt><code>poses_left.txt</code></dt>
+          <dd>Camera-to-world poses, one 4×4 matrix per line as 16 numbers (row by row), OpenCV axes: x right, y down,
+            z forward. This is the ground truth, used only to evaluate; without ground truth, write your odometry poses here
+            too.</dd>
+          <dt><code>odom_left.txt</code></dt>
+          <dd>Same format; CROSS uses the steps between consecutive poses. Without it, the odometry is simulated from
+            <code>poses_left.txt</code> (noise-free, or noisy with <code>--snr</code>). <code>--odom-file NAME</code> reads
+            another file of the folder.</dd>
+          <dt><code>imu.txt</code> <code>imu.json</code></dt>
+          <dd>For <code>*_imu</code> and <code>mono_vio</code>: <code>t wx wy wz ax ay az</code> (rad/s, m/s²), and the
+            IMU's pose in the camera frame with its noise.</dd>
+          <dt><code>gnss.txt</code></dt>
+          <dd>Optional GNSS fixes, to place the map on the Earth (<a href="#large-maps">Large maps</a>).</dd>
+        </dl>
+        <p>Converters for public datasets are in <code>scripts/datasets/</code> (OpenLORIS, TUM RGB-D) and
+          <code>benchmark/datasets/</code> (KITTI, ROVER, OpenLORIS stereo, NCLT). Two phones on a bar make a stereo rig too:
+          <code>scripts/rig/</code> calibrates it from the phones' own recordings. To run on a live robot, feed frames
+          through the <a href="#python">Python API</a>.</p>
+        <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/GUIDE.md#7-using-your-own-data" rel="noopener">Guide: using your own data</a></p>
+      </section>
+
+      <!-- ---------------------------------------------------------- configuration -->
+      <section class="docs-section" aria-labelledby="configuration">
+        <h2 id="configuration">Configuration</h2>
+        <p>A run's settings come from four layers, each overriding the one before:</p>
+        <ol class="layers">
+          <li><strong>Mode file</strong><span><code>configs/modes/&lt;mode&gt;.yaml</code>, with shared pieces from <code>configs/base/</code></span></li>
+          <li><strong>Fast overlay</strong><span>with <code>--fast</code>: <code>configs/overlays/fast/&lt;mode&gt;.yaml</code></span></li>
+          <li><strong>Your files</strong><span><code>--config a.yaml b.yaml</code>, left to right</span></li>
+          <li><strong>Single values</strong><span><code>--set section.key=value</code></span></li>
+        </ol>
+        <div class="code">
+          <div class="code-head"><span>Terminal</span><button class="copy" type="button" data-strip-prompt aria-label="Copy the configuration example"></button></div>
+          <pre><code><span class="p">$ </span>python run.py my_sequence --mode stereo_wheel \
+    --config configs/overlays/outdoor.yaml my_robot.yaml \
+    --set mapping.loop_closure.confidence=0.9995</code></pre>
+        </div>
+        <p>Your own file (<code>my_robot.yaml</code> here) holds only the keys it changes, nested as in the mode files. A key
+          CROSS does not know is reported with a warning and ignored (<code>--set</code> stops with an error); check the
+          spelling against <code>cross/core/config.py</code>.</p>
+
+        <h3 id="overlays">Shipped overlays</h3>
+        <div class="table-wrap">
+          <table class="table table-stack">
+            <thead><tr><th scope="col">overlay in configs/overlays/</th><th scope="col">use it for</th></tr></thead>
+            <tbody>
+              <tr><td><code>outdoor.yaml</code></td><td>outdoor scenes (larger distances)</td></tr>
+              <tr><td><code>odometry_vio.yaml</code></td><td>external odometry from a low-drift visual-inertial odometry (a phone's ARKit / ARCore, a Basalt-class VIO on the robot) in a <code>*_wheel</code> mode</td></tr>
+              <tr><td><code>strict_merge.yaml</code></td><td>large or repetitive buildings, where a wrong relocalization costs more than a late one</td></tr>
+              <tr><td><code>stereo_lowband.yaml</code></td><td>remote sessions over a thin link: the left image only, at half the rate</td></tr>
+              <tr><td><code>geo_anchor.yaml</code></td><td>with GNSS: place the map on the Earth without moving it</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>Camera mounting.</strong> The default assumes a forward-looking camera on a ground robot. For a tilted
+          camera set <code class="wrap">mapping.projection.estimate_vertical=true</code>; for a down-looking one
+          <code>mapping.projection.vertical=z</code>.</p>
+        <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/GUIDE.md#8-changing-the-configuration" rel="noopener">Guide: changing the configuration</a>
+          <a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/USAGE.md#3-configuration" rel="noopener">Reference: configuration</a></p>
+      </section>
+
+      <!-- ---------------------------------------------------------- python -->
+      <section class="docs-section" aria-labelledby="python">
+        <h2 id="python">Python API</h2>
+        <p>Run CROSS inside your own program: build a session for a mode, optionally load a map, feed frames, and read the
+          pose in the map.</p>
+        <div class="code">
+          <div class="code-head"><span>Python</span><button class="copy" type="button" aria-label="Copy the Python example"></button></div>
+          <pre><code><span class="k">import</span> numpy <span class="k">as</span> np
+<span class="k">from</span> cross.core.config <span class="k">import</span> load_config
+<span class="k">from</span> cross.dataloader.auto <span class="k">import</span> load_dataset
+<span class="k">from</span> cross.pipeline <span class="k">import</span> mode_config_files, build_session
+<span class="k">from</span> cross.core.types <span class="k">import</span> Camera
+<span class="k">from</span> cross.utils.lie_tensor <span class="k">import</span> normalize_SE3
+
+dataset = load_dataset(<span class="s">"data/posed/office1-2"</span>)
+camera = Camera(K=dataset.rgb_K, frame_width=dataset.rgb_width, frame_height=dataset.rgb_height)
+config = load_config(*mode_config_files(<span class="s">"rgbd"</span>, <span class="s">"external"</span>))  <span class="c"># = configs/modes/rgbd_wheel.yaml</span>
+session = build_session(<span class="s">"rgbd"</span>, <span class="s">"external"</span>, camera, config)
+session.load_map(<span class="s">"maps/office/map.pkl"</span>)  <span class="c"># optional: relocalize in a saved map</span>
+
+to_matrix = <span class="k">lambda</span> pose: normalize_SE3(pose).matrix().detach().cpu().numpy()
+<span class="c"># frame: dict with rgb, depth, delta_pose (odometry), timestamp, ...</span>
+<span class="k">for</span> i, frame <span class="k">in</span> enumerate(dataset.replay_data()):
+    <span class="k">if</span> i == 0:
+        frame[<span class="s">"delta_pose"</span>] = None  <span class="c"># the first frame has no motion</span>
+    session.process(frame)
+    <span class="k">if</span> session.localized():
+        pose, _, _ = session.belief(to_matrix)  <span class="c"># 4x4 camera pose in the map</span>
+session.save_map(<span class="s">"maps/office/map.pkl"</span>)
+session.release()</code></pre>
+        </div>
+        <p>On a robot, replace the dataset with a loop over your own frames. CROSS is a plain Python library (there is no ROS
+          node): each frame is a dictionary with:</p>
+        <dl class="spec">
+          <dt><code>rgb</code></dt><dd>the color image, H × W × 3, uint8</dd>
+          <dt><code>depth</code> or <code>rgb_right</code></dt><dd>as the mode needs: depth in meters, or the right image of
+            the stereo pair</dd>
+          <dt><code>delta_pose</code></dt><dd>the odometry step: the camera's 4×4 motion since the previous frame</dd>
+          <dt><code>timestamp</code></dt><dd>seconds</dd>
+        </dl>
+        <p>The stereo modes also need the rig: <code class="wrap">build_session(..., T_right_in_left=...)</code>. The modes with a
+          monocular frontend need its configuration: <code class="wrap">cross.pipeline.session_factory(args, camera, config)</code>
+          returns a function that builds sessions of any mode from the runners' parsed arguments
+          (<code>add_session_args</code> / <code>finish_session_args</code>); call it to get a session, as
+          <code>run.py</code> does.</p>
+        <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/GUIDE.md#10-using-cross-from-python" rel="noopener">Guide: using CROSS from Python</a>
+          <a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/USAGE.md#10-programmatic-use" rel="noopener">Reference: programmatic use</a></p>
+      </section>
+
+      <!-- ---------------------------------------------------------- more capabilities -->
+      <section class="docs-section" aria-labelledby="extensions">
+        <h2 id="extensions">More capabilities</h2>
+        <p>Remote sessions and large maps are part of CROSS. Two optional packages build on a saved map:
+          <code>cross_world</code> reconstructs it as 3D Gaussians, and <code>cross_nav</code> adds navigation on the same
+          VGGT-Omega backbone.</p>
+        <div class="caps">
+          <article class="card cap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/><path d="M8 7h.01M8 17h.01"/></svg>
+            <h3 id="remote">Remote sessions on a GPU server</h3>
+            <p>The model and the map run on a GPU server. The robot runs only its odometry and <code>cross-edge</code>, a
+              small package without PyTorch that sends images when the server will use them; network delays hold back only
+              the map corrections.</p>
+            <p class="cap-note">The live VIO is tested on x86-64 only (not on aarch64 boards such as a Jetson), the edge
+              replays recorded stereo folders in real time (a live camera driver is not included), and the link is not
+              encrypted: use a network you trust.</p>
+            <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/edge/README.md" rel="noopener">cross-edge README</a></p>
+          </article>
+          <article class="card cap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+            <h3 id="large-maps">Large maps and GNSS anchoring</h3>
+            <p>Maps stay on disk and load keyframe images when they are used, and long pose-graph optimizations run in the
+              background. Optional GNSS fixes anchor a map to latitude and longitude; a later session's fix and compass
+              then narrow the search.</p>
+            <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/USAGE.md#4-multi-session-map-one-session-relocalize-in-another" rel="noopener">Reference: map files, GNSS and compass</a></p>
+          </article>
+          <article class="card cap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg>
+            <h3 id="cross-world">3D world: Gaussian splatting</h3>
+            <p><code>cross_world</code> trains 3D Gaussians (gsplat) on a saved map's posed keyframes, with the sensor's
+              depth or stereo matching, and exports them to a web viewer; after a loop closure it moves them with the map
+              without retraining. Monocular maps have no depth source yet.</p>
+            <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/docs/WORLD.md" rel="noopener">CROSS World guide</a></p>
+          </article>
+          <article class="card cap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 21 3l-8 18-2-8z"/></svg>
+            <h3 id="cross-nav">Navigation: BEV occupancy</h3>
+            <p><code>cross_nav</code> adds a head to the VGGT-Omega pass that predicts a bird's-eye-view occupancy grid
+              around the camera, with BEV planners, a trajectory policy and a robot agent on top. Install it with
+              <code>bash install.sh --nav</code>.</p>
+            <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/cross_nav/README.md" rel="noopener">CROSS Nav README</a></p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------- benchmark -->
+      <section class="docs-section" aria-labelledby="benchmark">
+        <h2 id="benchmark">Run the benchmark</h2>
+        <p><code>benchmark/</code> holds a fixed evaluation protocol with three tracks: <strong>T1</strong> mapping accuracy
+          (ATE), <strong>T2</strong> multi-session localization (recall) and <strong>T3</strong> relocalization success, on
+          KITTI, OpenLORIS-Scene, ROVER and SimChange, for CROSS and six baselines: ORB-SLAM3, RTAB-Map, MASt3R-SLAM,
+          VGGT-SLAM 2.0, LingBot-Map and AMB3R-SLAM. The published results come from <span data-num="runs">9,198</span>
+          runs on <span data-num="datasets">4</span> datasets with <span data-num="sessions">120</span> sessions.</p>
+        <figure class="bench-fig">
+          <figcaption><strong>Relocalization success (T3)</strong><span>overall · CROSS with stereo + odometry (<code>stereo_wheel</code>)</span></figcaption>
+          <!-- gen:lb-cmp-t3 -->
+          <ul class="lb-cmp">
+            <li class="is-cross"><span class="lb-cmp-name">CROSS</span><span class="lb-cmp-bar" aria-hidden="true"><i style="--w:93.0%"></i></span><span class="lb-cmp-val">93%</span></li>
+            <li class="is-ub"><span class="lb-cmp-name">LingBot-Map <small>upper bound</small></span><span class="lb-cmp-bar" aria-hidden="true"><i style="--w:59.0%"></i></span><span class="lb-cmp-val">59%</span></li>
+            <li><span class="lb-cmp-name">RTAB-Map <small>same inputs</small></span><span class="lb-cmp-bar" aria-hidden="true"><i style="--w:43.0%"></i></span><span class="lb-cmp-val">43%</span></li>
+          </ul>
+          <!-- /gen:lb-cmp-t3 -->
+        </figure>
+        <p class="table-note">T3: the share of 10 s trials that start with no pose in a map from another session and end
+          within 2 m indoors or 5 m outdoors, averaged over OpenLORIS-Scene, ROVER and SimChange. RTAB-Map had the same
+          inputs as CROSS. LingBot-Map runs on one camera without odometry and has no relocalization step, so its T2 and T3
+          numbers are upper bounds; with the stereo pair alone, CROSS reaches
+          <span data-num="t3.cross_camera.overall">88%</span>. ROVER and SimChange odometry is simulated from ground truth
+          plus noise. <a href="../leaderboard/">All results and caveats</a></p>
+        <div class="code">
+          <div class="code-head"><span>Terminal</span><button class="copy" type="button" data-strip-prompt aria-label="Copy the benchmark commands"></button></div>
+          <pre><code><span class="p">$ </span>export BENCH_DATA=/path/to/benchmark_data BENCH_RESULTS=/path/to/runs
+<span class="c"># once per dataset: download and convert</span>
+<span class="p">$ </span>bash benchmark/datasets/download_openloris.sh /path/to/openloris
+<span class="p">$ </span>python benchmark/datasets/prepare_openloris.py /path/to/openloris $BENCH_DATA/openloris
+<span class="c"># the job list; restrict with --setups rgbd stereo mono, --scenes office home, --tracks t1 t2t3</span>
+<span class="p">$ </span>python benchmark/jobs.py --dataset openloris --systems cross_rgbd cross_stereo orbslam3 \
+    &gt; queue.txt
+<span class="c"># run the jobs (or split the lines over workers / GPUs), then make the tables and the page</span>
+<span class="p">$ </span>while read -r job; do python benchmark/run.py $job; done &lt; queue.txt
+<span class="p">$ </span>python benchmark/collect.py $BENCH_RESULTS &amp;&amp; python benchmark/make_tables.py \
+    &amp;&amp; python benchmark/build_site.py</code></pre>
+        </div>
+        <p>The baselines are built separately (<a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/README.md#baselines" rel="noopener">benchmark/README.md</a>).
+          Outdoor datasets add the outdoor overlay automatically; tuning per dataset is not allowed. To test a change in
+          minutes, the development split runs a small subset with the same protocol.</p>
+        <p class="more"><a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/PROTOCOL.md" rel="noopener">Protocol</a>
+          <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/DEV.md" rel="noopener">Development split</a>
+          <a href="../leaderboard/">Benchmark results</a>
+          <a href="../replays/">Trajectory replays</a></p>
+      </section>
+
+      <!-- ---------------------------------------------------------- troubleshooting -->
+      <section class="docs-section" aria-labelledby="troubleshooting">
+        <h2 id="troubleshooting">Troubleshooting</h2>
+        <div class="table-wrap">
+          <table class="table table-stack table-trouble">
+            <thead><tr><th scope="col">problem</th><th scope="col">what to do</th></tr></thead>
+            <tbody>
+              <tr><td>no window opens / the run fails on a server</td><td>add <code>--no-viz</code></td></tr>
+              <tr><td><code>CUDA out of memory</code></td><td>close other GPU programs; in <code>stereo_basalt</code> and <code>stereo_dpvo</code>, try <code>--fast</code></td></tr>
+              <tr><td>the new session never joins the map</td><td>make sure the session revisits places that are in the map, and that the robot moves: a standing robot does not join (placements are tested at new keyframes). Check the calibration (<code>K</code>, <code>T_right_in_left</code>). A map built with <code>--fast</code> must be used with <code>--fast</code></td></tr>
+              <tr><td><code>No module named 'dpvo'</code></td><td>the mode needs <code>bash install.sh --mono</code></td></tr>
+              <tr><td>the released VGGT-Omega checkpoint does not download</td><td>it is gated: request access at <a href="https://huggingface.co/facebook/VGGT-Omega" rel="noopener">facebook/VGGT-Omega</a> and log in (<code>huggingface-cli login</code>). The default fine-tuned checkpoint is public</td></tr>
+              <tr><td>a setting has no effect</td><td>look for a <code>config: unknown key(s)</code> warning; <code>--set</code> with an unknown key stops with an error</td></tr>
+              <tr><td>CROSS asks <code>[y/N]</code> before it starts</td><td>the configuration has a documented risk; read the warning, or pass <code>--accept-config-risk</code></td></tr>
+              <tr><td>the first run fails without internet</td><td>models download on first use; run once online, then <code>export CROSS_HUB_OFFLINE=1</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Still stuck? <a href="https://github.com/jiaming-ai/CROSS/issues" rel="noopener">Open an issue on GitHub</a>.</p>
+      </section>
+
+      <!-- ---------------------------------------------------------- licenses -->
+      <section class="docs-section" aria-labelledby="licenses">
+        <h2 id="licenses">Licenses</h2>
+        <p>CROSS's code is released under the <a href="https://github.com/jiaming-ai/CROSS/blob/master/LICENSE" rel="noopener">MIT license</a>.
+          Third-party components keep their own licenses:</p>
+        <ul>
+          <li><strong>VGGT-Omega</strong> (<code>third_party/vggt-omega</code>, the released checkpoint, and our fine-tuned
+            checkpoint derived from it): <a href="https://github.com/jiaming-ai/CROSS/blob/master/third_party/vggt-omega/LICENSE" rel="noopener">FAIR Noncommercial Research License</a>.
+            The stereo, <code>rgbd_ff_*</code> and single-camera modes use it, except <code>mono_dpvo</code>, which uses
+            Depth Anything 3 instead.</li>
+          <li><strong>Depth Anything 3</strong>: code Apache-2.0; the DA3-LARGE-1.1 weights that
+            <code>install.sh --mono</code> downloads are CC BY-NC 4.0.</li>
+          <li><strong>DPVO</strong> (built by <code>install.sh --mono</code>): MIT.</li>
+        </ul>
+        <div class="note"><strong>Commercial use.</strong> The RGB-D modes with PnP (<code>rgbd_wheel</code>,
+          <code>rgbd_basalt</code>) use none of the non-commercial models. Check the licenses above before any commercial
+          use of the other modes.</div>
+      </section>
+
+      <!-- ---------------------------------------------------------- citation -->
+      <section class="docs-section" aria-labelledby="citation">
+        <h2 id="citation">Citation</h2>
+        <p>If you use CROSS in your research, please cite the
+          <a href="../v1/">CROSS 1 paper</a> (NeurIPS 2026, <a href="https://arxiv.org/abs/2605.02227" rel="noopener">arXiv 2605.02227</a>):</p>
+        <div class="code">
+          <div class="code-head"><span>BibTeX</span><button class="copy" type="button" aria-label="Copy the BibTeX entry"></button></div>
+          <pre><code>@inproceedings{wang2026cross,
+  title     = {Change-Robust Online Topological Memory for Long-Term
+               Relocalization and Semantic Navigation},
+  author    = {Wang, Jiaming and Chen, Jizhuo and Liu, Diwen and
+               Ghotavadekar, Atharva and Da, Jiaxuan and K{\"a}stner, Linh
+               and Soh, Harold},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2026},
+  eprint    = {2605.02227},
+  archivePrefix = {arXiv}
+}</code></pre>
+        </div>
+        <p class="muted">Papers on CROSS 2, CROSS 3 and CROSS Cloud are coming soon.</p>
+      </section>
+
+    </article>
+  </div>
 </main>
 
 <!-- partial:footer -->
 <footer class="sf">
-  <div class="container sf-grid">
+  <div class="sf-wrap sf-grid">
     <div class="sf-about">
       <a class="sf-brand" href="../">
         <svg class="sh-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M10.5 21.5 21.5 10.5M10.5 10.5l11 11"/></svg>
@@ -109,8 +809,8 @@
       <span class="sf-soon">CROSS Cloud <span class="sf-tag">coming soon</span></span>
     </nav>
   </div>
-  <div class="container sf-bottom">
-    <p>© 2026 The CROSS authors. Benchmark numbers from the published benchmark run (<a href="../benchmark/">full results</a>).</p>
+  <div class="sf-wrap sf-bottom">
+    <p>© 2026 The CROSS authors. Leaderboard and replay numbers come from the published benchmark run (<a href="../benchmark/">full results</a>); paper pages report their paper's results.</p>
     <a href="#top" class="sf-top">Back to top ↑</a>
   </div>
 </footer>

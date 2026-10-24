@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>CROSS social card</title>
+<!-- 1200x630 social preview cards (og:image) of the hub pages; rendered by tools/og/make_og.sh: card.html?page=<name> -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    position: relative; font-family: Inter, system-ui, sans-serif; color: #eef1f6; -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(55% 80% at 82% 10%, rgba(232, 98, 44, .30), transparent 64%),
+      radial-gradient(45% 70% at 0% 100%, rgba(57, 135, 229, .18), transparent 62%),
+      linear-gradient(180deg, #07090e, #0c1018);
+  }
+  body::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image: linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
+    background-size: 44px 44px; -webkit-mask-image: radial-gradient(80% 100% at 70% 0%, #000, transparent 78%);
+  }
+  .card { position: relative; z-index: 1; display: grid; grid-template-columns: 500px 1fr; gap: 44px; height: 100%; padding: 56px 56px 50px; }
+  .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 26px; letter-spacing: -0.03em; }
+  .brand svg { width: 36px; height: 36px; }
+  .left { display: flex; flex-direction: column; }
+  .kicker { margin-top: 46px; font-family: "JetBrains Mono", monospace; font-size: 15px; letter-spacing: .14em; text-transform: uppercase; color: #f59a70; }
+  h1 { margin-top: 14px; font-size: 54px; line-height: 1.03; letter-spacing: -0.04em; font-weight: 800; }
+  h1 em { font-style: normal; background: linear-gradient(100deg, #ffd9c4, #f59a70 45%, #e8622c); -webkit-background-clip: text; color: transparent; }
+  .sub { margin-top: 18px; font-size: 21px; line-height: 1.45; color: rgba(238, 241, 246, .74); }
+  .url { margin-top: auto; font-family: "JetBrains Mono", monospace; font-size: 16px; color: rgba(238, 241, 246, .55); }
+  .right { display: flex; align-items: center; }
+  .frame { width: 100%; border-radius: 16px; overflow: hidden; border: 1px solid rgba(255,255,255,.14); background: #05070b;
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,.7), 0 0 60px -10px rgba(232, 98, 44, .25); }
+  .bar { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; background: #0f131b; border-bottom: 1px solid rgba(255,255,255,.07);
+    font-family: "JetBrains Mono", monospace; font-size: 12px; color: rgba(238,241,246,.55); }
+  .bar i { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.16); }
+  .bar span { margin-left: 8px; }
+  .frame img { display: block; width: 100%; }
+  /* benchmark bars */
+  .rank { padding: 22px 26px 20px; display: grid; gap: 13px; }
+  .row { display: grid; grid-template-columns: 150px 1fr 56px; align-items: center; gap: 14px; font-size: 17px; font-weight: 650; }
+  .row small { display: block; font-size: 12px; font-weight: 500; color: rgba(238,241,246,.5); }
+  .track { height: 12px; border-radius: 0 6px 6px 0; background: rgba(255,255,255,.07); }
+  .track i { display: block; height: 100%; border-radius: 0 6px 6px 0; background: rgba(238,241,246,.34); }
+  .row.cross .track i { background: #f07a45; }
+  .row.ub .track i { background: repeating-linear-gradient(135deg, rgba(238,241,246,.34) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1px rgba(238,241,246,.34); }
+  .val { text-align: right; font-variant-numeric: tabular-nums; }
+  .cap { padding: 0 26px 18px; font-size: 13px; color: rgba(238,241,246,.5); }
+  /* terminal */
+  pre { padding: 22px 24px; font-family: "JetBrains Mono", monospace; font-size: 16.5px; line-height: 1.8; color: #e5e7ee; white-space: pre; }
+  pre .p { color: #f59a70; } pre .c { color: #8b91a3; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="left">
+    <div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#e8622c"/><path d="M10.5 21.5 21.5 10.5M10.5 10.5l11 11" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/></svg>CROSS</div>
+    <p class="kicker" id="kicker"></p>
+    <h1 id="title"></h1>
+    <p class="sub" id="sub"></p>
+    <p class="url" id="url"></p>
+  </div>
+  <div class="right"><div class="frame" id="frame"></div></div>
+</div>
+<script>
+  var page = new URLSearchParams(location.search).get('page') || 'home';
+  var bar = function (label) { return '<div class="bar"><i></i><i></i><i></i><span>' + label + '</span></div>'; };
+  var C = {
+    home: { kicker: 'Open source · NeurIPS 2026', title: 'Visual <span style="white-space:nowrap">multi-session</span> SLAM that <em>survives change</em>',
+      sub: 'Map once. Relocalize and keep tracking at night, across seasons and after the scene changed.', url: 'jiaming.im/CROSS',
+      frame: bar('cross · real runs') + '<img src="../../assets/video/hero-poster.jpg" alt="">' },
+    leaderboard: { kicker: 'Benchmark', title: 'The multi-session SLAM <em>benchmark</em>',
+      sub: 'CROSS and six open-source SLAM systems on the same sessions: mapping, localization in a stored map, relocalization.',
+      url: 'jiaming.im/CROSS/leaderboard', frame: null },
+    replays: { kicker: 'Benchmark replays', title: 'Trajectory <em>replays</em>',
+      sub: 'Watch CROSS and SLAM baselines map a session and localize other sessions in a stored map.',
+      url: 'jiaming.im/CROSS/replays', frame: bar('map error · night with lamps') + '<img src="../../assets/video/loop-tracking.jpg" alt="">' },
+    docs: { kicker: 'Documentation', title: 'Get started with <em>CROSS</em>',
+      sub: 'One install script, fourteen sensor modes, map once and relocalize every later session.',
+      url: 'jiaming.im/CROSS/docs', frame: bar('terminal') + '<pre><span class="c"># install</span>\n<span class="p">$ </span>git clone …/jiaming-ai/CROSS.git\n<span class="p">$ </span>bash install.sh --stereo\n\n<span class="c"># map once, relocalize later</span>\n<span class="p">$ </span>python run.py session1 \\\n    --mode stereo_wheel --save-map map.pkl\n<span class="p">$ </span>python run.py session2 \\\n    --mode stereo_wheel --load-map map.pkl</pre>' },
+  }[page];
+  ['kicker', 'title', 'sub', 'url'].forEach(function (k) { document.getElementById(k).innerHTML = C[k]; });
+  var frame = document.getElementById('frame');
+  if (C.frame) { frame.innerHTML = C.frame; }
+  else {
+    // the leaderboard's default relocalization view: each system's best configuration (same rule as tools/build.py)
+    fetch('../../assets/data/leaderboard.json').then(function (r) { return r.json(); }).then(function (L) {
+      var T = L.tasks.t3, best = {};
+      T.rows.forEach(function (r) {
+        var c = r.cells.overall; if (!c.v) return;
+        var v = c.v[1]; if (!best[r.family] || v > best[r.family].v) best[r.family] = { v: v, r: r };
+      });
+      var rows = Object.keys(best).map(function (f) { return best[f]; }).sort(function (a, b) { return b.v - a.v; });
+      frame.innerHTML = bar('relocalization success · best configuration of each system') + '<div class="rank">' + rows.map(function (b) {
+        var fam = b.r.family, ub = L.systems[b.r.system].upper_bound;
+        return '<div class="row' + (fam === 'cross' ? ' cross' : '') + (ub ? ' ub' : '') + '"><span>' + L.families[fam] +
+          (ub ? '<small>upper bound</small>' : '') + '</span><span class="track"><i style="width:' + (b.v * 100) + '%"></i></span><span class="val">' +
+          Math.round(b.v * 100) + '%</span></div>';
+      }).join('') + '</div><p class="cap">Within 2 m indoors and 5 m outdoors, over OpenLORIS, ROVER and SimChange.</p>';
+      document.body.setAttribute('data-ready', '1');
+    });
+  }
+</script>
+</body>
+</html>

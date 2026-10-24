@@ -3,29 +3,132 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CROSS: Change-Robust Online Topological Memory</title>
-  <meta name="description" content="CROSS lets a robot reuse a single sparse RGB-D memory across lighting, seasonal, crowd, and object changes by validating every visual match as a continuous SE(3) pose hypothesis before it is committed to the map.">
+  <title>CROSS 1 (NeurIPS 2026): Change-Robust Topological Memory</title>
+  <meta name="description" content="Long-term, multi-session visual relocalization in one sparse RGB-D map under lighting, season and object change: CROSS tests each match as an SE(3) pose first.">
+  <link rel="canonical" href="https://jiaming.im/CROSS/v1/">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="CROSS">
   <meta property="og:title" content="CROSS: Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation">
   <meta property="og:description" content="Validate visual matches in continuous pose space before they touch the map.">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="https://jiaming.im/CROSS/">
-  <meta property="og:image" content="https://jiaming.im/CROSS/static/img/og-image.jpg">
+  <meta property="og:url" content="https://jiaming.im/CROSS/v1/">
+  <meta property="og:image" content="https://jiaming.im/CROSS/v1/static/img/og-image.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="CROSS 1 (NeurIPS 2026): a quadruped maps a campus route in the evening and relocalizes in a crowded afternoon">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#0e0e10">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23e8622c'/%3E%3Cpath d='M20 44 L44 20 M20 20 L44 44' stroke='white' stroke-width='7' stroke-linecap='round'/%3E%3C/svg%3E">
+  <meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e0e10" media="(prefers-color-scheme: dark)">
+  <!-- paper metadata for Google Scholar: the title exactly as on arXiv -->
+  <meta name="citation_title" content="Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation">
+  <meta name="citation_author" content="Wang, Jiaming">
+  <meta name="citation_author" content="Chen, Jizhuo">
+  <meta name="citation_author" content="Liu, Diwen">
+  <meta name="citation_author" content="Ghotavadekar, Atharva">
+  <meta name="citation_author" content="Da, Jiaxuan">
+  <meta name="citation_author" content="Kästner, Linh">
+  <meta name="citation_author" content="Soh, Harold">
+  <meta name="citation_publication_date" content="2026">
+  <meta name="citation_conference_title" content="Advances in Neural Information Processing Systems (NeurIPS)">
+  <meta name="citation_pdf_url" content="https://arxiv.org/pdf/2605.02227">
+  <link rel="icon" href="../assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../assets/img/apple-touch-icon.png">
 
+  <!-- apply the saved theme (or ?theme=dark|light) before first paint; above the stylesheets so it never waits for them -->
+  <script>document.documentElement.classList.add('js');try{var t=new URLSearchParams(location.search).get('theme')||localStorage.getItem('cross-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" onload="this.onload=null;this.rel='stylesheet'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"></noscript>
+  <!-- site tokens, header and footer first; this page's own styles after (site.css is not loaded here) -->
+  <link rel="stylesheet" href="../assets/css/chrome.css">
   <link rel="stylesheet" href="static/css/style.css">
-
-  <script>
-    // apply a saved theme before first paint
-    try { var t = localStorage.getItem('cross-theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
+  <!-- KaTeX 0.16.11 (MIT), self-hosted; the math is far below the fold, so its stylesheet does not block rendering -->
+  <link rel="stylesheet" href="static/vendor/katex/katex.min.css" media="print" onload="this.media='all'">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "ScholarlyArticle",
+        "@id": "https://jiaming.im/CROSS/v1/#paper",
+        "headline": "Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation",
+        "name": "Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation",
+        "alternateName": ["CROSS", "CROSS 1"],
+        "description": "CROSS lets a robot reuse a single sparse RGB-D memory across lighting, seasonal, crowd, and object changes by validating every visual match as a continuous SE(3) pose hypothesis before it is committed to the map.",
+        "author": [
+          {"@type": "Person", "name": "Jiaming Wang", "affiliation": {"@type": "CollegeOrUniversity", "name": "National University of Singapore"}},
+          {"@type": "Person", "name": "Jizhuo Chen", "affiliation": {"@type": "CollegeOrUniversity", "name": "National University of Singapore"}},
+          {"@type": "Person", "name": "Diwen Liu", "affiliation": {"@type": "CollegeOrUniversity", "name": "National University of Singapore"}},
+          {"@type": "Person", "name": "Atharva Ghotavadekar", "affiliation": {"@type": "CollegeOrUniversity", "name": "National University of Singapore"}},
+          {"@type": "Person", "name": "Jiaxuan Da", "affiliation": {"@type": "CollegeOrUniversity", "name": "National University of Singapore"}},
+          {"@type": "Person", "name": "Linh Kästner", "affiliation": {"@type": "CollegeOrUniversity", "name": "National University of Singapore"}},
+          {"@type": "Person", "name": "Harold Soh", "affiliation": {"@type": "CollegeOrUniversity", "name": "National University of Singapore"}}
+        ],
+        "datePublished": "2026",
+        "inLanguage": "en",
+        "isPartOf": {"@type": "Periodical", "name": "Advances in Neural Information Processing Systems"},
+        "publication": {"@type": "PublicationEvent", "name": "NeurIPS 2026"},
+        "sameAs": "https://arxiv.org/abs/2605.02227",
+        "url": "https://jiaming.im/CROSS/v1/",
+        "mainEntityOfPage": "https://jiaming.im/CROSS/v1/",
+        "image": "https://jiaming.im/CROSS/v1/static/img/og-image.jpg",
+        "keywords": ["relocalization", "multi-session relocalization", "multi-session mapping", "visual SLAM", "topological map", "long-term navigation", "visual place recognition", "semantic navigation"]
+      },
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          {"@type": "ListItem", "position": 1, "name": "CROSS", "item": "https://jiaming.im/CROSS/"},
+          {"@type": "ListItem", "position": 2, "name": "CROSS 1", "item": "https://jiaming.im/CROSS/v1/"}
+        ]
+      }
+    ]
+  }
   </script>
 </head>
-<body>
+<body class="v1 night-top">
+<!-- partial:header -->
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="sh" id="site-header">
+  <div class="sh-inner">
+    <a class="sh-brand" href="../" data-key="home" aria-label="CROSS home">
+      <svg class="sh-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M10.5 21.5 21.5 10.5M10.5 10.5l11 11"/></svg>
+      <span>CROSS</span>
+    </a>
+    <nav class="sh-nav" aria-label="Main">
+      <a href="../leaderboard/" data-key="leaderboard">Benchmark</a>
+      <a href="../benchmark/" data-key="full-results">Full results</a>
+      <a href="../replays/" data-key="replays">Replays</a>
+      <a href="../docs/" data-key="docs">Docs</a>
+      <a href="../#research" data-key="papers" aria-current="true">Papers</a>
+    </nav>
+    <div class="sh-actions">
+      <a class="sh-gh" href="https://github.com/jiaming-ai/CROSS" rel="noopener">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.73-1.54-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+        <span>GitHub</span>
+      </a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch between light and dark theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+      </button>
+      <button class="sh-menu" type="button" aria-expanded="false" aria-controls="sh-drawer" aria-label="Open menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="i-open" d="M4 7h16M4 12h16M4 17h16"/><path class="i-close" d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+  </div>
+  <nav class="sh-drawer" id="sh-drawer" aria-label="Main (mobile)" hidden>
+    <a href="../" data-key="home">Home</a>
+    <a href="../leaderboard/" data-key="leaderboard">Benchmark</a>
+    <a href="../benchmark/" data-key="full-results">Full results</a>
+    <a href="../replays/" data-key="replays">Trajectory replays</a>
+    <a href="../docs/" data-key="docs">Documentation</a>
+    <a href="../#research" data-key="papers" aria-current="true">Papers</a>
+    <a href="https://github.com/jiaming-ai/CROSS" rel="noopener">GitHub</a>
+  </nav>
+</header>
+<!-- /partial:header -->
+
+<main id="main">
 
 <!-- ============================== HERO ============================== -->
 <header class="hero" id="top">
@@ -34,7 +137,7 @@
   </video>
   <div class="hero-shade"></div>
   <div class="hero-inner">
-    <p class="hero-eyebrow">NeurIPS 2026</p>
+    <p class="hero-eyebrow">CROSS 1 · NeurIPS 2026</p>
     <h1 class="hero-title">
       <span class="wordmark">CROSS</span>
       <span class="hero-sub">Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation</span>
@@ -54,17 +157,22 @@
       <a class="pill" href="https://arxiv.org/abs/2605.02227" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M9 5h10v10" /></svg>arXiv</a>
       <a class="pill" href="#video"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>Video</a>
       <a class="pill" href="https://github.com/jiaming-ai/CROSS" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18-6-6 6-6M15 6l6 6-6 6" /></svg>Code</a>
-      <a class="pill" href="benchmark/" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></svg>Benchmark</a>
+      <a class="pill" href="../leaderboard/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></svg>Benchmark</a>
       <a class="pill" href="#citation"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h4v4H8v6H4v-6zM16 7h4v4h-3v6h-4v-6z" /></svg>BibTeX</a>
     </nav>
+    <p class="hero-more"><a href="../">Part of the CROSS project: open-source software, benchmark and follow-up work<span aria-hidden="true"> →</span></a></p>
   </div>
   <a class="scroll-cue" href="#overview" aria-label="Scroll to overview"><span></span></a>
+  <button class="hero-pause" id="heroPause" type="button" aria-label="Pause background video">
+    <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5h3v14H8zM13 5h3v14h-3z"/></svg>
+    <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+  </button>
 </header>
 
-<!-- ============================== NAV ============================== -->
+<!-- ============================== SECTION NAV (sticks below the site header) ============================== -->
 <nav class="topnav" id="topnav" aria-label="Sections">
   <div class="topnav-inner">
-    <a class="brand" href="#top"><span class="brand-mark"></span>CROSS</a>
+    <a class="brand" href="#top">CROSS 1</a>
     <div class="topnav-links">
       <a href="#overview">Overview</a>
       <a href="#video">Video</a>
@@ -74,18 +182,13 @@
       <a href="#robustness">Robustness</a>
       <a href="#citation">Cite</a>
     </div>
-    <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle dark mode">
-      <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-      <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
-    </button>
   </div>
 </nav>
 
-<main>
-
 <!-- ============================== OVERVIEW ============================== -->
-<section class="section" id="overview">
+<section class="section" id="overview" aria-labelledby="overview-h">
   <div class="wrap">
+    <h2 class="sr-only" id="overview-h">Overview</h2>
     <p class="eyebrow">TL;DR</p>
     <p class="lead">
       A robot's memory is only as good as its ability to find itself in it again. CROSS stores a sparse graph of raw RGB-D keyframes and
@@ -111,10 +214,11 @@
       </div>
       <div class="stat" role="listitem">
         <div class="stat-value">28<span> ms</span></div>
-        <div class="stat-label">Per RGB-D frame on one RTX 4000: retrieval, relative pose and filtering</div>
+        <div class="stat-label">Per RGB-D frame on one RTX 4000 Ada: retrieval, relative pose and filtering</div>
         <div class="stat-cmp">faster than 30 Hz</div>
       </div>
     </div>
+    <p class="stats-note">Numbers on this page are from the paper (CROSS 1, <span class="nowrap">RGB-D</span>). The current release adds stereo and monocular modes and is tested in the <a href="../leaderboard/">CROSS benchmark</a> with its own protocol (10 s relocalization trials at 10 Hz on OpenLORIS, ROVER and SimChange, instead of the paper's 200-frame trials at 30 Hz), so the two sets of numbers are not directly comparable.</p>
 
     <figure class="figure spot-figure" id="teaser">
       <div class="spot-stage">
@@ -124,14 +228,14 @@
       <figcaption>
         <p><strong>CROSS in the wild.</strong> A quadruped maps a ≈170 m route through walkways and a canteen in the evening, then comes back in the afternoon when the area is crowded and lit differently, and navigates to a goal given in language. Hover or tap a label to see where it happens.</p>
         <ul class="spot-keys">
-          <li><button type="button" data-spot="0.035,0.54,0.155,0.44">A</button> Language goal “security post” is found and reached</li>
-          <li><button type="button" data-spot="0.25,0.54,0.148,0.44">B</button> Same place: empty while mapping, crowded while relocalizing</li>
-          <li><button type="button" data-spot="0.83,0,0.167,0.49">C</button> Evening mapping vs afternoon relocalization</li>
-          <li><button type="button" data-spot="0.386,0,0.293,0.22">D</button> The camera disconnects mid-map and reconnects later</li>
-          <li><button type="button" data-spot="0.138,0,0.16,0.235">E</button> Navigating among moving pedestrians</li>
-          <li><button type="button" data-spot="0.526,0.805,0.155,0.195">F1</button> A persistent branch is promoted to a loop closure</li>
-          <li><button type="button" data-spot="0.722,0.805,0.155,0.195">F2</button> A spurious branch is rejected as the robot moves</li>
-          <li><button type="button" data-spot="0.626,0.4,0.118,0.2">G</button> The robot: Unitree Go2 with a RealSense D435i</li>
+          <li><button type="button" aria-pressed="false" aria-describedby="spot-a" data-spot="0.035,0.54,0.155,0.44">A</button> <span id="spot-a">Language goal “security post” is found and reached</span></li>
+          <li><button type="button" aria-pressed="false" aria-describedby="spot-b" data-spot="0.25,0.54,0.148,0.44">B</button> <span id="spot-b">Same place: empty while mapping, crowded while relocalizing</span></li>
+          <li><button type="button" aria-pressed="false" aria-describedby="spot-c" data-spot="0.83,0,0.167,0.49">C</button> <span id="spot-c">Evening mapping vs afternoon relocalization</span></li>
+          <li><button type="button" aria-pressed="false" aria-describedby="spot-d" data-spot="0.386,0,0.293,0.22">D</button> <span id="spot-d">The camera disconnects mid-map and reconnects later</span></li>
+          <li><button type="button" aria-pressed="false" aria-describedby="spot-e" data-spot="0.138,0,0.16,0.235">E</button> <span id="spot-e">Navigating among moving pedestrians</span></li>
+          <li><button type="button" aria-pressed="false" aria-describedby="spot-f1" data-spot="0.526,0.805,0.155,0.195">F1</button> <span id="spot-f1">A persistent branch is promoted to a loop closure</span></li>
+          <li><button type="button" aria-pressed="false" aria-describedby="spot-f2" data-spot="0.722,0.805,0.155,0.195">F2</button> <span id="spot-f2">A spurious branch is rejected as the robot moves</span></li>
+          <li><button type="button" aria-pressed="false" aria-describedby="spot-g" data-spot="0.626,0.4,0.118,0.2">G</button> <span id="spot-g">The robot: Unitree Go2 with a RealSense D435i</span></li>
         </ul>
       </figcaption>
     </figure>
@@ -139,12 +243,12 @@
 </section>
 
 <!-- ============================== VIDEO ============================== -->
-<section class="section section-dark" id="video">
-  <div class="wrap wrap-wide">
+<section class="section section-dark" id="video" aria-labelledby="video-h">
+  <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Video</p>
-      <h2>Five minutes on a real robot</h2>
-      <p class="section-intro">Two deployments, an evening map reused in a crowded afternoon and an office map reused after the lights and furniture changed, followed by stress tests with camera occlusion, motion blur and corrupted odometry.</p>
+      <h2 id="video-h">Five minutes of real-world runs</h2>
+      <p class="section-intro">Two robot deployments, an evening map reused in a crowded afternoon and an office map reused after the lights and furniture changed, followed by handheld stress tests with camera occlusion, motion blur and corrupted odometry.</p>
     </div>
     <div class="player">
       <div class="player-frame">
@@ -168,9 +272,9 @@
 </section>
 
 <!-- ============================== ABSTRACT ============================== -->
-<section class="section" id="abstract">
+<section class="section" id="abstract" aria-labelledby="abstract-h">
   <div class="wrap wrap-narrow">
-    <p class="eyebrow">Abstract</p>
+    <h2 class="eyebrow" id="abstract-h">Abstract</h2>
     <p class="abstract">
       Long-term semantic navigation requires a robot to reuse past observations after appearance and scene change, but semantic memories are only useful if the robot can relocalize into the memory without corrupting it with false visual matches.
       We propose CROSS, a change-robust topological memory that introduces a <em>pre-commitment</em> localization layer between visual place recognition and map update.
@@ -183,11 +287,11 @@
 </section>
 
 <!-- ============================== IDEA ============================== -->
-<section class="section section-tint" id="idea">
+<section class="section section-tint" id="idea" aria-labelledby="idea-h">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">The idea</p>
-      <h2>When should a robot trust a visual match?</h2>
+      <h2 id="idea-h">When should a robot trust a visual match?</h2>
       <p class="section-intro">
         Place recognition proposes where the robot might be. Under changed lighting and repetitive structure, the top match is often a look-alike, and a false loop closure quietly corrupts the memory.
         Topological filters wait before committing, but over discrete place IDs that throw away the geometry needed to check a match against odometry. Robust pose-graph back-ends keep the geometry, but only judge a match after it has entered the graph.
@@ -195,26 +299,31 @@
       </p>
     </div>
 
-    <div class="quad" role="table" aria-label="Where existing methods resolve ambiguous matches">
-      <div class="quad-corner" role="columnheader"></div>
-      <div class="quad-colhead" role="columnheader">Match enters the map first,<br>is judged later</div>
-      <div class="quad-colhead" role="columnheader">Match is judged<br>before it enters the map</div>
-      <div class="quad-rowhead" role="rowheader">Belief over<br><strong>discrete place IDs</strong></div>
-      <div class="quad-cell" role="cell">
-        <h4>Single-frame retrieval</h4>
+    <!-- where existing methods resolve ambiguous matches: the axis labels are visual; each cell names both of its axes in .quad-tag -->
+    <div class="quad">
+      <div class="quad-corner" aria-hidden="true"></div>
+      <p class="quad-colhead" aria-hidden="true">Match enters the map first,<br>is judged later</p>
+      <p class="quad-colhead" aria-hidden="true">Match is judged<br>before it enters the map</p>
+      <p class="quad-rowhead" aria-hidden="true">Belief over<br><strong>discrete place IDs</strong></p>
+      <div class="quad-cell">
+        <h3>Single-frame retrieval</h3>
+        <p class="quad-tag"><span class="sr-only">Belief over discrete place IDs; </span>enters the map first, judged later</p>
         <p>Take the best-scoring keyframe and commit. Fast, but every look-alike becomes a false loop closure.</p>
       </div>
-      <div class="quad-cell" role="cell">
-        <h4>Topological &amp; sequence filters</h4>
+      <div class="quad-cell">
+        <h3>Topological &amp; sequence filters</h3>
+        <p class="quad-tag"><span class="sr-only">Belief over discrete place IDs; </span>judged before it enters the map</p>
         <p>Delay the decision over node IDs, routes or image sequences. They wait, but cannot ask whether a match fits the robot's motion.</p>
       </div>
-      <div class="quad-rowhead" role="rowheader">Belief over<br><strong>continuous poses</strong></div>
-      <div class="quad-cell" role="cell">
-        <h4>Robust pose-graph back-ends</h4>
+      <p class="quad-rowhead" aria-hidden="true">Belief over<br><strong>continuous poses</strong></p>
+      <div class="quad-cell">
+        <h3>Robust pose-graph back-ends</h3>
+        <p class="quad-tag"><span class="sr-only">Belief over continuous poses; </span>enters the map first, judged later</p>
         <p>Switchable constraints, max-mixtures, multi-hypothesis iSAM. Geometry is kept, but candidates are already factors in the graph.</p>
       </div>
-      <div class="quad-cell quad-cross" role="cell">
-        <h4>CROSS</h4>
+      <div class="quad-cell quad-cross">
+        <h3>CROSS</h3>
+        <p class="quad-tag"><span class="sr-only">Belief over continuous poses; </span>judged before it enters the map</p>
         <p>Each retrieval becomes an SE(3) pose branch, propagated with odometry and pruned when inconsistent. Only persistent branches reach the map.</p>
       </div>
     </div>
@@ -254,7 +363,7 @@
             </div>
             <span class="badge" id="greedyBadge">—</span>
           </div>
-          <canvas id="greedyCanvas" aria-label="Map view: greedy matching baseline"></canvas>
+          <canvas id="greedyCanvas" role="img" aria-label="Map view: greedy matching baseline"></canvas>
           <div class="demo-counter"><span id="greedyWrong">0</span> <span id="greedyWrongLabel">false loop closures</span> written into the map</div>
         </div>
         <div class="demo-panel demo-panel-cross">
@@ -265,10 +374,12 @@
             </div>
             <span class="badge" id="crossBadge">—</span>
           </div>
-          <canvas id="crossCanvas" aria-label="Map view: CROSS hypothesis filtering"></canvas>
-          <div class="hyp-list" id="hypList" aria-live="polite"></div>
+          <canvas id="crossCanvas" role="img" aria-label="Map view: CROSS hypothesis filtering"></canvas>
+          <div class="hyp-list" id="hypList"></div>
         </div>
       </div>
+      <!-- screen readers hear only the milestones of a run (demo.js), not every frame of the branch list -->
+      <p class="sr-only" id="demoStatus" role="status"></p>
 
       <div class="demo-legend" aria-label="Legend">
         <span><i class="lg-node"></i>Keyframe in memory</span>
@@ -289,11 +400,11 @@
 </section>
 
 <!-- ============================== METHOD ============================== -->
-<section class="section" id="method">
+<section class="section" id="method" aria-labelledby="method-h">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Method</p>
-      <h2>Topological in what it stores, continuous in what it tests</h2>
+      <h2 id="method-h">Topological in what it stores, continuous in what it tests</h2>
       <p class="section-intro">
         The memory is a sparse graph: each node keeps a raw RGB-D keyframe and a Gaussian-mixture pose, and edges record odometry and proximity.
         Raw frames keep the memory task-agnostic, since detectors or VLMs can read them at query time.
@@ -314,10 +425,10 @@
     </div>
 
     <div class="steps" id="steps" role="tablist" aria-label="Method steps">
-      <button type="button" role="tab" class="step on" aria-selected="true" data-step="0"><span class="step-n">1</span><span>Retrieve</span></button>
-      <button type="button" role="tab" class="step" aria-selected="false" data-step="1"><span class="step-n">2</span><span>Lift</span></button>
-      <button type="button" role="tab" class="step" aria-selected="false" data-step="2"><span class="step-n">3</span><span>Validate</span></button>
-      <button type="button" role="tab" class="step" aria-selected="false" data-step="3"><span class="step-n">4</span><span>Commit</span></button>
+      <button type="button" role="tab" class="step on" id="step-tab-0" aria-controls="step-panel-0" aria-selected="true" data-step="0"><span class="step-n">1</span><span>Retrieve</span></button>
+      <button type="button" role="tab" class="step" id="step-tab-1" aria-controls="step-panel-1" aria-selected="false" data-step="1"><span class="step-n">2</span><span>Lift</span></button>
+      <button type="button" role="tab" class="step" id="step-tab-2" aria-controls="step-panel-2" aria-selected="false" data-step="2"><span class="step-n">3</span><span>Validate</span></button>
+      <button type="button" role="tab" class="step" id="step-tab-3" aria-controls="step-panel-3" aria-selected="false" data-step="3"><span class="step-n">4</span><span>Commit</span></button>
     </div>
 
     <figure class="figure spot-figure spot-figure-method">
@@ -328,14 +439,14 @@
     </figure>
 
     <div class="step-panels">
-      <div class="step-panel on" data-panel="0" role="tabpanel">
+      <div class="step-panel on" data-panel="0" role="tabpanel" id="step-panel-0" aria-labelledby="step-tab-0">
         <div class="step-text">
           <h3>Retrieve candidates, but don't believe them yet</h3>
           <p>Visual place recognition (BoQ) proposes keyframes that look like the current frame. Each proposal is weighted by appearance and by geometry: the retrieval score and the number of PnP inliers it can support. Several proposals may survive, which is the point: data association is treated as a latent variable instead of being decided here.</p>
         </div>
         <div class="step-eq">$$P(i)=\operatorname{softmax}\!\Big(\pi(i)\,\frac{\mathrm{inlier}(i)}{M}\Big)$$<span class="eq-note">π(i): VPR score · inlier(i): PnP inliers · M: max features</span></div>
       </div>
-      <div class="step-panel" data-panel="1" role="tabpanel">
+      <div class="step-panel" data-panel="1" role="tabpanel" id="step-panel-1" aria-labelledby="step-tab-1">
         <div class="step-text">
           <h3>Lift each match into a pose, not a place</h3>
           <p>XFeat + LightGlue matches and an E-PnP solve give the relative pose between the current frame and keyframe <em>i</em>. Composing it with the keyframe's own pose mixture turns a retrieval into a global SE(3) pose mode with an uncertainty that shrinks with the inlier count. Summing over candidates gives a <em>global</em> measurement message that can place modes anywhere in the map, which is what lets the filter recover from tracking loss and detect revisits.</p>
@@ -344,7 +455,7 @@
           $$\Sigma^{(k)}_{i,t}\approx \mathrm{Ad}_{T_{i,t}^{-1}}\,\Sigma^{(k)}_{i}\,\mathrm{Ad}_{T_{i,t}^{-1}}^{\top}+\Gamma^{\text{pnp}}_{i,t}$$<span class="eq-note">Γ<sup>pnp</sup> = λI / max(n<sub>inliers</sub>, 1)</span>
           $$\begin{aligned}m^{\text{meas}}_t(x_t)&=\sum_{i=1}^{N_t}P(i)\sum_{k=1}^{K}w^{(k)}_i\\&\qquad\mathcal{N}_{\mathfrak{se}(3)}\!\Big(\log\!\big((\mu^{(k)}_i T_{i,t})^{-1}x_t\big);\,0,\,\Sigma^{(k)}_{i,t}\Big)\end{aligned}$$<span class="eq-note">measurement message: one mixture over all N<sub>t</sub> retrieved keyframes, not just the tracked branch</span></div>
       </div>
-      <div class="step-panel" data-panel="2" role="tabpanel">
+      <div class="step-panel" data-panel="2" role="tabpanel" id="step-panel-2" aria-labelledby="step-tab-2">
         <div class="step-text">
           <h3>Let odometry test the branches</h3>
           <p>The belief over the current pose is a bounded Gaussian mixture on SE(3), updated by forward message passing: odometry pushes every branch forward, and the global measurement message re-weights them by overlap. Measurement modes are clustered with an SE(3)-aware DBSCAN, then fused into existing branches, born as new ones, or pruned when their weight or overlap vanishes. A look-alike that fits the image but not the motion loses weight step by step.</p>
@@ -355,7 +466,7 @@
           $$p(x_t\mid z_{1:t},u_{1:t},\mathcal{G})\;\propto\; m^{\text{meas}}_t(x_t)\;m^{\text{mot}}_t(x_t)$$
           $$w^{(i,j)}_t\;\propto\; w^{(i)}_{\text{mot}}\,w^{(j)}_{\text{meas}}\,C_{ij}$$<span class="eq-note">C<sub>ij</sub>: Gaussian overlap of motion component i and measurement component j</span></div>
       </div>
-      <div class="step-panel" data-panel="3" role="tabpanel">
+      <div class="step-panel" data-panel="3" role="tabpanel" id="step-panel-3" aria-labelledby="step-tab-3">
         <div class="step-text">
           <h3>Commit only what persists</h3>
           <p>A revisit, whether a loop closure or a kidnapped-robot event, shows up as a branch that becomes consistent with an older part of the map. Its log posterior odds against the currently tracked branch are counted over a sliding window, and it is promoted only when the count passes a threshold. Then a joint pose-graph optimization aligns the two branches and they merge into one. New nodes are created when retrieval similarity drops, linked by odometry and proximity edges, and smoothed by pose-graph optimization.</p>
@@ -368,11 +479,11 @@
 </section>
 
 <!-- ============================== RESULTS ============================== -->
-<section class="section section-tint" id="results">
+<section class="section section-tint" id="results" aria-labelledby="results-h">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Results</p>
-      <h2>One map, many conditions</h2>
+      <h2 id="results-h">One map, many conditions</h2>
       <p class="section-intro">We build a map from one traversal and relocalize from another, recorded at a different time of day or months later. Each test traversal is cut into 200-frame trials: 735 on OpenLORIS (indoor corridor, ≈80 m) and 1,232 on Rover (outdoor campus, ≈270 m). A trial succeeds if the robot relocalizes within 2 m indoors or 5 m outdoors.</p>
     </div>
 
@@ -386,13 +497,13 @@
         <div class="viewer-stage">
           <img src="static/img/seasons/July_1350.webp" width="640" height="480" alt="Campus path in July 2023, 1 pm">
         </div>
-        <div class="timeline" role="tablist" aria-label="Rover capture time">
-          <button type="button" role="tab" data-src="static/img/seasons/July_1350.webp" data-alt="Campus path in July 2023, 1 pm" class="on">Jul ’23<small>1 pm</small></button>
-          <button type="button" role="tab" data-src="static/img/seasons/Nov_1527.webp" data-alt="Campus path in November 2023, 3 pm">Nov ’23<small>3 pm</small></button>
-          <button type="button" role="tab" data-src="static/img/seasons/Jan_1019.webp" data-alt="Campus path in January 2024, 10 am">Jan ’24<small>10 am</small></button>
-          <button type="button" role="tab" data-src="static/img/seasons/Apr_1401.webp" data-alt="Campus path in April 2024, 2 pm">Apr ’24<small>2 pm</small></button>
-          <button type="button" role="tab" data-src="static/img/seasons/Sep_1427.webp" data-alt="Campus path in September 2024, 2 pm">Sep ’24<small>2 pm</small></button>
-          <button type="button" role="tab" data-src="static/img/seasons/Sep_1955.webp" data-alt="Campus path in September 2024, 7 pm">Sep ’24<small>7 pm</small></button>
+        <div class="timeline" role="radiogroup" aria-label="Rover capture time">
+          <button type="button" role="radio" aria-checked="true" data-src="static/img/seasons/July_1350.webp" data-alt="Campus path in July 2023, 1 pm" class="on">Jul ’23<small>1 pm</small></button>
+          <button type="button" role="radio" aria-checked="false" data-src="static/img/seasons/Nov_1527.webp" data-alt="Campus path in November 2023, 3 pm">Nov ’23<small>3 pm</small></button>
+          <button type="button" role="radio" aria-checked="false" data-src="static/img/seasons/Jan_1019.webp" data-alt="Campus path in January 2024, 10 am">Jan ’24<small>10 am</small></button>
+          <button type="button" role="radio" aria-checked="false" data-src="static/img/seasons/Apr_1401.webp" data-alt="Campus path in April 2024, 2 pm">Apr ’24<small>2 pm</small></button>
+          <button type="button" role="radio" aria-checked="false" data-src="static/img/seasons/Sep_1427.webp" data-alt="Campus path in September 2024, 2 pm">Sep ’24<small>2 pm</small></button>
+          <button type="button" role="radio" aria-checked="false" data-src="static/img/seasons/Sep_1955.webp" data-alt="Campus path in September 2024, 7 pm">Sep ’24<small>7 pm</small></button>
         </div>
       </div>
       <div class="viewer" data-viewer>
@@ -403,11 +514,11 @@
         <div class="viewer-stage">
           <img src="static/img/corridor/seq5.webp" width="848" height="480" alt="Corridor at 12:28">
         </div>
-        <div class="timeline" role="tablist" aria-label="OpenLORIS capture time">
-          <button type="button" role="tab" data-src="static/img/corridor/seq5.webp" data-alt="Corridor at 12:28" class="on">12:28</button>
-          <button type="button" role="tab" data-src="static/img/corridor/seq1.webp" data-alt="Corridor at 13:20">13:20</button>
-          <button type="button" role="tab" data-src="static/img/corridor/seq2.webp" data-alt="Corridor at 17:07">17:07</button>
-          <button type="button" role="tab" data-src="static/img/corridor/seq3.webp" data-alt="Corridor at 20:54">20:54</button>
+        <div class="timeline" role="radiogroup" aria-label="OpenLORIS capture time">
+          <button type="button" role="radio" aria-checked="true" data-src="static/img/corridor/seq5.webp" data-alt="Corridor at 12:28" class="on">12:28</button>
+          <button type="button" role="radio" aria-checked="false" data-src="static/img/corridor/seq1.webp" data-alt="Corridor at 13:20">13:20</button>
+          <button type="button" role="radio" aria-checked="false" data-src="static/img/corridor/seq2.webp" data-alt="Corridor at 17:07">17:07</button>
+          <button type="button" role="radio" aria-checked="false" data-src="static/img/corridor/seq3.webp" data-alt="Corridor at 20:54">20:54</button>
         </div>
       </div>
     </div>
@@ -432,20 +543,41 @@
         </div>
       </div>
       <div class="chart" id="relocChart"></div>
-      <p class="chart-foot" id="relocFoot"></p>
-      <details class="table-view"><summary>Show as table</summary><div id="relocTable"></div></details>
+      <p class="chart-foot" id="relocFoot">On both datasets, with a map from another session: CROSS 38.4% vs 19.8% for the next best (RTAB-Map).</p>
+      <details class="table-view"><summary>Show as table</summary><div id="relocTable">
+        <table>
+          <thead><tr><th scope="col">Method</th><th scope="col">Success</th><th scope="col">95% CI</th></tr></thead>
+          <tbody>
+            <tr><td>ORB-SLAM3</td><td>1.3%</td><td>—</td></tr>
+            <tr><td>RTAB-Map</td><td>19.8%</td><td>—</td></tr>
+            <tr><td>MASt3R-SLAM</td><td>6.2%</td><td>—</td></tr>
+            <tr><td>GM</td><td>6.9%</td><td>—</td></tr>
+            <tr><td>SM</td><td>12.8%</td><td>—</td></tr>
+            <tr><td>PBU</td><td>6.8%</td><td>—</td></tr>
+            <tr><td>ABM</td><td>9.0%</td><td>—</td></tr>
+            <tr class="hl"><td>CROSS (ours)</td><td>38.4%</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div></details>
     </div>
 
     <figure class="figure figure-card zoomable-wrap">
-      <div class="tabs" role="tablist" aria-label="Per-location results">
-        <button type="button" role="tab" class="on" data-src="static/img/reloc-campus-4.webp" data-w="2400" data-h="973">Rover, four methods</button>
-        <button type="button" role="tab" data-src="static/img/reloc-campus-all.webp" data-w="2200" data-h="1882">Rover, all methods</button>
-        <button type="button" role="tab" data-src="static/img/reloc-corridor-all.webp" data-w="2200" data-h="1625">OpenLORIS, all methods</button>
+      <div class="tabs" role="radiogroup" aria-label="Per-location figure">
+        <button type="button" role="radio" aria-checked="true" class="on" data-src="static/img/reloc-campus-4.webp" data-w="2400" data-h="973"
+          data-alt="Per-location relocalization outcomes on Rover Campus for ORB-SLAM3, RTAB-Map, MASt3R-SLAM and CROSS, with a success-rate heatmap for every map and test session pair."
+          data-caption="(a) ORB-SLAM3, (b) RTAB-Map, (c) MASt3R-SLAM, (d) CROSS.">Rover, four methods</button>
+        <button type="button" role="radio" aria-checked="false" data-src="static/img/reloc-campus-all.webp" data-w="2200" data-h="1883"
+          data-alt="Per-location relocalization outcomes on Rover Campus for all eight methods, with a success-rate heatmap for every map and test session pair."
+          data-caption="(a) ORB-SLAM3, (b) RTAB-Map, (c) MASt3R-SLAM, (d) GM, (e) SM, (f) PBU, (g) ABM, (h) CROSS.">Rover, all methods</button>
+        <button type="button" role="radio" aria-checked="false" data-src="static/img/reloc-corridor-all.webp" data-w="2200" data-h="1624"
+          data-alt="Per-location relocalization outcomes on the OpenLORIS Corridor for all eight methods, with a success-rate heatmap for every map and test session pair."
+          data-caption="(a) ORB-SLAM3, (b) RTAB-Map, (c) MASt3R-SLAM, (d) GM, (e) SM, (f) PBU, (g) ABM, (h) CROSS. The last two sequences (20:54 and 20:56) are shaded grey to mark a lack of spatial overlap.">OpenLORIS, all methods</button>
       </div>
-      <button class="zoomable" type="button" aria-label="Enlarge figure">
-        <img id="perLocImg" src="static/img/reloc-campus-4.webp" width="2400" height="973" alt="Per-location relocalization outcomes on Rover Campus and a mapping-by-testing success-rate heatmap for each method." loading="lazy">
+      <button class="zoomable" type="button">
+        <span class="sr-only">Enlarge figure: </span>
+        <img id="perLocImg" src="static/img/reloc-campus-4.webp" width="2400" height="973" alt="Per-location relocalization outcomes on Rover Campus for ORB-SLAM3, RTAB-Map, MASt3R-SLAM and CROSS, with a success-rate heatmap for every map and test session pair." loading="lazy">
       </button>
-      <figcaption><strong>Where each method relocalizes.</strong> Left: each row is a map built from one session (color); each column block is a test session at the same physical locations; a bar marks a location where relocalization succeeded. (a) ORB-SLAM3, (b) RTAB-Map, (c) MASt3R-SLAM, (d) CROSS. Right: success rate for every map–test pair. The diagonal is the easy same-session case; CROSS is the only method that stays warm off the diagonal. Click to enlarge.</figcaption>
+      <figcaption><strong>Where each method relocalizes.</strong> Left: each row is a map built from one session (color); each column block is a test session at the same physical locations; a bar marks a location where relocalization succeeded. <span id="perLocMethods">(a) ORB-SLAM3, (b) RTAB-Map, (c) MASt3R-SLAM, (d) CROSS.</span> Right: success rate for every map–test pair, from dark red (0%) to blue (100%). The diagonal is the easy same-session case; off the diagonal the baselines are mostly red, while CROSS's cells are mostly orange to blue. Click to enlarge.</figcaption>
     </figure>
 
     <!-- real robot -->
@@ -476,8 +608,17 @@
           </div>
         </div>
         <div class="chart" id="robotChart"></div>
-        <p class="chart-foot">With ten trials per setting the intervals are wide; the pooled 30 trials separate CROSS (76.7%, [59.1, 88.2]) from both baselines. <button class="linklike" type="button" data-seek="180">Watch an office trial ▸ 3:00</button></p>
-        <details class="table-view"><summary>Show as table</summary><div id="robotTable"></div></details>
+        <p class="chart-foot">With ten trials per setting the intervals are wide. Pooled over 30 trials, CROSS (76.7%, [59.1, 88.2]) is clearly above M+S with ORB-SLAM3 (26.7%, [14.2, 44.4]); against M+S with RTAB-Map (43.3%, [27.4, 60.8]) the intervals just overlap. <button class="linklike" type="button" data-seek="180">Watch an office trial ▸ 3:00</button></p>
+        <details class="table-view"><summary>Show as table</summary><div id="robotTable">
+          <table>
+            <thead><tr><th scope="col">Method</th><th scope="col">LC</th><th scope="col">OR</th><th scope="col">LC+OR</th><th scope="col">All</th></tr></thead>
+            <tbody>
+              <tr><td>M+S (ORB-SLAM3)</td><td>30% [10.8, 60.3]</td><td>30% [10.8, 60.3]</td><td>20% [5.7, 51.0]</td><td>26.7% [14.2, 44.4]</td></tr>
+              <tr><td>M+S (RTAB-Map)</td><td>40% [16.8, 68.7]</td><td>60% [31.3, 83.2]</td><td>30% [10.8, 60.3]</td><td>43.3% [27.4, 60.8]</td></tr>
+              <tr class="hl"><td>CROSS</td><td>70% [39.7, 89.2]</td><td>80% [49.0, 94.3]</td><td>80% [49.0, 94.3]</td><td>76.7% [59.1, 88.2]</td></tr>
+            </tbody>
+          </table>
+        </div></details>
       </div>
     </div>
 
@@ -487,7 +628,7 @@
         <div class="chart-card-head">
           <div>
             <h3>Perceptual aliasing (Topo-Bench)</h3>
-            <p class="muted" id="topoDesc"></p>
+            <p class="muted"><span id="topoDesc">Balanced localization accuracy: the geometric mean of the three regimes, so a method cannot win by excelling at one.</span> Higher is better.</p>
           </div>
           <div class="filters">
             <div class="seg seg-sm" role="radiogroup" aria-label="Topo-Bench metric" data-filter="topo">
@@ -499,7 +640,22 @@
           </div>
         </div>
         <div class="chart" id="topoChart"></div>
-        <details class="table-view"><summary>Show as table</summary><div id="topoTable"></div></details>
+        <details class="table-view"><summary>Show as table</summary><div id="topoTable">
+          <table>
+            <thead><tr><th scope="col">Method</th><th scope="col">A+P</th><th scope="col">P.O.</th><th scope="col">A.O.</th><th scope="col">BLA</th></tr></thead>
+            <tbody>
+              <tr><td>RTAB-Map</td><td>0.059</td><td>0.433</td><td>1</td><td>0.301</td></tr>
+              <tr><td>ORB-SLAM3</td><td>0.059</td><td>0.183</td><td>1</td><td>0.227</td></tr>
+              <tr><td>ABM</td><td>0.02</td><td>0.328</td><td>1</td><td>0.201</td></tr>
+              <tr><td>OpenFABMAP</td><td>0</td><td>0.112</td><td>0.732</td><td>0.0748</td></tr>
+              <tr><td>RatSLAM</td><td>0.02</td><td>0.097</td><td>0.443</td><td>0.103</td></tr>
+              <tr><td>GM</td><td>0.078</td><td>0.302</td><td>0.959</td><td>0.288</td></tr>
+              <tr><td>SM</td><td>0.118</td><td>0.187</td><td>0.959</td><td>0.281</td></tr>
+              <tr><td>PBU</td><td>0.078</td><td>0.302</td><td>0.959</td><td>0.288</td></tr>
+              <tr class="hl"><td>CROSS (ours)</td><td>0.275</td><td>0.336</td><td>0.99</td><td>0.452</td></tr>
+            </tbody>
+          </table>
+        </div></details>
       </div>
       <div class="card chart-card">
         <div class="chart-card-head">
@@ -519,31 +675,31 @@
 </section>
 
 <!-- ============================== ROBUSTNESS ============================== -->
-<section class="section" id="robustness">
+<section class="section" id="robustness" aria-labelledby="robustness-h">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Robustness</p>
-      <h2>When the camera lies, the branches wait</h2>
+      <h2 id="robustness-h">When the camera lies, the branches wait</h2>
       <p class="section-intro">When images are unusable, branches keep moving on odometry and their uncertainty grows. When good frames return, the global measurement message finds the right keyframe again. Pick a case and watch it play.</p>
     </div>
 
     <div class="tabs tabs-lg" role="tablist" aria-label="Robustness scenario" id="robTabs">
-      <button type="button" role="tab" class="on" aria-selected="true" data-rob="occlusion">Camera occlusion</button>
-      <button type="button" role="tab" aria-selected="false" data-rob="fast">Fast, blurry motion</button>
-      <button type="button" role="tab" aria-selected="false" data-rob="noise">Corrupted odometry</button>
+      <button type="button" role="tab" class="on" id="rob-tab-occlusion" aria-controls="rob" aria-selected="true" data-rob="occlusion">Camera occlusion</button>
+      <button type="button" role="tab" id="rob-tab-fast" aria-controls="rob" aria-selected="false" data-rob="fast">Fast, blurry motion</button>
+      <button type="button" role="tab" id="rob-tab-noise" aria-controls="rob" aria-selected="false" data-rob="noise">Corrupted odometry</button>
     </div>
 
-    <div class="card rob" id="rob">
+    <div class="card rob" id="rob" role="tabpanel" aria-labelledby="rob-tab-occlusion">
       <div class="rob-stage">
         <video id="robVideo" controls muted loop playsinline preload="metadata" poster="static/video/rob-occlusion-poster.jpg">
           <source src="static/video/rob-occlusion.mp4" type="video/mp4">
         </video>
       </div>
       <div class="rob-side">
-        <p class="rob-step" id="robStepLabel"></p>
-        <p class="rob-caption" id="robCaption"></p>
-        <p class="rob-legend" id="robLegend"></p>
-        <button class="linklike" type="button" id="robSeek">Watch in the video ▸</button>
+        <p class="rob-step" id="robStepLabel">Camera occlusion</p>
+        <p class="rob-caption" id="robCaption">The camera is covered twice. With no usable retrieval the motion message keeps moving on odometry and its uncertainty grows, while nothing is written to the map. When a clear frame returns, the measurement message overlaps the motion message again and uncertainty collapses.</p>
+        <p class="rob-legend" id="robLegend">Left: belief on the map. Right: camera. Yellow: estimated trajectory. Blue: motion message. Green: measurement message. Ellipse axes show uncertainty.</p>
+        <button class="linklike" type="button" id="robSeek">Watch in the full video ▸ 4:15</button>
       </div>
     </div>
 
@@ -552,7 +708,7 @@
         <div class="chart-card-head">
           <div>
             <h3>Real time on one GPU</h3>
-            <p class="muted">Average time per RGB-D frame on an RTX 4000 Ada, against a 30 Hz frame budget.</p>
+            <p class="muted">Average time per RGB-D frame on an RTX 4000 Ada, against a 30 Hz frame budget. Lower is better.</p>
           </div>
         </div>
         <div class="chart" id="budgetChart"></div>
@@ -561,7 +717,7 @@
         <div class="chart-card-head">
           <div>
             <h3>Relative-pose module</h3>
-            <p class="muted">Time per frame pair, same GPU, same linear scale.</p>
+            <p class="muted">Time per frame pair, same GPU, same linear scale. Lower is better.</p>
           </div>
         </div>
         <div class="chart" id="poseTimeChart"></div>
@@ -571,10 +727,10 @@
 </section>
 
 <!-- ============================== LIMITATIONS ============================== -->
-<section class="section section-tint" id="limits">
+<section class="section section-tint" id="limits" aria-labelledby="limits-h">
   <div class="wrap wrap-narrow">
     <p class="eyebrow">Limitations</p>
-    <h2>What CROSS does not solve yet</h2>
+    <h2 id="limits-h">What CROSS does not solve yet</h2>
     <ul class="limits">
       <li><strong>Relative pose is the bottleneck.</strong> Keypoint matching and PnP can fail under extreme appearance shift, low overlap, motion blur or noisy depth. The filter itself can take a learned relative-pose estimator once one is accurate, metric and fast enough.</li>
       <li><strong>Absolute success is still limited.</strong> Even for CROSS, cross-session success is around 40%, and it drops for day-to-night and January-to-September gaps. A moving robot gets repeated chances to relocalize, so higher rates mean faster recovery rather than all-or-nothing.</li>
@@ -584,12 +740,12 @@
 </section>
 
 <!-- ============================== CITATION ============================== -->
-<section class="section" id="citation">
+<section class="section" id="citation" aria-labelledby="citation-h">
   <div class="wrap wrap-narrow">
     <p class="eyebrow">Citation</p>
-    <h2>BibTeX</h2>
+    <h2 id="citation-h">BibTeX</h2>
     <div class="bibtex">
-      <button class="btn btn-small copy" type="button" id="copyBib">Copy</button>
+      <button class="btn btn-small bib-copy" type="button" id="copyBib">Copy</button>
 <pre id="bib"><code>@inproceedings{wang2026cross,
   title     = {Change-Robust Online Topological Memory for Long-Term
                Relocalization and Semantic Navigation},
@@ -602,28 +758,64 @@
   archivePrefix = {arXiv}
 }</code></pre>
     </div>
+    <p class="credits">Datasets and benchmarks: OpenLORIS-Scene (Shi et al., ICRA 2020) · ROVER (Schmidt et al., T-RO 2025) · <a class="nowrap" href="https://arxiv.org/abs/2510.04100" rel="noopener">Topo-Bench</a></p>
   </div>
 </section>
 
 </main>
 
-<footer class="footer">
-  <div class="wrap">
-    <p>CROSS · Change-Robust Online Spatial memory System</p>
-    <p class="muted">Benchmarks: OpenLORIS-Scene (Shi et al., ICRA 2020) · ROVER (Schmidt et al., T-RO 2025) · <a href="https://arxiv.org/abs/2510.04100" rel="noopener">Topo-Bench</a></p>
+<!-- partial:footer -->
+<footer class="sf">
+  <div class="sf-wrap sf-grid">
+    <div class="sf-about">
+      <a class="sf-brand" href="../">
+        <svg class="sh-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M10.5 21.5 21.5 10.5M10.5 10.5l11 11"/></svg>
+        <span>CROSS</span>
+      </a>
+      <p>Visual multi-session mapping, tracking and relocalization for robots. Open source, MIT-licensed code.</p>
+      <p class="sf-org">National University of Singapore</p>
+    </div>
+    <nav class="sf-col" aria-label="Use CROSS">
+      <h2>Use CROSS</h2>
+      <a href="../docs/#install">Install</a>
+      <a href="../docs/#quick-start">Quick start</a>
+      <a href="../docs/#modes">Sensor modes</a>
+      <a href="../docs/#python">Python API</a>
+      <a href="https://github.com/jiaming-ai/CROSS" rel="noopener">GitHub</a>
+    </nav>
+    <nav class="sf-col" aria-label="Benchmark">
+      <h2>Benchmark</h2>
+      <a href="../leaderboard/">Leaderboard</a>
+      <a href="../benchmark/">Full results</a>
+      <a href="../replays/">Trajectory replays</a>
+      <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/PROTOCOL.md" rel="noopener">Protocol</a>
+    </nav>
+    <nav class="sf-col" aria-label="Papers">
+      <h2>Papers</h2>
+      <a href="../v1/">CROSS 1 <span class="sf-tag">NeurIPS 2026</span></a>
+      <span class="sf-soon">CROSS 2 <span class="sf-tag">coming soon</span></span>
+      <span class="sf-soon">CROSS 3 <span class="sf-tag">coming soon</span></span>
+      <span class="sf-soon">CROSS Cloud <span class="sf-tag">coming soon</span></span>
+    </nav>
+  </div>
+  <div class="sf-wrap sf-bottom">
+    <p>© 2026 The CROSS authors. Leaderboard and replay numbers come from the published benchmark run (<a href="../benchmark/">full results</a>); paper pages report their paper's results.</p>
+    <a href="#top" class="sf-top">Back to top ↑</a>
   </div>
 </footer>
+<!-- /partial:footer -->
 
-<!-- lightbox -->
-<div class="lightbox" id="lightbox" hidden>
+<!-- lightbox: a modal dialog (focus stays inside, Escape closes it, focus returns to the figure) -->
+<dialog class="lightbox" id="lightbox" aria-label="Enlarged figure">
   <button class="lightbox-close" type="button" aria-label="Close">×</button>
   <img alt="">
-</div>
+</dialog>
 
 <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
 
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"></script>
+<script defer src="../assets/js/site.js"></script>
+<script defer src="static/vendor/katex/katex.min.js"></script>
+<script defer src="static/vendor/katex/contrib/auto-render.min.js"></script>
 <script defer src="static/js/sim.js"></script>
 <script defer src="static/js/charts.js"></script>
 <script defer src="static/js/demo.js"></script>
