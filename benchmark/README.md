@@ -6,7 +6,7 @@ A fixed evaluation protocol for CROSS and for SLAM systems compared with it. It 
 - **T2 multi-session localization.** A later session is localized in a stored map.
 - **T3 relocalization success.** The CROSS paper's metric.
 
-The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange, each with RGB-D, stereo and monocular setups.
+The datasets are KITTI, OpenLORIS-Scene, ROVER and SimChange (v3 in the overall scores since 2026-10-25; the v2 tables are kept), each with RGB-D, stereo and monocular setups.
 
 - [PROTOCOL.md](PROTOCOL.md): datasets, splits, setups, odometry, metrics and run rules.
 - [RESULTS.md](RESULTS.md): result tables, generated from `results/results.json`.

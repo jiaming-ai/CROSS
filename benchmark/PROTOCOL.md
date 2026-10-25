@@ -26,7 +26,8 @@ one ground-truth frame, which T2 and T3 need.
 | [KITTI odometry](https://www.cvlibs.net/datasets/kitti/eval_odometry.php) (raw drives) | outdoor, car, 0.4–5 km | stereo colour (cam 2/3, 0.54 m), mono (cam 2) | dead reckoning of the OXTS level-frame velocities and yaw rate, INS roll / pitch (no GPS position) | KITTI odometry poses (RTK/INS) | 00, 01, 02, 04–10 (03 has no raw drive) | none (single session per route) |
 | [OpenLORIS-Scene](https://lifelong-robotic-vision.github.io/dataset/scene.html) | indoor, wheeled robot; office, corridor, home, cafe, market | RGB-D (D435i colour + aligned depth), stereo (T265 fisheye pair, rectified), mono (D435i colour) | robot wheel odometry | motion capture (office), 2D LiDAR SLAM (others) | all 22 sequences | office1-1 → 1-2…1-7; corridor1-1 → 1-2…1-5; home1-1 → 1-2…1-5; cafe1-1 → 1-2; market1-1 → 1-2, 1-3 (17 queries) |
 | [ROVER](https://iis-esslingen.github.io/rover/) campus_large | outdoor, ground robot, multi-season | RGB-D (D435i), stereo (T265, rectified), mono (D435i colour) | see §3 | total station (mm) | all 8 recordings | day (2024-09-25) → summer, autumn, winter, spring, dusk, night, night-light (7 queries) |
-| [SimChange](https://github.com/jiaming-ai/SimChange) v2 | indoor (HSSD house, restaurant, classroom, Lone Monk) | rendered RGB-D, stereo (0.1/0.3/0.5 m), mono | ground truth + SNR 10 noise (seeded) | exact | – | map → all change variants of the scene (lighting, rearrangement, viewpoint, reverse, combinations) |
+| [SimChange](https://github.com/jiaming-ai/SimChange) v3 (in the overall scores since 2026-10-25) | indoor (HSSD house, restaurant, lab corridor) | rendered RGB-D, stereo (0.3 m), mono, through a camera model (sensor noise, blur, exposure) | ground truth + SNR 10 noise (seeded) | exact | – | map → lighting (sun, overcast, low sun, dusk, night with 100 / 50 / 25 % of the lamps on), objects changed until a given share of every map view's image features differs, rearrangement, route deviation, reverse, combinations (14-15 queries per scene) |
+| [SimChange](https://github.com/jiaming-ai/SimChange) v2 (in the overall scores until 2026-10-25) | indoor (HSSD house, restaurant, classroom, Lone Monk) | rendered RGB-D, stereo (0.1/0.3/0.5 m), mono | ground truth + SNR 10 noise (seeded) | exact | – | map → all change variants of the scene (lighting, rearrangement, viewpoint, reverse, combinations) |
 
 Notes.
 - **RGB-D outdoors.** No real outdoor dataset has usable active depth in sunlight. ROVER's D435i depth is used as
@@ -109,7 +110,9 @@ noise. CROSS runs these rows with its `*_basalt` mode files. Inputs:
 Accuracy over the 100-frame trial windows (`odom_vio.json` `eval`, mean): KITTI 1.1–2.1 % of
 the distance (OXTS dead reckoning 0.8–2.0 %), except 01 (highway, 4.7 %); ROVER ~0.3 m per window, about half of which is
 the ground truth's own heading error (heading from the direction of travel), except the night session (no light, 0.7 m);
-SimChange 0.04–0.13 m (10th to 90th percentile over the 100 sequences; simulated SNR 10: 0.27–0.46 m).
+SimChange v2 0.04–0.13 m (10th to 90th percentile over the 100 sequences; simulated SNR 10: 0.27–0.46 m), SimChange v3
+0.15–0.51 m (10th to 90th percentile over its 46 sequences, median 0.25 m; worst the dark restaurant variants, `night_25`
+1.92 m): the v3 camera model and its dark variants make the VIO less accurate.
 
 A real VIO can fail (with the earlier 3-level pyramid, ROVER's night session ran away to ~30× the true velocity over the
 last 500 frames). CROSS's odometry scale guard (`mapping.loop_closure.odom_guard_factor`, on by default) applies to the RGB-D and stereo
@@ -227,8 +230,8 @@ is penalized.
   measures (since 2026-10-07). LR, MS-ATE and the time to localize use the evaluated frames: covered and moving.
 - **Aggregation**: LR and MS-ATE are computed per query session. Scene and dataset cells pool the frames of all query
   sessions (localized frames / all frames), so each session counts in proportion to its length, as T3 pools trials.
-- **Overall LR** of a system: the mean over OpenLORIS, ROVER and SimChange of its pooled LR at each dataset's smaller and
-  larger threshold, as for the overall RS (T3).
+- **Overall LR** of a system: the mean over OpenLORIS, ROVER and SimChange v3 (v2 until 2026-10-25) of its pooled LR at
+  each dataset's smaller and larger threshold, as for the overall RS (T3).
 - **Time to localize**: the first frame after which the error stays below the smaller threshold (1 m indoors, 3 m
   outdoors) for 5 consecutive frames.
 
@@ -244,14 +247,14 @@ keyframes. Monocular systems are aligned with Sim(3) on the map session, so thei
 - Trial length: **100 frames at 10 Hz (10 s), a new trial every 50 frames**, on every dataset (the last trial of a
   session may be shorter, down to 50 frames). The CROSS paper used
   200-frame trials at the native 30 Hz, about 7 s. At the benchmark's 10 Hz, 200 frames would be 20 s, which makes
-  relocalization easier. The same trials are used for the SimChange v2 runs. Trials overlap by half, so the Wilson intervals
+  relocalization easier. The same trials are used for the SimChange v2 and v3 runs. Trials overlap by half, so the Wilson intervals
   are approximate.
 - The error is measured against the pose the map implies for the query frame (`scripts/reloc_metrics.py`). The pose of the
   nearest map keyframe in the map is composed with its ground-truth offset to the query frame, so map drift does not count as a
   relocalization error. The absolute variant (map-session alignment, as in T2) is stored as well.
 - Also reported: the median final error of the failed trials, and 95 % Wilson intervals.
-- **Overall RS** of a system: the mean over OpenLORIS, ROVER and SimChange of its pooled RS at each dataset's smaller and
-  larger threshold (each dataset weighs the same, whatever its number of trials).
+- **Overall RS** of a system: the mean over OpenLORIS, ROVER and SimChange v3 (v2 until 2026-10-25) of its pooled RS at
+  each dataset's smaller and larger threshold (each dataset weighs the same, whatever its number of trials).
 - **Failed query sessions** (a crash or timeout that persists after re-runs, or a failed map) are shown as *k/N* ✗ (k of
   the N query sessions failed). Every counted trial of a failed session counts as a failed trial (systems without map
   persistence: the 5 evenly spaced trials they would have run), and in T2 every evaluated frame counts as not localized, so a

@@ -129,7 +129,7 @@ def table_models(T: mt.Tables, runs_by_key):
                          "pending": sy[system]["runner"] == "pending", "cells": cells})
         out["t1"][dataset] = {"cols": scenes + ["mean", "scale err. (mono)"], "rows": rows}
     for track in ("t2", "t3"):
-        for dataset in ("openloris", "rover", "simchange"):
+        for dataset in ("openloris", "rover", "simchange_v3", "simchange"):
             cfg = ds[dataset]
             scenes = [s for s in cfg["scenes"] if cfg["scenes"][s].get("queries")] or \
                 sorted({r["scene"] for k, v in T.idx.items() if k[0] == track and k[1] == dataset for r in v})
@@ -234,7 +234,7 @@ def history_models(hist, current, ds_cfg, sy, seed):
                         continue                   # not run with this code version
                     cur = any(c in shown[(t, d, row["system"], row["setup"])]
                               for t in ("t1", "t2", "t3") if t == track
-                              for d in ([dataset] if dataset != "all" else ("openloris", "rover", "simchange")))
+                              for d in ([dataset] if dataset != "all" else mt.T3_DATASETS))
                     dst["rows"].append({"system": row["system"], "setup": row["setup"], "label": row["label"],
                                         "commit": c, "current": cur, "cells": texts})
     return {"commits": commit_info(list(by_commit), by_commit), "tables": tables}

@@ -1,6 +1,6 @@
 {
  "repo": "Jamie-nus/CROSS-benchmark-runs",
- "revision": "e7fc953613432f35931053521d28c3b7cb4d7ec4",
+ "revision": "60b2d9f514e1572cfbfa286fb4643f45762dd09d",
  "files": {
   "t1/kitti/00.json.gz": "9196c544a1b161dd4f78e3d6d5f6e32d06b984ffc8c43225d555372ddec28ecd",
   "t1/kitti/01.json.gz": "25a458f2ac135d0fe8a73746b45d3c5acaf2e9951da3ac3ebdb4b24b72b97cc8",
@@ -22,6 +22,9 @@
   "t1/simchange/hssd_house.json.gz": "2ea4a2b21b7f0b5fe4a07d5d36511ad407b22cc059f37dc1c695ace2150651bc",
   "t1/simchange/hssd_restaurant.json.gz": "35b322663d328e1b54776461f146b20054712bba66bad0f78cfd6736bef0eff1",
   "t1/simchange/lonemonk.json.gz": "577b21c5457b6a463a61dada68a74e24bd1fefd970ffb3a7df48a3176af9e4e9",
+  "t1/simchange_v3/corridor.json.gz": "cfdb7933cb2b9fa6f5d7218bc015a633f02f5710ba20b053ab5fb9ba13c566ec",
+  "t1/simchange_v3/hssd_house.json.gz": "50666b8a673ab930a46f892b61763860fbaba9071e413ae867c4f7307ba59c1f",
+  "t1/simchange_v3/hssd_restaurant.json.gz": "1c174064b27f960d355afdf597bc3d5adb7b67d3474a8bcfa21e02fd18ef2640",
   "t2/openloris/cafe.json.gz": "70418df7f966cad81f5c3518bbbbf1d4f60ff3d926249620ff982620f9b2239d",
   "t2/openloris/corridor.json.gz": "6ce9ad71b7e3b4e1fa2d8888b42f8c569c70f8fa59476ef4dea08413309f916b",
   "t2/openloris/home.json.gz": "e60a5f3cd924ebb0b9045c62e0412f7b2eac3e58ad860062f8487496484d2553",
@@ -32,6 +35,9 @@
   "t2/simchange/hssd_house.json.gz": "b6aefb0d81b3e07f5e5c22c306fa4d9f00ef0aa1e2b13cd8517a7837e72ea565",
   "t2/simchange/hssd_restaurant.json.gz": "7bea9def1844a03b9fa5d111c36dca3abb337399f031312e01263099e0496a7e",
   "t2/simchange/lonemonk.json.gz": "9f57c2528321f44fac3cfe2c72cc4354461435a91fce7bd7e974fa1137a1af52",
+  "t2/simchange_v3/corridor.json.gz": "329937a3dec498b52b5f6fc99cf8b1dd89f42e9dd70933e9d423fe0885e14da2",
+  "t2/simchange_v3/hssd_house.json.gz": "0f2bf355255ff4a00864210a0c7a76ee5cdb7f8c7b3c3225f9648727fdcfa00d",
+  "t2/simchange_v3/hssd_restaurant.json.gz": "b6594d7f68f64d55bfd8319f0b7c64b4c3cfe1e15430f5e0f6deb8a28c7584f6",
   "t3/openloris/cafe.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a",
   "t3/openloris/corridor.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a",
   "t3/openloris/home.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a",
@@ -41,6 +47,9 @@
   "t3/simchange/classroom.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a",
   "t3/simchange/hssd_house.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a",
   "t3/simchange/hssd_restaurant.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a",
-  "t3/simchange/lonemonk.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a"
+  "t3/simchange/lonemonk.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a",
+  "t3/simchange_v3/corridor.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a",
+  "t3/simchange_v3/hssd_house.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a",
+  "t3/simchange_v3/hssd_restaurant.json.gz": "694735d2026dd25f1fcedb44649393c5ae6c3644b717e84d9cc9f44750c50e2a"
  }
 }

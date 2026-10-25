@@ -134,7 +134,8 @@ def dataset_section(ds_cfg):
     if not f.is_file():
         return ""
     st = json.loads(f.read_text())
-    names = {"kitti": "KITTI odometry", "openloris": "OpenLORIS-Scene", "rover": "ROVER campus_large", "simchange": "SimChange v2"}
+    names = {"kitti": "KITTI odometry", "openloris": "OpenLORIS-Scene", "rover": "ROVER campus_large", "simchange_v3": "SimChange v3",
+             "simchange": "SimChange v2"}
     out = ["## Datasets", "",
            "A *session* is one recorded traversal. In each scene, the map session builds the map; every other session is a query "
            "session, run against that map once as a whole (T2) and as independent 10 s trials (T3). All sessions run at 10 Hz. "
@@ -142,7 +143,7 @@ def dataset_section(ds_cfg):
            "| dataset | scene | sessions (map + queries) | map session | query sessions | T3 trials |",
            "|---|---|---|---|---|---|"]
     details = []
-    for d in ("kitti", "openloris", "rover", "simchange"):
+    for d in ("kitti", "openloris", "rover", "simchange_v3", "simchange"):
         for scene in ds_cfg.get(d, {}).get("scenes", {}):
             rows = st.get(d, {}).get(scene)
             sc = ds_cfg[d]["scenes"][scene]
@@ -562,7 +563,7 @@ class Tables:
         return f"{mean(rates):.2f} %" + fail_note(failed, n, pending)
 
     def t2_overall_str(self, system, setup):
-        """Overall localization recall: the mean over the T2 datasets (OpenLORIS, ROVER, SimChange) of the pooled LR at
+        """Overall localization recall: the mean over the T2 datasets (OpenLORIS, ROVER, SimChange v3) of the pooled LR at
         each dataset's smaller / larger threshold, with the failed and pending queries of all of them."""
         rates, failed, pending, n, dead = [], 0, 0, 0, False
         for d in T3_DATASETS:
@@ -585,7 +586,7 @@ class Tables:
         return f"{mean([x[0] for x in rates]):.2f} / {mean([x[1] for x in rates]):.2f}" + fail_note(failed, n, pending)
 
     def t3_overall(self, system, setup):
-        """Overall relocalization success: the mean over the T3 datasets (OpenLORIS, ROVER, SimChange) of the pooled RS at
+        """Overall relocalization success: the mean over the T3 datasets (OpenLORIS, ROVER, SimChange v3) of the pooled RS at
         each dataset's smaller / larger threshold, with the failed and pending queries of all of them."""
         rates, failed, pending, n, dead = [], 0, 0, 0, False
         for d in T3_DATASETS:
@@ -603,7 +604,8 @@ class Tables:
     def t3_overall_table(self):
         head = ["system · setup"] + [f"{DS_NAMES[d]} RS@{self.ds[d]['thresholds'][0]:g}/{self.ds[d]['thresholds'][1]:g} m"
                                      for d in T3_DATASETS] + ["overall"]
-        lines = ["Overall = mean over the three datasets of the pooled success at each dataset's smaller / larger threshold "
+        lines = ["Overall = mean over the three datasets (OpenLORIS, ROVER, SimChange v3; SimChange v2 until 2026-10-25) of the "
+                 "pooled success at each dataset's smaller / larger threshold "
                  "(a method missing a dataset has no overall value). (k/N ✗): k of the N query sessions failed (crash or "
                  "timeout after re-runs, or a failed map); every counted trial of a failed session counts as a failure.", "",
                  "| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
@@ -643,12 +645,14 @@ class Tables:
          "not include this error; the others are scored with SE(3)."),
         ("lr", "Multi-session localization (T2): localization recall, higher is better",
          [("OpenLORIS LR@1/2 m", "t2", "openloris"), ("ROVER LR@3/5 m", "t2", "rover"),
-          ("SimChange LR@1/2 m", "t2", "simchange"), ("overall", "t2", "*")],
-         "Overall: mean over the three datasets of the pooled recall at each dataset's smaller / larger threshold."),
+          ("SimChange v3 LR@1/2 m", "t2", "simchange_v3"), ("overall", "t2", "*")],
+         "Overall: mean over the three datasets (OpenLORIS, ROVER, SimChange v3) of the pooled recall at each dataset's "
+         "smaller / larger threshold."),
         ("rs", "Relocalization (T3): relocalization success, higher is better",
          [("OpenLORIS RS@1/2 m", "t3", "openloris"), ("ROVER RS@3/5 m", "t3", "rover"),
-          ("SimChange RS@1/2 m", "t3", "simchange"), ("overall", "t3", "*")],
-         "Overall: mean over the three datasets of the pooled success at each dataset's smaller / larger threshold."),
+          ("SimChange v3 RS@1/2 m", "t3", "simchange_v3"), ("overall", "t3", "*")],
+         "Overall: mean over the three datasets (OpenLORIS, ROVER, SimChange v3) of the pooled success at each dataset's "
+         "smaller / larger threshold."),
     )
 
     def summary(self):
@@ -701,8 +705,8 @@ def fail_note(failed, n, pending=0):
 
 
 T1_DATASETS = ("kitti", "openloris", "rover")
-T3_DATASETS = ("openloris", "rover", "simchange")
-DS_NAMES = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange": "SimChange"}
+T3_DATASETS = ("openloris", "rover", "simchange_v3")     # SimChange v3 replaced v2 in the overall scores on 2026-10-25
+DS_NAMES = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange_v3": "SimChange v3", "simchange": "SimChange v2"}
 
 
 def old_rule_note(res) -> str:
@@ -763,13 +767,14 @@ def main():
               "Each frame is scored with the pose the system reported at that frame (ORB-SLAM3: localized from the frame "
               "at which its session has been merged into the stored map); MASt3R-SLAM and VGGT-SLAM 2.0 log their "
               "keyframe poses only after their final optimization, i.e. in hindsight."]
-    for d, title in (("openloris", "OpenLORIS-Scene"), ("rover", "ROVER campus_large")):
+    for d, title in (("openloris", "OpenLORIS-Scene"), ("rover", "ROVER campus_large"), ("simchange_v3", "SimChange v3")):
         parts += ["", f"### {title}", "", T.t2_table(d)]
     parts += ["", "## T3 — relocalization success", "",
               "Independent 10 s trials (100 frames at 10 Hz, stride 50) that start without a pose; success when the final "
               "estimate is within 1 m / 2 m (indoors) or 3 m / 5 m (outdoors) of the pose the map implies."]
     parts += ["", "### Overall", "", T.t3_overall_table()]
-    for d, title in (("openloris", "OpenLORIS-Scene"), ("rover", "ROVER campus_large"), ("simchange", "SimChange v2")):
+    for d, title in (("openloris", "OpenLORIS-Scene"), ("rover", "ROVER campus_large"), ("simchange_v3", "SimChange v3"),
+                     ("simchange", "SimChange v2 (until 2026-10-25 in the overall scores)")):
         parts += ["", f"### {title}", "", T.t3_table(d)]
     if legacy.is_file():
         parts += ["", legacy.read_text().strip()]

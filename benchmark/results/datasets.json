@@ -3241,5 +3241,783 @@
     "trials": 140
    }
   }
+ },
+ "simchange_v3": {
+  "hssd_house": {
+   "hssd_house/map": {
+    "role": "map",
+    "setups": {
+     ".": {
+      "frames": 1080,
+      "duration_s": 108.0,
+      "path_m": 105.52716254549605,
+      "extent_m": 29.666856280944945,
+      "moving": 1.0,
+      "still": []
+     }
+    }
+   },
+   "hssd_house/sun_45_0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/overcast_0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/sun_10_180": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/dusk_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/night_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/night_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/night_25": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/objfeat_40": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/objfeat_90": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/rearr3_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/objfeat_50+wander_0.3": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 924,
+      "duration_s": 92.4,
+      "path_m": 97.51687526953629,
+      "extent_m": 29.792005171572914,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 18
+   },
+   "hssd_house/objfeat_50+night_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 991,
+      "duration_s": 99.1,
+      "path_m": 97.45138964545434,
+      "extent_m": 29.66707929729862,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   },
+   "hssd_house/sun_45_0+wander_0.3": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 924,
+      "duration_s": 92.4,
+      "path_m": 97.51687526953629,
+      "extent_m": 29.792005171572914,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 18
+   },
+   "hssd_house/reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1000,
+      "duration_s": 100.0,
+      "path_m": 97.45179798919422,
+      "extent_m": 29.666423133406493,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 19
+   }
+  },
+  "hssd_restaurant": {
+   "hssd_restaurant/map": {
+    "role": "map",
+    "setups": {
+     ".": {
+      "frames": 1314,
+      "duration_s": 131.4,
+      "path_m": 145.8115887597658,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": []
+     }
+    }
+   },
+   "hssd_restaurant/sun_45_0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/overcast_0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/sun_10_180": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/dusk_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/night_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/night_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/night_25": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/objfeat_40": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/objfeat_90": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/rearr3_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/objfeat_50+wander_0.3": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1150,
+      "duration_s": 115.0,
+      "path_m": 133.81783964601394,
+      "extent_m": 34.423893712023386,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 22
+   },
+   "hssd_restaurant/objfeat_50+night_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1210,
+      "duration_s": 121.0,
+      "path_m": 134.02036901573274,
+      "extent_m": 34.486259523225606,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   },
+   "hssd_restaurant/sun_45_0+wander_0.3": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1150,
+      "duration_s": 115.0,
+      "path_m": 133.81783964601394,
+      "extent_m": 34.423893712023386,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 22
+   },
+   "hssd_restaurant/reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 1204,
+      "duration_s": 120.4,
+      "path_m": 134.0191136726617,
+      "extent_m": 34.48469300812412,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 24
+   }
+  },
+  "corridor": {
+   "corridor/map": {
+    "role": "map",
+    "setups": {
+     ".": {
+      "frames": 669,
+      "duration_s": 66.9,
+      "path_m": 94.99923793223951,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": []
+     }
+    }
+   },
+   "corridor/sun_45_0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/overcast_0": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/sun_10_180": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/dusk_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/night_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/night_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/night_25": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/objfeat_25": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/objfeat_50": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/objfeat_75": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/rearr3_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/objfeat_50+wander_0.3": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 584,
+      "duration_s": 58.4,
+      "path_m": 85.40058903858257,
+      "extent_m": 34.72222598623092,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 11
+   },
+   "corridor/objfeat_50+night_100": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 616,
+      "duration_s": 61.6,
+      "path_m": 84.96146328925947,
+      "extent_m": 34.43920650763659,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   },
+   "corridor/sun_45_0+wander_0.3": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 584,
+      "duration_s": 58.4,
+      "path_m": 85.40058903858257,
+      "extent_m": 34.72222598623092,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 11
+   },
+   "corridor/reverse": {
+    "role": "query",
+    "setups": {
+     ".": {
+      "frames": 619,
+      "duration_s": 61.9,
+      "path_m": 84.96154272085369,
+      "extent_m": 34.4391958251151,
+      "moving": 1.0,
+      "still": [],
+      "covered": 1.0,
+      "uncovered": [],
+      "evaluated": 1.0
+     }
+    },
+    "trials": 12
+   }
+  }
  }
 }
