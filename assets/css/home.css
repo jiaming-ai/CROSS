@@ -22,19 +22,22 @@
   position: absolute; left: calc(var(--x) * var(--wm)); top: calc(var(--y) * var(--wm));
   font-size: max(8.5px, min(13px, calc(var(--wm) * .046))); line-height: 1; letter-spacing: -0.02em; white-space: nowrap; color: var(--accent-ink);
 }
-.mast h1 { font-size: clamp(30px, 3.05vw, 46px); line-height: 1.02; letter-spacing: -0.04em; font-weight: 400; }
-.mast-sub { font-size: clamp(16px, 1.25vw, 19px); font-weight: 300; line-height: 1.3; letter-spacing: -0.015em; max-width: 34em; }
+/* the title column grows with the window, as the wordmark does, and the install line sits at its foot, level with the
+   rule under the strengths */
+.mast h1 { font-size: clamp(30px, 3.05vw, 60px); line-height: 1.02; letter-spacing: -0.04em; font-weight: 400; }
+.mast-sub { font-size: clamp(16px, 1.25vw, 24px); font-weight: 300; line-height: 1.3; letter-spacing: -0.015em; max-width: 34em; }
 .mast-points {
   grid-column: 1 / 8; grid-row: 2; align-self: end;
   list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: var(--g);
   border-top: 1px solid var(--rule); font-size: clamp(14px, 1.05vw, 16px); line-height: 1.25; letter-spacing: -0.012em;
 }
 @media (max-width: 1000px) { .mast-points { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.mast-points li { padding: 6px 0 5px; border-bottom: 1px solid var(--hair); }
+.mast-points li { padding: 6px 0 5px; border-bottom: 1px solid var(--line); }
 .mast-note { font-size: 12.5px; letter-spacing: 0; color: var(--ink-3); }
 .mast-note-line { display: block; }
 .mast-links { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 16px; }
-.mast-install { display: flex; align-items: center; gap: 0; }
+.mast-install { display: flex; align-items: center; gap: 0; margin-top: auto; }
+@media (max-width: 1000px) { .mast-install { margin-top: 0; } }
 .mast-install code { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; font-size: 13px; background: var(--surface-2); }
 
 /* ------------------------------------------------------------------ highlights: playlist player + grouped list */
@@ -80,8 +83,8 @@ html:not(.js) .hl-bar { display: none; }  /* without JS the video keeps its nati
 /* ------------------------------------------------------------------ summary */
 .summary-body { padding-top: clamp(20px, 2.6vw, 36px); padding-bottom: clamp(52px, 6.5vw, 104px); }
 .summary-body .sx-statement { max-width: 30em; }
-.figures { list-style: none; margin: clamp(34px, 4.5vw, 64px) 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: var(--g); row-gap: 28px; }
-@media (max-width: 900px) { .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.figures { list-style: none; margin: clamp(34px, 4.5vw, 64px) 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: var(--g); row-gap: 28px; }
+@media (max-width: 640px) { .figures { grid-template-columns: minmax(0, 1fr); } }
 .figures li { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--rule); }
 .fig-v { font-size: clamp(52px, 7vw, 108px); font-weight: 200; letter-spacing: -0.06em; line-height: .9; font-variant-numeric: tabular-nums; }
 .fig-k { font-size: clamp(15px, 1.15vw, 18px); line-height: 1.25; letter-spacing: -0.012em; max-width: 22em; }
@@ -102,10 +105,22 @@ html:not(.js) .hl-bar { display: none; }  /* without JS the video keeps its nati
 /* ------------------------------------------------------------------ benchmark */
 .bench-body { padding-top: clamp(20px, 2.6vw, 36px); padding-bottom: clamp(52px, 6.5vw, 104px); }
 .bench-lead { max-width: 30em; margin-bottom: clamp(26px, 3.4vw, 48px); }
-.bench-grid { row-gap: 32px; }
+/* the side column (facts, how to read the ranking, links) has its type in container units, so it grows with the chart
+   and ends level with it at desktop widths */
+.bench-grid { row-gap: 32px; container-type: inline-size; }
 .bench-chart { grid-column: 1 / 9; min-width: 0; }
-.bench-side { grid-column: 10 / 13; min-width: 0; display: flex; flex-direction: column; gap: 22px; }
-@media (max-width: 1000px) { .bench-chart, .bench-side { grid-column: 1 / -1; } }
+.bench-side { grid-column: 10 / 13; min-width: 0; display: flex; flex-direction: column; gap: 1.5em; font-size: clamp(13.5px, calc(8.5px + .43cqw), 17px); }
+/* below 1200 px (as the highlights and the video): the chart, then the facts beside the note and the links */
+@media (max-width: 1199px) {
+  .bench-chart { grid-column: 1 / -1; }
+  .bench-side {
+    grid-column: 1 / -1; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); column-gap: var(--g); row-gap: 1.2em;
+    align-items: start; font-size: 14.5px;
+  }
+  .bench-facts { grid-column: 1 / 8; grid-row: 1 / 3; }
+  .bench-foot, .bench-links { grid-column: 9 / 13; }
+}
+@media (max-width: 760px) { .bench-side { display: flex; } }
 .bench-tabs { margin-bottom: 14px; }
 @media (max-width: 560px) { .bench-tabs [role="tab"] { font-size: 19px; } }
 .js .hr-panel[hidden] { display: none; }
@@ -139,32 +154,54 @@ html:not(.js) .hl-bar { display: none; }  /* without JS the video keeps its nati
   .hr-bar { grid-column: 1 / -1; grid-row: 2; height: 8px; }
   .hr-val { grid-row: 1; grid-column: 2; }
 }
-.bench-foot { margin-top: 12px; max-width: 64em; }
+.bench-foot { font-size: .88em; line-height: 1.4; color: var(--ink-3); max-width: 40em; }
 .bench-facts { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
-.bench-facts li { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; line-height: 1.3; }
-.bench-facts li span:first-child { color: var(--ink-3); }
-.bench-links { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; font-size: 16px; }
+.bench-facts li { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: .55em; padding: .5em 0; border-bottom: 1px solid var(--line); line-height: 1.3; }
+.bench-facts li > span:first-child { color: var(--ink-3); }
+.bench-links { display: flex; flex-direction: column; align-items: flex-start; gap: .5em; font-size: 1.1em; }
 
-/* ------------------------------------------------------------------ video */
-.tour-grid { row-gap: 24px; padding-top: 20px; padding-bottom: clamp(52px, 6.5vw, 104px); }
-.tour-player { grid-column: 1 / 9; min-width: 0; }
+/* ------------------------------------------------------------------ video: the player, what is playing, the chapters */
+/* 1200 px and up: the player on 8 columns; on the other 4, what the playing chapter shows at the top and the chapter list
+   at the foot. Their type is in container units (cqw, the grid's width), so the column grows with the player and fills
+   its height at every width. Narrower: the player, then what is playing beside the chapters; phones: one column. */
+.tour-grid { container-type: inline-size; grid-template-rows: auto 1fr; row-gap: 1.6cqw; padding-top: 20px; padding-bottom: clamp(52px, 6.5vw, 104px); }
+.tour-player { grid-column: 1 / 9; grid-row: 1 / 3; min-width: 0; }
 .tour-player .sx-frame { background: #000; }
 .tour-player video { object-fit: contain; background: #000; }
-.tour-side { grid-column: 9 / 13; min-width: 0; }
-@media (max-width: 1000px) { .tour-player, .tour-side { grid-column: 1 / -1; } }
-.tour-side .sx-list-head { font-size: 15px; }
+.tour-now {
+  grid-column: 9 / 13; grid-row: 1; min-width: 0; display: flex; flex-direction: column; gap: .5em;
+  padding-top: .45em; border-top: 1px solid var(--rule); font-size: clamp(13px, 1.05cqw, 19px);
+}
+.tour-now-k { display: flex; justify-content: space-between; gap: 1em; }
+.tour-now-k > :first-child { display: inline-flex; align-items: center; gap: .3em; }
+.tour-now-k > :first-child::before { content: ""; width: .6em; height: .6em; margin-right: .25em; background: var(--accent); }
+.tour-now-k > :last-child { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.tour-now-t { font-size: clamp(22px, 2.1cqw, 40px); letter-spacing: -0.035em; line-height: 1.06; text-wrap: balance; }
+.tour-now-d { font-size: clamp(15px, 1.28cqw, 24px); font-weight: 300; line-height: 1.36; letter-spacing: -0.01em; }
+.tour-side { grid-column: 9 / 13; grid-row: 2; align-self: end; min-width: 0; }
+.tour-side .sx-list-head { font-size: clamp(14px, 1.05cqw, 19px); }
 .chapters { list-style: none; margin: 0; padding: 0; }
 .chapters button {
   width: 100%; display: grid; grid-template-columns: 2.2em minmax(0, 1fr) auto; column-gap: .6em; align-items: baseline;
-  padding: .42em 0; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left;
-  font-size: clamp(15px, 1.1vw, 18px); letter-spacing: -0.015em; line-height: 1.2;
+  padding: .38em 0; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left;
+  font-size: clamp(15px, 1.12cqw, 21px); letter-spacing: -0.015em; line-height: 1.2;
   color: color-mix(in srgb, var(--ink) 62%, transparent); transition: color .15s;
 }
-.chapters button:hover, .chapters button.is-on { color: var(--ink); }
+.chapters button:hover, .chapters button[aria-current] { color: var(--ink); }
 .ch-i { font-variant-numeric: tabular-nums; }
 .ch-n small { display: block; font-size: 12px; letter-spacing: 0; color: var(--ink-3); }
-.ch-t { font-size: 13px; letter-spacing: 0; font-variant-numeric: tabular-nums; }
-.chapters button.is-on .ch-t::before { content: ""; display: inline-block; width: .5em; height: .5em; margin-right: .45em; background: var(--accent); }
+.ch-t { font-size: 13px; letter-spacing: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chapters button[aria-current] .ch-t::before { content: ""; display: inline-block; width: .5em; height: .5em; margin-right: .45em; background: var(--accent); }
+@media (max-width: 1199px) {
+  .tour-grid { grid-template-rows: none; row-gap: 20px; }
+  .tour-player { grid-column: 1 / -1; grid-row: auto; }
+  .tour-now { grid-column: 1 / 7; grid-row: auto; font-size: 15px; }
+  .tour-side { grid-column: 7 / 13; grid-row: auto; align-self: start; }
+  .tour-now-t { font-size: clamp(22px, 2.6vw, 28px); }
+  .tour-now-d { font-size: 16px; min-height: calc(1.36em * 4); }
+  .tour-side .sx-list-head, .chapters button { font-size: 15px; }
+}
+@media (max-width: 760px) { .tour-now, .tour-side { grid-column: 1 / -1; } }
 
 /* ------------------------------------------------------------------ method */
 .method .container { padding-top: clamp(20px, 2.6vw, 36px); padding-bottom: clamp(52px, 6.5vw, 104px); }
@@ -190,15 +227,18 @@ html:not(.js) .hl-bar { display: none; }  /* without JS the video keeps its nati
 .method-more { margin-top: clamp(28px, 3.5vw, 48px); font-size: 17px; }
 
 /* ------------------------------------------------------------------ get started */
-.start-grid { row-gap: 32px; padding-top: clamp(20px, 2.6vw, 36px); }
+/* the text column's type is in container units, so it grows with the width and ends level with the terminal, whose
+   height does not change */
+.start-grid { row-gap: 32px; padding-top: clamp(20px, 2.6vw, 36px); container-type: inline-size; }
 .start-text { grid-column: 1 / 6; min-width: 0; display: flex; flex-direction: column; gap: 22px; }
 .start-code { grid-column: 6 / 13; min-width: 0; }
 @media (max-width: 1100px) { .start-text, .start-code { grid-column: 1 / -1; } }
-.start-text .sx-statement { font-size: clamp(22px, 2.3vw, 34px); }
-.start-facts { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
-.start-facts li { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; line-height: 1.3; }
-.start-facts li span:first-child { color: var(--ink-3); }
+.start-text .sx-statement { font-size: clamp(22px, 2.3cqw, 44px); }
+.start-facts { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); font-size: clamp(14px, calc(8.5px + .43cqw), 17px); }
+.start-facts li { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); gap: .55em; padding: .5em 0; border-bottom: 1px solid var(--line); line-height: 1.3; }
+.start-facts li > span:first-child { color: var(--ink-3); }
 .start-links { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 16px; }
+@media (max-width: 1100px) { .start-facts { font-size: 14.5px; } }
 .start-code .sx-list-head { align-items: center; font-size: 15px; }
 .start-code .sx-listing { padding-top: 8px; overflow-x: auto; }
 .modes { padding-top: clamp(40px, 5vw, 72px); padding-bottom: clamp(52px, 6.5vw, 104px); }
@@ -232,6 +272,19 @@ html:not(.js) .hl-bar { display: none; }  /* without JS the video keeps its nati
 .mo-meta { margin-top: auto; font-size: 13px; color: var(--ink-3); }
 .mo-soon::before { content: ""; display: inline-block; width: .5em; height: .5em; margin-right: .4em; border: 1px solid currentColor; }
 .mo-links { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 15px; }
+/* the first paper's cell fills the height of the teaser beside it: its type is in container units, and from 1320 px a
+   short list says what the paper shows (one to four points as the teaser grows) */
+.mo-lead { container-type: inline-size; }
+.mo-lead h3 { font-size: clamp(18px, 4.4cqw, 32px); }
+.mo-lead .mo-sub { font-size: clamp(15px, 3cqw, 21px); }
+.mo-lead .mo-meta { font-size: clamp(13px, 2.2cqw, 15px); }
+.mo-lead .mo-links { font-size: clamp(15px, 2.6cqw, 18px); }
+.mo-shows { display: none; list-style: none; margin: 4px 0 0; padding: 0; border-top: 1px solid var(--line); font-size: clamp(14px, 2.6cqw, 18px); line-height: 1.25; letter-spacing: -0.012em; }
+.mo-shows li { padding: .38em 0; border-bottom: 1px solid var(--line); }
+@media (min-width: 1320px) { .mo-shows { display: block; } }
+@media (max-width: 1399px) { .mo-shows li:nth-child(n+2) { display: none; } }
+@media (max-width: 1559px) { .mo-shows li:nth-child(n+3) { display: none; } }
+@media (max-width: 1649px) { .mo-shows li:nth-child(4) { display: none; } }
 .mo-media { display: block; overflow: hidden; background: #fff; }
 .mo-wide { grid-column: span 2; }
 @media (max-width: 900px) { .mo-wide { grid-column: auto; } }
@@ -245,3 +298,7 @@ html:not(.js) .hl-bar { display: none; }  /* without JS the video keeps its nati
 
 /* ------------------------------------------------------------------ BibTeX */
 .bib-body { padding-top: clamp(20px, 2.6vw, 36px); padding-bottom: clamp(52px, 6.5vw, 104px); }
+
+/* without JavaScript the clips cannot load their posters (site.js reads data-poster on scroll): show the poster image */
+html:not(.js) .ov-clips video { display: none; }
+html:not(.js) .ov-clips .sx-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }

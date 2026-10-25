@@ -8,7 +8,7 @@
   <!-- apply the saved theme (or ?theme=dark|light) before first paint -->
   <script>document.documentElement.classList.add('js');try{var t=new URLSearchParams(location.search).get('theme')||localStorage.getItem('cross-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
   <title>CROSS: Visual Multi-Session SLAM and Relocalization for Robots</title>
-  <meta name="description" content="Open-source visual multi-session SLAM for long-term robot navigation: map once, then relocalize and keep tracking across lighting, season and scene change.">
+  <meta name="description" content="Open-source visual SLAM for multi-session mapping, tracking and relocalization: map once, then relocalize and navigate across lighting, season and scene change.">
   <link rel="canonical" href="https://jiaming.im/CROSS/">
   <meta name="robots" content="index, follow, max-image-preview:large">
   <meta property="og:type" content="website">
@@ -19,7 +19,8 @@
   <meta property="og:image" content="https://jiaming.im/CROSS/assets/img/og/home.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="CROSS: visual multi-session SLAM that survives change">
+  <meta property="og:image:alt" content="CROSS: visual multi-session SLAM that survives change; a snowy session relocalized in a summer map (NCLT)">
+  <meta name="twitter:image:alt" content="CROSS: visual multi-session SLAM that survives change; a snowy session relocalized in a summer map (NCLT)">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#000000">
   <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
@@ -43,7 +44,7 @@
      "keywords": ["visual SLAM", "multi-session mapping", "relocalization", "multi-session localization", "long-term navigation", "place recognition", "loop closure", "RGB-D", "stereo", "monocular", "robotics"],
      "author": [{"@type": "Person", "name": "Jiaming Wang", "url": "https://jiaming.im/"}, {"@type": "Person", "name": "Harold Soh"}],
      "sourceOrganization": {"@type": "Organization", "name": "National University of Singapore"},
-     "citation": {"@type": "ScholarlyArticle", "headline": "CROSS: Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation", "url": "https://jiaming.im/CROSS/v1/", "sameAs": "https://arxiv.org/abs/2605.02227"},
+     "citation": {"@type": "ScholarlyArticle", "@id": "https://jiaming.im/CROSS/v1/#paper", "headline": "Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation", "url": "https://jiaming.im/CROSS/v1/", "sameAs": "https://arxiv.org/abs/2605.02227"},
      "isPartOf": {"@id": "https://jiaming.im/CROSS/#website"}}
   ]}</script>
 </head>
@@ -100,7 +101,7 @@
     <div class="mast-info">
       <h1 id="mast-title"><span class="sr-only">CROSS: </span>Visual <span class="nowrap">multi-session</span> SLAM<br>that survives change</h1>
       <p class="mast-sub">Map a place once. Come back at night, in another season, after the furniture moved, or with another
-        camera: CROSS finds where it is, keeps tracking and extends the same map, for long-term navigation.</p>
+        camera: CROSS finds where it is, keeps tracking and extends the same map, for long-term, multi-session navigation.</p>
       <p class="mast-links">
         <a class="sx-link" href="docs/#install">Get started</a>
         <a class="sx-link" href="leaderboard/">Benchmark</a>
@@ -145,15 +146,15 @@
     <div class="hl-now">
       <p class="hl-now-k"><span><span id="hl-now-n">01</span> <span id="hl-now-g">Relocalization</span></span><span id="hl-now-w">ROVER campus</span></p>
       <h3 class="hl-now-t" id="hl-now-t">Night, in a map made by day</h3>
-      <p class="hl-now-d" id="hl-now-d">Mapped by day, back at night. CROSS finds its place in the old map; the five other systems give no pose or the wrong place.</p>
+      <p class="hl-now-d" id="hl-now-d">A night session, in a map recorded by day. CROSS finds its place in the map; the five other systems shown give no pose or the wrong place.</p>
     </div>
     <div class="sx-list hl-list" id="hl-list">
         <div class="hl-group">
           <p class="sx-list-head"><span>Relocalization</span><span>in a map from another session</span></p>
           <div class="sx-runin">
-            <button class="sx-chip" type="button" data-src="clip-reloc-night" data-group="Relocalization" data-title="Night, in a map made by day" data-desc="Mapped by day, back at night. CROSS finds its place in the old map; the five other systems give no pose or the wrong place." data-where="ROVER campus" data-d="6"><span class="sx-chip-n">01</span> Night</button>
+            <button class="sx-chip" type="button" data-src="clip-reloc-night" data-group="Relocalization" data-title="Night, in a map made by day" data-desc="A night session, in a map recorded by day. CROSS finds its place in the map; the five other systems shown give no pose or the wrong place." data-where="ROVER campus" data-d="6"><span class="sx-chip-n">01</span> Night</button>
             <button class="sx-chip" type="button" data-src="clip-reloc-dark" data-group="Relocalization" data-title="Lights off, in a map made with them on" data-desc="The same corridor with the lights off. CROSS localizes; the other systems give no pose or the wrong place." data-where="OpenLORIS corridor" data-d="6"><span class="sx-chip-n">02</span> Lights off</button>
-            <button class="sx-chip" type="button" data-src="clip-reloc-snow" data-group="Relocalization" data-title="Snow, in a summer map" data-desc="One camera and wheel odometry in a summer map. CROSS localizes; the other systems give no pose or land 100 m away." data-where="NCLT north campus" data-d="7"><span class="sx-chip-n">03</span> Snow</button>
+            <button class="sx-chip" type="button" data-src="clip-reloc-snow" data-group="Relocalization" data-title="Snow, in a summer map" data-desc="One camera and wheel odometry in a summer map. CROSS localizes; three other systems give no pose and LingBot-Map lands over 100 m away (RTAB-Map needs a second camera)." data-where="NCLT north campus" data-d="7"><span class="sx-chip-n">03</span> Snow</button>
             <button class="sx-chip" type="button" data-src="clip-reloc-cafe" data-group="Relocalization" data-title="A busy café, seen from the other side" data-desc="People walk through a café the map saw from the other side. CROSS localizes; the others give no pose or the wrong place." data-where="OpenLORIS café" data-d="6"><span class="sx-chip-n">04</span> Café</button>
             <button class="sx-chip" type="button" data-src="clip-reloc-people" data-group="Relocalization" data-title="People walking, objects moved" data-desc="CROSS localizes, as do AMB3R-SLAM and LingBot-Map; the other three systems give no pose or the wrong place." data-where="OpenLORIS home" data-d="6"><span class="sx-chip-n">05</span> People</button>
           </div>
@@ -171,14 +172,14 @@
             <button class="sx-chip" type="button" data-src="clip-scale-nclt" data-group="Large scale" data-title="6.5 km in one session" data-desc="A Segway crosses a campus, indoors and out. Verified loop closures correct the wheel odometry's drift: 34 by the 4.8 km mark." data-where="NCLT" data-d="12"><span class="sx-chip-n">08</span> 6.5 km</button>
             <button class="sx-chip" type="button" data-src="clip-scale-gps" data-group="Large scale" data-title="On the Earth with consumer GPS" data-desc="The same session with consumer GPS as an extra input: the map sits on its true place, 3.1 m RMSE without alignment." data-where="NCLT" data-d="5"><span class="sx-chip-n">09</span> GPS</button>
             <button class="sx-chip" type="button" data-src="clip-robots-home" data-group="Large scale" data-title="Three robots, one map" data-desc="Three recordings of one home, replayed as three robots; each joins the shared map once it recognizes a place. In development." data-where="OpenLORIS home" data-d="10"><span class="sx-chip-n">10</span> Three robots</button>
-            <button class="sx-chip" type="button" data-src="clip-world-fly" data-group="Large scale" data-title="The map as a 3D world" data-desc="A flight through the Gaussian-splatting world built from a saved map: rendered views, not camera frames." data-where="KITTI" data-d="9"><span class="sx-chip-n">11</span> 3D world</button>
+            <button class="sx-chip" type="button" data-src="clip-world-fly" data-group="Large scale" data-title="The map as a 3D world" data-desc="A virtual camera on the car's own path through the Gaussian-splatting world built from a saved map: rendered views, not camera frames." data-where="KITTI" data-d="9"><span class="sx-chip-n">11</span> 3D world</button>
           </div>
         </div>
         <div class="hl-group">
           <p class="sx-list-head"><span>Deployment</span><span>edge and cloud, any camera</span></p>
           <div class="sx-runin">
-            <button class="sx-chip" type="button" data-src="clip-cloud" data-group="Deployment" data-title="Light robot, GPU in the cloud" data-desc="The robot runs its odometry and the CROSS edge client on under half a CPU core; a GPU server does the rest, with 100 ms of added delay." data-where="OpenLORIS office" data-d="8"><span class="sx-chip-n">12</span> GPU server</button>
-            <button class="sx-chip" type="button" data-src="clip-cam-indoor" data-group="Deployment" data-title="A map from another camera" data-desc="The map holds only camera A's images; camera B, a colour camera on the same robot, finds its place in it." data-where="OpenLORIS office" data-d="6.5"><span class="sx-chip-n">13</span> Another camera</button>
+            <button class="sx-chip" type="button" data-src="clip-cloud" data-group="Deployment" data-title="Light robot, GPU in the cloud" data-desc="A recorded office session replayed in real time: the robot's odometry and the CROSS edge client use under half of one x86 core; a GPU server does the rest, with 100 ms of added delay." data-where="OpenLORIS office" data-d="8"><span class="sx-chip-n">12</span> GPU server</button>
+            <button class="sx-chip" type="button" data-src="clip-cam-indoor" data-group="Deployment" data-title="A map from another camera" data-desc="The map holds only camera A's images; camera B, a color camera on the same robot, finds its place in it." data-where="OpenLORIS office" data-d="6.5"><span class="sx-chip-n">13</span> Another camera</button>
           </div>
         </div>
     </div>
@@ -193,15 +194,14 @@
         hypothesis and <strong>commits only what the robot's own motion confirms</strong>, so a single look-alike view cannot
         corrupt the map. <span class="nowrap">RGB-D</span>, stereo or monocular; with wheel odometry, a VIO, an IMU or none.</p>
       <ul class="figures" aria-label="Benchmark highlights">
-        <li><span class="fig-v" data-num="t3.cross.overall">93%</span><span class="fig-k">relocalization success from 10 s cold starts on OpenLORIS, ROVER and SimChange</span><span class="fig-c">cameras only: <span data-num="t3.cross_camera.overall">88%</span>; best other system: <span data-num="t3.best_baseline.overall">59%</span></span></li>
-        <li><span class="fig-v" data-num="t3.cross_camera.rover">88%</span><span class="fig-k">relocalization success outdoors with cameras only, over 14 months of seasons, dusk and night</span><span class="fig-c">best other system: <span data-num="t3.best_baseline.rover">39%</span></span></li>
-        <li><span class="fig-v" data-num="t1.cross.overall">0.35%</span><span class="fig-k">mapping error, as a share of the distance travelled</span><span class="fig-c">RTAB-Map with the same odometry: <span data-num="t1.rtabmap_same_inputs.overall">0.76%</span></span></li>
-        <li><span class="fig-v">14</span><span class="fig-k">sensor modes, one flag: <code>--mode stereo_wheel</code></span><span class="fig-c">RGB-D, stereo, mono; wheel, VIO, IMU or none</span></li>
+        <li><span class="fig-v" data-num="t3.cross.overall">93%</span><span class="fig-k">relocalization success from 10 s cold starts on OpenLORIS, ROVER and SimChange</span><span class="fig-c"><a href="#benchmark">first of seven systems: the ranking ↓</a></span></li>
+        <li><span class="fig-v" data-num="t3.cross_camera.rover">88%</span><span class="fig-k">relocalization success outdoors with cameras only, over 14 months of seasons, dusk and night</span><span class="fig-c">best other system: <span data-num="t3.best_baseline.rover">39%</span><span data-num="t3.best_baseline.rover.ub_note">, an upper bound</span></span></li>
+        <li><span class="fig-v" data-num="t1.cross.overall">0.35%</span><span class="fig-k">mapping error, as a share of the distance traveled</span><span class="fig-c"><a href="#benchmark">the lowest of seven systems: the ranking ↓</a></span></li>
       </ul>
-      <p class="sx-label figures-note">CROSS with a stereo camera, in the CROSS benchmark: <span data-num="runs">9,198</span> runs
-        against <span data-num="baselines">6</span> open-source SLAM systems on the same sessions. Figures with odometry use
-        the recommended stereo + odometry mode: wheel odometry on OpenLORIS, odometry simulated from ground truth plus noise on
-        ROVER and SimChange, where no wheel odometry was recorded; every system that takes odometry gets the same.
+      <p class="sx-label figures-note">CROSS with a stereo camera, in the CROSS benchmark, against open-source SLAM systems run
+        on the same sessions. Figures with odometry use the recommended stereo + odometry mode: wheel odometry on OpenLORIS,
+        dead reckoning from the car's INS on KITTI (close to the ground truth), and odometry simulated from ground truth plus
+        noise on ROVER and SimChange, where no wheel odometry was recorded; every system that takes odometry gets the same.
         <a href="leaderboard/">How it was measured</a></p>
     </div>
   </section>
@@ -218,10 +218,10 @@
           <a class="ov-link" href="leaderboard/">our benchmark&nbsp;→</a></p>
       </div>
       <div class="sx-clips ov-clips">
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-reloc-night.jpg" aria-label="A night session relocalized in a map made by day"><source src="assets/video/clip-reloc-night.mp4" type="video/mp4"></video></div><figcaption>Night in a day map, ROVER</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-reloc-dark.jpg" aria-label="Lights off, in a map made with the lights on"><source src="assets/video/clip-reloc-dark.mp4" type="video/mp4"></video></div><figcaption>Lights off, OpenLORIS</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-reloc-snow.jpg" aria-label="A snowy session relocalized in a summer map"><source src="assets/video/clip-reloc-snow.mp4" type="video/mp4"></video></div><figcaption>Snow in a summer map, NCLT</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-reloc-cafe.jpg" aria-label="A busy café relocalized from the other side"><source src="assets/video/clip-reloc-cafe.mp4" type="video/mp4"></video></div><figcaption>Busy café, OpenLORIS</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-reloc-night.jpg" aria-label="A night session relocalized in a map made by day"><source src="assets/video/clip-reloc-night.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-reloc-night.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Night in a day map, ROVER</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-reloc-dark.jpg" aria-label="Lights off, in a map made with the lights on"><source src="assets/video/clip-reloc-dark.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-reloc-dark.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Lights off, OpenLORIS</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-reloc-snow.jpg" aria-label="A snowy session relocalized in a summer map"><source src="assets/video/clip-reloc-snow.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-reloc-snow.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Snow in a summer map, NCLT</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-reloc-cafe.jpg" aria-label="A busy café relocalized from the other side"><source src="assets/video/clip-reloc-cafe.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-reloc-cafe.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Busy café, OpenLORIS</figcaption></figure>
       </div>
     </div>
 
@@ -229,42 +229,43 @@
       <div class="ov-text sx-grid">
         <h3 class="ov-name">Accurate tracking, any sensor setup</h3>
         <p class="ov-sentence"><strong>Accurate tracking</strong> with <span class="nowrap">RGB-D</span>, stereo or one camera, with
-          wheel odometry, a VIO, an IMU <strong>or nothing at all</strong>: fourteen ready-made modes, picked with one flag.</p>
+          wheel odometry, a VIO, an IMU <strong>or nothing at all</strong>: ready-made modes, picked with one flag.</p>
       </div>
       <div class="sx-clips ov-clips" data-n="3">
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-setups-home.jpg" aria-label="One indoor session mapped in several sensor setups"><source src="assets/video/clip-setups-home.mp4" type="video/mp4"></video></div><figcaption>Indoors, every setup, OpenLORIS home</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-setups-rover.jpg" aria-label="One outdoor robot session mapped in several sensor setups"><source src="assets/video/clip-setups-rover.mp4" type="video/mp4"></video></div><figcaption>Outdoor robot, ROVER</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-setups-kitti.jpg" aria-label="One drive mapped in eleven sensor setups"><source src="assets/video/clip-setups-kitti.mp4" type="video/mp4"></video></div><figcaption>A car, eleven setups, KITTI</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-setups-home.jpg" aria-label="One indoor session mapped in several sensor setups"><source src="assets/video/clip-setups-home.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-setups-home.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Indoors, every setup, OpenLORIS home</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-setups-rover.jpg" aria-label="One outdoor robot session mapped in several sensor setups"><source src="assets/video/clip-setups-rover.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-setups-rover.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Outdoor robot, ROVER</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-setups-kitti.jpg" aria-label="One drive mapped in eleven sensor setups"><source src="assets/video/clip-setups-kitti.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-setups-kitti.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>A car, eleven setups, KITTI</figcaption></figure>
       </div>
     </div>
 
     <div class="sx-band sx-band--blue ov">
       <div class="ov-text sx-grid">
         <h3 class="ov-name">Large scale, with or without GPS</h3>
-        <p class="ov-sentence">Sessions of <strong>kilometres, indoors and out</strong>, kept accurate by verified loop closures
+        <p class="ov-sentence">Sessions of <strong>kilometers, indoors and out</strong>, kept accurate by verified loop closures
           <strong>with or without GPS</strong>; with it, the map is placed on the Earth. Soon, <strong>several robots</strong>
           will build one map together.</p>
       </div>
       <div class="sx-clips ov-clips">
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-scale-nclt.jpg" aria-label="A 6.5 km session mapped indoors and outdoors"><source src="assets/video/clip-scale-nclt.mp4" type="video/mp4"></video></div><figcaption>6.5 km in one session, NCLT</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-scale-gps.jpg" aria-label="The map aligned to consumer GPS"><source src="assets/video/clip-scale-gps.mp4" type="video/mp4"></video></div><figcaption>Placed on the Earth with consumer GPS</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-scale-kitti.jpg" aria-label="A KITTI drive mapped with loop closures"><source src="assets/video/clip-scale-kitti.mp4" type="video/mp4"></video></div><figcaption>Driving, KITTI 00</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-robots-home.jpg" aria-label="Three robots join one shared map"><source src="assets/video/clip-robots-home.mp4" type="video/mp4"></video></div><figcaption>Three robots, one map (in development)</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-scale-nclt.jpg" aria-label="A 6.5 km session mapped indoors and outdoors"><source src="assets/video/clip-scale-nclt.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-scale-nclt.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>6.5 km in one session, NCLT</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-scale-gps.jpg" aria-label="The map aligned to consumer GPS"><source src="assets/video/clip-scale-gps.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-scale-gps.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Placed on the Earth with consumer GPS</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-scale-kitti.jpg" aria-label="A KITTI drive mapped with loop closures"><source src="assets/video/clip-scale-kitti.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-scale-kitti.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Driving, KITTI 00</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-robots-home.jpg" aria-label="Three robots join one shared map"><source src="assets/video/clip-robots-home.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-robots-home.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Three robots, one map (in development)</figcaption></figure>
       </div>
     </div>
 
     <div class="sx-band sx-band--mint ov">
       <div class="ov-text sx-grid">
         <h3 class="ov-name">Light on the robot, heavy in the cloud</h3>
-        <p class="ov-sentence">The robot needs <strong>under half a CPU core</strong>: it runs its odometry and sends a few frames to
-          <strong>a GPU server</strong>, which does the heavy work and keeps it localized over a slow link. A map made with one
-          camera also <strong>serves another camera</strong>.</p>
+        <p class="ov-sentence">The robot needs <strong>under half a CPU core</strong>: it runs its odometry and sends about one frame
+          in five to <strong>a GPU server</strong>, which does the heavy work and keeps it localized with 100 ms of added
+          network delay. A map made with one camera also <strong>serves another camera</strong>.
+          <a class="ov-link" href="docs/#remote">Remote sessions&nbsp;→</a></p>
       </div>
       <div class="sx-clips ov-clips">
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cloud.jpg" aria-label="The robot streams a few images to a GPU server"><source src="assets/video/clip-cloud.mp4" type="video/mp4"></video></div><figcaption>Half a CPU core on the robot, GPU in the cloud</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cam-indoor.jpg" aria-label="A colour camera relocalizes in another camera's map indoors"><source src="assets/video/clip-cam-indoor.mp4" type="video/mp4"></video></div><figcaption>Another camera, indoors</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cam-winter.jpg" aria-label="Another camera relocalizes outdoors in winter"><source src="assets/video/clip-cam-winter.mp4" type="video/mp4"></video></div><figcaption>Another camera, outdoors in winter</figcaption></figure>
-        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cam-night.jpg" aria-label="Another camera relocalizes at night under lamps"><source src="assets/video/clip-cam-night.mp4" type="video/mp4"></video></div><figcaption>Another camera, at night</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cloud.jpg" aria-label="The robot streams a few images to a GPU server"><source src="assets/video/clip-cloud.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-cloud.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Half an x86 core on the robot, GPU in the cloud (replay)</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cam-indoor.jpg" aria-label="A color camera relocalizes in another camera's map indoors"><source src="assets/video/clip-cam-indoor.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-cam-indoor.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Another camera, indoors</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cam-winter.jpg" aria-label="Another camera relocalizes outdoors in winter"><source src="assets/video/clip-cam-winter.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-cam-winter.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Another camera, outdoors in winter</figcaption></figure>
+        <figure class="sx-clip"><div class="sx-frame"><video data-inview muted loop playsinline preload="none" width="960" height="540" data-poster="assets/video/clip-cam-night.jpg" aria-label="Another camera relocalizes at night under lamps"><source src="assets/video/clip-cam-night.mp4" type="video/mp4"></video><noscript><img src="assets/video/clip-cam-night.jpg" width="960" height="540" alt="" loading="lazy"></noscript></div><figcaption>Another camera, at night</figcaption></figure>
       </div>
     </div>
   </section>
@@ -272,11 +273,11 @@
   <!-- ============================================================ benchmark -->
   <section class="bench" id="benchmark" aria-labelledby="bench-title">
     <header class="sx-head"><h2 class="sx-h" id="bench-title">Benchmark</h2>
-      <p class="sx-aside"><span data-num="runs">9,198</span> runs, <span data-num="baselines">6</span> open-source systems, 4 datasets</p></header>
+      <p class="sx-aside"><span data-num="runs">9,198</span> runs, <span data-num="baselines">6</span> open-source systems, <span data-num="datasets">4</span> datasets</p></header>
     <div class="container bench-body">
-      <p class="sx-statement bench-lead">On the same sessions, CROSS <strong>relocalizes in <span data-num="t3.cross.overall">93%</span>
-        of cold starts</strong>. The best other system, <span data-num="t3.best_baseline.name">LingBot-Map</span>, reaches
-        <span data-num="t3.best_baseline.overall">59%</span><span data-num="t3.best_baseline.ub"> (an upper bound: it has no relocalization step)</span>.</p>
+      <p class="sx-statement bench-lead">On the same sessions, CROSS <strong>ranks first in all three tasks</strong>: it
+        relocalizes from a cold start far more often than any other system, keeps more of each later session localized in
+        its map, and maps with the lowest error.</p>
       <div class="bench-grid sx-grid">
         <div class="bench-chart">
           <div class="sx-tabs bench-tabs" role="tablist" aria-label="Benchmark task">
@@ -288,7 +289,7 @@
             <p class="hr-title sx-label">Relocalization success from 10 s cold starts, within 2 m indoors and 5 m outdoors. Higher is better.</p>
             <!-- gen:home-rank-t3 -->
             <ol class="hr-list" data-task="t3">
-              <li class="hr-row is-cross"><span class="hr-name">CROSS<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:94.0%"></i></span><span class="hr-val"><b>94%</b></span></li>
+              <li class="hr-row is-cross"><span class="hr-name">CROSS<small>Stereo + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:93.0%"></i></span><span class="hr-val"><b>93%</b></span></li>
               <li class="hr-row is-ub"><span class="hr-name">LingBot-Map<small>Mono camera only · upper bound</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:59.0%"></i></span><span class="hr-val"><b>59%</b></span></li>
               <li class="hr-row"><span class="hr-name">RTAB-Map<small>RGB-D + odometry · <span class="hr-fail">1/100 query sessions failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:45.0%"></i></span><span class="hr-val"><b>45%</b></span></li>
               <li class="hr-row"><span class="hr-name">ORB-SLAM3<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:45.0%"></i></span><span class="hr-val"><b>45%</b></span></li>
@@ -302,7 +303,7 @@
             <p class="hr-title sx-label">Share of a whole query session localized in a stored map, same radii. Higher is better.</p>
             <!-- gen:home-rank-t2 -->
             <ol class="hr-list" data-task="t2">
-              <li class="hr-row is-cross"><span class="hr-name">CROSS<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:95.0%"></i></span><span class="hr-val"><b>95%</b></span></li>
+              <li class="hr-row is-cross"><span class="hr-name">CROSS<small>Stereo + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:93.0%"></i></span><span class="hr-val"><b>93%</b></span></li>
               <li class="hr-row is-ub"><span class="hr-name">LingBot-Map<small>Mono camera only · upper bound</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:59.0%"></i></span><span class="hr-val"><b>59%</b></span></li>
               <li class="hr-row"><span class="hr-name">RTAB-Map<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:57.0%"></i></span><span class="hr-val"><b>57%</b></span></li>
               <li class="hr-row"><span class="hr-name">ORB-SLAM3<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:54.0%"></i></span><span class="hr-val"><b>54%</b></span></li>
@@ -313,10 +314,10 @@
             <!-- /gen:home-rank-t2 -->
           </div>
           <div class="hr-panel" id="hr-t1" role="tabpanel" aria-labelledby="hr-tab-t1">
-            <p class="hr-title sx-label">Trajectory error as a share of the distance travelled. Lower is better.</p>
+            <p class="hr-title sx-label">Trajectory error as a share of the distance traveled. Lower is better.</p>
             <!-- gen:home-rank-t1 -->
             <ol class="hr-list" data-task="t1">
-              <li class="hr-row is-cross"><span class="hr-name">CROSS<small>RGB-D + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:9.0%"></i></span><span class="hr-val"><b>0.33%</b></span></li>
+              <li class="hr-row is-cross"><span class="hr-name">CROSS<small>Stereo + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:9.6%"></i></span><span class="hr-val"><b>0.35%</b></span></li>
               <li class="hr-row"><span class="hr-name">RTAB-Map<small>Stereo + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:20.8%"></i></span><span class="hr-val"><b>0.76%</b></span></li>
               <li class="hr-row"><span class="hr-name">AMB3R-SLAM<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:36.1%"></i></span><span class="hr-val"><b>1.32%</b></span></li>
               <li class="hr-row"><span class="hr-name">LingBot-Map<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:51.6%"></i></span><span class="hr-val"><b>1.89%</b></span></li>
@@ -326,10 +327,6 @@
             </ol>
             <!-- /gen:home-rank-t1 -->
           </div>
-          <p class="sx-label bench-foot">Each system's best configuration, so CROSS shows <span data-num="t3.cross.best.overall">94%</span>
-            here and <span data-num="t3.cross.overall">93%</span> in its recommended stereo + odometry mode above. Hatched:
-            LingBot-Map has no relocalization step, so its scores are upper bounds. Grey values leave failed sequences out of
-            their mean.</p>
         </div>
         <div class="bench-side">
           <ul class="bench-facts">
@@ -338,6 +335,9 @@
             <li><span>Inputs</span><span>the same images for every system, the same odometry for every system that takes it</span></li>
             <li><span>Open</span><span>protocol, runners for every system, all per-run results</span></li>
           </ul>
+          <p class="bench-foot">CROSS in its recommended stereo + odometry mode, as in the figures above; every other system
+            in its best configuration. Hatched: LingBot-Map has no relocalization step, so its
+            relocalization and localization scores are upper bounds. Gray values leave failed sequences out of their mean.</p>
           <p class="bench-links">
             <a class="sx-link" href="leaderboard/">Leaderboard by sensor and inputs →</a>
             <a class="sx-link" href="replays/">Trajectory replays →</a>
@@ -351,6 +351,7 @@
   <!-- ============================================================ video -->
   <section class="tour" id="tour" aria-labelledby="tour-title">
     <header class="sx-head"><h2 class="sx-h" id="tour-title">Video</h2><p class="sx-aside">5:09, with sound</p></header>
+    <!-- the side column says what the playing chapter shows (home.js updates it from the chapter buttons' data-*) -->
     <div class="container tour-grid sx-grid">
       <div class="tour-player">
         <div class="sx-frame">
@@ -359,18 +360,32 @@
           </video>
         </div>
       </div>
+      <div class="tour-now">
+        <p class="tour-now-k"><span><span id="tour-now-n">01</span> <span id="tour-now-g">Intro</span></span><span id="tour-now-at">0:00</span></p>
+        <p class="tour-now-t" id="tour-now-t">CROSS in ten seconds</p>
+        <p class="tour-now-d" id="tour-now-d">What it does: relocalize across sessions, with any camera setup; stay accurate in the dark and in sharp turns; map kilometers without drift; run light on the robot with the GPU in the cloud; share one map across cameras, and soon across robots.</p>
+      </div>
       <div class="tour-side">
         <p class="sx-list-head"><span>Chapters</span><span>5:09</span></p>
         <ol class="chapters" aria-label="Video chapters">
-          <li><button type="button" data-t="0"><span class="ch-i">01</span><span class="ch-n">Intro</span><span class="ch-t">0:00</span></button></li>
-          <li><button type="button" data-t="10.7"><span class="ch-i">02</span><span class="ch-n">Multi-session visual localization</span><span class="ch-t">0:10</span></button></li>
-          <li><button type="button" data-t="64"><span class="ch-i">03</span><span class="ch-n">Any sensor setup</span><span class="ch-t">1:04</span></button></li>
-          <li><button type="button" data-t="106.7"><span class="ch-i">04</span><span class="ch-n">Accurate in extreme conditions</span><span class="ch-t">1:46</span></button></li>
-          <li><button type="button" data-t="149.3"><span class="ch-i">05</span><span class="ch-n">Large-scale mapping</span><span class="ch-t">2:29</span></button></li>
-          <li><button type="button" data-t="181.3"><span class="ch-i">06</span><span class="ch-n">One map, another camera</span><span class="ch-t">3:01</span></button></li>
-          <li><button type="button" data-t="208"><span class="ch-i">07</span><span class="ch-n">Edge + cloud</span><span class="ch-t">3:28</span></button></li>
-          <li><button type="button" data-t="234.7"><span class="ch-i">08</span><span class="ch-n">Multi-agent mapping <small>in development</small></span><span class="ch-t">3:54</span></button></li>
-          <li><button type="button" data-t="266.7"><span class="ch-i">09</span><span class="ch-n">CROSS World</span><span class="ch-t">4:26</span></button></li>
+          <li><button type="button" aria-current="true" data-t="0" data-group="Intro" data-title="CROSS in ten seconds"
+            data-desc="What it does: relocalize across sessions, with any camera setup; stay accurate in the dark and in sharp turns; map kilometers without drift; run light on the robot with the GPU in the cloud; share one map across cameras, and soon across robots."><span class="ch-i">01</span><span class="ch-n">Intro</span><span class="ch-t">0:00</span></button></li>
+          <li><button type="button" data-t="10.7" data-group="Relocalization" data-title="Where am I in this map?"
+            data-desc="Four cold starts in a map from another session: night in a day map, lights off, snow in a summer map, a busy café seen from the opposite side. In all four, only CROSS finds its place; then every system's success rate in each condition."><span class="ch-i">02</span><span class="ch-n">Multi-session visual localization</span><span class="ch-t">0:10</span></button></li>
+          <li><button type="button" data-t="64" data-group="Tracking" data-title="One system, every sensor setup"
+            data-desc="One session mapped in every setup, from stereo with wheel odometry to one camera alone: an indoor wheeled robot, an outdoor ground robot, and a car on KITTI 07. Then the grid of shipped modes."><span class="ch-i">03</span><span class="ch-n">Any sensor setup</span><span class="ch-t">1:04</span></button></li>
+          <li><button type="button" data-t="106.7" data-group="Tracking" data-title="Accurate in the dark, in glare, in sharp turns"
+            data-desc="Whole sessions mapped at night without light, under street lamps, and at speed through tight corridors: CROSS keeps the lowest map error while the others drift or lose tracking. Then every system's map error on the whole benchmark."><span class="ch-i">04</span><span class="ch-n">Accurate in extreme conditions</span><span class="ch-t">1:46</span></button></li>
+          <li><button type="button" data-t="149.3" data-group="Large scale" data-title="Kilometers without drift"
+            data-desc="The NCLT campus in one session, indoors and outdoors: loop closures pull the map back onto the ground truth as the wheel odometry drifts. Then a 3.7 km drive on KITTI 00, and every system's map error over NCLT, KITTI 00 and KITTI 02."><span class="ch-i">05</span><span class="ch-n">Large-scale mapping</span><span class="ch-t">2:29</span></button></li>
+          <li><button type="button" data-t="181.3" data-group="Deployment" data-title="One map, another camera"
+            data-desc="Camera A, a grayscale stereo fisheye, builds the map; camera B, a color camera mounted elsewhere on the same robot, finds its place in it. Then how often camera B localizes in camera A's map, indoors and outdoors."><span class="ch-i">06</span><span class="ch-n">One map, another camera</span><span class="ch-t">3:01</span></button></li>
+          <li><button type="button" data-t="208" data-group="Deployment" data-title="Light on the robot, heavy in the cloud"
+            data-desc="The robot runs its VIO and the CROSS edge client on under half a CPU core and uploads about one frame in five; a GPU server matches it against the map and sends back the robot's pose in the map."><span class="ch-i">07</span><span class="ch-n">Edge + cloud</span><span class="ch-t">3:28</span></button></li>
+          <li><button type="button" data-t="234.7" data-group="Large scale" data-title="Many robots, one map"
+            data-desc="Three recordings replayed as three robots at once, in an apartment and on a campus across summer, autumn and spring: each robot joins the shared map once it finds its place, until all three map together. In development."><span class="ch-i">08</span><span class="ch-n">Multi-agent mapping <small>in development</small></span><span class="ch-t">3:54</span></button></li>
+          <li><button type="button" data-t="266.7" data-group="3D world" data-title="The map becomes a 3D world"
+            data-desc="CROSS World turns the map's own posed keyframes into 3D Gaussians: 300 keyframes of the KITTI 07 map become 3 million Gaussians, a 50 MB world to fly through in a web browser."><span class="ch-i">09</span><span class="ch-n">CROSS World</span><span class="ch-t">4:26</span></button></li>
         </ol>
       </div>
     </div>
@@ -427,7 +442,7 @@
             drift that built up in between.</p>
         </li>
       </ol>
-      <p class="method-more"><a class="sx-link" href="v1/">The method in detail: the CROSS 1 paper →</a></p>
+      <p class="method-more"><a class="sx-link" href="v1/">The method in detail: the NeurIPS 2026 paper →</a></p>
     </div>
   </section>
 
@@ -439,10 +454,11 @@
         <p class="sx-statement">One script installs everything into a local environment and downloads the models. Then
           <strong>map a session, save it, and relocalize the next session in it</strong>.</p>
         <ul class="start-facts">
-          <li><span>Reads</span><span><span class="nowrap">RGB-D</span> and stereo folders, KITTI, TUM RGB-D, OpenLORIS, TartanAir, iPhone recordings (Record3D)</span></li>
+          <li><span>Reads</span><span><span class="nowrap">RGB-D</span> and stereo folders, KITTI raw, TartanAir, Virtual KITTI 2, OpenLORIS, iPhone recordings (Record3D); TUM RGB-D after conversion</span></li>
           <li><span>Install</span><span><code>--stereo</code> covers the <span class="nowrap">RGB-D</span> and VGGT-Omega modes; <code>--mono</code> adds DPVO and the monocular IMU modes</span></li>
           <li><span>Python</span><span>feed frames, read poses in the map's coordinates</span></li>
-          <li><span>Licence</span><span>MIT-licensed code. The learned models (VGGT-Omega, Depth Anything 3) are for non-commercial research; the <span class="nowrap">RGB-D</span> modes with PnP use neither</span></li>
+          <li><span>Robot</span><span>a robot without a GPU runs <code>cross-edge</code>, a client without PyTorch, and a GPU server does the rest: <a href="docs/#remote">remote sessions</a></span></li>
+          <li><span>License</span><span>MIT-licensed code. The learned models (VGGT-Omega, Depth Anything 3) are for non-commercial research; the <span class="nowrap">RGB-D</span> modes with PnP use neither</span></li>
         </ul>
         <p class="start-links"><a class="sx-link" href="docs/">Documentation →</a><a class="sx-link" href="docs/#python">Python API →</a><a class="sx-link" href="https://github.com/jiaming-ai/CROSS" rel="noopener">GitHub ↗</a></p>
       </div>
@@ -450,21 +466,24 @@
         <p class="sx-list-head"><span>Terminal</span><button class="copy" type="button" data-copy="#start-listing" data-strip-prompt aria-label="Copy the commands"></button></p>
         <ol class="sx-listing" id="start-listing">
           <li><span class="c"># install: a local .venv with PyTorch, CROSS and the models</span></li>
-          <li><span class="p">$ </span>git clone https://github.com/jiaming-ai/CROSS.git &amp;&amp; cd CROSS</li>
-          <li data-mark><span class="p">$ </span>bash install.sh --stereo</li>
-          <li><span class="p">$ </span>source .venv/bin/activate</li>
+          <li><span class="p">$ </span>git clone <span class="nowrap">https://github.com/</span><wbr><span class="nowrap">jiaming-ai/CROSS.git</span> &amp;&amp; cd CROSS</li>
+          <li data-mark><span class="p">$ </span>bash install.sh --stereo &amp;&amp; source .venv/bin/activate</li>
           <li data-blank> </li>
-          <li><span class="c"># two recordings of one office (OpenLORIS-Scene; download: see the docs)</span></li>
-          <li><span class="p">$ </span>python scripts/datasets/convert_openloris.py data/openloris/office1-1 data/posed/office1-1</li>
-          <li><span class="p">$ </span>python scripts/datasets/convert_openloris.py data/openloris/office1-2 data/posed/office1-2</li>
+          <li><span class="c"># two recordings of one office (OpenLORIS-Scene from Hugging Face, 10.6 GB)</span></li>
+          <li><span class="p">$ </span><span class="nowrap">PATH="$HOME/.local/bin:$PATH"</span> uv pip install py7zr</li>
+          <li><span class="p">$ </span>bash benchmark/datasets/download_openloris.sh data/openloris office1-1_7</li>
+          <li><span class="p">$ </span>python scripts/datasets/convert_openloris.py \</li>
+          <li>    <span class="nowrap">data/openloris/office1-1</span> <span class="nowrap">data/posed/office1-1</span></li>
+          <li><span class="p">$ </span>python scripts/datasets/convert_openloris.py \</li>
+          <li>    <span class="nowrap">data/openloris/office1-2</span> <span class="nowrap">data/posed/office1-2</span></li>
           <li data-blank> </li>
           <li><span class="c"># session 1: build a map and save it</span></li>
-          <li data-mark><span class="p">$ </span>python run.py data/posed/office1-1 --mode rgbd_wheel \</li>
-          <li data-mark>    --save-map maps/office/map.pkl</li>
+          <li data-mark><span class="p">$ </span>python run.py data/posed/office1-1 <span class="nowrap">--mode rgbd_wheel</span> \</li>
+          <li data-mark>    <span class="nowrap">--save-map maps/office/map.pkl</span></li>
           <li data-blank> </li>
           <li><span class="c"># session 2: relocalize in it, write poses in the map frame</span></li>
-          <li data-mark><span class="p">$ </span>python run.py data/posed/office1-2 --mode rgbd_wheel \</li>
-          <li data-mark>    --load-map maps/office/map.pkl --save-poses office1-2.txt</li>
+          <li data-mark><span class="p">$ </span>python run.py data/posed/office1-2 <span class="nowrap">--mode rgbd_wheel</span> \</li>
+          <li data-mark>    <span class="nowrap">--load-map maps/office/map.pkl</span> <span class="nowrap">--save-poses office1-2.txt</span></li>
         </ol>
       </div>
     </div>
@@ -498,6 +517,12 @@
         <h3><a href="v1/">Change-Robust Online Topological Memory for Long-Term Relocalization and Semantic Navigation</a></h3>
         <p class="mo-sub">Every visual match becomes a pose hypothesis that odometry must confirm before it reaches the map; a
           quadruped navigates to language goals in maps from another session.</p>
+        <ul class="mo-shows" aria-label="What the paper shows">
+          <li>Relocalization in a map from another session</li>
+          <li>Language goals reached on a real quadruped</li>
+          <li>Look-alike places ruled out by the robot's motion</li>
+          <li>Real time on one GPU</li>
+        </ul>
         <p class="mo-meta">Jiaming Wang, Jizhuo Chen, Diwen Liu, Atharva Ghotavadekar, Jiaxuan Da, Linh Kästner, Harold Soh</p>
         <p class="mo-links"><a href="v1/">Project page</a><a href="https://arxiv.org/abs/2605.02227" rel="noopener">arXiv ↗</a><a href="https://arxiv.org/pdf/2605.02227" rel="noopener">PDF ↗</a></p>
       </article>
@@ -514,7 +539,7 @@
       <article class="mo-cell mo-text">
         <p class="mo-k">CROSS 3</p>
         <h3>Large-scale, long-term mapping</h3>
-        <p class="mo-sub">Kilometre-scale maps reused over many sessions, outdoors and with more than one camera.</p>
+        <p class="mo-sub">Kilometer-scale maps reused over many sessions, outdoors and with more than one camera.</p>
         <p class="mo-meta mo-soon">Paper coming soon</p>
       </article>
       <article class="mo-cell mo-text">
@@ -523,15 +548,15 @@
         <p class="mo-sub">The robot keeps its odometry and a live pose; a GPU server runs the model and the map over the network.</p>
         <p class="mo-meta mo-soon">Paper coming soon</p>
       </article>
-      <div class="mo-cell mo-media mo-duo" style="--ground: var(--band-yellow)" aria-hidden="true"><img src="assets/img/halftone/cross2.png" width="960" height="547" loading="lazy" alt=""><span class="mo-chip">CROSS 2</span></div>
+      <div class="mo-cell mo-media mo-duo" style="--ground: var(--band-yellow)" aria-hidden="true"><img src="assets/img/halftone/cross2.png" width="960" height="625" loading="lazy" alt=""><span class="mo-chip">CROSS 2</span></div>
       <div class="mo-cell mo-media mo-duo mo-dark" style="--ground: #e2231a" aria-hidden="true"><img src="assets/img/halftone/cross3.png" width="960" height="454" loading="lazy" alt=""><span class="mo-chip">CROSS 3</span></div>
-      <div class="mo-cell mo-media mo-duo mo-dark" style="--ground: var(--band-blue)" aria-hidden="true"><img src="assets/img/halftone/cloud.png" width="960" height="672" loading="lazy" alt=""><span class="mo-chip">CROSS Cloud</span></div>
+      <div class="mo-cell mo-media mo-duo mo-dark" style="--ground: var(--band-blue)" aria-hidden="true"><img src="assets/img/halftone/cloud.png" width="960" height="673" loading="lazy" alt=""><span class="mo-chip">CROSS Cloud</span></div>
     </div>
   </section>
 
   <!-- ============================================================ BibTeX -->
   <section class="bib" id="cite" aria-labelledby="cite-title">
-    <header class="sx-head"><h2 class="sx-h" id="cite-title">BibTeX</h2><p class="sx-aside">Using CROSS in your research? Please cite CROSS 1.</p></header>
+    <header class="sx-head"><h2 class="sx-h" id="cite-title">BibTeX</h2><p class="sx-aside">Using CROSS in your research? Please cite the NeurIPS 2026 paper.</p></header>
     <div class="container bib-body">
       <div class="sx-bib">
         <button class="copy" type="button" data-copy="#bibtex" aria-label="Copy BibTeX"></button>

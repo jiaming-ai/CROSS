@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page not found · CROSS</title>
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#000000">
+  <!-- GitHub Pages serves this page for any missing path under /CROSS/, so every link is absolute. The NeurIPS paper
+       page moved from /CROSS/ to /CROSS/v1/: its old files (/CROSS/static/...) are sent to their new place. -->
+  <script>
+    (function () {
+      var p = location.pathname, i = p.indexOf('/CROSS/static/');
+      if (i >= 0) location.replace(p.slice(0, i) + '/CROSS/v1/static/' + p.slice(i + 14) + location.search + location.hash);
+    })();
+  </script>
+  <link rel="icon" href="/CROSS/assets/img/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@200..700&amp;display=swap">
+  <style>
+    :root { --ink: #111110; --bg: #fafaf7; --quiet: color-mix(in srgb, var(--ink) 62%, transparent); --accent: #e4321b; --m: 20px; }
+    @media (prefers-color-scheme: dark) { :root { --ink: #f0efea; --bg: #111110; --accent: #ffc400; } }
+    @media (max-width: 760px) { :root { --m: 12px; } }
+    * { box-sizing: border-box; margin: 0; }
+    body { background: var(--bg); color: var(--ink); font-family: "Inter Tight", Helvetica, Arial, sans-serif; letter-spacing: -0.01em; }
+    .bar { height: 34px; padding: 0 var(--m); display: flex; align-items: center; background: #000; font-size: 13px; }
+    .bar a { color: #f0efea; text-decoration: none; font-weight: 500; }
+    .head { border-bottom: 1px solid var(--ink); padding: 0 var(--m); }  /* as the subpages: the title row right under the bar */
+    h1 { font-size: clamp(56px, 10vw, 150px); font-weight: 400; letter-spacing: -0.055em; line-height: 1; padding: .05em 0 .08em; }
+    .body { padding: clamp(18px, 2.6vw, 36px) var(--m) 80px; }
+    .lead { max-width: 30em; font-size: clamp(22px, 2.6vw, 38px); font-weight: 200; line-height: 1.15; letter-spacing: -0.03em; }
+    .lead strong { font-weight: 600; }
+    ul { list-style: none; padding: 0; margin-top: 28px; max-width: 34em; border-top: 1px solid var(--ink); font-size: 17px; }
+    li { border-bottom: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); }
+    li a { display: flex; justify-content: space-between; padding: 10px 0; color: var(--ink); text-decoration: none; }
+    li a:hover span:first-child, li a:focus-visible span:first-child { text-decoration: underline; text-underline-offset: 4px; }
+    li a span:last-child { color: var(--quiet); }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <div class="bar"><a href="/CROSS/">CROSS</a></div>
+  <main>
+    <div class="head"><h1>Not found</h1></div>
+    <div class="body">
+      <p class="lead">This page is not on the CROSS site. <strong>The pages it has:</strong></p>
+      <ul>
+        <li><a href="/CROSS/"><span>CROSS: visual multi-session SLAM</span><span>→</span></a></li>
+        <li><a href="/CROSS/leaderboard/"><span>Benchmark</span><span>→</span></a></li>
+        <li><a href="/CROSS/replays/"><span>Trajectory replays</span><span>→</span></a></li>
+        <li><a href="/CROSS/docs/"><span>Documentation</span><span>→</span></a></li>
+        <li><a href="/CROSS/v1/"><span>The NeurIPS 2026 paper</span><span>→</span></a></li>
+      </ul>
+    </div>
+  </main>
+</body>
+</html>

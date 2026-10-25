@@ -128,12 +128,42 @@
   });
   if (tabs.length) select(0);
 
-  // ---------------------------------------------------------------- video: chapters
+  // ---------------------------------------------------------------- video: chapters and what is playing
+  // The chapter buttons carry what each chapter shows (data-group, data-title, data-desc); the block above the list
+  // follows the playing chapter, and shows chapter 01 before the video starts.
   var tour = document.getElementById('tour-video');
   if (!tour) return;
   var chapters = Array.prototype.slice.call(document.querySelectorAll('.chapters button'));
   var starts = chapters.map(function (b) { return parseFloat(b.getAttribute('data-t')); });
+  var now = {};
+  ['n', 'g', 'at', 't', 'd'].forEach(function (k) { now[k] = document.getElementById('tour-now-' + k); });
+  var chapter = -1;
+  function chapterAt(t) {
+    var on = 0;
+    starts.forEach(function (s, i) { if (t >= s - 0.25) on = i; });
+    return on;
+  }
+  function showChapter(i) {
+    if (i === chapter) return;
+    chapter = i;
+    chapters.forEach(function (b, j) { if (j === i) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); });
+    var b = chapters[i];
+    if (!now.t) return;
+    now.n.textContent = b.querySelector('.ch-i').textContent;
+    now.g.textContent = b.getAttribute('data-group');
+    now.at.textContent = b.querySelector('.ch-t').textContent;
+    now.t.textContent = b.getAttribute('data-title');
+    now.d.textContent = b.getAttribute('data-desc');
+  }
+  // a requested jump shows its chapter at once; until the jump lands (or 6 s pass), progress events from the old
+  // position (the start, while the file loads) do not take the block back
+  var target = null, targetTimer = null;
+  tour.addEventListener('seeked', function () { target = null; });
   function seek(t) {
+    showChapter(chapterAt(t));
+    target = t;
+    clearTimeout(targetTimer);
+    targetTimer = setTimeout(function () { target = null; }, 6000);
     var go = function () {
       try { tour.currentTime = t; } catch (e) {}
       var p = tour.play(); if (p && p.catch) p.catch(function () {});
@@ -142,14 +172,16 @@
     else { tour.preload = 'auto'; tour.addEventListener('loadedmetadata', go, { once: true }); tour.load(); }
   }
   chapters.forEach(function (b) {
-    b.addEventListener('click', function () { seek(parseFloat(b.getAttribute('data-t'))); });
-  });
-  tour.addEventListener('timeupdate', function () {
-    var t = tour.currentTime, on = 0;
-    starts.forEach(function (s, i) { if (t >= s - 0.05) on = i; });
-    chapters.forEach(function (b, i) {
-      b.classList.toggle('is-on', i === on);
-      if (i === on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+    b.addEventListener('click', function () {
+      // below 1200 px the list sits under the player: bring the player into view (instantly: Chrome drops a click on
+      // a #link while a script's smooth scroll runs)
+      tour.scrollIntoView({ block: 'nearest' });
+      seek(parseFloat(b.getAttribute('data-t')));
     });
   });
+  tour.addEventListener('timeupdate', function () {
+    if (target !== null && Math.abs(tour.currentTime - target) > 1.5) return;
+    showChapter(chapterAt(tour.currentTime));
+  });
+  showChapter(0);
 })();
