@@ -5,12 +5,86 @@
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const smooth = reduceMotion ? 'auto' : 'smooth';
 
-  // ------------------------------------------------------------ math
-  if (window.renderMathInElement) {
-    window.renderMathInElement(document.body, {
-      delimiters: [{ left: '$$', right: '$$', display: true }],
-      throwOnError: false,
+  // ------------------------------------------------------------ links to a section (#id): land on it and stay there
+  // A smooth jump keeps the target it computed when it started, so the page's first jump (a link from elsewhere to
+  // v1/#results) is instant, and smooth scrolling (html.smooth-scroll) starts only once the fonts are in. Until the
+  // reader scrolls, layout changes above the target (the font swap, the typeset maths) re-align it; during a smooth
+  // jump the re-alignment waits for the jump to end (an instant scroll in the middle of one lands in the wrong place).
+  const root = document.documentElement;
+  // on a reload or an uncached back / forward visit (CROSS.restored, set by site.js) the browser restores the reader's
+  // place, so the #section is not aligned again
+  let holdHash = !!location.hash && !(window.CROSS && window.CROSS.restored), scrolling = false, realignLater = false, scrollIdle = null;
+  const release = () => { holdHash = false; };
+  ['wheel', 'touchstart', 'pointerdown', 'keydown'].forEach((t) => window.addEventListener(t, release, { passive: true, capture: true }));
+  window.addEventListener('hashchange', () => { holdHash = true; });  // an in-page link was followed
+  window.addEventListener('scroll', () => {
+    scrolling = true;
+    clearTimeout(scrollIdle);
+    scrollIdle = setTimeout(() => { scrolling = false; if (realignLater) { realignLater = false; realign(); } }, 150);
+  }, { passive: true });
+  function realign() {
+    if (!holdHash || !location.hash) return;
+    if (scrolling) { realignLater = true; return; }
+    let t = null;
+    try { t = document.getElementById(decodeURIComponent(location.hash.slice(1))); } catch (e) { /* malformed hash */ }
+    if (t) t.scrollIntoView({ block: 'start', behavior: 'instant' });
+  }
+  const fontsIn = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+  fontsIn.then(() => { realign(); root.classList.add('smooth-scroll'); });
+  window.addEventListener('load', realign);
+
+  // ------------------------------------------------------------ math: KaTeX loads and typesets only the Method section,
+  // when that section comes within a few screens, so its script, fonts and the typesetting stay off the page's startup.
+  const method = $('#method');
+  let mathStarted = false;
+  function typeset() {
+    if (mathStarted || !method) return;
+    mathStarted = true;
+    const load = (src) => new Promise((ok, fail) => {
+      const s = document.createElement('script');
+      s.src = src; s.onload = ok; s.onerror = fail;
+      document.head.appendChild(s);
     });
+    load('static/vendor/katex/katex.min.js')
+      .then(() => load('static/vendor/katex/contrib/auto-render.min.js'))
+      .then(() => {
+        window.renderMathInElement(method, { delimiters: [{ left: '$$', right: '$$', display: true }], throwOnError: false });
+        // the equations change the panel heights: let the spotlight on the system figure find its place again
+        window.dispatchEvent(new Event('resize'));
+        markScrollers();
+        realign();  // a linked section below Method moved down with it
+      })
+      .catch(() => {});  // offline: the TeX source stays readable
+  }
+
+  // ------------------------------------------------------------ boxes that scroll sideways (wide equations, tables, BibTeX)
+  // become keyboard stops with a name while they overflow, so they can be scrolled without a pointer (Safari does not
+  // make scrollers focusable by itself)
+  function markScrollers() {
+    $$('.eq-block, .step-eq, .table-view > div, .sx-bib pre').forEach((el) => {
+      const scrolls = el.scrollWidth > el.clientWidth + 1;
+      if (scrolls && !el.hasAttribute('tabindex')) {
+        el.tabIndex = 0;
+        el.setAttribute('role', 'region');
+        el.setAttribute('aria-label', el.matches('pre') ? 'BibTeX' : el.closest('.table-view') ? 'Table' : 'Equation');
+        el.dataset.scroller = '';
+      } else if (!scrolls && el.hasAttribute('data-scroller')) {
+        el.removeAttribute('tabindex'); el.removeAttribute('role'); el.removeAttribute('aria-label');
+        delete el.dataset.scroller;
+      }
+    });
+  }
+  let scT = null;
+  window.addEventListener('resize', () => { clearTimeout(scT); scT = setTimeout(markScrollers, 200); });
+  document.addEventListener('toggle', markScrollers, true);  // a table view was opened
+  markScrollers();
+  if (method && 'IntersectionObserver' in window) {
+    const mio = new IntersectionObserver((ents) => {
+      if (ents.some((e) => e.isIntersecting)) { mio.disconnect(); typeset(); }
+    }, { rootMargin: '1500px 0px' });
+    mio.observe(method);
+  } else {
+    typeset();
   }
   // The theme is switched by the site header's toggle (site.js), which fires 'themechange' for the demo canvas.
 
@@ -38,76 +112,83 @@
     });
   });
 
-  // ------------------------------------------------------------ hero video: plays while in view; the corner button pauses it
-  const heroVid = $('.hero-video'), heroBtn = $('#heroPause');
-  if (heroVid) {
-    let paused = reduceMotion;
-    const setBtn = () => {
-      heroBtn.classList.toggle('paused', paused);
-      heroBtn.setAttribute('aria-label', paused ? 'Play background video' : 'Pause background video');
-    };
-    if (reduceMotion) { heroVid.removeAttribute('autoplay'); heroVid.pause(); }
-    setBtn();
-    heroBtn.addEventListener('click', () => {
-      paused = !paused;
-      if (paused) heroVid.pause(); else heroVid.play().catch(() => {});
-      setBtn();
-    });
-    if ('IntersectionObserver' in window) {
-      new IntersectionObserver(([e]) => {
-        if (e.isIntersecting && !paused) heroVid.play().catch(() => {}); else heroVid.pause();
-      }).observe(heroVid);
-    }
-  }
-
-  // ------------------------------------------------------------ section nav: mark the section being read, keep its link in view
+  // ------------------------------------------------------------ section bar: mark the section being read, keep its link in view
+  // Once the bar sticks under the top bar it gets a rule underneath (.is-stuck), so the page scrolls cleanly below it.
   const header = $('#site-header'), topnav = $('#topnav'), strip = $('.topnav-links', topnav);
   const navLinks = $$('a', strip);
   const sections = navLinks.map((a) => $(a.getAttribute('href')));
-  let activeLink = null, spyQueued = false;
+  let activeLink = null, spyQueued = false, stripStale = false, stripIdle = null;
   function spy() {
     spyQueued = false;
+    topnav.classList.toggle('is-stuck', topnav.getBoundingClientRect().top <= header.getBoundingClientRect().bottom + 0.5);
     const line = header.offsetHeight + topnav.offsetHeight + window.innerHeight * 0.25;
     let cur = null;
     sections.forEach((s, i) => { if (s.getBoundingClientRect().top <= line) cur = navLinks[i]; });
     if (cur === activeLink) return;
     if (activeLink) { activeLink.classList.remove('active'); activeLink.removeAttribute('aria-current'); }
     activeLink = cur;
-    if (!cur) return;
-    cur.classList.add('active');
-    cur.setAttribute('aria-current', 'true');
-    // on phones the links scroll sideways: bring the active one into the strip (the page itself does not move)
-    const sr = strip.getBoundingClientRect(), ar = cur.getBoundingClientRect();
-    if (ar.left < sr.left || ar.right > sr.right) strip.scrollTo({ left: strip.scrollLeft + ar.left - sr.left - 16, behavior: smooth });
+    stripStale = true;
+    if (cur) { cur.classList.add('active'); cur.setAttribute('aria-current', 'true'); }
   }
-  window.addEventListener('scroll', () => { if (!spyQueued) { spyQueued = true; requestAnimationFrame(spy); } }, { passive: true });
-  window.addEventListener('resize', spy);
+  // On phones the links scroll sideways. Once the page stops, the strip brings the active link into view (above the
+  // first section, its start); the page itself does not move. While the page scrolls the strip holds still, so the
+  // link a reader aims at stays under the finger, and it jumps (scrollLeft) instead of gliding: while an element
+  // scrolls smoothly by script, Chrome may not follow a click on a #link. A strip the reader swiped stays as it is
+  // until another section becomes active.
+  function syncStrip() {
+    if (!stripStale) return;
+    stripStale = false;
+    if (!activeLink) { strip.scrollLeft = 0; return; }
+    const sr = strip.getBoundingClientRect(), ar = activeLink.getBoundingClientRect();
+    if (ar.left < sr.left || ar.right > sr.right) strip.scrollLeft += ar.left - sr.left - 16;
+  }
+  // (a phone's address bar fires resize in the middle of a scroll: resize waits for the same pause)
+  const syncSoon = () => { clearTimeout(stripIdle); stripIdle = setTimeout(syncStrip, 150); };
+  window.addEventListener('scroll', () => {
+    if (!spyQueued) { spyQueued = true; requestAnimationFrame(spy); }
+    syncSoon();
+  }, { passive: true });
+  window.addEventListener('resize', () => { spy(); syncSoon(); });
   spy();
+  syncStrip();
 
   // ------------------------------------------------------------ main video + chapters
+  // The chapter list beside the player marks the playing chapter (aria-current: an accent square before its time), and
+  // chapter 1 before the video starts.
   const video = $('#mainVideo');
   const chapterBtns = $$('#chapters button');
   const chapterTimes = chapterBtns.map((b) => +b.dataset.t);
+  const chapterAt = (tSec) => { let idx = 0; chapterTimes.forEach((ct, i) => { if (tSec >= ct - 0.25) idx = i; }); return idx; };
+  // a requested jump marks its chapter at once; until the jump lands (or fails), progress events from the old
+  // position (the start, while the file loads) do not take the mark back
+  let seekTarget = null, seekTimer = null;
   const playAt = (tSec) => {
+    showChapter(chapterAt(tSec));
+    seekTarget = tSec;
+    clearTimeout(seekTimer);
+    seekTimer = setTimeout(() => { seekTarget = null; }, 6000);
     const go = () => { video.currentTime = tSec; video.play().catch(() => {}); };
     if (video.readyState >= 1) go(); else { video.addEventListener('loadedmetadata', go, { once: true }); video.load(); }
   };
+  video.addEventListener('seeked', () => { seekTarget = null; });
   function seek(tSec) {
     $('#video').scrollIntoView({ behavior: smooth, block: 'start' });
     playAt(tSec);
   }
-  chapterBtns.forEach((b) => b.addEventListener('click', () => playAt(+b.dataset.t)));
   let chapter = -1;
-  video.addEventListener('timeupdate', () => {
-    let idx = 0;
-    chapterTimes.forEach((ct, i) => { if (video.currentTime >= ct - 0.25) idx = i; });
+  function showChapter(idx) {
     if (idx === chapter) return;
     chapter = idx;
-    chapterBtns.forEach((b, i) => {
-      b.classList.toggle('on', i === idx);
-      if (i === idx) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
-    });
+    chapterBtns.forEach((b, i) => { if (i === idx) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); });
+  }
+  // where the list sits under the player (narrow screens), bring the player into view
+  const inView = (el) => el.scrollIntoView({ block: 'nearest', behavior: smooth });
+  chapterBtns.forEach((b) => b.addEventListener('click', () => { inView(video); playAt(+b.dataset.t); }));
+  video.addEventListener('timeupdate', () => {
+    if (seekTarget !== null && Math.abs(video.currentTime - seekTarget) > 1.5) return;
+    showChapter(chapterAt(video.currentTime));
   });
+  showChapter(0);
   $$('[data-seek]').forEach((b) => b.addEventListener('click', () => seek(+b.dataset.seek)));
 
   // ------------------------------------------------------------ spotlight figures
@@ -172,6 +253,7 @@
       panels.forEach((p, k) => p.classList.toggle('on', k === i));
       placeSpot(stage, spot, METHOD_SPOTS[i]);
       spot.classList.add('on');
+      markScrollers();  // the panel just shown may hold an equation wider than the screen
     };
     steps.forEach((s, i) => s.addEventListener('click', () => setStep(i)));
     const img = $('img', stage);
@@ -185,15 +267,29 @@
   $$('[data-viewer]').forEach((v) => {
     const stage = $('.viewer-stage', v);
     const btns = $$('.timeline button', v);
-    let idx = 0, timer = null, userTook = false, advanced = 0, held = false;
-    btns.forEach((b) => { const im = new Image(); im.src = b.dataset.src; }); // preload
+    let idx = 0, timer = null, userTook = false, advanced = 0, held = false, preloaded = false;
+    // the other captures load when the viewer comes near (or the reader reaches for it), not with the page
+    const preload = () => {
+      if (preloaded) return;
+      preloaded = true;
+      btns.forEach((b) => { const im = new Image(); im.src = b.dataset.img; });
+    };
+    if ('IntersectionObserver' in window) {
+      const pio = new IntersectionObserver((ents) => {
+        if (ents.some((e) => e.isIntersecting)) { pio.disconnect(); preload(); }
+      }, { rootMargin: '600px 0px' });
+      pio.observe(v);
+    } else {
+      preload();
+    }
     const show = (i) => {
+      preload();
       idx = i;
       btns.forEach((b, k) => { b.classList.toggle('on', k === i); b.setAttribute('aria-checked', k === i); });
       const base = $('img:not(.fade-top)', stage);
       const top = document.createElement('img');
       top.className = 'fade-top';
-      top.src = btns[i].dataset.src; top.alt = btns[i].dataset.alt;
+      top.src = btns[i].dataset.img; top.alt = btns[i].dataset.alt;
       top.style.opacity = 0;
       stage.appendChild(top);
       requestAnimationFrame(() => requestAnimationFrame(() => { top.style.opacity = 1; }));
@@ -204,9 +300,9 @@
       b.addEventListener('click', () => { userTook = true; stop(); show(i); });
       b.addEventListener('pointerenter', () => { if (userTook) show(i); });
     });
-    v.addEventListener('pointerenter', () => { held = true; });
+    v.addEventListener('pointerenter', () => { held = true; preload(); });
     v.addEventListener('pointerleave', () => { held = false; });
-    v.addEventListener('focusin', () => { held = true; });
+    v.addEventListener('focusin', () => { held = true; preload(); });
     v.addEventListener('focusout', (e) => { if (!v.contains(e.relatedTarget)) held = false; });
     if (!reduceMotion && 'IntersectionObserver' in window) {
       new IntersectionObserver(([e]) => {
@@ -231,10 +327,10 @@
       perImg.style.opacity = 0.3;
       const im = new Image();
       im.onload = () => {
-        perImg.src = b.dataset.src; perImg.width = +b.dataset.w; perImg.height = +b.dataset.h; perImg.alt = b.dataset.alt;
+        perImg.src = b.dataset.img; perImg.width = +b.dataset.w; perImg.height = +b.dataset.h; perImg.alt = b.dataset.alt;
         perImg.style.opacity = 1;
       };
-      im.src = b.dataset.src;
+      im.src = b.dataset.img;
     }));
   }
 
@@ -250,52 +346,57 @@
   lb.addEventListener('click', () => lb.close());
   lb.addEventListener('close', () => { if (lbFrom) lbFrom.focus(); });
 
-  // ------------------------------------------------------------ robustness videos (the HTML holds the first scenario)
+  // ------------------------------------------------------------ robustness: one player, three cases (the HTML holds the first)
+  // A case's row in the list plays its clip; above the list, the case's name, caption and legend (the original page's
+  // texts). The frame keeps its shape, so a switch moves nothing. A click on the case already chosen plays it again if
+  // it was paused.
   const ROB = {
     occlusion: {
       seek: 255,
-      src: 'rob-occlusion',
       label: 'Camera occlusion',
       t: 'The camera is covered twice. With no usable retrieval the motion message keeps moving on odometry and its uncertainty grows, while nothing is written to the map. When a clear frame returns, the measurement message overlaps the motion message again and uncertainty collapses.',
       legend: 'Left: belief on the map. Right: camera. Yellow: estimated trajectory. Blue: motion message. Green: measurement message. Ellipse axes show uncertainty.',
     },
     fast: {
       seek: 229,
-      src: 'rob-fast',
       label: 'Fast, blurry motion',
       t: 'Severe motion blur makes observations very uncertain and spawns spurious branches. They live on while the blur lasts, but none is committed. When sharp frames return, temporal filtering removes them and one consistent branch is left.',
       legend: 'Left: belief on the map. Right: camera. Yellow: estimated trajectory. Blue: measurement message. Cyan: motion message. Ellipse axes show uncertainty.',
     },
     noise: {
       seek: 270,
-      src: 'rob-noise',
       label: 'Corrupted odometry',
       t: 'Noise is injected into the odometry, up to five times the size of each motion step. The odometry alone drifts far off, yet retrievals keep pulling the estimate back, so it stays close to the reference trajectory.',
       legend: 'Yellow: CROSS estimate. Green: reference trajectory from SLAM. Blue: the corrupted odometry CROSS is given. Noise is injected as T·exp(ξ) with its size set by a signal-to-noise ratio.',
     },
   };
-  const robVideo = $('#robVideo'), robPanel = $('#rob'), robCap = $('#robCaption'), robLab = $('#robStepLabel');
-  const robLegend = $('#robLegend'), robSeek = $('#robSeek');
+  const robVideo = $('#robVideo'), robBtns = $$('#robList button');
+  const robNow = { label: $('#robStepLabel'), cap: $('#robCaption'), legend: $('#robLegend'), seek: $('#robSeek') };
   let robKey = 'occlusion';
-  function robBuild() {
-    const sc = ROB[robKey];
-    robVideo.poster = `static/video/${sc.src}-poster.jpg`;
-    robVideo.src = `static/video/${sc.src}.mp4`;
+  function robShow(b) {
+    const key = b.dataset.rob, sc = ROB[key];
+    robBtns.forEach((o) => { if (o === b) o.setAttribute('aria-current', 'true'); else o.removeAttribute('aria-current'); });
+    if (key === robKey && robVideo.currentSrc) {
+      if (robVideo.paused) robVideo.play().catch(() => {});
+      return;
+    }
+    robKey = key;
+    robVideo.poster = `static/video/${b.dataset.src}-poster.jpg`;
+    robVideo.src = `static/video/${b.dataset.src}.mp4`;
+    robVideo.setAttribute('aria-label', `${sc.label}: the belief on the map and the camera view`);
     robVideo.load();
     robVideo.play().catch(() => {});
-    robLab.textContent = sc.label;
-    robCap.textContent = sc.t;
-    robLegend.textContent = sc.legend;
-    robSeek.textContent = `Watch in the full video ▸ ${Math.floor(sc.seek / 60)}:${String(sc.seek % 60).padStart(2, '0')}`;
+    robNow.label.textContent = sc.label;
+    robNow.cap.textContent = sc.t;
+    robNow.legend.textContent = sc.legend;
+    // the play mark is decoration: screen readers hear "Watch in the full video 4:15"
+    const mark = document.createElement('span');
+    mark.setAttribute('aria-hidden', 'true');
+    mark.textContent = '▸';
+    robNow.seek.replaceChildren('Watch in the full video ', mark, ` ${Math.floor(sc.seek / 60)}:${String(sc.seek % 60).padStart(2, '0')}`);
   }
-  robSeek.addEventListener('click', () => seek(ROB[robKey].seek));
-  $$('#robTabs button').forEach((b) => b.addEventListener('click', () => {
-    $$('#robTabs button').forEach((o) => { o.classList.toggle('on', o === b); o.setAttribute('aria-selected', o === b); });
-    robPanel.setAttribute('aria-labelledby', b.id);
-    if (robKey === b.dataset.rob) return;
-    robKey = b.dataset.rob;
-    robBuild();
-  }));
+  robNow.seek.addEventListener('click', () => seek(ROB[robKey].seek));
+  robBtns.forEach((b) => b.addEventListener('click', () => { robShow(b); inView(robVideo); }));
 
   // ------------------------------------------------------------ charts (the HTML holds every table and the default texts)
   const CC = window.CrossCharts;
@@ -314,7 +415,7 @@
   ];
   const DS = { ols: 0, rover: 1, all: 2 };
   const DS_N = { ols: 735, rover: 1232 };
-  const DS_NAME = { ols: 'OpenLORIS', rover: 'Rover', all: 'both datasets' };
+  const DS_NAME = { ols: 'OpenLORIS', rover: 'ROVER', all: 'both datasets' };
   const relocState = { protocol: 'cross', dataset: 'all' };
   const relocValues = () => {
     const o = {};
@@ -333,6 +434,7 @@
   function relocRefresh(dur) {
     const vals = relocValues();
     reloc.update(vals, dur);
+    // the original page's note (the HTML holds its default)
     const others = RELOC.filter((m) => !m.hl).map((m) => ({ m, d: vals[m.key] })).sort((a, b) => b.d.v - a.d.v);
     const best = others[0], me = vals.cross;
     const setting = relocState.protocol === 'cross' ? 'with a map from another session' : 'in the same session';
@@ -416,12 +518,12 @@
   new CC.Dumbbell($('#ablationChart'), {
     rows: [
       { label: 'OpenLORIS', a: 8.0, b: 35.3 },
-      { label: 'Rover', a: 6.3, b: 39.7 },
+      { label: 'ROVER', a: 6.3, b: 39.7 },
       { label: 'Both', a: 6.8, b: 38.4 },
     ],
     aLabel: 'PBU (discrete node IDs)', bLabel: 'CROSS (continuous SE(3))',
     max: 45, ticks: [0, 10, 20, 30, 40], tickFmt: (v) => v + '%', fmt: pct,
-    aria: 'Relocalization success of PBU versus CROSS',
+    aria: 'Relocalization success with a map from another session, PBU versus CROSS: OpenLORIS 8.0% versus 35.3%, ROVER 6.3% versus 39.7%, both datasets 6.8% versus 38.4%',
   });
 
   // Runtime
@@ -444,17 +546,5 @@
   poseTime.update({ pnp: { v: 0 }, vggt: { v: 0 } }, 0);
   CC.whenVisible($('#poseTimeChart'), () => poseTime.update({ pnp: { v: 16 }, vggt: { v: 490 } }, 900));
 
-  // ------------------------------------------------------------ bibtex
-  const copyBtn = $('#copyBib');
-  copyBtn.addEventListener('click', async () => {
-    const txt = $('#bib').textContent;
-    try { await navigator.clipboard.writeText(txt); }
-    catch (e) {
-      const r = document.createRange(); r.selectNodeContents($('#bib'));
-      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
-      document.execCommand('copy'); s.removeAllRanges();
-    }
-    copyBtn.textContent = 'Copied';
-    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1600);
-  });
+  // BibTeX: the Copy button is the site's (site.js: .copy[data-copy="#bib"]), which also announces the copy.
 })();

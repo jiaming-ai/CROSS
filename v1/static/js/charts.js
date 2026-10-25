@@ -1,5 +1,7 @@
 /* Small SVG chart helpers for the project page. Colors come from CSS classes,
- * so every chart follows the light/dark theme without re-rendering. */
+ * so every chart follows the light/dark theme without re-rendering.
+ * Swiss style: square marks (no rounded data ends), hairline grid, text in ink tokens,
+ * CROSS in --c-cross and the other methods in grey (style.css: .c-bar, .c-bar-2, .c-bar-hl). */
 (function () {
   'use strict';
 
@@ -17,7 +19,7 @@
     t.textContent = str;
     return t;
   }
-  // bar with a 4px rounded data-end, square at the baseline (horizontal)
+  // bar from the baseline; r rounds the data end (the page draws square bars: r = 0)
   function hBarPath(x, y, w, h, r) {
     r = Math.min(r, h / 2, Math.max(w, 0));
     if (w <= 0) return `M${x},${y}h0v${h}h0z`;
@@ -83,7 +85,7 @@
       const g = el('g', {}, svg);
       if (it.kind === 'line') el('line', { x1: 0, x2: 18, y1: 0, y2: 0, stroke: it.stroke, 'stroke-width': 2.5 }, g);
       else if (it.kind === 'dot') el('circle', { cx: 6, cy: 0, r: 5, class: it.cls }, g);
-      else el('rect', { x: 0, y: -6, width: 12, height: 12, rx: 3, class: it.cls }, g);
+      else el('rect', { x: 0, y: -6, width: 12, height: 12, class: it.cls }, g);
       const off = it.kind === 'line' ? 24 : 18;
       const t = text(g, off, 0.5, it.label, 'c-legend');
       const w = off + t.getComputedTextLength();
@@ -172,15 +174,16 @@
       target.push(d.v, d.ci ? d.ci[0] / cs : d.v, d.ci ? d.ci[1] / cs : d.v, d.ci ? 1 : 0);
     });
     const from = this.cur || target.map((v, i) => (i % 4 === 3 ? v : 0));
-    const { barH, x0 } = this.geom;
     const s = this.spec;
     tween(from, target, dur === undefined ? 450 : dur, (vals) => {
       this.cur = vals;
+      // read the geometry on every frame: a resize during the tween rebuilds the chart with a new label column
+      const { barH, x0 } = this.geom;
       keys.forEach((k, i) => {
         const R = this.rows[k];
         const [v, lo, hi, hasCi] = vals.slice(i * 4, i * 4 + 4);
         const xv = this.scale(v);
-        R.bar.setAttribute('d', hBarPath(x0, R.cy - barH / 2, xv - x0, barH, 4));
+        R.bar.setAttribute('d', hBarPath(x0, R.cy - barH / 2, xv - x0, barH, 0));
         const show = hasCi > 0.5;
         R.ci.style.display = show ? '' : 'none';
         const xl = this.scale(lo), xh = this.scale(hi);
@@ -227,7 +230,7 @@
         const x = gx - (n * bw + (n - 1) * 2) / 2 + si * (bw + 2);
         const g = el('g', { class: 'c-row' }, svg);
         el('rect', { x: x - 1, y: top, width: bw + 2, height: ph, class: 'c-hit' }, g);
-        const p = el('path', { class: se.cls, d: vBarPath(x, y(0), bw, 0, 4) }, g);
+        const p = el('path', { class: se.cls, d: vBarPath(x, y(0), bw, 0, 0) }, g);
         const cx = x + bw / 2;
         let ciG = null;
         if (d.ci) {
@@ -254,7 +257,7 @@
     });
     const grow = () => tween([0], [1], instant ? 0 : 700, ([k]) => {
       bars.forEach((b) => {
-        b.p.setAttribute('d', vBarPath(b.x, y(0), b.bw, (y(0) - y(b.v)) * k, 4));
+        b.p.setAttribute('d', vBarPath(b.x, y(0), b.bw, (y(0) - y(b.v)) * k, 0));
         if (b.ciG) b.ciG.setAttribute('opacity', k > 0.85 ? 1 : 0);
         if (b.lab) b.lab.setAttribute('opacity', k > 0.85 ? 1 : 0);
       });
@@ -289,8 +292,8 @@
       const cy = top + rowH * i + rowH / 2;
       text(svg, left - 14, cy, r.label, 'c-label', 'end');
       const line = el('line', { x1: x(r.a), x2: x(r.a), y1: cy, y2: cy, stroke: 'currentColor', 'stroke-width': 2, class: 'c-ci' }, svg);
-      el('circle', { cx: x(r.a), cy, r: 5.5, class: 'c-bar-2', stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
-      const b = el('circle', { cx: x(r.a), cy, r: 6.5, class: 'c-bar-hl', stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
+      el('circle', { cx: x(r.a), cy, r: 5.5, class: 'c-bar-2', stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
+      const b = el('circle', { cx: x(r.a), cy, r: 6.5, class: 'c-bar-hl', stroke: 'var(--bg)', 'stroke-width': 2 }, svg);
       text(svg, x(r.a), cy + 16, s.fmt(r.a), 'c-value', 'middle');
       const lb = text(svg, x(r.b) + 12, cy, s.fmt(r.b), 'c-value c-value-hl');
       lb.setAttribute('opacity', 0);
@@ -325,12 +328,12 @@
     const max = 36;
     const x = (v) => left + (W - left - right) * v / max;
     // track (the budget)
-    el('rect', { x: x(0), y: barY, width: x(s.budget) - x(0), height: barH, rx: 6, fill: 'var(--surface-2)', stroke: 'var(--line-2)', 'stroke-dasharray': '0' }, svg);
+    el('rect', { x: x(0), y: barY, width: x(s.budget) - x(0), height: barH, fill: 'var(--surface-2)', stroke: 'var(--line-2)' }, svg);
     const segs = [];
     let acc = 0;
     s.segments.forEach((sg, i) => {
       const x0 = x(acc) + (i ? 1 : 0), x1 = x(acc + sg.v) - 1;
-      const r = el('rect', { x: x0, y: barY, width: 0, height: barH, rx: i === 0 ? 6 : 0, class: sg.cls }, svg);
+      const r = el('rect', { x: x0, y: barY, width: 0, height: barH, class: sg.cls }, svg);
       // label above
       const lab = text(svg, x0, barY - 26, sg.label, 'c-label');
       const val = text(svg, x0, barY - 10, `${sg.v} ms`, 'c-value c-value-hl');

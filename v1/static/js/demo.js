@@ -1,4 +1,7 @@
-/* Renders the CROSS vs. commit-on-retrieval toy simulation (sim.js). */
+/* Renders the CROSS vs. commit-on-retrieval toy simulation (sim.js).
+ * Colours follow the site: red means CROSS only (its committed estimate, in --c-cross); the baseline's estimate is grey
+ * ink, its false loop closures dashed ink with a cross at the wrong keyframe, branches --blue, retrievals --green;
+ * re-read on every theme change. */
 (function () {
   'use strict';
   const root = document.getElementById('demo');
@@ -19,7 +22,8 @@
     const v = (n) => cs.getPropertyValue(n).trim();
     colors = {
       bg: v('--canvas-bg'), corridor: v('--corridor'), ink: v('--ink'), ink2: v('--ink-2'), ink3: v('--ink-3'),
-      blue: v('--blue'), green: v('--green'), accent: v('--accent'), red: v('--red'), surface: v('--surface'), good: v('--good'),
+      blue: v('--blue'), green: v('--green'), cross: v('--c-cross'), good: v('--good'),
+      ring: v('--canvas-bg'),  // the gap around marks drawn over other marks
     };
   }
 
@@ -62,7 +66,7 @@
     for (let x = cx0 - (cy1 - cy0); x < cx1; x += 5) { ctx.beginPath(); ctx.moveTo(x, cy1); ctx.lineTo(x + (cy1 - cy0), cy0); ctx.stroke(); }
     ctx.restore();
     ctx.fillStyle = colors.ink3;
-    ctx.font = `500 ${Math.max(9, s * 0.42)}px Inter, system-ui, sans-serif`;
+    ctx.font = `400 ${Math.max(9, s * 0.42)}px "Inter Tight", system-ui, sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.fillText('crowd: no matches', (cx0 + cx1) / 2, cy1 + 3);
     ctx.textBaseline = 'middle';
@@ -98,7 +102,7 @@
     ctx.translate(x, y); ctx.rotate(-pose[2]);
     ctx.beginPath(); ctx.moveTo(r, 0); ctx.lineTo(-r * 0.7, r * 0.62); ctx.lineTo(-r * 0.35, 0); ctx.lineTo(-r * 0.7, -r * 0.62); ctx.closePath();
     ctx.fillStyle = colors.ink; ctx.fill();
-    ctx.lineWidth = 2; ctx.strokeStyle = colors.surface; ctx.stroke(); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = colors.ring; ctx.stroke(); ctx.fill();
     ctx.restore();
   }
 
@@ -116,9 +120,9 @@
     ctx.lineWidth = lw || 1.5; ctx.strokeStyle = alpha(color, strokeA); ctx.stroke();
   }
 
-  function cross(S, x, y, color, a) {
-    const { ctx } = S; const [px, py] = P(S, x, y); const r = 5;
-    ctx.strokeStyle = alpha(color, a); ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+  function cross(S, x, y, color, a, size) {
+    const { ctx } = S; const [px, py] = P(S, x, y); const r = size || 5;
+    ctx.strokeStyle = alpha(color, a); ctx.lineWidth = size ? 1.8 : 2.2; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(px - r, py - r); ctx.lineTo(px + r, py + r); ctx.moveTo(px + r, py - r); ctx.lineTo(px - r, py + r); ctx.stroke();
   }
 
@@ -133,20 +137,21 @@
     const tr = recentRetrieval(t);
     const ge = sim.greedy[tr >= 0 ? tr : 0];
     const hl = [];
-    if (tr >= 0 && ge.event) hl.push({ i: ge.event.kf, color: ge.event.kind === 'wrong' ? colors.red : colors.green, a: 1 - (t - tr) / 3 });
+    if (tr >= 0 && ge.event) hl.push({ i: ge.event.kf, color: ge.event.kind === 'wrong' ? colors.ink : colors.green, a: 1 - (t - tr) / 3 });
     drawMap(S, hl);
-    // corrupted memory: false loop-closure edges accumulated so far
-    ctx.setLineDash([4, 4]); ctx.lineWidth = 1.6;
+    // corrupted memory: false loop-closure edges accumulated so far (dashed ink), a cross at the wrongly matched keyframe
     sim.falseEdges.forEach((e) => {
       if (e.t > t) return;
       const fresh = Math.max(0, 1 - (t - e.t) / 12);
       const [ax, ay] = P(S, e.a[0], e.a[1]), [bx, by] = P(S, e.b[0], e.b[1]);
-      ctx.strokeStyle = alpha(colors.red, 0.35 + 0.5 * fresh);
+      ctx.setLineDash([4, 4]); ctx.lineWidth = 1.6;
+      ctx.strokeStyle = alpha(colors.ink, 0.4 + 0.5 * fresh);
       ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      ctx.setLineDash([]);
+      cross(S, e.b[0], e.b[1], colors.ink, 0.45 + 0.5 * fresh, 3.5);
     });
-    ctx.setLineDash([]);
-    // committed estimate trajectory, broken at jumps
-    ctx.strokeStyle = colors.accent; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    // committed estimate trajectory (a baseline: grey ink), broken at jumps
+    ctx.strokeStyle = colors.ink2; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.beginPath();
     let prev = null;
     for (let k = 0; k <= t; k++) {
@@ -163,13 +168,13 @@
       const n = sim.map.nodes[ge.event.kf];
       const [nx, ny] = P(S, n.x, n.y), [ex, ey] = P(S, ge.est[0], ge.est[1]);
       ctx.setLineDash([2, 3]); ctx.lineWidth = 1.2;
-      ctx.strokeStyle = alpha(ge.event.kind === 'wrong' ? colors.red : colors.green, 0.9 * (1 - (t - tr) / 3));
+      ctx.strokeStyle = alpha(ge.event.kind === 'wrong' ? colors.ink : colors.green, 0.9 * (1 - (t - tr) / 3));
       ctx.beginPath(); ctx.moveTo(nx, ny); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
     }
     if (cur.est) {
       const [x, y] = P(S, cur.est[0], cur.est[1]);
       ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = colors.accent; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = colors.surface; ctx.stroke();
+      ctx.fillStyle = colors.ink2; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = colors.ring; ctx.stroke();
     }
     drawRobot(S, sim.gt[t]);
 
@@ -202,7 +207,7 @@
       const h = alive.get(id);
       const isC = id === committedId;
       const w = h ? h.w : 0;
-      ctx.strokeStyle = isC ? colors.accent : alpha(colors.blue, h ? 0.25 + 0.6 * w : 0.18);
+      ctx.strokeStyle = isC ? colors.cross : alpha(colors.blue, h ? 0.25 + 0.6 * w : 0.18);
       ctx.lineWidth = isC ? 3 : 2;
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       ctx.beginPath();
@@ -214,13 +219,13 @@
       }
       if (n > 1) ctx.stroke();
     });
-    // pruned branches: red x where they died
+    // pruned branches: a grey x where they died
     sim.events.forEach((e) => {
       if (e.type !== 'prune' || e.t > t || t - e.t > 24) return;
       const pts = sim.history[e.id];
       if (!pts || !pts.length) return;
       const last = pts.filter((p) => p.t <= e.t).pop() || pts[0];
-      cross(S, last.x, last.y, colors.red, 1 - (t - e.t) / 24);
+      cross(S, last.x, last.y, colors.ink3, 1 - (t - e.t) / 24);
     });
     // measurement modes (lifted retrievals)
     if (fr && fr.modes) {
@@ -237,10 +242,10 @@
     // live branches
     f.hyps.slice().sort((a, b) => a.w - b.w).forEach((h) => {
       const isC = h.id === committedId;
-      const col = isC ? colors.accent : colors.blue;
+      const col = isC ? colors.cross : colors.blue;
       ellipse(S, h.mu, h.P, col, 0.08 + 0.3 * h.w, 0.45 + 0.55 * h.w, isC ? 2 : 1.5);
       const [x, y] = P(S, h.mu[0], h.mu[1]);
-      ctx.font = `600 ${Math.max(10, s * 0.46)}px Inter, system-ui, sans-serif`;
+      ctx.font = `600 ${Math.max(10, s * 0.46)}px "Inter Tight", system-ui, sans-serif`;
       ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
       ctx.fillStyle = alpha(colors.ink, 0.55 + 0.45 * h.w);
       ctx.fillText(`#${h.id}`, x + 8, y - 6);
@@ -328,8 +333,8 @@
     const W = Math.max(280, errBox.clientWidth);
     const svg = el('svg', { role: 'img', 'aria-label': 'Position error over time for both methods' }, errBox);
     const lh = window.CrossCharts.legend(svg, [
-      { kind: 'line', stroke: 'var(--bar-muted-2)', label: 'Commit on retrieval' },
-      { kind: 'line', stroke: 'var(--accent)', label: 'CROSS (after commit)' },
+      { kind: 'line', stroke: 'var(--ink-3)', label: 'Commit on retrieval' },
+      { kind: 'line', stroke: 'var(--c-cross)', label: 'CROSS (after commit)' },
     ], 34, 9, W - 40);
     const left = 34, right = 10, top = lh + 16, bottom = 22, H = top + 102 + bottom;
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
@@ -358,10 +363,10 @@
     // greedy line
     let d = '';
     sim.greedy.forEach((g, k) => { if (g.err == null) return; d += (d ? 'L' : 'M') + x(k).toFixed(1) + ',' + y(g.err).toFixed(1); });
-    el('path', { d, fill: 'none', stroke: 'var(--bar-muted-2)', 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
+    el('path', { d, fill: 'none', stroke: 'var(--ink-3)', 'stroke-width': 2, 'stroke-linejoin': 'round' }, svg);
     let dc = '';
     sim.frames.forEach((f, k) => { if (f.err == null) return; dc += (dc ? 'L' : 'M') + x(k).toFixed(1) + ',' + y(f.err).toFixed(1); });
-    if (dc) el('path', { d: dc, fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2.5, 'stroke-linejoin': 'round' }, svg);
+    if (dc) el('path', { d: dc, fill: 'none', stroke: 'var(--c-cross)', 'stroke-width': 2.5, 'stroke-linejoin': 'round' }, svg);
     if (ct) {
       if (x(ct) - x(first) > 280) text(svg, (x(first) + x(ct)) / 2, y(maxE / 2), 'CROSS holds its branches, commits nothing', 'c-tick c-halo', 'middle');
       text(svg, x(ct) + 4, y(maxE * 0.93), 'commit', 'c-tick c-halo');

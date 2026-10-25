@@ -1,39 +1,46 @@
-// CROSS site: docs page (table of contents with scrollspy, mode picker, folder-layout tabs).
+// CROSS site: docs page (the index of the sections with scrollspy, the mode picker, the folder-layout tabs). site.js,
+// loaded first, names the heading anchors, makes code and tables that scroll sideways reachable by keyboard
+// (CROSS.markScrollers) and puts a linked section under the bars once the fonts are in.
 (function () {
   'use strict';
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var smooth = reduceMotion ? 'auto' : 'smooth';
+  var CROSS = window.CROSS || {};
+  var markScrollers = function () { if (CROSS.markScrollers) CROSS.markScrollers(); };
 
-  // ---------------------------------------------------------------- table of contents: mark the section in view
+  // ---------------------------------------------------------------- the index: mark the section in view
   var toc = document.querySelector('.docs-toc');
   var nav = toc && toc.querySelector('nav');
-  var chips = toc && toc.querySelector('.docs-toc-scroll');
+  var bar = toc && toc.querySelector('.docs-toc-scroll');
   var links = toc ? Array.prototype.slice.call(toc.querySelectorAll('a[href^="#"]')) : [];
   var heads = links.map(function (a) { return document.getElementById(a.getAttribute('href').slice(1)); });
   var current = -1, pinned = -1, ticking = false;
+  // how far below the window's top a linked section lands: its scroll margin (docs.css --docs-top)
+  var landing = CROSS.landing || function (el) { return (el && parseFloat(getComputedStyle(el).scrollMarginTop)) || 0; };
 
-  // keep the current link in view: in the chip bar (narrow screens) or in the sidebar when it is taller than the window
+  // keep the current link in view: in the bar (narrow screens) or in the sidebar when it is taller than the window.
+  // Instantly: while an index scrolls smoothly, Chrome drops the page's jump to a section clicked in the meantime.
   function reveal(a) {
     var r = a.getBoundingClientRect(), box;
-    if (chips && chips.scrollWidth > chips.clientWidth) {
-      box = chips.getBoundingClientRect();
+    if (bar && bar.scrollWidth > bar.clientWidth) {
+      box = bar.getBoundingClientRect();
       if (r.left < box.left + 24 || r.right > box.right - 24) {
-        chips.scrollTo({ left: chips.scrollLeft + r.left - box.left - (box.width - r.width) / 2, behavior: smooth });
+        bar.scrollLeft += r.left - box.left - (box.width - r.width) / 2;
       }
     } else if (nav && nav.scrollHeight > nav.clientHeight) {
       box = nav.getBoundingClientRect();
       if (r.top < box.top + 24 || r.bottom > box.bottom - 24) {
-        nav.scrollTo({ top: nav.scrollTop + r.top - box.top - (box.height - r.height) / 2, behavior: smooth });
+        nav.scrollTop += r.top - box.top - (box.height - r.height) / 2;
       }
     }
   }
   function spy() {
     ticking = false;
-    // a section is current once its heading passes a line a third of the way down the window
-    var line = Math.max(parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0, window.innerHeight * 0.3) + 8;
+    // a section is current once its title passes a line a third of the way down the window
+    var line = Math.max(landing(heads[0]), window.innerHeight * 0.3) + 8;
     var idx = -1;
     heads.forEach(function (h, i) { if (h && h.getBoundingClientRect().top <= line) idx = i; });
-    // at the bottom of the page the last headings cannot reach the line: the clicked one, else the last
+    // at the bottom of the page the last titles cannot reach the line: the clicked one, else the last
     if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
       idx = pinned >= 0 ? Math.max(pinned, idx) : heads.length - 1;
     }
@@ -41,26 +48,18 @@
     if (current >= 0) links[current].removeAttribute('aria-current');
     current = idx;
     if (idx >= 0) { links[idx].setAttribute('aria-current', 'true'); reveal(links[idx]); }
+    // back above the first section: the index from its start again
+    else if (bar && bar.scrollWidth > bar.clientWidth) bar.scrollLeft = 0;
+    else if (nav && nav.scrollHeight > nav.clientHeight) nav.scrollTop = 0;
   }
   function onScroll() { if (!ticking) { ticking = true; requestAnimationFrame(spy); } }
   if (links.length) {
-    toc.addEventListener('click', function (e) { pinned = links.indexOf(e.target.closest('a')); });
+    toc.addEventListener('click', function (e) { var a = e.target.closest('a'); pinned = a ? links.indexOf(a) : -1; });
     // the reader scrolls on their own again: forget the clicked link
     ['wheel', 'pointerdown', 'keydown'].forEach(function (t) { window.addEventListener(t, function () { pinned = -1; }, { passive: true }); });
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onScroll);
     spy();
-  }
-
-  // ---------------------------------------------------------------- the 14-mode table: a fade while columns are off-screen
-  var wrap = document.querySelector('.modes-wrap');
-  if (wrap) {
-    var fade = function () {
-      wrap.parentNode.classList.toggle('more-right', wrap.scrollLeft + wrap.clientWidth < wrap.scrollWidth - 2);
-    };
-    wrap.addEventListener('scroll', fade, { passive: true });
-    window.addEventListener('resize', fade);
-    fade();
   }
 
   // ---------------------------------------------------------------- mode picker (docs/GUIDE.md "Choose a mode", docs/USAGE.md "Modes")
@@ -71,7 +70,7 @@
     stereo_basalt: { install: '--stereo', bench: 'cross_stereo+vio', basalt: true, text: 'Stereo pair + the odometry of Basalt’s stereo-inertial VIO, read from odom_vio.txt.' },
     stereo_imu: { install: '--stereo', bench: 'cross_stereo_vgio', imu: true, text: 'Stereo pair + IMU: CROSS fuses the IMU with its own VGGT-Omega passes, with the scale from the stereo pair. No separate odometry needed; the pairs must be rectified.' },
     stereo_dpvo: { install: '--mono', bench: 'cross_stereo_vo', text: 'Stereo pair only: CROSS runs DPVO visual odometry, with the scale from stereo depth. The pairs must be rectified.' },
-    rgbd_wheel: { install: '', bench: 'cross_rgbd', text: 'Color + depth + external odometry. Feature matching (XFeat + LightGlue) and PnP on the depth: no large model and no non-commercial weights; relocalization runs at about 39 frames per second on an RTX 4000 Ada.' },
+    rgbd_wheel: { install: '', bench: 'cross_rgbd', text: 'Color + depth + external odometry. Feature matching (XFeat + LightGlue) and PnP on the depth: no large model and no non-commercial weights.' },
     rgbd_basalt: { install: '', bench: 'cross_rgbd+vio', basalt: true, text: 'Color + depth + the odometry of a Basalt stereo-inertial VIO, read from odom_vio.txt.' },
     rgbd_dpvo: { install: '--mono', bench: 'cross_rgbd_vo', text: 'Color + depth only: CROSS runs DPVO visual odometry, with the scale from the depth.' },
     rgbd_ff_wheel: { install: '--stereo', bench: 'cross_rgbd_ff', text: 'Color + depth + external odometry, with VGGT-Omega relative poses scaled by the depth.' },
@@ -100,6 +99,7 @@
       none: ['mono_dpvo', []]
     }
   };
+  var wrap = document.querySelector('.modes-wrap');
   var picker = document.getElementById('mode-picker');
   if (picker) {
     var $ = function (id) { return document.getElementById(id); };
@@ -142,7 +142,7 @@
       $('pk-bench').hidden = !(b && b.t3);
       if (b && b.t3) {
         $('pk-bench').innerHTML = 'In the benchmark: <b>' + b.t3 + '</b> relocalization success' +
-          (b.t1 ? ', <b>' + b.t1 + '</b> mapping error (of the path)' : '') + '. <a href="../leaderboard/">All results</a>';
+          (b.t1 ? ', <b>' + b.t1 + '</b> mapping error (of the path)' : '') + '. <a href="../leaderboard/">Benchmark and caveats</a>';
       }
       // one line per command line, so that phones wrap them with a hanging indent
       var lines = ['<span class="p">$ </span>python run.py my_sequence --mode ' + esc(mode) + (configs.length ? ' \\' : '')];
@@ -164,8 +164,15 @@
       // a short summary for screen readers (the output above is not a live region: it is long)
       if (announce) $('pk-status').textContent = 'Recommended: ' + mode + ', installed with ' + install + '.';
     };
-    picker.addEventListener('change', function () { render(true); });
-    render(false);
+    picker.addEventListener('change', function () { render(true); markScrollers(); });
+    // the HTML already shows the answer to the default questions, with its benchmark numbers (tools/build.py), so the
+    // page does not move while the numbers load; a form the browser restored with other answers is drawn now
+    if (val('pk-cam') === 'stereo' && val('pk-odom') === 'odom' && val('pk-env') === 'indoor') {
+      picked = chipsByMode.stereo_wheel || null;
+      if (picked) { picked.classList.add('is-pick'); showPick(picked); }
+    } else {
+      render(false);
+    }
 
     // the benchmark numbers of every mode (overall T3 at the larger radius, overall T1; tools/build.py writes the file)
     fetch('../assets/data/leaderboard.json').then(function (r) { return r.ok ? r.json() : null; }).then(function (L) {
@@ -196,7 +203,9 @@
         document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
       });
       if (focus) tabs[i].focus();
+      markScrollers();  // the panel shown now may scroll sideways
     };
+    box.setAttribute('data-ready', '');
     tabs.forEach(function (t, i) {
       t.addEventListener('click', function () { select(i); });
       t.addEventListener('keydown', function (e) {

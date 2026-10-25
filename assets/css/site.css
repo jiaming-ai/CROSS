@@ -9,11 +9,19 @@
 *, *::before, *::after { box-sizing: border-box; }
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: calc(var(--header-h) + 12px);
   -webkit-text-size-adjust: 100%;
   background: var(--bg);
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+/* Links to a section and keyboard focus stop under the top bar. The offset is a scroll margin on what can be scrolled
+   to, not a scroll padding on the page: with a padding, the browser counts the sticky bars themselves as hidden and
+   scrolls the page up each time one of their links gets focus. For the same reason the links of the sticky bars get no
+   margin: the top bar (.sh) and the docs page's index (.docs-toc, which sets its own offset in docs.css). Scripts that
+   place a target read its scroll-margin-top (site.js CROSS.landing). */
+html { scroll-padding-top: 0; }
+:is([id], a[href], button, input, select, textarea, summary, [tabindex]):not(.sh *, .docs-toc *) {
+  scroll-margin-top: calc(var(--header-h) + 12px);
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -94,19 +102,34 @@ hr { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
   border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
   padding: .02em var(--m) .06em;
 }
-.sx-h { font-size: clamp(44px, 9.6vw, 104px); font-weight: 400; letter-spacing: -0.05em; line-height: 1; padding-top: .04em; }
+.sx-h { font-size: clamp(44px, 9.6vw, 104px); font-weight: 400; letter-spacing: -0.05em; line-height: 1; padding-top: .04em; text-wrap: balance; }
 .sx-aside { padding-bottom: .55em; font-size: clamp(15px, 1.4vw, 21px); letter-spacing: -0.015em; color: var(--ink); }
+/* a subpage's title row: the h1 is the row, the huge words on the left and, at their baseline on the right, what the
+   page holds (still read as part of the h1). The row gap keeps an aside that wraps under the words clear of their
+   descenders. Directly under the black bar the row has no rule of its own (.sx-head--top: the bar is its upper edge).
+   <div class="sx-head sx-head--top"><h1 class="sx-title"><span class="sx-h">Docs</span><span class="sr-only">: </span>
+   <span class="sx-title-aside">what the page holds</span></h1></div> */
+.sx-title {
+  flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
+  gap: clamp(10px, 1.6vw, 20px) 24px; font-size: inherit; line-height: 1; letter-spacing: 0;
+}
+.sx-title-aside { padding-bottom: .55em; font-size: clamp(15px, 1.4vw, 21px); line-height: 1.25; letter-spacing: -0.015em; max-width: 34em; }
+@media (max-width: 760px) { .sx-title-aside { padding: .2em 0 .7em; } }
+.sx-head--top { border-top: 0; }
 /* numbered subsection: <h3 class="sx-sub"><span class="sx-n">01</span>The method</h3> */
 .sx-sub {
   display: flex; align-items: baseline; gap: 0; border-bottom: 1px solid var(--rule);
   padding: .1em var(--m) .06em; font-size: clamp(30px, 4vw, 52px); letter-spacing: -0.04em; line-height: 1.05;
+  text-wrap: balance;
 }
 .sx-n { min-width: 2.4em; font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) { .sx-n { min-width: 1.8em; } }
-/* a statement: light sentence, key phrases heavier */
+/* a statement: light sentence, key phrases heavier; --md is the mid size, for the lead of a subsection */
 .sx-statement { font-size: clamp(22px, 2.75vw, 40px); font-weight: 200; line-height: 1.14; letter-spacing: -0.03em; }
 .sx-statement strong, .sx-statement b { font-weight: 600; }
 .sx-statement em { font-style: italic; }
+.sx-statement--md { font-size: clamp(20px, 2.1vw, 30px); font-weight: 200; line-height: 1.16; letter-spacing: -0.028em; }
+.sx-statement--md strong, .sx-statement--md b { font-weight: 600; }
 .sx-label { font-size: 13px; line-height: 1.35; letter-spacing: 0; color: var(--ink-3); }
 .sx-mid { font-size: clamp(18px, 1.6vw, 24px); letter-spacing: -0.02em; line-height: 1.2; }
 .sx-rule { border-top: 1px solid var(--rule); }
@@ -182,11 +205,22 @@ hr { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
 .sx-listing li[data-mark] { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 3px 0 var(--accent); }
 .sx-listing .c { color: var(--ink-3); }
 .sx-listing .p { color: var(--accent-ink); user-select: none; }
+/* phones: a long line wraps with a hanging indent (its rows start after the "$ ") instead of scrolling sideways; a URL
+   that should break in one place only is two .nowrap spans with a <wbr> between them */
+@media (max-width: 760px) {
+  .sx-listing li { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: calc(3em + 2ch); text-indent: -2ch; }
+}
 
 /* BibTeX block */
 .sx-bib { position: relative; max-width: 100%; background: var(--surface-2); border-left: 3px solid var(--accent); }
 .sx-bib pre { margin: 0; padding: 1.25rem 6rem 1.25rem 1.5rem; overflow-x: auto; font-size: clamp(12px, 1.05vw, 15px); line-height: 1.6; }
 .sx-bib .copy { position: absolute; top: .75rem; right: .75rem; }
+/* phones: the Copy button sits above the entry instead of over its first line (the entry scrolls sideways under it) */
+@media (max-width: 600px) {
+  .sx-bib { display: flex; flex-direction: column; }
+  .sx-bib .copy { position: static; align-self: flex-end; margin: 10px 10px 0 0; }
+  .sx-bib pre { padding: 8px 14px 16px; }
+}
 
 /* ------------------------------------------------------------------ buttons, chips (square) */
 .btn {
@@ -257,12 +291,19 @@ hr { border: 0; border-top: 1px solid var(--rule); margin: 32px 0; }
   transition: background .15s;
 }
 html:not(.js) .copy { display: none; }  /* filled in by site.js: blank without it */
-.copy:hover, .copy:focus-visible { background: var(--accent); color: #fff; }
+.copy:hover, .copy:focus-visible { background: var(--accent-hover); color: #fff; }  /* the darker red: 5.8:1 with white */
 .copy.is-done { background: var(--good); }
 .copy svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; }
 .code > .copy { position: absolute; top: 8px; right: 8px; }
+/* dark theme: a light button, the accent (yellow) on hover and focus, green once copied; black text on all three */
 :root[data-theme="dark"] .copy { background: #f0efea; color: #000; }
-@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .copy { background: #f0efea; color: #000; } }
+:root[data-theme="dark"] .copy:hover, :root[data-theme="dark"] .copy:focus-visible { background: var(--accent); color: #000; }
+:root[data-theme="dark"] .copy.is-done { background: var(--good); color: #000; }
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .copy { background: #f0efea; color: #000; }
+  :root:where(:not([data-theme="light"])) .copy:hover, :root:where(:not([data-theme="light"])) .copy:focus-visible { background: var(--accent); color: #000; }
+  :root:where(:not([data-theme="light"])) .copy.is-done { background: var(--good); color: #000; }
+}
 
 /* ------------------------------------------------------------------ tables: hairlines, a black rule under the head */
 .table-wrap { position: relative; overflow-x: auto; border: 0; border-top: 1px solid var(--rule); border-radius: 0; background: transparent; }
@@ -275,8 +316,9 @@ html:not(.js) .copy { display: none; }  /* filled in by site.js: blank without i
 }
 .table tbody tr:hover td { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 .table td.n, .table th.n { text-align: right; font-variant-numeric: tabular-nums; }
-.table .is-cross td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.table .is-cross td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* CROSS's row: every cell tinted (a row header th too), the accent bar on the first cell */
+.table .is-cross > * { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.table .is-cross > :first-child { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* ------------------------------------------------------------------ segmented controls become text toggles */
 .seg { display: inline-flex; flex-wrap: wrap; gap: 2px 14px; padding: 0; border: 0; border-radius: 0; background: none; }
@@ -329,8 +371,10 @@ html:not(.js) .copy { display: none; }  /* filled in by site.js: blank without i
 .page-hero .btn-row { margin-top: 22px; }
 
 /* ------------------------------------------------------------------ heading anchors (pages with data-anchors) */
+/* site.js adds them, named after their heading; hidden where nothing hovers (a touch screen) */
 .h-anchor { margin-left: .3em; color: var(--ink-3); text-decoration: none; opacity: 0; transition: opacity .15s; }
 h2:hover > .h-anchor, h3:hover > .h-anchor, .h-anchor:focus { opacity: 1; }
+@media (hover: none) { .h-anchor { display: none; } }
 
 /* the style does not animate content in */
 .js [data-reveal] { opacity: 1; transform: none; }

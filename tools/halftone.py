@@ -63,7 +63,17 @@ def main():
     if a.crop:
         x0, y0, x1, y1 = a.crop
         img = img.crop((round(x0 * img.width), round(y0 * img.height), round(x1 * img.width), round(y1 * img.height)))
-    halftone(img, a.width, a.cell, a.angle, a.gamma, a.invert).save(a.out, optimize=True)
+    save(halftone(img, a.width, a.cell, a.angle, a.gamma, a.invert), a.out)
+
+
+def save(rgba, out):
+    """A PNG with one ink colour and 16 alpha levels in a palette: about a quarter of the size of RGBA, and the same on
+    screen (at most 8/255 off at the dots' anti-aliased edges)."""
+    level = rgba.getchannel("A").point(lambda v: round(v / 255 * 15))
+    pal = Image.new("P", rgba.size)
+    pal.putdata(list(level.getdata()))
+    pal.putpalette(list(rgba.getpixel((0, 0))[:3]) * 16)
+    pal.save(out, optimize=True, transparency=bytes(round(i * 255 / 15) for i in range(16)))
 
 
 if __name__ == "__main__":

@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="robots" content="noindex">
 <title>CROSS social card</title>
-<!-- 1200x630 social preview cards (og:image) of the hub pages, Swiss style; rendered by tools/og/make_og.sh:
-     card.html?page=<home|leaderboard|replays|docs> -->
+<!-- 1200x630 social preview cards (og:image) of the site's pages, Swiss style; rendered by tools/og/make_og.sh into
+     assets/img/og/<page>.jpg: card.html?page=<home|leaderboard|replays|docs|v1> (v1: the NeurIPS 2026 paper page) -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@200..700&family=JetBrains+Mono:wght@400;500&display=block">
 <style>
   * { box-sizing: border-box; margin: 0; }
@@ -34,6 +34,7 @@
   .row.cross .t i { background: #e4321b; }
   .row.ub .t i { background: repeating-linear-gradient(135deg, rgba(17,17,16,.4) 0 2px, transparent 2px 5px); box-shadow: inset 0 0 0 1px rgba(17,17,16,.4); }
   .row .v { text-align: right; font-variant-numeric: tabular-nums; }
+  .row small { display: block; margin-top: 1px; font-size: 16px; font-weight: 400; letter-spacing: -0.01em; color: #66665f; }
   ol.listing { margin-top: 12px; padding: 0; list-style: none; font-family: "JetBrains Mono", monospace; font-size: 17px; line-height: 1.9; counter-reset: l; }
   ol.listing li { position: relative; padding-left: 2.6em; white-space: pre; counter-increment: l; }
   ol.listing li::before { content: counter(l); position: absolute; left: 0; width: 1.8em; text-align: right; color: rgba(17,17,16,.35); }
@@ -56,10 +57,14 @@
 <script>
   var page = new URLSearchParams(location.search).get('page') || 'home';
   var C = {
-    home: { kicker: 'Open source · NeurIPS 2026', title: 'Visual multi-session SLAM that survives change',
+    home: { kicker: 'Open source · NeurIPS 2026 paper', title: 'Visual multi-session SLAM that survives change',
       sub: 'Map once. <b>Relocalize and keep tracking</b> at night, across seasons and after the scene changed.',
-      url: 'RGB-D, stereo or monocular · MIT-licensed code',
+      url: 'jiaming.im/CROSS',
       right: '<p class="head"><span>Snow in a summer map</span><span>NCLT</span></p><div class="media"><img src="still-home.jpg" alt=""></div>' },
+    v1: { kicker: 'NeurIPS 2026 paper', title: 'Change-Robust Online Topological Memory',
+      sub: 'Long-term relocalization and semantic navigation: <b>every visual match is tested as a pose</b> before it reaches the map.',
+      url: 'jiaming.im/CROSS/v1',
+      right: '<p class="head"><span>A quadruped among people</span><span>Paper video</span></p><div class="media"><img src="still-v1.jpg" alt=""></div>' },
     leaderboard: { kicker: 'Benchmark', title: 'The multi-session SLAM benchmark',
       sub: 'CROSS and six open-source SLAM systems on <b>the same sessions</b>: mapping, localization in a stored map, relocalization.',
       url: 'jiaming.im/CROSS/leaderboard', right: null },
@@ -81,19 +86,21 @@
   var right = document.getElementById('right');
   if (C.right) { right.innerHTML = C.right; }
   else {
-    // the leaderboard's default relocalization view: each system's best configuration (same rule as tools/build.py)
+    // the leaderboard's default relocalization view, with the rule of tools/build.py (lb_key, lb_default_view): every
+    // row with an overall value, best first, ties by the stricter threshold's value, then in table order; the first row
+    // of each system is its best configuration. A system with no relocalization step is marked "upper bound".
     fetch('../../assets/data/leaderboard.json').then(function (r) { return r.json(); }).then(function (L) {
-      var best = {};
-      L.tasks.t3.rows.forEach(function (r) {
-        var c = r.cells.overall; if (!c.v || c.fail) return;
-        var v = c.v[1]; if (!best[r.family] || v > best[r.family].v) best[r.family] = { v: v, r: r };
-      });
-      var rows = Object.keys(best).map(function (f) { return best[f]; }).sort(function (a, b) { return b.v - a.v; }).slice(0, 6);
+      var all = L.tasks.t3.rows, seen = {}, best = [];
+      var hl = function (r) { var v = r.cells.overall.v; return Array.isArray(v) ? v : [0, v]; };  // [stricter, overall]
+      all.map(function (r, i) { return i; }).filter(function (i) { return all[i].cells.overall.v != null; })
+        .sort(function (a, b) { var x = hl(all[a]), y = hl(all[b]); return (y[1] - x[1]) || (y[0] - x[0]) || (a - b); })
+        .forEach(function (i) { var r = all[i]; if (!seen[r.family]) { seen[r.family] = true; best.push({ v: hl(r)[1], r: r }); } });
       right.innerHTML = '<p class="head"><span>Relocalization success, best configuration</span><span>higher is better</span></p><div class="rows">' +
-        rows.map(function (b) {
+        best.slice(0, 7).map(function (b) {
           var fam = b.r.family, ub = L.systems[b.r.system].upper_bound;
           return '<div class="row' + (fam === 'cross' ? ' cross' : '') + (ub ? ' ub' : '') + '"><span>' + L.families[fam] +
-            '</span><span class="t"><i style="width:' + (b.v * 100) + '%"></i></span><span class="v">' + Math.round(b.v * 100) + '%</span></div>';
+            (ub ? '<small>upper bound</small>' : '') + '</span><span class="t"><i style="width:' + (b.v * 100) + '%"></i></span>' +
+            '<span class="v">' + Math.round(b.v * 100) + '%</span></div>';
         }).join('') + '</div>';
     });
   }

@@ -9,6 +9,7 @@
   var controls = board.querySelector('.lb-controls');
   var tabs = [].slice.call(board.querySelectorAll('[role="tab"]'));
   var panels = [].slice.call(board.querySelectorAll('.lb-panel'));
+  var groups = [].slice.call(board.querySelectorAll('.lb-filters [role="radiogroup"]'));
   var status = document.getElementById('lb-status');
   var state = { task: 't3', sensor: 'all', inputs: 'all', view: 'best' };
   var UNRANKED = '<span aria-hidden="true">–</span><span class="sr-only">not ranked</span>';  // build.py LB_UNRANKED
@@ -147,17 +148,40 @@
     });
   });
 
-  // ---------------------------------------------------------------- filters
-  board.querySelectorAll('[data-filter]').forEach(function (b) {
-    b.addEventListener('click', function () {
-      var f = b.getAttribute('data-filter');
-      state[f] = b.getAttribute('data-value');
-      board.querySelectorAll('[data-filter="' + f + '"]').forEach(function (o) {
-        o.setAttribute('aria-pressed', String(o === b));
-      });
-      panels.forEach(render);
-      updateStatus();
+  // ---------------------------------------------------------------- filters: single-choice groups (ARIA radio groups)
+  // each group is one tab stop (its chosen option); the arrow keys, Home and End move the choice; a click or Space
+  // chooses. The chosen option is marked by aria-checked, which site.css's .seg draws with the accent square.
+  function mark(group) {
+    group.querySelectorAll('[role="radio"]').forEach(function (o) {
+      var on = o.getAttribute('data-value') === state[o.getAttribute('data-filter')];
+      o.setAttribute('aria-checked', String(on));
+      o.tabIndex = on ? 0 : -1;
     });
+  }
+  function pick(group, b) {
+    var f = b.getAttribute('data-filter'), v = b.getAttribute('data-value');
+    if (state[f] === v) return;
+    state[f] = v;
+    mark(group);
+    panels.forEach(render);
+    updateStatus();
+  }
+  groups.forEach(function (group) {
+    group.addEventListener('click', function (e) {
+      var b = e.target.closest('[role="radio"]');
+      if (b) pick(group, b);
+    });
+    group.addEventListener('keydown', function (e) {
+      var step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      var items = [].slice.call(group.querySelectorAll('[role="radio"]'));
+      var i = items.indexOf(document.activeElement), n = items.length;
+      if (i < 0 || (step === undefined && e.key !== 'Home' && e.key !== 'End')) return;
+      e.preventDefault();
+      var b = items[e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (i + step + n) % n];
+      b.focus();
+      pick(group, b);
+    });
+    mark(group);
   });
 
   // ---------------------------------------------------------------- tooltip on the overall bars (values are also in the row)
@@ -208,11 +232,12 @@
   panels.forEach(render);
   var m = /^#lb-(t[123])$/.exec(location.hash);
   select(m ? m[1] : state.task);
-  // the browser scrolls to the panel on load; show the tabs above it instead, at once (html has smooth scrolling)
-  if (m) window.addEventListener('load', function () {
-    var html = document.documentElement, was = html.style.scrollBehavior;
-    html.style.scrollBehavior = 'auto';
-    controls.scrollIntoView();
-    html.style.scrollBehavior = was;
-  });
+  // the browser scrolls to the panel on load and focuses it (it is the link's target): show the tabs above it instead
+  // (site.js puts CROSS.hashTarget under the bar, again once the fonts are in), and put the focus on the selected tab
+  // rather than around the whole table. Not on a reload or a back / forward visit (CROSS.restored): the browser puts
+  // the reader back where they were, and the tab in the address is only the table they had open.
+  if (m && !(window.CROSS && window.CROSS.restored)) {
+    if (window.CROSS) window.CROSS.hashTarget = controls;
+    window.addEventListener('load', function () { tabOf(m[1]).focus({ preventScroll: true }); });
+  }
 })();

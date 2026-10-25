@@ -187,6 +187,7 @@ def numbers(L):
         # the best baseline's score is an upper bound when it has no relocalization step (LingBot-Map)
         N[f"{tid}.best_baseline.ub"] = (" (an upper bound: it has no relocalization step)"
                                         if L["systems"][bl[0]["system"]]["upper_bound"] else "")
+        N[f"{tid}.best_baseline.ub_note"] = ", an upper bound" if L["systems"][bl[0]["system"]]["upper_bound"] else ""
         cl, val = best_rows(T, lambda r: r["family"] in ("orbslam3", "rtabmap"))
         N[f"{tid}.best_classical.overall"] = pct(val(cl[0]))
         N[f"{tid}.best_classical.name"] = FAMILIES[cl[0]["family"]]
@@ -194,6 +195,7 @@ def numbers(L):
             b, val = best_rows(T, lambda r: r["family"] != "cross", col)
             N[f"{tid}.best_baseline.{col}"] = pct(val(b[0]))
             N[f"{tid}.best_baseline.{col}.name"] = FAMILIES[b[0]["family"]]
+            N[f"{tid}.best_baseline.{col}.ub_note"] = ", an upper bound" if L["systems"][b[0]["system"]]["upper_bound"] else ""
         same = next(r for r in T["rows"] if r["system"] == "rtabmap" and r["setup"] == "stereo")  # same inputs as ref
         N[f"{tid}.rtabmap_same_inputs.overall"] = pct(same["cells"]["overall"]["v"][1])
     T = L["tasks"]["t1"]
@@ -221,7 +223,7 @@ T1_SEQUENCES = [
 ]
 T2_SCENES = [("rover", "campus_large", "ROVER campus"), ("openloris", "corridor", "OpenLORIS corridor"),
              ("openloris", "market", "OpenLORIS market"), ("openloris", "home", "OpenLORIS home"),
-             ("openloris", "cafe", "OpenLORIS cafe"), ("openloris", "office", "OpenLORIS office")]
+             ("openloris", "cafe", "OpenLORIS café"), ("openloris", "office", "OpenLORIS office")]
 
 
 def slim(v, nd=3):
@@ -289,13 +291,14 @@ def build_replays(B, L):
 # ------------------------------------------------------------------------------------------------ leaderboard page
 # Generated blocks of leaderboard/index.html. lb-table-<task>: the task's table with every row of the benchmark; the
 # default view (the best configuration of each system, ranked) is visible, the other rows are hidden, and
-# assets/js/leaderboard.js filters, orders and ranks the rows again with the same rules (lb_key). lb-cmp-<task>: the
-# comparison bars of a headline tile (also on docs/index.html). lb-scored: the relocalization trials scored per system.
+# assets/js/leaderboard.js filters, orders and ranks the rows again with the same rules (lb_key). lb-scored: the
+# relocalization trials scored per system. lb-cmp-<task>: the comparison bars of docs/index.html's benchmark figure
+# (only lb-cmp-t3 is built: no page shows the others).
 LB_INPUTS = {"camera": "Camera only", "imu": "+ IMU", "odometry": "+ odometry", "vio": "+ odometry"}
 LB_FILTER = {"vio": "odometry"}  # filter group of an input kind: a Basalt VIO stream is an odometry input
 LB_DATASETS = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange": "SimChange"}
 LB_CONFIG_WORDS = {"external odometry": "dataset odometry", "stereo VIO odometry": "Basalt stereo VIO",
-                   "DA3": "Depth Anything 3", "PnP": "PnP on depth"}
+                   "DA3": "Depth Anything 3", "PnP": "PnP on depth", "VGGT-inertial odometry": "IMU fused by CROSS"}
 LB_TASK = {  # task -> (overall column, what a failure counts, what happens to it, why a row has no rank)
     "t3": ("Overall success", "query sessions", "their trials count as failed trials", "no overall value"),
     "t2": ("Overall recall", "query sessions", "their frames count as not localized", "no overall value"),
@@ -303,6 +306,12 @@ LB_TASK = {  # task -> (overall column, what a failure counts, what happens to i
            "the mean leaves failed sequences out, or a dataset was not run"),
 }
 LB_UNRANKED = '<span aria-hidden="true">–</span><span class="sr-only">not ranked</span>'  # leaderboard.js: UNRANKED
+# the tables' captions (for screen readers): each task as the page's tabs name it, and what its overall column measures
+LB_CAPTION = {
+    "t3": "Relocalization (T3): relocalization success, higher is better",
+    "t2": "Localization in a stored map (T2): localization recall, higher is better",
+    "t1": "Mapping accuracy (T1): ATE, overall as a share of the path length and per dataset in meters, lower is better",
+}
 
 
 def esc(s):
@@ -345,7 +354,7 @@ def lb_default_view(tid, rows):
 
 
 def lb_fmt(tid, col, v):
-    """Display text of a value: a fraction as a percentage (T2, T3); ATE in % of the path or in metres (T1)."""
+    """Display text of a value: a fraction as a percentage (T2, T3); ATE in % of the path or in meters (T1)."""
     if tid != "t1":
         return f"{round(v * 100)}%"
     if col == "overall":
@@ -458,15 +467,15 @@ def gen_lb_table(tid, L):
     body.insert(first, lb_sep(tid, len(head), first < len(view)))
     body += [lb_row(tid, L, i, None, False, wmax) for i in range(len(rows)) if i not in shown]
     return "\n".join([f'<table class="table lb-table" data-task="{tid}">',
-                      f'  <caption class="sr-only">{esc(T["title"])}</caption>',
+                      f'  <caption class="sr-only">{esc(LB_CAPTION[tid])}</caption>',
                       "  <thead>", f'    <tr>{"".join(head)}</tr>', "  </thead>", "  <tbody>"]
                      + [f"    {b}" for b in body] + ["  </tbody>", "</table>"])
 
 
 def gen_lb_cmp(tid, L):
-    """Comparison bars of a headline tile: CROSS with stereo + odometry (the recommended mode), the best other
-    system (when it is not RTAB-Map with the same inputs) and RTAB-Map with the same inputs: the rows of the data-num
-    headline numbers."""
+    """Comparison bars of docs/index.html's benchmark figure: CROSS with stereo + odometry (the recommended mode), the
+    best other system (when it is not RTAB-Map with the same inputs) and RTAB-Map with the same inputs: the rows of the
+    data-num headline numbers."""
     T = L["tasks"][tid]
     row = lambda s: next(r for r in T["rows"] if r["system"] == s and r["setup"] == "stereo")
     val = lambda r: r["cells"]["overall"]["v"][1] if T["higher"] else r["cells"]["overall"]["v"]
@@ -501,12 +510,26 @@ def gen_lb_scored(L):
             "every trial, so they are scored on a subset.</li>")
 
 
+def home_view(tid, rows):
+    """The hub's ranking: CROSS in its recommended mode (stereo + odometry, the configuration of the hub's figures and
+    of data-num t*.cross.*), every other system in its best configuration; best first, ranks as lb_default_view."""
+    ref = next(i for i, r in enumerate(rows) if r["system"] == "cross_stereo" and r["setup"] == "stereo")
+    keep = [ref] + [i for i, _ in lb_default_view(tid, rows) if rows[i]["family"] != "cross"]
+    out, rank, prev = [], 0, None
+    for n, i in enumerate(sorted(keep, key=lambda i: lb_key(tid, rows[i], i))):
+        k = lb_key(tid, rows[i], i)
+        if k[0] == 0 and k[1] != prev:
+            rank, prev = n + 1, k[1]
+        out.append((i, rank if k[0] == 0 else None))
+    return out
+
+
 def gen_home_rank(tid, L):
-    """The hub's benchmark chart: the leaderboard's default view (each system's best configuration, best first) as a
-    list of bars. Unranked rows (T1 means that leave failed sequences out) keep their value, muted, after the ranked
-    ones."""
+    """The hub's benchmark chart (home_view: CROSS's recommended mode against every other system's best configuration)
+    as a list of bars. Unranked rows (T1 means that leave failed sequences out) keep their value, muted, after the
+    ranked ones."""
     T = L["tasks"][tid]
-    rows, view = T["rows"], lb_default_view(tid, T["rows"])
+    rows, view = T["rows"], home_view(tid, T["rows"])
     num = lambda v: v[1] if isinstance(v, list) else v
     top = 1.0 if T["higher"] else max(num(rows[i]["cells"]["overall"]["v"]) for i, _ in view
                                        if rows[i]["cells"]["overall"]["v"] is not None)  # every drawn bar on one scale
@@ -532,8 +555,27 @@ def gen_home_rank(tid, L):
     return "\n".join([f'<ol class="hr-list" data-task="{tid}">'] + [f"  {li}" for li in items] + ["</ol>"])
 
 
-GEN_BLOCKS = {f"lb-{kind}-{tid}": (lambda L, f=f, tid=tid: f(tid, L))
-              for kind, f in (("table", gen_lb_table), ("cmp", gen_lb_cmp)) for tid in ("t1", "t2", "t3")}
+def gen_lb_og_alt(L):
+    """The leaderboard's social-card description: the rows tools/og/card.html draws (the default relocalization view,
+    every system), so the alt text follows the data as the card does."""
+    T = L["tasks"]["t3"]
+    rows = T["rows"]
+    items = []
+    for i, _ in lb_default_view("t3", rows)[:7]:
+        r = rows[i]
+        v = r["cells"]["overall"]["v"]
+        if v is None:
+            continue
+        ub = " (upper bound)" if L["systems"][r["system"]]["upper_bound"] else ""
+        items.append(f"{FAMILIES[r['family']]} {lb_fmt('t3', 'overall', v[1] if isinstance(v, list) else v)}{ub}")
+    alt = esc("The multi-session SLAM benchmark: relocalization success of the best configuration of each system. "
+              + ", ".join(items) + ".")
+    return f'<meta property="og:image:alt" content="{alt}">\n<meta name="twitter:image:alt" content="{alt}">'
+
+
+GEN_BLOCKS = {f"lb-table-{tid}": (lambda L, tid=tid: gen_lb_table(tid, L)) for tid in ("t1", "t2", "t3")}
+GEN_BLOCKS["lb-og-alt"] = gen_lb_og_alt
+GEN_BLOCKS["lb-cmp-t3"] = lambda L: gen_lb_cmp("t3", L)
 GEN_BLOCKS["lb-scored"] = gen_lb_scored
 GEN_BLOCKS.update({f"home-rank-{tid}": (lambda L, tid=tid: gen_home_rank(tid, L)) for tid in ("t1", "t2", "t3")})
 

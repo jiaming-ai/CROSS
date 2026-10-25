@@ -201,8 +201,14 @@
 .sh-drawer a[aria-current] { color: var(--accent); }
 @media (max-width: 900px) {
   .sh-nav, .sh-ext { display: none; }
-  .sh-menu { display: inline-flex; }
+  .js .sh-menu { display: inline-flex; }
+  /* without JavaScript the menu cannot open: the links stay in the bar and scroll sideways */
+  html:not(.js) .sh-nav {
+    display: flex; position: static; transform: none; min-width: 0; height: 100%; overflow-x: auto; scrollbar-width: none;
+  }
 }
+/* without JavaScript the theme follows the system, and the toggle would do nothing */
+html:not(.js) .theme-toggle { display: none; }
 /* pages that used to start on a dark band: the bar is always solid now */
 body.night-top .sh { margin-bottom: 0; }
 

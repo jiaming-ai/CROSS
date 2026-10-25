@@ -1,8 +1,9 @@
 // CROSS site: trajectory replays (replays/index.html). The data in assets/data/replays/ is built by tools/build.py from
 // the published benchmark: index.json (the catalog), one file per mapping sequence (T1) and one per localization
 // scene (T2, all its query sessions). Paths are top-down, in metres; the replay draws them on a canvas as time runs.
-// The page's HTML lists the sequences and scenes it offers, with their titles and in their order; this script turns
-// those lists into the picker.
+// The page's HTML lists the scenes and sequences it offers, with their titles and in their order; this script turns
+// those lists into the picker. Localization in a stored map is the default view (the site's headline task), on the
+// scene and query session of the hub's first clip: a night session in a map made by day.
 (function () {
   'use strict';
   var app = document.getElementById('rp-app');
@@ -19,19 +20,19 @@
     'cross_rgbd_ff+vio': 'rgbd_ff_basalt', cross_stereo: 'stereo_wheel', 'cross_stereo+vio': 'stereo_basalt', cross_stereo_vo: 'stereo_dpvo',
     cross_stereo_vgio: 'stereo_imu', cross_mono: 'mono_dpvo', cross_mono_ff_odom: 'mono_wheel', 'cross_mono_ff_odom+vio': 'mono_basalt',
     cross_mono_ff_vio: 'mono_vio', cross_mono_ff_vgio: 'mono_imu' };
-  // the Inputs filter, as on the leaderboard: a Basalt stereo VIO stream is an odometry input
+  // the Inputs filter, as on the leaderboard (same options, same order): a Basalt stereo VIO stream is an odometry input
   var INPUT_GROUP = { camera: 'camera', odometry: 'odometry', vio: 'odometry', imu: 'imu' };
   var INPUT_RANK = { camera: 0, odometry: 0, imu: 0, vio: 1 };  // within a group, the dataset's own odometry first
   var INPUT_WORD = { camera: 'camera only', odometry: 'with odometry', imu: 'with IMU' };
-  var GROUPS = ['camera', 'odometry', 'imu'];
+  var GROUPS = ['camera', 'imu', 'odometry'];
   // configuration names in the leaderboard's words (tools/build.py LB_CONFIG_WORDS)
-  var CONFIG_WORDS = { 'external odometry': 'dataset odometry', 'stereo VIO odometry': 'Basalt stereo VIO', DA3: 'Depth Anything 3',
+  var CONFIG_WORDS = { 'external odometry': 'dataset odometry', 'stereo VIO odometry': 'Basalt stereo VIO', 'VGGT-inertial odometry': 'IMU fused by CROSS', DA3: 'Depth Anything 3',
     PnP: 'PnP on depth' };
   var SETUPS = ['rgbd', 'stereo', 'mono'];
   var SETUP_WORD = { rgbd: 'RGB-D', stereo: 'stereo', mono: 'mono' };
   var ROVER = { day: 'Day', summer: 'Summer', autumn: 'Autumn', winter: 'Winter', spring: 'Spring', dusk: 'Dusk', night: 'Night',
     'night-light': 'Night with lights' };
-  var DEFAULT_QUERY = { 't2-rover-campus_large': 'campus_large_winter_2024-01-27' };
+  var DEFAULT_QUERY = { 't2-rover-campus_large': 'campus_large_night_2024-09-24_3' };
   var ODOMETRY = {
     rover: 'On ROVER the dataset odometry is simulated, as in the benchmark: ground-truth increments with noise (SNR 10). ' +
       'The Basalt stereo VIO configurations get stereo-inertial odometry from the robot’s own stereo pair and IMU instead.',
@@ -41,12 +42,13 @@
   };
   // the tags of the Systems list, explained under it
   var TAGS = {
-    sim3: { text: 'Sim(3)', note: 'aligned with scale, as the benchmark scores the monocular baselines (no metric input).' },
+    sim3: { text: 'Sim(3)', note: 'aligned with scale, as the benchmark scores the monocular baselines (no metric input); ' +
+      'CROSS estimates metric scale and is aligned rigidly.' },
     failed: { text: 'failed', bad: true, note: 'less than 80% of the session tracked: a tracking failure in the benchmark.' },
     crashed: { text: 'run failed', bad: true, note: 'a crash or timeout: every scored frame counts as not localized.' },
     upper: { text: 'upper bound', note: 'no relocalization step, so every query pose counts.' },
     stream: { text: 'one stream', note: 'cannot save a map, so it runs the map session and the query session as one stream. ' +
-      'MASt3R-SLAM, VGGT-SLAM 2.0 and AMB3R-SLAM log their poses after their final optimization, which favours them.' },
+      'MASt3R-SLAM, VGGT-SLAM 2.0 and AMB3R-SLAM log their poses after their final optimization, which favors them.' },
     mode: { mode: true, note: 'the shipped CROSS mode for these inputs (see the docs).' }
   };
   var MOVING_STEP = 0.005;   // m per ground-truth sample: below it the robot stands still (approximates the benchmark rule)
@@ -55,11 +57,11 @@
 
   function $(id) { return document.getElementById(id); }
   var el = {
-    intro: $('rp-intro'), tabs: [].slice.call(document.querySelectorAll('.rp-tab')), panel: $('rp-panel'),
+    tabs: [].slice.call(document.querySelectorAll('.rp-tab')), panel: $('rp-panel'),
     picks: [].slice.call(document.querySelectorAll('.rp-pick')), list1: $('rp-list-t1'), list2: $('rp-list-t2'),
     mapName: $('rp-map-name'), chips: $('rp-chips'), setup: $('rp-setup'), inputs: $('rp-inputs'),
     radiusFilter: document.querySelector('.rp-filter[data-only="t2"]'), radius: $('rp-radius'), speed: $('rp-speed'),
-    context: $('rp-context'), viewer: $('rp-viewer'), scnTitle: $('rp-scn-title'), scnSub: $('rp-scn-sub'), best: $('rp-best'),
+    context: $('rp-context'), scnTitle: $('rp-scn-title'), scnSub: $('rp-scn-sub'),
     stage: $('rp-stage'), canvas: $('rp-canvas'), msg: $('rp-msg'), summary: $('rp-summary'), key: $('rp-key'),
     play: $('rp-play'), scrub: $('rp-scrub'), pos: $('rp-pos'), restart: $('rp-restart'), tlKey: $('rp-tl-key'),
     tlRows: $('rp-tl-rows'), metric: $('rp-side-metric'), sys: $('rp-sys'), notes: $('rp-notes'), notrun: $('rp-notrun'),
@@ -67,7 +69,7 @@
   };
 
   var CAT = null, ORDER = {}, ITEMS = {}, D = null, Q = null, ROWS = [], tlHead = null, loadSeq = 0;
-  var S = { mode: 't1', t1: null, t2: null, query: {}, setup: 'stereo', inputs: 'camera', radius: 1, on: {}, cfg: {},
+  var S = { mode: 't2', t1: null, t2: null, query: {}, setup: 'stereo', inputs: 'camera', radius: 1, on: {}, cfg: {},
     hover: null, tau: reduceMotion ? 1 : 0, playing: false, speed: 1, auto: false, inView: false };
   Object.keys(DEFAULT_ON).forEach(function (k) { S.on[k] = true; });
 
@@ -83,6 +85,10 @@
   function metres(v) { return v == null ? '–' : (v < 10 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : String(Math.round(v))) + ' m'; }
   function dprNow() { return Math.min(window.devicePixelRatio || 1, 2); }
   function npts(P) { return P.length >> 1; }
+  function median(v) {
+    var s = v.slice().sort(function (a, b) { return a - b; }), n = s.length;
+    return !n ? 0 : n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  }
 
   // a path as flat centimetre integers (first point absolute, then steps) -> Float64Array [x0, y0, x1, y1, ...] in metres
   function decodePath(a) {
@@ -118,15 +124,58 @@
   // estimated poses are matched in order to the ground truth (evenly spaced in time) by dynamic time warping. A run that
   // tracked only part of the session (completeness c) is placed where its poses match when it is accurate enough for
   // that to mean something; otherwise it is assumed to start with the session and to cover the fraction c of it.
-  // Per pose: the first (a) and last (b) matched time, as fractions of the session.
+  // Per pose: the first (a) and last (b) matched time, as fractions of the session. Across a gap of CROSS's path (see
+  // revisits) the marker holds on the pose before it until the robot reaches the pose after it; gap[i] is the time from
+  // which pose i is held so.
   function timing(r, gt) {
-    var m = npts(gt), c = clamp(r.completeness || 0, 0, 1), W;
+    var m = npts(gt), c = clamp(r.completeness || 0, 0, 1), W, gap = null;
     if (c >= 0.95 || m < 3) W = warp(r.e, gt, m - 1, false);
     else if (r.ate != null && r.ate <= 0.1 * Math.min(D.gtDiag, c * D.gtLen)) W = warp(r.e, gt, m - 1, true);
     else W = warp(r.e, gt, Math.max(1, Math.round(c * (m - 1))), false);
     var den = Math.max(1, m - 1);
+    (r.fam === 'cross' ? revisits(r.e, gt, W) : []).forEach(function (q) {
+      W.b[q[0]] = W.a[q[0] + 1] = q[2];
+      (gap = gap || {})[q[0]] = q[1] / den;
+    });
     for (var i = 0; i < W.a.length; i++) { W.a[i] /= den; W.b[i] /= den; }
-    return { a: W.a, b: W.b, end: W.b[W.b.length - 1] };
+    return { a: W.a, b: W.b, end: W.b[W.b.length - 1], gap: gap };
+  }
+  // CROSS's published path is its permanent map keyframes, the poses its ATE is scored on. While it re-drives a stretch it
+  // has mapped it keeps only temporary keyframes (PROTOCOL.md, T1), so the path skips that stretch, and a straight line
+  // across it would look like an error. A step of the path is such a gap when it is long (over 4 times the median step,
+  // 4 ground-truth samples and 1.5 m), both its poses lie on the ground truth (within a quarter of the step), the robot
+  // really travelled that far between them (0.8 of the step along the ground truth), and at least 60% of that stretch lies
+  // within the larger success radius of ground it covered before. Returns [pose, its time, the next pose's time] per gap,
+  // in ground-truth samples. A real jump of the estimate fails these tests and is drawn.
+  function revisits(e, gt, W) {
+    var n = npts(e), cum = D.gtCum, R = D.thresholds[1], steps = [], out = [], i, s, k;
+    if (!cum || n < 3) return out;
+    for (i = 0; i < n - 1; i++) steps.push(Math.hypot(e[2 * i + 2] - e[2 * i], e[2 * i + 3] - e[2 * i + 1]));
+    var thr = Math.max(4 * median(steps), 4 * D.gtStep, 1.5);
+    for (i = 0; i < n - 1; i++) {
+      if (!(steps[i] > thr)) continue;
+      var ti = nearestSample(gt, e, i, W.a[i], W.b[i]), tj = nearestSample(gt, e, i + 1, W.a[i + 1], W.b[i + 1]);
+      if (tj <= ti + 1 || cum[tj] - cum[ti] < 0.8 * steps[i]) continue;
+      if (Math.max(Math.hypot(gt[2 * ti] - e[2 * i], gt[2 * ti + 1] - e[2 * i + 1]),
+        Math.hypot(gt[2 * tj] - e[2 * i + 2], gt[2 * tj + 1] - e[2 * i + 3])) >= 0.25 * steps[i]) continue;
+      var near = 0;
+      for (s = ti + 1; s < tj; s++) {
+        for (k = 0; k < ti && cum[s] - cum[k] > 3 * R; k++) {
+          if (Math.hypot(gt[2 * k] - gt[2 * s], gt[2 * k + 1] - gt[2 * s + 1]) < R) { near++; break; }
+        }
+      }
+      if (near >= 0.6 * (tj - ti - 1)) out.push([i, ti, tj]);
+    }
+    return out;
+  }
+  // the ground-truth sample, among those matched to pose i (k0..k1), nearest to it: when the robot was there
+  function nearestSample(gt, e, i, k0, k1) {
+    var best = k0, bd = Infinity;
+    for (var k = k0; k <= k1; k++) {
+      var d = Math.hypot(gt[2 * k] - e[2 * i], gt[2 * k + 1] - e[2 * i + 1]);
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
   }
   // dynamic time warping of the poses e against the ground-truth samples 0..j1; open: the match may begin and end
   // anywhere in them. Returns the first and last matched sample of each pose.
@@ -160,17 +209,17 @@
     return { a: A, b: B };
   }
   function timingOf(r) { return r._t || (r._t = timing(r, D.gt)); }
-  // where a run is at time tau: null before its first pose; i = the last pose reached
+  // where a run is at time tau: null before its first pose; i = the last pose reached; gap = held on it across a gap
   function headOf(r, T, tau) {
     var a = T.a, b = T.b, n = a.length, lo = 0, hi = n - 1, e = r.e;
     if (tau < a[0]) return null;
     while (lo < hi) { var mid = (lo + hi + 1) >> 1; if (a[mid] <= tau) lo = mid; else hi = mid - 1; }
-    var x = e[2 * lo], y = e[2 * lo + 1];
-    if (lo < n - 1 && tau > b[lo]) {
+    var x = e[2 * lo], y = e[2 * lo + 1], gap = !!(T.gap && T.gap[lo] != null && tau > T.gap[lo]);
+    if (!gap && lo < n - 1 && tau > b[lo]) {
       var u = clamp((tau - b[lo]) / Math.max(1e-9, a[lo + 1] - b[lo]), 0, 1);
       x += (e[2 * lo + 2] - x) * u; y += (e[2 * lo + 3] - y) * u;
     }
-    return { i: lo, x: x, y: y };
+    return { i: lo, x: x, y: y, gap: gap };
   }
   function isLost(r, T, tau) { return r.completeness < 0.95 && T.end < 0.985 && tau > T.end + 0.004; }
 
@@ -238,10 +287,15 @@
     // odometry run, so the page leaves it out
     var keep = function (r) { prepRun(r); return !r.odom_fallback; };
     if (d.track === 't1') {
-      var g = d.gt = decodePath(d.gt), b = grow(g, { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity });
+      var g = d.gt = decodePath(d.gt), b = grow(g, { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity }), m = npts(g), steps = [];
       d.gtDiag = Math.hypot(b.x1 - b.x0, b.y1 - b.y0);
-      d.gtLen = 0;
-      for (var i = 2; i < g.length; i += 2) d.gtLen += Math.hypot(g[i] - g[i - 2], g[i + 1] - g[i - 1]);
+      d.gtCum = new Float64Array(m);                    // the distance travelled up to each ground-truth sample
+      for (var i = 1; i < m; i++) {
+        steps.push(Math.hypot(g[2 * i] - g[2 * i - 2], g[2 * i + 1] - g[2 * i - 1]));
+        d.gtCum[i] = d.gtCum[i - 1] + steps[i - 1];
+      }
+      d.gtLen = m ? d.gtCum[m - 1] : 0;
+      d.gtStep = median(steps);
       d.runs = d.runs.filter(keep);
       d.runs.forEach(function (r) { r.e = decodePath(r.e); });
     } else {
@@ -302,11 +356,15 @@
   }
 
   // ---------------------------------------------------------------- colours (tokens; re-read when the theme changes)
+  // Systems wear their categorical colour (CROSS red in both themes), the ground truth is dashed grey, everything else
+  // is ink. A wrong pose is drawn in ink, not in --bad: --bad is a red like CROSS's (nearly the same in the dark theme),
+  // so a CROSS route would read as all one state.
   var COL = {}, FONT = 'system-ui, sans-serif';
   function readColours() {
     var cs = getComputedStyle(document.documentElement);
     Object.keys(CAT.families).concat('gt').forEach(function (k) { COL[k] = cs.getPropertyValue('--c-' + k).trim(); });
-    ['ink', 'ink-2', 'ink-3', 'bad', 'grid', 'line', 'line-2'].forEach(function (k) { COL[k] = cs.getPropertyValue('--' + k).trim(); });
+    ['ink', 'ink-2', 'ink-3', 'grid', 'line', 'line-2'].forEach(function (k) { COL[k] = cs.getPropertyValue('--' + k).trim(); });
+    COL.wrong = COL.ink;
     COL.pane = getComputedStyle(el.stage).backgroundColor;
     FONT = getComputedStyle(document.body).fontFamily || FONT;
   }
@@ -348,11 +406,19 @@
     c.lineWidth = 4; c.strokeStyle = COL.pane; c.stroke();
     c.fillStyle = COL[fam]; c.fill();
   }
+  // the last keyframe of a run that re-drives a stretch it has mapped (it has no pose of its own there): the shape, hollow
+  function heldMark(c, fam, x, y) {
+    shapePath(c, fam, x, y, 5);
+    c.lineJoin = 'round';
+    c.lineWidth = 6; c.strokeStyle = COL.pane; c.stroke();
+    c.fillStyle = COL.pane; c.fill();
+    c.lineWidth = 2; c.strokeStyle = COL[fam]; c.stroke();
+  }
   function lostMark(c, fam, x, y) {
-    c.lineCap = 'round';
+    c.lineCap = 'square';
     [[5, COL.pane], [2.25, COL[fam]]].forEach(function (s) {
       c.lineWidth = s[0]; c.strokeStyle = s[1]; c.beginPath();
-      c.moveTo(x - 4.5, y - 4.5); c.lineTo(x + 4.5, y + 4.5); c.moveTo(x + 4.5, y - 4.5); c.lineTo(x - 4.5, y + 4.5); c.stroke();
+      c.moveTo(x - 4, y - 4); c.lineTo(x + 4, y + 4); c.moveTo(x + 4, y - 4); c.lineTo(x - 4, y + 4); c.stroke();
     });
   }
   // a run whose position lies outside the view: an arrow at the edge of the view, pointing to it
@@ -414,6 +480,15 @@
     c.moveTo(X(P[0]), Y(P[1]));
     for (var i = 1; i <= last; i++) c.lineTo(X(P[2 * i]), Y(P[2 * i + 1]));
   }
+  // a run's path up to pose end, left open across its gaps (T.gap)
+  function traceRun(c, P, T, end) {
+    var g = T.gap;
+    c.beginPath();
+    c.moveTo(X(P[0]), Y(P[1]));
+    for (var i = 1; i <= end; i++) {
+      if (g && g[i - 1] != null) c.moveTo(X(P[2 * i]), Y(P[2 * i + 1])); else c.lineTo(X(P[2 * i]), Y(P[2 * i + 1]));
+    }
+  }
   // the static layer: metric grid, the map session's route (T2), the ground truth, the scale bar
   function paintStatic() {
     var c = layer.getContext('2d');
@@ -437,11 +512,11 @@
     c.setLineDash([]);
     // scale bar, bottom left: the grid step
     var L = st * V.s, bx = 16, by = V.h - 16, label = (st >= 1 ? String(st) : String(+st.toPrecision(2))) + ' m';
-    c.strokeStyle = COL['ink-2']; c.lineWidth = 1.5; c.lineCap = 'butt'; c.beginPath();
-    c.moveTo(bx, by - 4); c.lineTo(bx, by); c.lineTo(bx + L, by); c.lineTo(bx + L, by - 4); c.stroke();
-    c.font = '600 11.5px ' + FONT; c.textBaseline = 'middle'; c.lineJoin = 'round';
+    c.strokeStyle = COL.ink; c.lineWidth = 1.5; c.lineCap = 'butt'; c.lineJoin = 'miter'; c.beginPath();
+    c.moveTo(bx, by - 5); c.lineTo(bx, by); c.lineTo(bx + L, by); c.lineTo(bx + L, by - 5); c.stroke();
+    c.font = '400 12px ' + FONT; c.textBaseline = 'middle'; c.lineJoin = 'round';
     c.lineWidth = 3; c.strokeStyle = COL.pane; c.strokeText(label, bx + L + 7, by - 2);
-    c.fillStyle = COL['ink-2']; c.fillText(label, bx + L + 7, by - 2);
+    c.fillStyle = COL.ink; c.fillText(label, bx + L + 7, by - 2);
   }
 
   // ---------------------------------------------------------------- drawing (one frame)
@@ -467,8 +542,8 @@
       ctx.globalAlpha = hot && row.fam !== hot ? 0.16 : 1;
       ctx.strokeStyle = COL[row.fam];
       ctx.lineWidth = row.fam === 'cross' ? 2.75 : 2;
-      trace(ctx, r.e, hd.i); ctx.lineTo(X(hd.x), Y(hd.y)); ctx.stroke();
-      heads.push({ row: row, x: X(hd.x), y: Y(hd.y), lost: isLost(r, T, S.tau), alpha: ctx.globalAlpha });
+      traceRun(ctx, r.e, T, hd.i); ctx.lineTo(X(hd.x), Y(hd.y)); ctx.stroke();
+      heads.push({ row: row, x: X(hd.x), y: Y(hd.y), lost: isLost(r, T, S.tau), held: hd.gap, alpha: ctx.globalAlpha });
     });
     var avoid = [{ x: 0, y: V.h - 34, w: V.step * V.s + 64, h: 34 }];
     heads.forEach(function (hd) {
@@ -478,8 +553,9 @@
         var p = edgeArrow(ctx, hd.row.fam, hd.x, hd.y);
         hd.x = p.x; hd.y = p.y;
       } else if (hd.lost) lostMark(ctx, hd.row.fam, hd.x, hd.y);
+      else if (hd.held) heldMark(ctx, hd.row.fam, hd.x, hd.y);
       else marker(ctx, hd.row.fam, hd.x, hd.y);
-      hd.text = hd.row.name + (off ? ' · off view' : hd.lost ? ' · lost track' : '');
+      hd.text = hd.row.name + (off ? ' · off view' : hd.lost ? ' · lost track' : hd.held ? ' · revisiting its map' : '');
       avoid.push({ x: hd.x - 7, y: hd.y - 7, w: 14, h: 14 });
     });
     ctx.globalAlpha = 1;
@@ -504,9 +580,10 @@
         if (st) {
           var end = Math.min(b, f);
           ctx.globalAlpha = st === 3 ? 0.75 : 1;
-          ctx.strokeStyle = st === 1 ? COL[row.fam] : st === 2 ? COL.bad : COL['ink-3'];
-          ctx.lineWidth = st === 3 ? 2.25 : 3.5;
-          ctx.setLineDash(st === 2 ? [5, 4] : []);
+          ctx.strokeStyle = st === 1 ? COL[row.fam] : st === 2 ? COL.wrong : COL['ink-3'];
+          ctx.lineWidth = st === 3 ? 2.25 : st === 2 ? 3 : 3.5;
+          ctx.lineCap = st === 2 ? 'butt' : 'round';           // round caps would close the gaps of the dashes
+          ctx.setLineDash(st === 2 ? [6, 4] : []);
           ctx.beginPath(); ctx.moveTo(X(g[2 * a]), Y(g[2 * a + 1]));
           for (var k = a + 1; k <= Math.floor(end); k++) ctx.lineTo(X(g[2 * k]), Y(g[2 * k + 1]));
           if (end > Math.floor(end)) { var q = at(g, end); ctx.lineTo(X(q.x), Y(q.y)); }
@@ -521,7 +598,7 @@
     if (rpx > 6) {
       ctx.beginPath(); ctx.arc(hx, hy, rpx, 0, Math.PI * 2);
       if (rpx < 0.15 * Math.min(V.w, V.h)) { ctx.globalAlpha = 0.06; ctx.fillStyle = COL.ink; ctx.fill(); }
-      ctx.globalAlpha = 0.7; ctx.setLineDash([3, 3]); ctx.lineWidth = 1; ctx.strokeStyle = COL['ink-3']; ctx.stroke();
+      ctx.globalAlpha = 0.7; ctx.lineCap = 'butt'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1; ctx.strokeStyle = COL['ink-3']; ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha = 1;
     }
     ctx.beginPath(); ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
@@ -534,7 +611,7 @@
   // direct labels beside the markers, where they fit (never over another label or marker)
   function placeLabels(items, avoid) {
     var boxes = avoid.slice(), hh = 16;
-    ctx.font = '600 12px ' + FONT; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+    ctx.font = '500 12.5px ' + FONT; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
     items.forEach(function (it) {
       var w = ctx.measureText(it.text).width + 2, cands = [[10, -11], [10, 11], [-10 - w, -11], [-10 - w, 11], [-w / 2, -19], [-w / 2, 19]];
       for (var i = 0; i < cands.length; i++) {
@@ -586,7 +663,8 @@
     });
     drawStrips();
   }
-  // T1: the stretch of the session a run tracked, an x where it lost track; right: the share of the session tracked
+  // T1: the stretch of the session a run tracked (a square-ended bar), an x where it lost track; right: the share of the
+  // session tracked
   function paintTrack(c, r, fam, sp) {
     var mid = sp.h / 2;
     c.fillStyle = COL.line; c.fillRect(0, mid - 0.5, sp.w, 1);
@@ -594,13 +672,12 @@
     if (!r.e) return;
     var T = timingOf(r), x0 = T.a[0] * sp.w, x1 = T.end * sp.w;
     c.fillStyle = COL[fam];
-    c.beginPath();
-    if (c.roundRect) c.roundRect(x0, mid - 4, Math.max(2, x1 - x0), 8, 4); else c.rect(x0, mid - 4, Math.max(2, x1 - x0), 8);
-    c.fill();
-    if (isLost(r, T, 1)) lostMark(c, fam, Math.min(x1 + 6, sp.w - 6), mid);
+    c.fillRect(x0, mid - 3, Math.max(2, x1 - x0), 6);
+    if (isLost(r, T, 1)) lostMark(c, fam, Math.min(x1 + 7, sp.w - 6), mid);
   }
-  // T2, a win/loss strip: localized = a bar up in the system's colour, wrong = a bar down in --bad, no pose = a short
-  // neutral tick, not scored = nothing (position, not only colour, tells the states apart); right: localized so far
+  // T2, a barcode on a hairline: localized = a bar up in the system's colour, wrong = a bar down in ink, no pose = a
+  // short grey tick on the line, not scored = nothing (position, not only colour, tells the states apart); right:
+  // localized so far
   function paintStates(c, r, fam, sp) {
     var s = states(r), m = s.st.length, mid = Math.round(sp.h / 2), unit = sp.w / Math.max(1, m - 1), j = 0;
     c.fillStyle = COL.line; c.fillRect(0, mid - 0.5, sp.w, 1);
@@ -609,8 +686,8 @@
       while (k < m && s.st[k] === st) k++;
       var x0 = Math.max(0, (j - 0.5) * unit), x1 = Math.min(sp.w, (k - 0.5) * unit);
       if (st === 1) { c.fillStyle = COL[fam]; c.fillRect(x0, 1, x1 - x0, mid - 2); }
-      else if (st === 2) { c.fillStyle = COL.bad; c.fillRect(x0, mid + 1, x1 - x0, mid - 2); }
-      else if (st === 3) { c.fillStyle = COL['ink-3']; c.globalAlpha = 0.45; c.fillRect(x0, mid - 2.5, x1 - x0, 5); c.globalAlpha = 1; }
+      else if (st === 2) { c.fillStyle = COL.wrong; c.globalAlpha = 0.8; c.fillRect(x0, mid + 1, x1 - x0, mid - 2); c.globalAlpha = 1; }
+      else if (st === 3) { c.fillStyle = COL['ink-3']; c.globalAlpha = 0.75; c.fillRect(x0, mid - 2, x1 - x0, 4); c.globalAlpha = 1; }
       j = k;
     }
   }
@@ -722,15 +799,33 @@
       return p;
     }));
   }
-  // the value column: T1 the run's ATE, T2 its final recall within the radius
+  // the value column: T1 the run's ATE, T2 its final recall within the radius; the best value of the view is tagged
   function fillValues() {
-    var t1 = D.track === 't1';
+    var t1 = D.track === 't1', best = bestFamilies();
     el.metric.textContent = t1 ? 'ATE · lower is better' : 'Final recall within ' + D.thresholds[S.radius] + ' m';
     ROWS.forEach(function (row) {
       if (!row.li) return;
       var r = row.run;
-      row.val.textContent = t1 ? (r.e ? metres(r.ate) : '–') : r.status !== 'ok' ? '–' : pct(finalRecall(r));
+      row.val.replaceChildren();
+      if (best[row.fam]) row.val.append(h('span', 'rp-tag rp-tag-best', 'best'), ' ');
+      row.val.append(t1 ? (r.e ? metres(r.ate) : '–') : r.status !== 'ok' ? '–' : pct(finalRecall(r)));
     });
+  }
+  // the systems with the best value of this view, as shown: the lowest error of a run that tracked the session (T1) or the
+  // highest final recall above 0 (T2), among all the systems that have a run here, shown or not; ties share it; nothing
+  // when only one system has a run here
+  function bestFamilies() {
+    var t1 = D.track === 't1', out = {}, top;
+    var val = function (row) { return t1 ? metres(row.run.ate) : pct(finalRecall(row.run)); };
+    if (ROWS.filter(function (row) { return row.run; }).length < 2) return out;
+    var rows = ROWS.filter(function (row) {
+      var r = row.run;
+      return r && (t1 ? r.e && !r.failed && r.ate != null : r.status === 'ok' && finalRecall(r) > 0);
+    }).sort(function (a, b) { return t1 ? a.run.ate - b.run.ate : finalRecall(b.run) - finalRecall(a.run); });
+    if (!rows.length) return out;
+    top = val(rows[0]);
+    rows.forEach(function (row) { if (val(row) === top) out[row.fam] = true; });
+    return out;
   }
   function setHover(fam) {
     if (S.hover === fam) return;
@@ -742,33 +837,40 @@
     requestDraw();
   }
 
-  // ---------------------------------------------------------------- keys, the result line, texts
+  // ---------------------------------------------------------------- keys and texts
   var KEY_GT = '<svg viewBox="0 0 22 12" aria-hidden="true"><path d="M1 6h20" stroke="var(--c-gt)" stroke-width="1.5" stroke-dasharray="4 3" fill="none"/></svg>';
   var KEY_NOW = '<svg viewBox="0 0 22 12" aria-hidden="true"><circle cx="11" cy="6" r="4" fill="none" stroke="var(--ink)" stroke-width="2"/></svg>';
-  var KEY_MAP = '<svg viewBox="0 0 22 12" aria-hidden="true"><path d="M1 6h20" stroke="var(--ink)" stroke-opacity=".07" stroke-width="10" stroke-linecap="round"/><path d="M1 6h20" stroke="var(--ink-3)" stroke-width="1.5"/></svg>';
-  var KEY_ROUTE = '<svg viewBox="0 0 22 12" aria-hidden="true"><path d="M2 6h18" stroke="var(--c)" stroke-width="3.5" stroke-linecap="round"/></svg>';
+  var KEY_HELD = '<svg viewBox="0 0 22 12" aria-hidden="true"><circle cx="11" cy="6" r="3.6" fill="none" stroke="var(--c-cross)" stroke-width="2"/></svg>';
+  var KEY_MAP = '<svg viewBox="0 0 22 12" aria-hidden="true"><path d="M1 6h20" stroke="var(--ink)" stroke-opacity=".07" stroke-width="10"/><path d="M1 6h20" stroke="var(--ink-3)" stroke-width="1.5"/></svg>';
+  // the route of the system the T2 view is coloured by: localized (its colour), wrong (dashed ink), no pose (grey)
+  var KEY_OK = '<svg viewBox="0 0 18 12" aria-hidden="true"><path d="M1 6h16" stroke="var(--c)" stroke-width="3.5"/></svg>';
+  var KEY_WRONG = '<svg viewBox="0 0 18 12" aria-hidden="true"><path d="M1 6h16" stroke="var(--ink)" stroke-width="3" stroke-dasharray="6 4"/></svg>';
+  var KEY_NOPOSE = '<svg viewBox="0 0 18 12" aria-hidden="true"><path d="M1 6h16" stroke="var(--ink-3)" stroke-opacity=".75" stroke-width="2.25"/></svg>';
   var KEY_UP = '<svg viewBox="0 0 16 12" aria-hidden="true"><rect x="2" y="0" width="12" height="5.5" fill="var(--ink-2)"/><rect x="0" y="5.5" width="16" height="1" fill="var(--line-2)"/></svg>';
-  var KEY_DOWN = '<svg viewBox="0 0 16 12" aria-hidden="true"><rect x="0" y="5.5" width="16" height="1" fill="var(--line-2)"/><rect x="2" y="6.5" width="12" height="5.5" fill="var(--bad)"/></svg>';
-  var KEY_NONE = '<svg viewBox="0 0 16 12" aria-hidden="true"><rect x="2" y="3.5" width="12" height="5" fill="var(--ink-3)" fill-opacity=".45"/></svg>';
+  var KEY_DOWN = '<svg viewBox="0 0 16 12" aria-hidden="true"><rect x="0" y="5.5" width="16" height="1" fill="var(--line-2)"/><rect x="2" y="6.5" width="12" height="5.5" fill="var(--ink)" fill-opacity=".8"/></svg>';
+  var KEY_NONE = '<svg viewBox="0 0 16 12" aria-hidden="true"><rect x="0" y="5.5" width="16" height="1" fill="var(--line-2)"/><rect x="2" y="4" width="12" height="4" fill="var(--ink-3)" fill-opacity=".75"/></svg>';
   var KEY_SKIP = '<svg viewBox="0 0 16 12" aria-hidden="true"><rect x="0" y="5.5" width="16" height="1" fill="var(--line-2)"/></svg>';
-  var KEY_TRACK = '<svg viewBox="0 0 16 12" aria-hidden="true"><rect x="0" y="2" width="16" height="8" rx="4" fill="var(--ink-2)"/></svg>';
-  var KEY_LOST = '<svg viewBox="0 0 16 12" aria-hidden="true"><path d="M4 2l8 8M12 2l-8 8" stroke="var(--ink-2)" stroke-width="2" stroke-linecap="round"/></svg>';
-  function keyItem(tagName, icon, text) {
-    var it = h(tagName);
+  var KEY_TRACK = '<svg viewBox="0 0 16 12" aria-hidden="true"><rect x="0" y="3" width="16" height="6" fill="var(--ink-2)"/></svg>';
+  var KEY_LOST = '<svg viewBox="0 0 16 12" aria-hidden="true"><path d="M4.5 2.5l7 7M11.5 2.5l-7 7" stroke="var(--ink-2)" stroke-width="2" stroke-linecap="square"/></svg>';
+  function keyItem(tagName, icon, text, cls) {
+    var it = h(tagName, cls);
     it.innerHTML = icon;                                // constant markup only
     it.appendChild(document.createTextNode(text));
     return it;
   }
   function buildKeys() {
     var t1 = D.track === 't1', r = D.thresholds[S.radius] + ' m';
+    // T1: the hollow marker, when CROSS's path here has gaps where it revisits its map (see revisits)
+    var held = t1 && ROWS.some(function (row) { return row.run && row.run.e && timingOf(row.run).gap; });
     el.routeKey = t1 ? null : h('li', 'rp-key-route');
     el.key.replaceChildren.apply(el.key, t1
       ? [keyItem('li', KEY_GT, 'Ground truth'), keyItem('li', KEY_NOW, 'True position now')]
+        .concat(held ? [keyItem('li', KEY_HELD, 'Hollow: CROSS revisiting its map, shown at its last keyframe')] : [])
       : [keyItem('li', KEY_GT, 'Query session’s route'), keyItem('li', KEY_MAP, 'Map session (shaded: the area it covers)'),
         keyItem('li', KEY_NOW, 'True position, ' + r + ' radius'), el.routeKey]);
     el.tlKey.replaceChildren.apply(el.tlKey, t1
       ? [keyItem('span', KEY_TRACK, 'Tracking'), keyItem('span', KEY_LOST, 'Lost track'), h('span', null, 'Right: share of the session tracked')]
-      : [keyItem('span', KEY_UP, 'Localized within ' + r + ' (system colour)'), keyItem('span', KEY_DOWN, 'Wrong, beyond ' + r),
+      : [keyItem('span', KEY_UP, 'Localized within ' + r + ' (system color)'), keyItem('span', KEY_DOWN, 'Wrong, beyond ' + r),
         keyItem('span', KEY_NONE, 'No pose in the map'), keyItem('span', KEY_SKIP, 'Not scored: outside the map or standing still'),
         h('span', null, 'Right: localized so far')]);
     updateRouteKey();
@@ -780,42 +882,13 @@
     el.routeKey.hidden = !row;
     if (!row) return;
     el.routeKey.style.setProperty('--c', 'var(--c-' + row.fam + ')');
-    var text = h('span', null, 'Route coloured by ');
-    text.appendChild(h('strong', null, row.name));
-    el.routeKey.innerHTML = KEY_ROUTE;                  // constant markup only
-    el.routeKey.appendChild(text);
-  }
-  // the result of this view in one line: the lowest error (T1) or the best final recall (T2) among the systems that
-  // have a run here (shown or not); failed runs do not count
-  function updateBest() {
-    var t1 = D.track === 't1', val, rows, top;
-    val = function (row) { return t1 ? metres(row.run.ate) : pct(finalRecall(row.run)); };
-    rows = ROWS.filter(function (row) {
-      var r = row.run;
-      return r && (t1 ? r.e && !r.failed && r.ate != null : r.status === 'ok');
-    }).sort(function (a, b) { return t1 ? a.run.ate - b.run.ate : finalRecall(b.run) - finalRecall(a.run); });
-    el.best.hidden = false;
-    if (!rows.length || (!t1 && !finalRecall(rows[0].run))) {
-      el.best.replaceChildren(h('span', 'rp-best-k', t1 ? 'No run tracked 80% of the session' : 'No system localized within ' +
-        D.thresholds[S.radius] + ' m'));
-      return;
-    }
-    top = rows.filter(function (row) { return val(row) === val(rows[0]); });
-    // the parts are flex items; the spaces between them only matter to the text (screen readers, copying)
-    el.best.replaceChildren(h('span', 'rp-best-k', (t1 ? 'Lowest error' : 'Best recall within ' + D.thresholds[S.radius] + ' m') + ':'));
-    top.forEach(function (row, i) {
-      if (i && i === top.length - 1) el.best.append(' ', h('span', 'rp-best-k', 'and'));
-      el.best.append(' ', swatch(row.fam), h('strong', null, row.name + (i < top.length - 2 ? ',' : '')));
-    });
-    el.best.append(' ', h('span', 'rp-best-v', val(rows[0])));
-    if (top.some(function (row) { return row.run.align === 'sim3'; })) el.best.append(' ', tag(TAGS.sim3));
-    if (top.some(function (row) { return row.run.upper; })) el.best.append(' ', tag(TAGS.upper));
+    var lead = h('span', null, 'Route of ');
+    lead.append(h('strong', null, row.name), ':');
+    el.routeKey.replaceChildren(lead, keyItem('span', KEY_OK, 'localized', 'rp-key-bit'),
+      keyItem('span', KEY_WRONG, 'wrong', 'rp-key-bit'), keyItem('span', KEY_NOPOSE, 'no pose yet', 'rp-key-bit'));
   }
   function updateTexts() {
     var t1 = S.mode === 't1', id = t1 ? S.t1 : S.t2, it = ITEMS[id], notes = [];
-    el.intro.textContent = t1
-      ? 'Each system maps the session on its own. Its final trajectory is drawn against the ground truth as the session plays.'
-      : 'The query session runs from its first frame, with no initial pose, against each system’s map of the map session.';
     if (it) el.scnTitle.textContent = it.title;
     if (t1) el.scnSub.textContent = it ? it.sub : '';
     else if (scene(S.t2)) {
@@ -824,15 +897,11 @@
     }
     el.tableWhat.textContent = t1 ? 'sequence' : 'query session';
     if (!D || D.id !== id) return;
-    if (S.inputs === 'camera') notes.push('Camera only: every system gets the same images and nothing else, the fairest comparison.');
-    else if (S.inputs === 'imu') notes.push('+ IMU: each system adds the platform’s IMU to its images (visual-inertial).');
-    else if (ODOMETRY[D.dataset]) notes.push(ODOMETRY[D.dataset]);
+    // what the inputs are on this dataset, where it matters to the numbers (How to read 03 defines the inputs; the Sim(3)
+    // tag explains the monocular alignment)
+    if (S.inputs === 'odometry' && ODOMETRY[D.dataset]) notes.push(ODOMETRY[D.dataset]);
     if (D.dataset === 'kitti' && S.setup === 'rgbd') notes.push('RGB-D on KITTI is the left image with depth from stereo matching.');
-    if (t1 && S.setup === 'mono' && S.inputs === 'camera') {
-      notes.push('The monocular baselines are aligned with scale (Sim(3)); CROSS estimates metric scale and is aligned rigidly (SE(3)), as in the benchmark.');
-    }
     el.context.textContent = notes.join(' ');
-    updateBest();
     updateRouteKey();
     // for screen readers: what the view shows, with the numbers
     var vis = shown(), sum = el.scnTitle.textContent + '. ' + el.scnSub.textContent + '. ' + CAT.setups[S.setup] + ', ' +
@@ -862,7 +931,8 @@
       runs.sort(function (a, b) {
         return fams.indexOf(a.fam) - fams.indexOf(b.fam) || GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group) || a.order - b.order;
       });
-      var tb = h('tbody'), gr = h('tr', 'rp-tr-group'), gh = h('th', null, CAT.setups[setup]);
+      var tb = h('tbody'), gr = h('tr', 'rp-tr-group'), gh = h('th');
+      gh.appendChild(h('span', 'rp-tr-group-k', CAT.setups[setup]));   // its own box, so it can stay in sight on phones
       gh.colSpan = cols.length; gh.scope = 'rowgroup';
       gr.appendChild(gh); tb.appendChild(gr);
       runs.forEach(function (r) {
@@ -1016,23 +1086,14 @@
     var first = items.filter(function (b) { return !b.disabled; })[0];
     if (!any && first) first.tabIndex = 0;
   }
-  // on phones a row of chips scrolls sideways: keep the chosen chips in sight (again once the web font is in)
-  function reveal() {
-    (S.mode === 't1' ? [el.list1] : [el.list2, el.chips]).forEach(function (group) {
-      var b = group.querySelector('[aria-checked="true"]');
-      if (!b || group.scrollWidth <= group.clientWidth) return;
-      var gb = group.getBoundingClientRect(), bb = b.getBoundingClientRect();
-      if (bb.left < gb.left + 16 || bb.right > gb.right - 16) group.scrollLeft += bb.left - gb.left - (gb.width - bb.width) / 2;
-    });
-  }
 
   // ---------------------------------------------------------------- scenario selection
-  // the page's lists (title, subtitle) become rows of chips; entries without data are dropped
+  // the page's lists (number, title, subtitle) become run-in rows of chips; entries without data are dropped
   function readItems() {
     [el.list1, el.list2].forEach(function (list) {
       [].forEach.call(list.children, function (li) {
-        var t = li.querySelector('.rp-item-t'), s = li.querySelector('.rp-item-s');
-        ITEMS[li.dataset.id] = { title: (t || li).textContent.trim(), sub: s ? s.textContent.trim() : '' };
+        var n = li.querySelector('.rp-item-n'), t = li.querySelector('.rp-item-t'), s = li.querySelector('.rp-item-s');
+        ITEMS[li.dataset.id] = { n: n ? n.textContent.trim() : '', title: (t || li).textContent.trim(), sub: s ? s.textContent.trim() : '' };
       });
     });
   }
@@ -1041,9 +1102,15 @@
       var list = p[0], known = {};
       p[1].forEach(function (it) { known[it.id] = true; });
       [].slice.call(list.children).forEach(function (li) {
-        var id = li.dataset.id, b;
+        var id = li.dataset.id, b, num;
         if (!known[id]) { li.remove(); return; }
-        b = h('button', 'rp-chip', ITEMS[id].title);
+        b = h('button', 'sx-chip rp-chip');
+        if (ITEMS[id].n) {                              // "01 KITTI 00": the number is for the eye only
+          num = h('span', 'sx-chip-n', ITEMS[id].n);
+          num.setAttribute('aria-hidden', 'true');
+          b.append(num, ' ');
+        }
+        b.append(ITEMS[id].title);
         b.type = 'button';
         b.setAttribute('role', 'radio');
         b.dataset.id = id;
@@ -1057,7 +1124,6 @@
   function markPicker() {
     markGroup(el.list1, function (b) { return b.dataset.id === S.t1; });
     markGroup(el.list2, function (b) { return b.dataset.id === S.t2; });
-    reveal();
   }
   function pickScenario(id) {
     if (id === (S.mode === 't1' ? S.t1 : S.t2)) return;
@@ -1072,7 +1138,7 @@
       el.chips.dataset.scene = it.id;
       el.mapName.textContent = capital(session(it.map).label);
       el.chips.replaceChildren.apply(el.chips, it.queries.map(function (q) {
-        var s = session(q), b = h('button', 'rp-chip', s.chip);
+        var s = session(q), b = h('button', 'sx-chip rp-chip', s.chip);
         b.type = 'button';
         b.setAttribute('role', 'radio');
         b.dataset.q = q;
@@ -1081,7 +1147,6 @@
       }));
     }
     markGroup(el.chips, function (b) { return b.dataset.q === cur; });
-    reveal();
   }
   function pickQuery(q) {
     if (q === curQuery()) return;
@@ -1109,7 +1174,7 @@
     if (S.mode === 't2') buildChips();
     updateTexts();
     if (user) writeHash();
-    el.viewer.classList.add('is-loading');
+    el.panel.classList.add('is-loading');
     load(id).then(function (d) {
       if (seq !== loadSeq) return;
       D = d;
@@ -1118,14 +1183,14 @@
       onData();
     }, function () {
       if (seq !== loadSeq) return;
-      el.msg.textContent = 'This replay could not be loaded. The numbers are in the benchmark summary.';
+      el.msg.textContent = 'This replay could not be loaded. The benchmark page has the numbers.';
       el.msg.hidden = false;
-      el.viewer.classList.remove('is-loading');
+      el.panel.classList.remove('is-loading');
     });
   }
   // after the scenario (or the query session) changed
   function onData() {
-    el.viewer.classList.remove('is-loading');
+    el.panel.classList.remove('is-loading');
     availability();
     markFilters();
     buildRows(); buildLegend(); buildKeys(); buildStrips();
@@ -1212,7 +1277,13 @@
     el.play.addEventListener('click', function () { if (S.playing) pause(); else play(); });
     el.restart.addEventListener('click', function () { S.tau = 0; play(); });
     el.scrub.addEventListener('input', function () { seek(+el.scrub.value / 1000); });
-    el.scrub.addEventListener('keydown', function (e) { if (e.key === ' ') { e.preventDefault(); if (S.playing) pause(); else play(); } });
+    // the keys move the playhead as on the view (2% a press, 10% a page), so every press announces a new position
+    el.scrub.addEventListener('keydown', function (e) {
+      var d = { ArrowRight: 0.02, ArrowUp: 0.02, ArrowLeft: -0.02, ArrowDown: -0.02, PageUp: 0.1, PageDown: -0.1 }[e.key];
+      if (e.key === ' ') { e.preventDefault(); if (S.playing) pause(); else play(); }
+      else if (d != null) { e.preventDefault(); seek(S.tau + d); }
+      else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); seek(e.key === 'Home' ? 0 : 1); }
+    });
     el.stage.addEventListener('keydown', function (e) {
       if (e.key === ' ') { e.preventDefault(); if (S.playing) pause(); else play(); }
       else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); seek(S.tau + (e.key === 'ArrowRight' ? 0.02 : -0.02)); }
@@ -1271,7 +1342,7 @@
       var mq = window.matchMedia('(prefers-color-scheme: dark)');
       if (mq.addEventListener) mq.addEventListener('change', onTheme); else if (mq.addListener) mq.addListener(onTheme);
     }
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { onTheme(); reveal(); });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(onTheme);
   }
 
   // ---------------------------------------------------------------- start
@@ -1293,7 +1364,7 @@
     resize();
     setMode(S.mode, false);
   }).catch(function () {
-    el.msg.textContent = 'The replay data could not be loaded. The numbers are in the benchmark summary.';
+    el.msg.textContent = 'The replay data could not be loaded. The benchmark page has the numbers.';
     el.msg.hidden = false;
   });
 })();
