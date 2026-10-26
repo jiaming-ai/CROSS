@@ -180,7 +180,7 @@ const $ = (t, a = {}, ...kids) => { const e = document.createElement(t); for (co
   for (const k of kids) e.append(k instanceof Node ? k : document.createTextNode(k ?? "")); return e; };
 const SVGNS = "http://www.w3.org/2000/svg";
 const s$ = (t, a = {}) => { const e = document.createElementNS(SVGNS, t); for (const [k, v] of Object.entries(a)) e.setAttribute(k, v); return e; };
-const DS = {all: "All datasets (overall)", kitti: "KITTI", openloris: "OpenLORIS-Scene", rover: "ROVER campus_large", simchange: "SimChange v2"};
+const DS = {all: "All datasets (overall)", kitti: "KITTI", openloris: "OpenLORIS-Scene", rover: "ROVER campus_large", simchange_v3: "SimChange v3", simchange: "SimChange v2"};
 const TRACK = {t1: "T1 · mapping accuracy", t2: "T2 · multi-session localization", t3: "T3 · relocalization success"};
 const state = {tab: "summary", ds: {t1: "openloris", t2: "openloris", t3: "all"}, sel: null, hl: true, hist: {track: "t1", ds: "kitti", sys: null}};
 const tip = document.getElementById("tip");
@@ -467,7 +467,7 @@ function trialPlot(r) {
 const FP = () => B.failure_page || {};
 const GRADE = {validated: "validated: tested on the data", supported: "supported: consistent with the data, not tested directly",
                speculative: "speculative: plausible, untested"};
-const DSHORT = {openloris: "OpenLORIS", rover: "ROVER", simchange: "SimChange", kitti: "KITTI"};
+const DSHORT = {openloris: "OpenLORIS", rover: "ROVER", simchange_v3: "SimChange v3", simchange: "SimChange v2", kitti: "KITTI"};
 const fpct = x => x == null ? "–" : `${Math.round(x)} %`;
 const SHORTSYS = {"cross_stereo|stereo": "CROSS stereo", "cross_stereo_vgio|stereo": "CROSS stereo, VGGT-IMU odom.",
   "cross_stereo_vo|stereo": "CROSS stereo, visual odom.", "cross_rgbd|rgbd": "CROSS RGB-D", "cross_mono_ff_odom|mono": "CROSS mono",
@@ -819,6 +819,10 @@ function renderMetrics(v) {
          "Basalt rows on OpenLORIS (no Basalt file there): the wheel row's cells, as before.",
          "mono + IMU depends on the machine it runs on: the same code repeats exactly on one machine but not on another. Its ROVER map session scores 2.43, 2.77 and 3.18 m ATE on three H20s, and relocalization follows the map: with the 2.43 m map ROVER T3 RS@3 / 5 m is 0.87 / 0.91 and T2 LR@3 / 5 m 0.77 / 0.91, with the 3.18 m map these tables hold (the benchmark run) 0.69 / 0.79 and 0.56 / 0.89. KITTI 07: 1.31 vs 2.32 m. The other modes repeat across machines to the millimetre.",
          "Baselines: ORB-SLAM3, RTAB-Map (external / visual / visual-inertial odometry) and VGGT-SLAM 2.0: the 2026-10-01 to 10-07 runs re-scored with the 2026-10-07 rules from their stored files (benchmark/run.py --reeval); VGGT-SLAM 2.0 applies the map-link rule from its logs. RTAB-Map + Basalt: re-run 2026-10-20 on the 4-level Basalt files. MASt3R-SLAM: re-run 2026-10-20/21 with the map-link rule (a query pose counts from its first loop closure or relocalization to the map), its published settings. It holds at most 512 keyframes and crashes on longer streams, so every ROVER cell, KITTI 05 / 06 and the T2 of most hssd_restaurant queries (map + query too long) are failed cells: a limit of the system, not of the run. LingBot-Map (added 2026-10-20): no relocalization step that could link a query frame to the map, so every query pose counts and its T2 / T3 are upper bounds. AMB3R-SLAM (added 2026-10-20): its published settings with the dataset's intrinsics and the same map-link rule; one declared deviation, stereo depth from 0.3 m on every dataset (upstream: from 3 m, set for KITTI). Its DBoW2 loop retrieval rarely links a query frame to the map, so its T2 / T3 stay low outside SimChange. The History tab lists every code version.")),
+    sec("SimChange v3 (2026-10-25)",
+      ul("SimChange v3 replaced SimChange v2 in the summary and in the overall scores (the mean over OpenLORIS, ROVER and SimChange v3); the v2 tables stay in the dataset menus.",
+         "v3 re-renders the HSSD house and restaurant with a camera model (sensor noise, blur, exposure) and physical lighting (sun, overcast, low sun, dusk, night with 100 / 50 / 25 % of the lamps on), changes objects until a given share of every map view's image features differs (objfeat_<percent>), deviates from the route (wander) or drives it in reverse, and adds a lab corridor scene: 43 query sessions in three scenes. Classroom and Lone Monk have no v3 lighting yet and stay in v2.",
+         "Every v3 row ran on the same code (e3e4a2c: master d8c459f plus the simchange_v3 dataset entry), 2026-10-23 to 25. MASt3R-SLAM failed 4 of its 86 v3 sessions: two T2 runs crashed at its 512-keyframe limit, and in two T3 runs the same trial hung in the first run and in the re-run (a timeout that persists after re-runs counts as a failed session).")),
     sec("Small scenes", "In small rooms (OpenLORIS office spans about 4 m, SimChange classroom about 6 m) even the 1 m threshold is a large fraction of the room; read those cells with the scene size in mind (Datasets tab)."));
 }
 
@@ -892,7 +896,7 @@ const DSCENE = (d, sc) => ({hssd_house: "HSSD house", hssd_restaurant: "HSSD res
 function renderData(v) {
   const S = B.datastats || {}, SP = B.splits || {};
   v.append($("p", {class: "note"}, "Representative images of every dataset, then the sessions per scene, as prepared (10 Hz). Frames and path length of each session; T3 trials = number of 100-frame trials (stride 50) of a query session. Rows marked 'not prepared yet' are still downloading or converting."));
-  for (const d of ["kitti", "openloris", "rover", "simchange"]) {
+  for (const d of ["kitti", "openloris", "rover", "simchange_v3", "simchange"]) {
     if (!SP[d]) continue;
     const card = $("div", {class: "card"}, $("h3", {}, DS[d] || d), renderSamples(d) || "");
     const t = $("table"); t.append($("thead", {}, $("tr", {}, ...["scene", "sessions", "map session", "query sessions", "query frames", "T3 trials", "thresholds"].map(h => $("th", {}, h)))));
