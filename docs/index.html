@@ -350,7 +350,7 @@
               <pre><code class="term-lines" id="pk-cmd"><span class="ln"><span class="p">$ </span>python run.py my_sequence --mode stereo_wheel</span></code></pre>
             </div>
             <ul class="picker-notes" id="pk-notes">
-              <li>Also possible: <code>stereo_dpvo</code> (<span data-num="t3.cross_camera.overall">88%</span> relocalization success, <span data-num="t1.cross_camera.overall">0.57%</span> mapping error), which needs no odometry.</li>
+              <li>Also possible: <code>stereo_dpvo</code> (<span data-num="t3.cross_camera.overall">87%</span> relocalization success, <span data-num="t1.cross_camera.overall">0.57%</span> mapping error), which needs no odometry.</li>
             </ul>
           </div>
           <div class="note picker-first"><strong>Which to try first.</strong> A stereo camera with any odometry:
@@ -630,20 +630,21 @@ session.release()</code></pre>
         <p class="docs-lead sx-statement sx-statement--md">A fixed protocol with <strong>three tasks</strong>, run on <strong>the same sessions for every
           system</strong>: CROSS and <span data-num="baselines">6</span> open-source baselines.</p>
         <p>The tasks: <strong>T1</strong> mapping accuracy (ATE), <strong>T2</strong> localization in a stored map (recall)
-          and <strong>T3</strong> relocalization success, on KITTI, OpenLORIS-Scene, ROVER and SimChange; the published
-          results come from <span data-num="runs">9,198</span> runs over <span data-num="sessions">120</span> sessions.</p>
+          and <strong>T3</strong> relocalization success, on KITTI, OpenLORIS-Scene, ROVER and SimChange v3; the scores come
+          from <span data-num="runs_scored">6,368</span> runs over <span data-num="sessions">86</span> sessions
+          (<span data-num="runs">12,491</span> runs are published).</p>
         <figure class="docs-bench">
           <figcaption class="sx-list-head"><span>Relocalization success (T3), overall</span><span>CROSS with stereo + odometry (<code>stereo_wheel</code>)</span></figcaption>
           <!-- gen:lb-cmp-t3 -->
           <ul class="lb-cmp">
             <li class="is-cross"><span class="lb-cmp-name">CROSS</span><span class="lb-cmp-bar" aria-hidden="true"><i style="--w:93.0%"></i></span><span class="lb-cmp-val">93%</span></li>
-            <li class="is-ub"><span class="lb-cmp-name">LingBot-Map <small>upper bound</small></span><span class="lb-cmp-bar" aria-hidden="true"><i style="--w:59.0%"></i></span><span class="lb-cmp-val">59%</span></li>
-            <li><span class="lb-cmp-name">RTAB-Map <small>same inputs</small></span><span class="lb-cmp-bar" aria-hidden="true"><i style="--w:43.0%"></i></span><span class="lb-cmp-val">43%</span></li>
+            <li class="is-ub"><span class="lb-cmp-name">LingBot-Map <small>upper bound</small></span><span class="lb-cmp-bar" aria-hidden="true"><i style="--w:48.0%"></i></span><span class="lb-cmp-val">48%</span></li>
+            <li><span class="lb-cmp-name">RTAB-Map <small>same inputs</small></span><span class="lb-cmp-bar" aria-hidden="true"><i style="--w:41.0%"></i></span><span class="lb-cmp-val">41%</span></li>
           </ul>
           <!-- /gen:lb-cmp-t3 -->
         </figure>
         <p class="table-note sx-label">T3: the share of 10 s trials that start with no pose in a map from another session and
-          end within 2 m indoors or 5 m outdoors, averaged over OpenLORIS-Scene, ROVER and SimChange. LingBot-Map runs on one
+          end within 2 m indoors or 5 m outdoors, averaged over OpenLORIS-Scene, ROVER and SimChange v3. LingBot-Map runs on one
           camera without odometry and has no relocalization step, so its number is an upper bound (hatched). ROVER and
           SimChange odometry is simulated from ground truth plus noise. <a href="../leaderboard/">Benchmark and caveats</a></p>
         <p>To reproduce it, follow <a href="https://github.com/jiaming-ai/CROSS/blob/master/benchmark/README.md#running" rel="noopener">benchmark/README.md</a>:

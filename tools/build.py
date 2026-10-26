@@ -104,6 +104,19 @@ def inputs_of(sysdef):
     return "camera"
 
 
+def summary_col(header):
+    """The dataset key of a summary-table column ("SimChange v3 RS@1/2 m" -> simchange_v3, "SimChange LR@1/2 m" ->
+    simchange (v2), "overall" -> overall)."""
+    h = header.strip().lower()
+    m = re.match(r"simchange(?: v(\d+))?\b", h)
+    if m:
+        return "simchange" if m.group(1) in (None, "2") else f"simchange_v{m.group(1)}"
+    for prefix in ("openloris", "rover", "kitti", "overall", "scale"):
+        if h.startswith(prefix):
+            return prefix
+    raise SystemExit(f"unknown summary column {header!r} (tools/build.py summary_col)")
+
+
 def build_leaderboard(B):
     systems = {}
     for key, d in B["systems"].items():
@@ -111,13 +124,16 @@ def build_leaderboard(B):
         systems[key] = {"label": d["label"], "family": fam, "inputs": inputs_of(d),
                         "map_reuse": d.get("map_reuse"), "upper_bound": key == "lingbot_map"}
     tasks = {}
-    spec = {  # summary key -> (task id, column datasets, pair values, higher is better)
-        "rs": ("t3", ["openloris", "rover", "simchange", "overall"], True, True),
-        "lr": ("t2", ["openloris", "rover", "simchange", "overall"], True, True),
-        "ate": ("t1", ["kitti", "openloris", "rover", "overall", "scale"], False, False),
-    }
+    spec = {"rs": ("t3", True, True), "lr": ("t2", True, True), "ate": ("t1", False, False)}  # (task, pairs, higher)
     for key, title, note, md in B["summary"]:
-        tid, cols, pair, higher = spec[key]
+        tid, pair, higher = spec[key]
+        # the columns come from the table's own header ("| system · setup | OpenLORIS RS@1/2 m | ... | SimChange v3
+        # RS@1/2 m | overall |"), so a dataset that replaces another (SimChange v3 for v2, 2026-10-25) is read right
+        head = next(l for l in md.splitlines() if l.startswith("| system"))
+        cols = [summary_col(h) for h in head.split("|")[2:-1]]
+        for c in cols:
+            if c not in ("overall", "scale") and (c not in B["datasets"] or c not in LB_DATASETS):
+                raise SystemExit(f"summary column {c!r} is not in benchmark/data.js datasets or tools/build.py LB_DATASETS")
         lines = [l for l in md.splitlines() if l.startswith("| ") and not l.startswith("| system") and not l.startswith("|---")]
         rows = []
         for (system, setup), line in zip(B["order"], lines):
@@ -129,23 +145,35 @@ def build_leaderboard(B):
         tasks[tid] = {"title": title, "note": note, "cols": cols, "higher": higher, "rows": rows}
     # relocalization trials scored per row: systems without map persistence re-run the map session for every trial,
     # so they are scored on a subset of the trials
+    # a run chunk's dataset ("t3_simchange_v3_corridor" -> simchange_v3: the longest matching dataset key)
+    chunk_ds = lambda ch: max((d for d in B["datasets"] if ch.split("_", 1)[1].startswith(d + "_")), key=len)
     scored = {}
     for chunk in B["chunks"]:
-        if chunk.startswith("t3_"):
+        if chunk.startswith("t3_") and chunk_ds(chunk) in tasks["t3"]["cols"]:  # the datasets the T3 table scores
             for r in load_runs(chunk):
                 key = (r["system"], r["setup"])
                 scored[key] = scored.get(key, 0) + (r.get("n_trials") or 0)
     for r in tasks["t3"]["rows"]:
         r["trials"] = scored.get((r["system"], r["setup"]), 0)
+    # the datasets the summary scores (KITTI, OpenLORIS, ROVER, SimChange v3); a replaced version (SimChange v2) stays in
+    # the full results only, and is not counted
+    shown = {c for T in tasks.values() for c in T["cols"] if c in B["datasets"]}
+    # the runs behind the tables: each task's own datasets and the tables' rows (the published total also holds a
+    # replaced dataset's runs and configurations that are in no table)
+    in_tables = {tuple(o) for o in B["order"]}
+    n_scored = sum(1 for ch in B["chunks"] if chunk_ds(ch) in tasks[ch.split("_", 1)[0]]["cols"]
+                   for r in load_runs(ch) if (r["system"], r["setup"]) in in_tables)
     datasets = {}
     for name, cfg in B["datasets"].items():
+        if name not in shown:
+            continue
         stats = B["datastats"].get(name, {})
         n_sessions = sum(len(v) for v in stats.values())
         n_trials = sum(s.get("trials", 0) for v in stats.values() for s in v.values())
         datasets[name] = {"environment": cfg["environment"], "thresholds": cfg["thresholds"],
                           "odometry": cfg.get("odometry"), "scenes": cfg["scenes"],
                           "sessions": n_sessions, "t3_trials": n_trials}
-    return {"generated": B["generated"], "commit": B["commit"], "n_runs": B["n_runs"],
+    return {"generated": B["generated"], "commit": B["commit"], "n_runs": B["n_runs"], "n_runs_scored": n_scored,
             "families": FAMILIES, "setups": SETUPS, "systems": systems, "datasets": datasets, "tasks": tasks}
 
 
@@ -158,7 +186,8 @@ def best_rows(task, pred=lambda r: True, col="overall", idx=1):
 
 def numbers(L):
     """Named values for data-num elements in the pages (all strings, formatted for display)."""
-    N = {"runs": f"{L['n_runs']:,}", "baselines": str(len(FAMILIES) - 1), "generated": L["generated"][:10],
+    N = {"runs": f"{L['n_runs']:,}", "runs_scored": f"{L['n_runs_scored']:,}", "baselines": str(len(FAMILIES) - 1),
+         "generated": L["generated"][:10],
          "commit": L["commit"]}
     pct = lambda v: f"{round(v * 100)}%"
     N["datasets"] = str(len(L["datasets"]))
@@ -174,11 +203,12 @@ def numbers(L):
         row = lambda s, st: next(r for r in T["rows"] if r["system"] == s and r["setup"] == st)
         # the configuration the pages headline: stereo + odometry (the recommended mode, stereo_wheel)
         ref = row("cross_stereo", "stereo")
-        for col in ("openloris", "rover", "simchange", "overall"):
+        cols = [c for c in T["cols"] if c != "scale"]  # the datasets, then overall
+        for col in cols:
             N[f"{tid}.cross.{col}"] = pct(ref["cells"][col]["v"][1])
         cam = row("cross_stereo_vo", "stereo")  # cameras only: no odometry input
-        for col in ("openloris", "rover", "simchange", "overall"):
-            N[f"{tid}.cross_camera.{col}" if col != "overall" else f"{tid}.cross_camera.overall"] = pct(cam["cells"][col]["v"][1])
+        for col in cols:
+            N[f"{tid}.cross_camera.{col}"] = pct(cam["cells"][col]["v"][1])
         best, val = best_rows(T, lambda r: r["family"] == "cross")  # CROSS's best configuration (the rankings' row)
         N[f"{tid}.cross.best.overall"] = pct(val(best[0]))
         bl, val = best_rows(T, lambda r: r["family"] != "cross")
@@ -191,7 +221,7 @@ def numbers(L):
         cl, val = best_rows(T, lambda r: r["family"] in ("orbslam3", "rtabmap"))
         N[f"{tid}.best_classical.overall"] = pct(val(cl[0]))
         N[f"{tid}.best_classical.name"] = FAMILIES[cl[0]["family"]]
-        for col in ("rover", "openloris", "simchange"):
+        for col in [c for c in cols if c != "overall"]:
             b, val = best_rows(T, lambda r: r["family"] != "cross", col)
             N[f"{tid}.best_baseline.{col}"] = pct(val(b[0]))
             N[f"{tid}.best_baseline.{col}.name"] = FAMILIES[b[0]["family"]]
@@ -296,7 +326,8 @@ def build_replays(B, L):
 # (only lb-cmp-t3 is built: no page shows the others).
 LB_INPUTS = {"camera": "Camera only", "imu": "+ IMU", "odometry": "+ odometry", "vio": "+ odometry"}
 LB_FILTER = {"vio": "odometry"}  # filter group of an input kind: a Basalt VIO stream is an odometry input
-LB_DATASETS = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange": "SimChange"}
+LB_DATASETS = {"kitti": "KITTI", "openloris": "OpenLORIS", "rover": "ROVER", "simchange": "SimChange v2",
+               "simchange_v3": "SimChange v3"}
 LB_CONFIG_WORDS = {"external odometry": "dataset odometry", "stereo VIO odometry": "Basalt stereo VIO",
                    "DA3": "Depth Anything 3", "PnP": "PnP on depth", "VGGT-inertial odometry": "IMU fused by CROSS"}
 LB_TASK = {  # task -> (overall column, what a failure counts, what happens to it, why a row has no rank)

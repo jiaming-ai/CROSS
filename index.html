@@ -194,7 +194,7 @@
         hypothesis and <strong>commits only what the robot's own motion confirms</strong>, so a single look-alike view cannot
         corrupt the map. <span class="nowrap">RGB-D</span>, stereo or monocular; with wheel odometry, a VIO, an IMU or none.</p>
       <ul class="figures" aria-label="Benchmark highlights">
-        <li><span class="fig-v" data-num="t3.cross.overall">93%</span><span class="fig-k">relocalization success from 10 s cold starts on OpenLORIS, ROVER and SimChange</span><span class="fig-c"><a href="#benchmark">first of seven systems: the ranking ↓</a></span></li>
+        <li><span class="fig-v" data-num="t3.cross.overall">93%</span><span class="fig-k">relocalization success from 10 s cold starts on OpenLORIS, ROVER and SimChange v3</span><span class="fig-c"><a href="#benchmark">first of seven systems: the ranking ↓</a></span></li>
         <li><span class="fig-v" data-num="t3.cross_camera.rover">88%</span><span class="fig-k">relocalization success outdoors with cameras only, over 14 months of seasons, dusk and night</span><span class="fig-c">best other system: <span data-num="t3.best_baseline.rover">39%</span><span data-num="t3.best_baseline.rover.ub_note">, an upper bound</span></span></li>
         <li><span class="fig-v" data-num="t1.cross.overall">0.35%</span><span class="fig-k">mapping error, as a share of the distance traveled</span><span class="fig-c"><a href="#benchmark">the lowest of seven systems: the ranking ↓</a></span></li>
       </ul>
@@ -273,7 +273,7 @@
   <!-- ============================================================ benchmark -->
   <section class="bench" id="benchmark" aria-labelledby="bench-title">
     <header class="sx-head"><h2 class="sx-h" id="bench-title">Benchmark</h2>
-      <p class="sx-aside"><span data-num="runs">9,198</span> runs, <span data-num="baselines">6</span> open-source systems, <span data-num="datasets">4</span> datasets</p></header>
+      <p class="sx-aside"><span data-num="runs_scored">6,368</span> runs, <span data-num="baselines">6</span> open-source systems, <span data-num="datasets">4</span> datasets</p></header>
     <div class="container bench-body">
       <p class="sx-statement bench-lead">On the same sessions, CROSS <strong>ranks first in all three tasks</strong>: it
         relocalizes from a cold start far more often than any other system, keeps more of each later session localized in
@@ -290,12 +290,12 @@
             <!-- gen:home-rank-t3 -->
             <ol class="hr-list" data-task="t3">
               <li class="hr-row is-cross"><span class="hr-name">CROSS<small>Stereo + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:93.0%"></i></span><span class="hr-val"><b>93%</b></span></li>
-              <li class="hr-row is-ub"><span class="hr-name">LingBot-Map<small>Mono camera only · upper bound</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:59.0%"></i></span><span class="hr-val"><b>59%</b></span></li>
-              <li class="hr-row"><span class="hr-name">RTAB-Map<small>RGB-D + odometry · <span class="hr-fail">1/100 query sessions failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:45.0%"></i></span><span class="hr-val"><b>45%</b></span></li>
-              <li class="hr-row"><span class="hr-name">ORB-SLAM3<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:45.0%"></i></span><span class="hr-val"><b>45%</b></span></li>
-              <li class="hr-row"><span class="hr-name">AMB3R-SLAM<small>RGB-D camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:22.0%"></i></span><span class="hr-val"><b>22%</b></span></li>
-              <li class="hr-row"><span class="hr-name">VGGT-SLAM 2.0<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:19.0%"></i></span><span class="hr-val"><b>19%</b></span></li>
-              <li class="hr-row"><span class="hr-name">MASt3R-SLAM<small>Mono camera only · <span class="hr-fail">12/100 query sessions failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:17.0%"></i></span><span class="hr-val"><b>17%</b></span></li>
+              <li class="hr-row is-ub"><span class="hr-name">LingBot-Map<small>Mono camera only · upper bound</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:48.0%"></i></span><span class="hr-val"><b>48%</b></span></li>
+              <li class="hr-row"><span class="hr-name">RTAB-Map<small>RGB-D + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:43.0%"></i></span><span class="hr-val"><b>43%</b></span></li>
+              <li class="hr-row"><span class="hr-name">ORB-SLAM3<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:41.0%"></i></span><span class="hr-val"><b>41%</b></span></li>
+              <li class="hr-row"><span class="hr-name">AMB3R-SLAM<small>RGB-D camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:18.0%"></i></span><span class="hr-val"><b>18%</b></span></li>
+              <li class="hr-row"><span class="hr-name">VGGT-SLAM 2.0<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:14.0%"></i></span><span class="hr-val"><b>14%</b></span></li>
+              <li class="hr-row"><span class="hr-name">MASt3R-SLAM<small>Mono camera only · <span class="hr-fail">9/67 query sessions failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:10.0%"></i></span><span class="hr-val"><b>10%</b></span></li>
             </ol>
             <!-- /gen:home-rank-t3 -->
           </div>
@@ -304,12 +304,12 @@
             <!-- gen:home-rank-t2 -->
             <ol class="hr-list" data-task="t2">
               <li class="hr-row is-cross"><span class="hr-name">CROSS<small>Stereo + odometry</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:93.0%"></i></span><span class="hr-val"><b>93%</b></span></li>
-              <li class="hr-row is-ub"><span class="hr-name">LingBot-Map<small>Mono camera only · upper bound</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:59.0%"></i></span><span class="hr-val"><b>59%</b></span></li>
-              <li class="hr-row"><span class="hr-name">RTAB-Map<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:57.0%"></i></span><span class="hr-val"><b>57%</b></span></li>
-              <li class="hr-row"><span class="hr-name">ORB-SLAM3<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:54.0%"></i></span><span class="hr-val"><b>54%</b></span></li>
-              <li class="hr-row"><span class="hr-name">AMB3R-SLAM<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:42.0%"></i></span><span class="hr-val"><b>42%</b></span></li>
+              <li class="hr-row"><span class="hr-name">ORB-SLAM3<small>Stereo + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:53.0%"></i></span><span class="hr-val"><b>53%</b></span></li>
+              <li class="hr-row"><span class="hr-name">RTAB-Map<small>RGB-D + IMU</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:51.0%"></i></span><span class="hr-val"><b>51%</b></span></li>
+              <li class="hr-row is-ub"><span class="hr-name">LingBot-Map<small>Mono camera only · upper bound</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:48.0%"></i></span><span class="hr-val"><b>48%</b></span></li>
+              <li class="hr-row"><span class="hr-name">AMB3R-SLAM<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:40.0%"></i></span><span class="hr-val"><b>40%</b></span></li>
               <li class="hr-row"><span class="hr-name">VGGT-SLAM 2.0<small>Mono camera only</small></span><span class="hr-bar" aria-hidden="true"><i style="--w:15.0%"></i></span><span class="hr-val"><b>15%</b></span></li>
-              <li class="hr-row"><span class="hr-name">MASt3R-SLAM<small>Mono camera only · <span class="hr-fail">25/100 query sessions failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:7.0%"></i></span><span class="hr-val"><b>7%</b></span></li>
+              <li class="hr-row"><span class="hr-name">MASt3R-SLAM<small>Mono camera only · <span class="hr-fail">9/67 query sessions failed</span></small></span><span class="hr-bar" aria-hidden="true"><i style="--w:6.0%"></i></span><span class="hr-val"><b>6%</b></span></li>
             </ol>
             <!-- /gen:home-rank-t2 -->
           </div>
@@ -330,7 +330,7 @@
         </div>
         <div class="bench-side">
           <ul class="bench-facts">
-            <li><span>Datasets</span><span>KITTI, OpenLORIS-Scene, ROVER over 14 months, SimChange</span></li>
+            <li><span>Datasets</span><span>KITTI, OpenLORIS-Scene, ROVER over 14 months, SimChange v3</span></li>
             <li><span>Systems</span><span>ORB-SLAM3, RTAB-Map, MASt3R-SLAM, VGGT-SLAM 2.0, LingBot-Map, AMB3R-SLAM</span></li>
             <li><span>Inputs</span><span>the same images for every system, the same odometry for every system that takes it</span></li>
             <li><span>Open</span><span>protocol, runners for every system, all per-run results</span></li>
