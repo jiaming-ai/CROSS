@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import hashlib
 
+import numpy as np
 import torch
 
 from .head import GravityHead, build_bev_head
@@ -112,3 +113,19 @@ class BEVPredictor:
     @staticmethod
     def log_metric_scale(metric: float) -> float:
         return math.log(max(float(metric), 1e-9))
+
+
+def fuse_own_priority(all_views: dict, own_views: dict) -> dict:
+    """One BEV from two runs of the heads on the same pass: all views, and the robot's own views only (the current
+    image and the session's own keyframes, without references from a loaded map, which may show another day).
+    Where the own views observe a cell they decide its occupancy, elsewhere all views do:
+    P = O_own P_own + (1 - O_own) P_all, observability max(O_all, O_own), the error map weighted like P.
+    Arrays (numpy or torch) of the same shape; both need the observability head."""
+    w = own_views["observability"]
+    out = dict(all_views)
+    out["prob"] = w * own_views["prob"] + (1 - w) * all_views["prob"]
+    o_all = all_views["observability"]
+    out["observability"] = np.maximum(o_all, w) if isinstance(w, np.ndarray) else torch.maximum(o_all, w)
+    if all_views.get("uncertainty") is not None and own_views.get("uncertainty") is not None:
+        out["uncertainty"] = w * own_views["uncertainty"] + (1 - w) * all_views["uncertainty"]
+    return out

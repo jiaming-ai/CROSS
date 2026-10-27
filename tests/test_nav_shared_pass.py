@@ -109,3 +109,85 @@ def test_visibility_head_inputs():
     assert torch.allclose(ls, torch.full((B,), math.log(2.0))) and torch.allclose(up, batch["up_cam"])
     ls, up = head_inputs(bb, batch, up_pred, {**exact, "p_scale_head": 1.0, "p_gravity_pred": 1.0}, "gtmix")
     assert torch.allclose(ls, bb["log_scale_head"]) and torch.allclose(up, up_pred)
+
+
+def test_fuse_own_priority():
+    """The own views decide the cells they observe (weight = their observability), all views the rest."""
+    from cross_nav.infer import fuse_own_priority
+    all_v = {"prob": np.array([.9, .9, .9]), "observability": np.array([.9, .2, .0]), "uncertainty": np.array([.3] * 3),
+             "res": .05}
+    own_v = {"prob": np.array([.1, .1, .1]), "observability": np.array([1., .5, .0]), "uncertainty": np.array([.1] * 3)}
+    out = fuse_own_priority(all_v, own_v)
+    assert np.allclose(out["prob"], [.1, .5, .9])
+    assert np.allclose(out["observability"], [1., .5, .0])
+    assert np.allclose(out["uncertainty"], [.1, .2, .3])
+    assert out["res"] == .05 and all_v["prob"][0] == .9           # other keys kept, inputs unchanged
+    t = fuse_own_priority({k: torch.as_tensor(v) for k, v in all_v.items() if k != "res"},
+                          {k: torch.as_tensor(v) for k, v in own_v.items()})
+    assert torch.allclose(t["prob"], torch.tensor([.1, .5, .9], dtype=torch.float64))
+
+
+def test_own_views_from_view_tags():
+    from cross.cv.pose_est_ff import own_views
+    tags = ["curr_L", "ref0_L", "ref1_L", "prev_L", "curr_R", "ref1_R", "nav_L", "nav_L"]
+    assert own_views(tags, [True, False], [True, False]) == [True, False, True, True, True, True, False, True]
+    assert own_views(tags) == [True, True, True, True, True, True, False, False]     # no flags: refs own, extras not
+
+
+class _StubNav:
+    """BEV heads whose output depends only on the view mask: view 2 is a loaded-map reference that shows an old
+    obstacle (P 0.9 everywhere); the own views see free ground (P 0.1) and observe the left half of the grid."""
+    visibility = object()
+
+    def __init__(self):
+        self.masks = []
+
+    @staticmethod
+    def log_metric_scale(metric):
+        return math.log(metric)
+
+    def __call__(self, tokens, pts, patch_hw, dino, depth, conf, pose_enc, hw, log_scale, up, views=None):
+        views = np.asarray(views, dtype=bool)
+        self.masks.append(views.copy())
+        stale = bool(views[2])
+        obs = torch.full((4, 4), .9) if stale else torch.zeros(4, 4)
+        if not stale:
+            obs[:, :2] = .8
+        up_t = torch.tensor([0., -1., 0.])
+        return {"prob": torch.full((4, 4), .9 if stale else .1), "observability": obs,
+                "uncertainty": torch.full((4, 4), .3 if stale else .1), "up_cam": up_t, "up_head": up_t.clone(),
+                "log_scale": log_scale, "res": .05, "size": 4, "uncertainty_kind": "error"}
+
+
+def _stub_estimator(fusion):
+    from cross.cv.pose_est_ff import PoseEstFeedForward
+    est = object.__new__(PoseEstFeedForward)
+    est.config = types.SimpleNamespace(nav_bev_fusion=fusion)
+    est.backend = types.SimpleNamespace(nav=_StubNav(), fingerprints=lambda images: [f"k{i}" for i in range(len(images))],
+                                        last_nav=dict.fromkeys(("tokens", "pts", "patch_hw", "dino", "depth", "conf",
+                                                                "pose_enc", "hw")))
+    est._gravity_cam = None
+    est._R_model_to_cam = None
+    return est
+
+
+def test_nav_bev_fusion_session():
+    """nav_bev_fusion: off = one head call on every view; session = a second call on the own views when the pass holds
+    loaded-map views, their occupancy where they observe; nothing to fuse without such views or without flags."""
+    images = [None] * 3
+    est = _stub_estimator("off")
+    out = est._nav_bev(None, images, 1.0, own=[True, True, False])
+    assert len(est.backend.nav.masks) == 1 and np.allclose(out["prob"], .9) and "fused" not in out
+    est = _stub_estimator("session")
+    out = est._nav_bev(None, images, 1.0, own=[True, True, False])
+    m = est.backend.nav.masks
+    assert len(m) == 2 and m[0].tolist() == [True, True, True] and m[1].tolist() == [True, True, False]
+    assert out["fused"] and out["n_own_views"] == 2 and out["prob"].dtype == np.float16
+    assert np.allclose(out["prob"][:, :2], .8 * .1 + .2 * .9, atol=1e-3)     # own views observe: mostly theirs
+    assert np.allclose(out["prob"][:, 2:], .9, atol=1e-3)                     # unobserved by them: all views
+    assert np.allclose(out["observability"], .9, atol=1e-3)
+    assert np.allclose(out["uncertainty"][:, :2], .8 * .1 + .2 * .3, atol=1e-3)
+    for own in ([True, True, True], None):
+        est = _stub_estimator("session")
+        out = est._nav_bev(None, images, 1.0, own=own)
+        assert len(est.backend.nav.masks) == 1 and np.allclose(out["prob"], .9) and not out.get("fused", False)

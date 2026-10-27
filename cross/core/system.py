@@ -2902,10 +2902,11 @@ class System:
             logger.debug("No valid retrieval results found.")
             if nav_on:
                 from cross.db.db import as_float_image
-                nav_images = [as_float_image(k.raw_rgb_image.to(self.device))
-                              for k in self._nav_coverage_keyframes([], n_nav)]
+                nav_kfs = self._nav_coverage_keyframes([], n_nav)
                 self.pose_est.estimate_pose(rgb_image.new_zeros((0,) + tuple(rgb_image.shape)), None, rgb_image, None,
-                                            odom_anchor=odom_anchor, nav_images=nav_images)
+                                            odom_anchor=odom_anchor,
+                                            nav_images=[as_float_image(k.raw_rgb_image.to(self.device)) for k in nav_kfs],
+                                            nav_loaded=[k.id in self.loaded_node_ids for k in nav_kfs])
             return ret
 
         retrieval_scores = results["scores"]
@@ -2916,8 +2917,8 @@ class System:
             retrieval_scores = retrieval_scores[:max_refs]
             keyframes = keyframes[:max_refs]
         from cross.db.db import as_float_image
-        nav_images = [as_float_image(k.raw_rgb_image.to(self.device))
-                      for k in self._nav_coverage_keyframes(keyframes, n_nav)] if n_nav > 0 else None
+        nav_kfs = self._nav_coverage_keyframes(keyframes, n_nav) if n_nav > 0 else []
+        nav_images = [as_float_image(k.raw_rgb_image.to(self.device)) for k in nav_kfs] if n_nav > 0 else None
         # stored images (host RAM by default) copied to the compute device for this pass only
         ref_rgbs = [as_float_image(p.raw_rgb_image.to(self.device)) for p in keyframes]
         ref_depths = [as_float_image(p.depth_image.to(self.device)) for p in keyframes] \
@@ -2945,6 +2946,7 @@ class System:
                 ref_rel_poses=self._map_anchor_pairs(keyframes),
                 ref_cam_ids=[k.cam_id for k in keyframes] if len(self.cameras) > 1 else None,
                 nav_images=nav_images,
+                nav_loaded=[k.id in self.loaded_node_ids for k in nav_kfs],
                 **source_context,
             )
         else:

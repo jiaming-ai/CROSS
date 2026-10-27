@@ -399,6 +399,23 @@ class _VGGTOmegaBackend(_Backend):
                             log_scale=float(log_scale[0]) if log_scale.numel() else None)
 
 
+def own_views(view_tags: List[str], ref_loaded=None, nav_loaded=None) -> List[bool]:
+    """Which views of a pass are the robot's own (pose_est.ff.nav_bev_fusion): the current image and its previous /
+    frontend / stereo views, and the references ("ref{i}_L/R") and BEV keyframes ("nav_L", in order) not loaded from a
+    map. ref_loaded / nav_loaded: per reference / extra keyframe, True when it comes from a loaded map (System passes
+    both); ref_loaded None = every reference is the session's own, nav_loaded None = no extra keyframe is."""
+    own, j = [], 0
+    for tag in view_tags:
+        if tag.startswith("ref"):
+            own.append(ref_loaded is None or not bool(ref_loaded[int(tag[3:tag.index("_")])]))
+        elif tag == "nav_L":
+            own.append(nav_loaded is not None and j < len(nav_loaded) and not bool(nav_loaded[j]))
+            j += 1
+        else:
+            own.append(True)
+    return own
+
+
 def _map_covis(p: np.ndarray, cmap) -> np.ndarray:
     """The head's probabilities on the geometric score's scale (covis_head_map knots), or unchanged without a map."""
     return p if cmap is None else np.interp(p, cmap[0], cmap[1]).astype(p.dtype)
@@ -683,6 +700,11 @@ class PoseEstFeedForward:
         if getattr(config, "nav_bev_head", "") and isinstance(self.backend, _VGGTOmegaBackend):
             self.backend.enable_nav(config.nav_bev_head, getattr(config, "nav_bev_visibility", ""),
                                     getattr(config, "nav_bev_visibility_gravity", ""))
+            fusion = getattr(config, "nav_bev_fusion", "off")
+            if fusion not in ("off", "session"):
+                raise ValueError(f"pose_est.ff.nav_bev_fusion must be off or session, not {fusion!r}")
+            if fusion == "session" and self.backend.nav.visibility is None:
+                raise ValueError("pose_est.ff.nav_bev_fusion=session needs the observability head (nav_bev_visibility)")
         self._auto_covis = auto_covis_source(self.backend)
         if getattr(config, "covis_source", "auto") == "auto":
             logger.info(f"covisibility source: {self._auto_covis} (auto)")
@@ -770,9 +792,10 @@ class PoseEstFeedForward:
                                       n_used=0, method="head")
         return scale_est
 
-    def _nav_bev(self, pred, images, metric: Optional[float]):
+    def _nav_bev(self, pred, images, metric: Optional[float], own=None):
         """BEV of a pass (last_nav) at its solved metric scale, or at the scale head's when the pass has no valid
-        anchor; exact duplicate views (e.g. the previous observation stored as a reference) are masked."""
+        anchor; exact duplicate views (e.g. the previous observation stored as a reference) are masked. own: (S,) bool,
+        the robot's own views of the pass; with nav_bev_fusion "session" they decide the cells they observe."""
         source = "anchors"
         if metric is None:
             if pred.log_scale is None:
@@ -784,16 +807,32 @@ class PoseEstFeedForward:
         out = self._predict_bev(metric, views)
         if out is not None:
             out["scale_source"] = source
+            if own is not None and getattr(self.config, "nav_bev_fusion", "off") == "session":
+                own_mask = views & np.asarray(own, dtype=bool)
+                out["n_own_views"] = int(own_mask.sum())
+                out["fused"] = bool(own_mask.any() and not np.array_equal(own_mask, views))
+                if out["fused"]:            # the pass has views of a loaded map: the heads again on the own views
+                    from cross_nav.infer import fuse_own_priority
+                    own_out = self._predict_bev(metric, own_mask)
+                    layers = ("prob", "observability", "uncertainty")
+                    fused = fuse_own_priority(
+                        {k: None if out.get(k) is None else out[k].astype(np.float32) for k in layers},
+                        {k: None if own_out.get(k) is None else own_out[k].astype(np.float32) for k in layers})
+                    for k in layers:
+                        if fused.get(k) is not None:
+                            out[k] = fused[k].astype(np.float16)
+                    out["t_bev"] += own_out["t_bev"]
         return out
 
-    def _nav_bevs(self, pred, images, metric, base_views, nav_images, n_extra, anchors, depth_meas, cfg, focal, mixed):
+    def _nav_bevs(self, pred, images, metric, base_views, nav_images, n_extra, anchors, depth_meas, cfg, focal, mixed,
+                  own=None, nav_own=None):
         """last_bev from the pass (every nav_bev_every-th pass) and, for experiments, last_bev_shadow: one BEV per
         count in nav_shadow from a separate pass with the same views and that many extra keyframes."""
         self.last_bev = None
         self.last_bev_shadow = {}
         self._n_passes += 1
         if (self._n_passes - 1) % max(1, int(getattr(cfg, "nav_bev_every", 1))) == 0:
-            self.last_bev = self._nav_bev(pred, images, metric)
+            self.last_bev = self._nav_bev(pred, images, metric, own)
             if self.last_bev is not None:
                 self.last_bev["n_extra"] = n_extra
             done = {n_extra: self.last_bev}     # by the number of extra keyframes actually in the pass
@@ -804,7 +843,9 @@ class PoseEstFeedForward:
                     pred_k = self.backend.infer(imgs_k, n_depth=None, focal=focal)
                     est = self._solve_scale(pred_k, pred_k.c2w, anchors, depth_meas, cfg)
                     m_k = est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0) if est.valid else None
-                    done[k] = self._nav_bev(pred_k, imgs_k, m_k)
+                    own_k = None if own is None else list(own[:len(base_views)]) + [
+                        bool(nav_own[j]) if nav_own is not None and j < len(nav_own) else False for j in range(k)]
+                    done[k] = self._nav_bev(pred_k, imgs_k, m_k, own_k)
                     if done[k] is not None:
                         done[k]["n_extra"] = k
                 self.last_bev_shadow[want] = done.get(k)
@@ -991,6 +1032,8 @@ class PoseEstFeedForward:
         for img in nav_images[:n_extra]:
             views.append(img)
             view_tags.append("nav_L")
+        own = own_views(view_tags, kwargs.get("ref_loaded"), kwargs.get("nav_loaded"))
+        nav_own = None if kwargs.get("nav_loaded") is None else [not bool(x) for x in kwargs["nav_loaded"]]
         images = self._as_model_input(views)
 
         t_model = time.perf_counter()
@@ -1048,7 +1091,7 @@ class PoseEstFeedForward:
             metric = scale_est.scale / float(getattr(self, "metric_scale_correction", 1.0) or 1.0)
         if nav_on:
             self._nav_bevs(pred, images, metric, views[:n_base], nav_images, n_extra, anchors, depth_meas, cfg, focal,
-                           mixed)
+                           mixed, own=own, nav_own=nav_own)
         if B == 0:                       # a pass for the BEV alone
             self.last_info = {"valid": False, "nav_only": True, "scale": scale_est.to_dict(), "t_model": t_model,
                               "n_views": len(views), "view_tags": view_tags}

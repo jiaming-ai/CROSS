@@ -773,6 +773,11 @@ class FeedForwardConfig:
     # its observability head (P(cell observed by the pass's views)) and that head's frozen gravity head, both or neither
     nav_bev_visibility: str = ""
     nav_bev_visibility_gravity: str = ""
+    # references from a loaded map show it as it was then (moved furniture, people): "off" lifts every view of the pass
+    # into the BEV; "session" also runs the heads on the robot's own views only (the current image and this session's
+    # views and keyframes) and lets them decide the cells they observe, the full pass the rest
+    # (cross_nav.infer.fuse_own_priority; one more head call, no extra backbone pass; needs nav_bev_visibility)
+    nav_bev_fusion: str = "off"
     # with a BEV head: up to this many extra keyframes in every pass, for the BEV only (not references of the pose
     # estimate): nearby keyframes chosen greedily for the ground they add around the robot (System._nav_coverage_keyframes:
     # keyframes within nav_extra_radius_m, coverage = cells of nav_extra_cell_m within nav_extra_range_m of the robot
