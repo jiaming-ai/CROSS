@@ -589,6 +589,24 @@ on vfin2: occupancy `configs/train/vfin2_route_ft.yaml`, observability `vfin2_vi
 `python -m cross_nav.train_visibility`; HSSD val240 on CROSS's pass 97.1-97.9 % vs 94.2-95.0 % with the vdl_s1
 heads); `bev_planner_best.json` holds the vdl_s1 heads.
 Simulator service: `cross_nav/policy/sim/cross_nav_service.py --bev cross_nav/configs/policy/bev_planner_vfin2.json`.
+
+References retrieved from a loaded map show the place as it was when it was mapped. The heads lift them like the
+current view, so furniture that has moved since is drawn as an observed obstacle. The heads were trained only on views
+of one recording. `--set pose_est.ff.nav_bev_fusion=session` (off by default; needs the observability head) runs the
+heads a second time on the pass, on the robot's own views only:
+- the current image, its previous / frontend / stereo views;
+- references and BEV keyframes made in this session.
+
+Where those views observe a cell, their occupancy decides it (weighted by their observability); the full pass fills
+the rest (`cross_nav.infer.fuse_own_priority`; `last_bev["fused"]`, `["n_own_views"]`). The cost is one more head call
+(~55 ms on an RTX A5000), no extra backbone pass. Tested offline on recorded Stretch runs with a 4-day-old phone map
+(1,029 passes, against the robot's measured depth; blocked = P > 0.6 and observability > 0.5):
+- a moved table: 99 % -> 2 % of its old floor blocked;
+- false blocking within 1.5 m: 4.3 -> 3.2 %;
+- real obstacles blocked within 3 m: 59 -> 64 %.
+
+With the metric scale from the robot's depth (`depth_scale`) the two rates were 2.3 % and 68 %. Lifting the current
+view alone lost real obstacles beside the robot (42 %): its narrow view leaves them unobserved.
 Labels for training come from the scene cache of `vggt_ft` (`python -m cross_nav.labels`: all frames of a place
 accumulated, free-space carving) and from simulated HSSD scenes with mesh labels (`cross_nav/sim/`).
 
